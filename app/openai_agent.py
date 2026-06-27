@@ -20,6 +20,7 @@ from .guardrails import (
     detect_blocked_request,
     detect_coupon_code_inquiry,
     detect_current_raffle_inquiry,
+    detect_human_support_request,
     detect_raffle_history_inquiry,
     detect_rules_inquiry,
     detect_simulation_inquiry,
@@ -27,7 +28,7 @@ from .guardrails import (
 )
 from .models import IncomingMessage, AgentResult
 from .repository import detect_third_party_account_inquiry
-from .site_knowledge import build_site_knowledge_text
+from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
 from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
 
 
@@ -43,7 +44,8 @@ Regras obrigatórias:
 - Se o cliente não tiver telefone cadastrado, oriente a acessar https://www.sorteionewstore.com.br/ e incluir o telefone no perfil.
 - Não altere cadastro, pagamentos ou participações pelo WhatsApp.
 - Não prometa ganhar sorteio; explique regras oficiais.
-- Se não souber, oriente o site ou encaminhe para a equipe.
+- Se não souber, oriente o site ou encaminhe para a equipe no WhatsApp {NS_SALES_WHATSAPP} (vendas e dúvidas).
+- Se o cliente quiser falar com um atendente humano, informe o contato {NS_SALES_WHATSAPP}.
 """.strip()
 
 
@@ -111,10 +113,20 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         return build_raffle_history_reply(message)
     if detect_rules_inquiry(message.text):
         return build_rules_reply_result(message)
+    if detect_human_support_request(message.text):
+        return AgentResult(
+            reply_text=HUMAN_SUPPORT_MESSAGE,
+            intent="human_support",
+            handoff_required=True,
+            safety_reason="human_support_requested",
+        )
 
     if not settings.openai_api_key:
         return AgentResult(
-            reply_text="Recebemos sua mensagem. A equipe da New Store vai dar continuidade ao atendimento.",
+            reply_text=(
+                "Recebemos sua mensagem. A equipe da New Store vai dar continuidade ao atendimento. "
+                f"{HUMAN_SUPPORT_MESSAGE}"
+            ),
             intent="fallback_no_openai_key",
             handoff_required=True,
             safety_reason="openai_api_key_missing",

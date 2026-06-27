@@ -62,6 +62,30 @@ RULES_KEYWORDS = (
     "lotomania",
 )
 
+HUMAN_SUPPORT_KEYWORDS = (
+    "falar com atendente",
+    "falar com um atendente",
+    "atendente humano",
+    "atendimento humano",
+    "falar com alguem",
+    "falar com alguém",
+    "falar com a equipe",
+    "falar com vocês",
+    "falar com voces",
+    "quero um humano",
+    "quero atendente",
+    "preciso de ajuda",
+    "contato de vendas",
+    "falar com vendas",
+    "equipe de vendas",
+    "whatsapp da loja",
+    "numero da loja",
+    "número da loja",
+    "telefone da loja",
+    "contato da new store",
+    "contato new store",
+)
+
 
 def detect_balance_inquiry(text: str) -> bool:
     normalized = (text or "").lower()
@@ -93,6 +117,11 @@ def detect_rules_inquiry(text: str) -> bool:
     return any(keyword in normalized for keyword in RULES_KEYWORDS)
 
 
+def detect_human_support_request(text: str) -> bool:
+    normalized = (text or "").lower()
+    return any(keyword in normalized for keyword in HUMAN_SUPPORT_KEYWORDS)
+
+
 BLOCKED_TOPICS = (
     "comprar número",
     "comprar numeros",
@@ -114,7 +143,10 @@ def detect_blocked_request(text: str) -> str | None:
 
 
 def default_safe_handoff() -> str:
+    from .site_knowledge import HUMAN_SUPPORT_MESSAGE, SITE_URL
+
     return (
         "Para sua segurança, vou encaminhar esse atendimento para a equipe da New Store. "
-        "Você também pode acessar sua conta pelo site oficial para consultar informações disponíveis."
+        f"{HUMAN_SUPPORT_MESSAGE} "
+        f"Você também pode acessar sua conta em {SITE_URL}."
     )

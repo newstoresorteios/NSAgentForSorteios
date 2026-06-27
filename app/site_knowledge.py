@@ -2,6 +2,12 @@ from __future__ import annotations
 
 SITE_URL = "https://www.sorteionewstore.com.br/"
 STORE_URL = "https://www.newstorerj.com.br/"
+NS_SALES_WHATSAPP = "+55 48 9949-0859"
+
+HUMAN_SUPPORT_MESSAGE = (
+    f"Para falar com a equipe da New Store (vendas e dúvidas), chame no WhatsApp {NS_SALES_WHATSAPP}. "
+    "Lá você encontra orientação e atendimento humano."
+)
 
 REGISTER_PHONE_MESSAGE = (
     "Não encontramos telefone cadastrado na sua conta. "
@@ -59,6 +65,8 @@ Cartão Presente Digital:
 - Pode usar parte do saldo ou em mais de um produto, respeitando a tabela.
 - Desconto Pix pode exigir aplicação manual pela equipe.
 
+Atendimento humano (vendas e dúvidas): WhatsApp {NS_SALES_WHATSAPP}.
+
 FAQ resumido:
 1. Sorteio baseado na Lotomania; ganhador = último número sorteado.
 2. Sorteio após venda de todos os números.
@@ -79,7 +87,8 @@ def build_rules_reply() -> str:
         "O sorteio usa a Lotomania (último número sorteado vence). "
         "A vaga confirma após pagamento; o sorteio ocorre quando a tabela enche. "
         "Cartão: validade 6 meses (renovável), pessoal, sem dinheiro, uso exclusivo no site. "
-        f"Dúvidas e novas rodadas: {SITE_URL} e grupo oficial WhatsApp."
+        f"Dúvidas e novas rodadas: {SITE_URL} e grupo oficial WhatsApp. "
+        f"Atendimento humano (vendas): {NS_SALES_WHATSAPP}."
     )
 
 
