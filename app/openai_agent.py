@@ -4,6 +4,7 @@ import re
 
 from openai import APIStatusError, OpenAI
 from .agent_replies import (
+    build_available_numbers_reply,
     build_balance_reply,
     build_coupon_code_reply,
     build_current_raffle_reply,
@@ -16,6 +17,7 @@ from .agent_replies import (
 from .repository import find_coupon_balance_by_phone
 from .config import get_settings
 from .guardrails import (
+    detect_available_numbers_inquiry,
     detect_balance_inquiry,
     detect_blocked_request,
     detect_coupon_code_inquiry,
@@ -107,6 +109,8 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         return build_coupon_code_reply(message)
     if detect_simulation_inquiry(message.text):
         return build_simulation_reply(message)
+    if detect_available_numbers_inquiry(message.text):
+        return build_available_numbers_reply(message)
     if detect_current_raffle_inquiry(message.text):
         return build_current_raffle_reply(message)
     if detect_raffle_history_inquiry(message.text):

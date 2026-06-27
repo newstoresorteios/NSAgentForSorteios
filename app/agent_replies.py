@@ -3,10 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .config import get_settings
 from .guardrails import default_safe_handoff, detect_last_participation_inquiry
 from .models import AgentResult, IncomingMessage
 from .repository import (
     find_coupon_balance_by_phone,
+    find_available_numbers_for_open_draw,
     find_current_raffle,
     find_last_payment_participation,
     find_user_coupon_code,
@@ -32,6 +34,7 @@ from .site_knowledge import (
     SITE_URL,
     STORE_URL,
     THIRD_PARTY_REFUSAL,
+    NS_SALES_WHATSAPP,
     build_rules_reply,
     build_simulation_reply as build_simulation_text,
 )
@@ -292,12 +295,12 @@ def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentR
         )
 
     lines = [
-        f"Sorteio atual: {raffle.get('title') or 'Rodada aberta'}.",
+        f"Sorteio aberto: *{raffle.get('title') or 'Rodada aberta'}*.",
         f"Prêmio: {raffle.get('prize_name') or 'consulte o site'}.",
         f"Status: {raffle.get('status') or 'aberto'}.",
     ]
     if raffle.get("quota_price_brl"):
-        lines.append(f"Valor da cota: {raffle['quota_price_brl']}.")
+        lines.append(f"Valor do sorteio: {raffle['quota_price_brl']}.")
     lines.append(f"Participe em {SITE_URL}.")
     reply_text = " ".join(lines)
     if message:
@@ -308,6 +311,96 @@ def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentR
     return AgentResult(
         reply_text=reply_text,
         intent="current_raffle",
+        handoff_required=False,
+    )
+
+
+def _format_available_numbers_list(numbers: list[str], max_chars: int) -> str:
+    if not numbers:
+        return "Nenhum número disponível no momento."
+
+    joined = ", ".join(numbers)
+    if len(joined) <= max_chars:
+        return joined
+
+    shown: list[str] = []
+    for number in numbers:
+        candidate = ", ".join(shown + [number])
+        if len(candidate) > max_chars:
+            break
+        shown.append(number)
+
+    hidden = len(numbers) - len(shown)
+    if not shown:
+        return f"{numbers[0]}… (+{len(numbers) - 1} números; veja a lista completa em {SITE_URL})"
+    if hidden > 0:
+        return f"{', '.join(shown)}… (+{hidden} números; lista completa em {SITE_URL})"
+    return ", ".join(shown)
+
+
+def build_available_numbers_reply(message: IncomingMessage) -> AgentResult:
+    settings = get_settings()
+    result = find_available_numbers_for_open_draw()
+
+    if result.get("error") == "database_not_configured":
+        return AgentResult(
+            reply_text=default_safe_handoff(),
+            intent="available_numbers",
+            handoff_required=True,
+            safety_reason="database_not_configured",
+        )
+    if result.get("lookup_error"):
+        return AgentResult(
+            reply_text=default_safe_handoff(),
+            intent="available_numbers",
+            handoff_required=True,
+            safety_reason="available_numbers_lookup_failed",
+        )
+    if result.get("error") == "no_open_draw":
+        return AgentResult(
+            reply_text=(
+                f"No momento não há sorteio aberto. Acompanhe novas rodadas em {SITE_URL} "
+                f"ou fale com a equipe no WhatsApp {NS_SALES_WHATSAPP}."
+            ),
+            intent="available_numbers",
+            handoff_required=False,
+        )
+
+    title = result.get("title") or "Sorteio atual"
+    available = result.get("available_numbers") or []
+    numbers_text = _format_available_numbers_list(available, max_chars=650)
+    count = len(available)
+    prize_line = ""
+    if result.get("prize_name"):
+        prize_line = f"Prêmio: {result['prize_name']}. "
+    if result.get("price_brl"):
+        prize_line += f"Valor: {result['price_brl']}. "
+
+    if count == 0:
+        if result.get("total_count") is None:
+            reply_text = (
+                f"Sorteio *{title}* aberto. Consulte a grade de números disponíveis em {SITE_URL}."
+            )
+        else:
+            reply_text = (
+                f"No sorteio *{title}*, todos os números já foram confirmados (pagamento aprovado). "
+                f"Acompanhe novas rodadas em {SITE_URL}."
+            )
+    else:
+        reply_text = (
+            f"Sorteio *{title}*. {prize_line}"
+            f"{count} número(s) disponível(is): {numbers_text}. "
+            f"Escolha e participe em {SITE_URL}. A vaga só confirma após compensação do pagamento."
+        )
+
+    vip = get_vip_profile(message.sender_phone)
+    if vip:
+        nickname = pick_vip_nickname(vip, message.text)
+        reply_text = build_vip_general_reply(vip, nickname, reply_text)
+
+    return AgentResult(
+        reply_text=reply_text[: settings.max_reply_chars],
+        intent="available_numbers",
         handoff_required=False,
     )
 

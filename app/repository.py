@@ -97,6 +97,62 @@ def _draw_label(draw_id: Any, title: Any) -> str:
     return "Sorteio"
 
 
+def expand_payment_number_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        if text.startswith("[") and text.endswith("]"):
+            inner = text[1:-1]
+            return [part.strip().strip('"').strip("'") for part in inner.split(",") if part.strip()]
+        return [part.strip() for part in text.split(",") if part.strip()]
+    return [str(raw).strip()]
+
+
+def parse_draw_number_pool(draw: dict[str, Any]) -> list[str]:
+    raw_numbers = draw.get("numbers")
+    if isinstance(raw_numbers, list) and raw_numbers:
+        return expand_payment_number_list(raw_numbers)
+
+    total = (
+        draw.get("total_numbers")
+        or draw.get("total_spots")
+        or draw.get("quota_count")
+        or draw.get("max_number")
+    )
+    start = draw.get("min_number") or draw.get("start_number") or 1
+    if total:
+        try:
+            end = int(total)
+            begin = int(start)
+            if end >= begin:
+                return [str(number) for number in range(begin, end + 1)]
+        except (TypeError, ValueError):
+            pass
+    return []
+
+
+def compute_available_numbers(pool: list[str], taken: set[str]) -> list[str]:
+    available = [number for number in pool if number not in taken]
+    try:
+        return sorted(available, key=lambda value: int(value))
+    except ValueError:
+        return sorted(available)
+
+
+def collect_taken_numbers(payment_rows: list[dict[str, Any]]) -> set[str]:
+    taken: set[str] = set()
+    for row in payment_rows:
+        if (row.get("status") or "").lower() != "approved":
+            continue
+        taken.update(expand_payment_number_list(row.get("numbers")))
+    return taken
+
+
 def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
     phone_digits = normalized
     phone_with_country = phone_digits if phone_digits.startswith("55") else f"55{phone_digits}"
@@ -218,29 +274,158 @@ def find_customer_profile_by_phone(phone: str | None) -> dict[str, Any]:
     }
 
 
-def find_current_raffle() -> dict[str, Any]:
+def find_draw_app_config(draw_id: int) -> dict[str, Any]:
     settings = get_settings()
     if not settings.database_url:
         return {"found": False, "error": "database_not_configured"}
 
     queries = (
         """
-        SELECT id, title, prize_name, status, winning_number, quota_price_cents
-        FROM public.raffles
-        WHERE lower(coalesce(status, '')) IN ('open', 'active', 'available', 'aberto')
+        SELECT
+          draw_id,
+          coalesce(prize_name, prize, premio, prize_title, product_name) AS prize_name,
+          coalesce(price_cents, amount_cents, ticket_price_cents, quota_price_cents, draw_price_cents) AS price_cents,
+          coalesce(price, ticket_price, draw_price, quota_price) AS price
+        FROM public.app_config_new
+        WHERE draw_id = %(draw_id)s
+        ORDER BY id DESC NULLS LAST
+        LIMIT 1
+        """,
+        """
+        SELECT
+          draw_id,
+          prize_name,
+          price_cents
+        FROM public.app_config_new
+        WHERE draw_id = %(draw_id)s
+        ORDER BY id DESC NULLS LAST
+        LIMIT 1
+        """,
+        """
+        SELECT *
+        FROM public.app_config_new
+        WHERE draw_id = %(draw_id)s
+        ORDER BY id DESC NULLS LAST
+        LIMIT 1
+        """,
+    )
+
+    last_error: str | None = None
+    for sql in queries:
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, {"draw_id": draw_id})
+                    row = cur.fetchone()
+                    if not row:
+                        continue
+
+                    data = dict(row)
+                    prize_name = (
+                        data.get("prize_name")
+                        or data.get("prize")
+                        or data.get("premio")
+                        or data.get("prize_title")
+                        or data.get("product_name")
+                    )
+                    price_cents = (
+                        data.get("price_cents")
+                        or data.get("amount_cents")
+                        or data.get("ticket_price_cents")
+                        or data.get("quota_price_cents")
+                        or data.get("draw_price_cents")
+                    )
+                    price_brl = format_cents_to_brl(price_cents) if price_cents is not None else None
+                    if not price_brl:
+                        raw_price = data.get("price") or data.get("ticket_price") or data.get("draw_price")
+                        if raw_price is not None:
+                            price_brl = str(raw_price)
+
+                    return {
+                        "found": True,
+                        "draw_id": data.get("draw_id") or draw_id,
+                        "prize_name": prize_name,
+                        "price_brl": price_brl,
+                    }
+        except Exception as exc:
+            last_error = str(exc)[:180]
+            continue
+
+    if last_error:
+        return {"found": False, "lookup_error": last_error}
+    return {"found": False}
+
+
+def find_current_raffle() -> dict[str, Any]:
+    draw = find_open_draw()
+    if draw.get("error") or draw.get("lookup_error") or not draw.get("found"):
+        return draw
+
+    draw_id = int(draw["id"])
+    config = find_draw_app_config(draw_id)
+
+    prize_name = draw.get("prize_name")
+    quota_price_brl = None
+    if config.get("found"):
+        prize_name = config.get("prize_name") or prize_name
+        quota_price_brl = config.get("price_brl")
+
+    return {
+        "found": True,
+        "id": draw_id,
+        "draw_id": draw_id,
+        "title": draw.get("title"),
+        "prize_name": prize_name,
+        "status": draw.get("status"),
+        "winning_number": draw.get("winning_number"),
+        "quota_price_brl": quota_price_brl,
+    }
+
+
+def find_open_draw() -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.database_url:
+        return {"found": False, "error": "database_not_configured"}
+
+    queries = (
+        """
+        SELECT
+          id,
+          title,
+          status,
+          numbers,
+          total_numbers,
+          total_spots,
+          quota_count,
+          min_number,
+          start_number,
+          max_number
+        FROM public.draws
+        WHERE lower(coalesce(status, '')) IN ('open', 'active', 'available', 'aberto', 'aberta')
         ORDER BY id DESC
         LIMIT 1
         """,
         """
-        SELECT id, title, prize_name, status, winning_number, quota_price_cents
-        FROM public.raffles
+        SELECT
+          id,
+          title,
+          status,
+          numbers,
+          total_numbers,
+          total_spots,
+          quota_count,
+          min_number,
+          start_number,
+          max_number
+        FROM public.draws
         WHERE is_current = true
         ORDER BY id DESC
         LIMIT 1
         """,
         """
-        SELECT id, title, prize_name, status, winning_number, quota_price_cents
-        FROM public.raffles
+        SELECT id, title, status
+        FROM public.draws
+        WHERE lower(coalesce(status, '')) IN ('open', 'active', 'available', 'aberto', 'aberta')
         ORDER BY id DESC
         LIMIT 1
         """,
@@ -254,16 +439,7 @@ def find_current_raffle() -> dict[str, Any]:
                     cur.execute(sql)
                     row = cur.fetchone()
                     if row:
-                        quota = row.get("quota_price_cents")
-                        return {
-                            "found": True,
-                            "id": row.get("id"),
-                            "title": row.get("title"),
-                            "prize_name": row.get("prize_name"),
-                            "status": row.get("status"),
-                            "winning_number": row.get("winning_number"),
-                            "quota_price_brl": format_cents_to_brl(quota) if quota is not None else None,
-                        }
+                        return {"found": True, **dict(row)}
         except Exception as exc:
             last_error = str(exc)[:180]
             continue
@@ -271,6 +447,79 @@ def find_current_raffle() -> dict[str, Any]:
     if last_error:
         return {"found": False, "lookup_error": last_error}
     return {"found": False}
+
+
+def find_draw_payments(draw_id: int) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.database_url:
+        return {"found": False, "error": "database_not_configured"}
+
+    queries = (
+        """
+        SELECT numbers, status
+        FROM public.payments
+        WHERE draw_id = %(draw_id)s
+        """,
+        """
+        SELECT numbers, status
+        FROM public.payments
+        WHERE coalesce(draw_id, raffle_id, sorteio_id) = %(draw_id)s
+        """,
+    )
+
+    last_error: str | None = None
+    for sql in queries:
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, {"draw_id": draw_id})
+                    rows = cur.fetchall()
+                    return {"found": True, "items": [dict(row) for row in rows]}
+        except Exception as exc:
+            last_error = str(exc)[:180]
+            continue
+
+    if last_error:
+        return {"found": False, "lookup_error": last_error}
+    return {"found": True, "items": []}
+
+
+def find_available_numbers_for_open_draw() -> dict[str, Any]:
+    draw = find_open_draw()
+    if draw.get("error") == "database_not_configured":
+        return {"found": False, "error": "database_not_configured"}
+    if draw.get("lookup_error"):
+        return {"found": False, "lookup_error": draw["lookup_error"]}
+    if not draw.get("found"):
+        return {"found": False, "error": "no_open_draw"}
+
+    draw_id = int(draw["id"])
+    config = find_draw_app_config(draw_id)
+    payments = find_draw_payments(draw_id)
+    if payments.get("lookup_error"):
+        return {"found": False, "lookup_error": payments["lookup_error"]}
+
+    taken = collect_taken_numbers(payments.get("items", []))
+    pool = parse_draw_number_pool(draw)
+    if pool:
+        available = compute_available_numbers(pool, taken)
+    else:
+        available = []
+
+    prize_name = config.get("prize_name") if config.get("found") else None
+    price_brl = config.get("price_brl") if config.get("found") else None
+
+    return {
+        "found": True,
+        "draw_id": draw_id,
+        "title": draw.get("title") or _draw_label(draw_id, None),
+        "status": draw.get("status"),
+        "prize_name": prize_name,
+        "price_brl": price_brl,
+        "available_numbers": available,
+        "taken_count": len(taken),
+        "total_count": len(pool) if pool else None,
+    }
 
 
 def find_last_payment_participation(user_id: int) -> dict[str, Any]:

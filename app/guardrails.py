@@ -29,10 +29,35 @@ SIMULATION_KEYWORDS = (
     "tabela de uso",
 )
 
+AVAILABLE_NUMBERS_KEYWORDS = (
+    "numeros disponiveis",
+    "números disponíveis",
+    "numeros disponiveis no sorteio",
+    "números disponíveis no sorteio",
+    "quais numeros estao disponiveis",
+    "quais números estão disponíveis",
+    "quais numeros disponiveis",
+    "quais números disponíveis",
+    "numeros livres",
+    "números livres",
+    "numeros abertos",
+    "números abertos",
+    "ver numeros do sorteio",
+    "ver números do sorteio",
+    "numeros do sorteio atual",
+    "números do sorteio atual",
+)
+
 CURRENT_RAFFLE_KEYWORDS = (
     "sorteio atual",
     "rodada atual",
     "sorteio aberto",
+    "qual sorteio esta aberto",
+    "qual sorteio está aberto",
+    "que sorteio esta aberto",
+    "que sorteio está aberto",
+    "sorteio esta aberto",
+    "sorteio está aberto",
     "premio atual",
     "prêmio atual",
 )
@@ -111,6 +136,11 @@ def detect_simulation_inquiry(text: str) -> bool:
 def detect_current_raffle_inquiry(text: str) -> bool:
     normalized = (text or "").lower()
     return any(keyword in normalized for keyword in CURRENT_RAFFLE_KEYWORDS)
+
+
+def detect_available_numbers_inquiry(text: str) -> bool:
+    normalized = (text or "").lower()
+    return any(keyword in normalized for keyword in AVAILABLE_NUMBERS_KEYWORDS)
 
 
 def detect_raffle_history_inquiry(text: str) -> bool:
