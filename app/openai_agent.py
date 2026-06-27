@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+import re
+
 from openai import APIStatusError, OpenAI
 from .config import get_settings
 from .models import IncomingMessage, AgentResult
@@ -31,6 +34,11 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 1].rstrip() + "…"
+
+
+def _sanitize_log_message(text: str) -> str:
+    redacted = re.sub(r"sk-(?:proj-)?[^\s'\"]+", "sk-***", text or "")
+    return redacted[:300]
 
 
 def build_agent_input(message: IncomingMessage, customer_context: dict) -> str:
@@ -68,18 +76,21 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         )
 
     client = OpenAI(api_key=settings.openai_api_key)
+    user_input = build_agent_input(message, customer_context)
     try:
-        response = client.responses.create(
+        response = client.chat.completions.create(
             model=settings.openai_model,
-            instructions=SYSTEM_INSTRUCTIONS,
-            input=build_agent_input(message, customer_context),
+            messages=[
+                {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                {"role": "user", "content": user_input},
+            ],
         )
     except APIStatusError as exc:
         print("[openai.agent] request_failed", {
             "status_code": exc.status_code,
             "error_type": type(exc).__name__,
             "model": settings.openai_model,
-            "message": str(exc)[:300],
+            "message": _sanitize_log_message(str(exc)),
         })
         if exc.status_code == 401:
             return AgentResult(
@@ -95,7 +106,10 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
             safety_reason=f"openai_error_{exc.status_code}",
         )
 
-    reply = _truncate(response.output_text or default_safe_handoff(), settings.max_reply_chars)
+    reply = _truncate(
+        (response.choices[0].message.content if response.choices else None) or default_safe_handoff(),
+        settings.max_reply_chars,
+    )
     return AgentResult(
         reply_text=reply,
         intent="general_support",
