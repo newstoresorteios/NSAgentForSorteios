@@ -1,16 +1,21 @@
 from __future__ import annotations
+
 from typing import Any
+
 import httpx
+
 from .config import get_settings
 from .models import BrevoSendResult
+from .repository import normalize_phone
+
+BREVO_WHATSAPP_SEND_URL = "https://api.brevo.com/v3/whatsapp/sendMessage"
 
 
 async def send_whatsapp_reply(to_phone: str | None, text: str) -> BrevoSendResult:
-    """Send a reply through a configurable Brevo outbound endpoint.
+    """Send a WhatsApp reply through Brevo's transactional API.
 
-    Default mode is dry_run so the webhook can be tested without sending messages.
-    Configure BREVO_SEND_URL only after confirming the correct Brevo endpoint for
-    the specific Brevo product connected to the WhatsApp account.
+    Requires an active customer session (user already messaged you). Within that
+    window, Brevo accepts plain `text` replies without a template.
     """
     settings = get_settings()
     mode = (settings.brevo_reply_mode or "dry_run").lower()
@@ -21,15 +26,23 @@ async def send_whatsapp_reply(to_phone: str | None, text: str) -> BrevoSendResul
     if not settings.brevo_api_key:
         return BrevoSendResult(ok=False, dry_run=False, error="brevo_api_key_missing")
 
-    if not settings.brevo_send_url:
-        return BrevoSendResult(ok=False, dry_run=False, error="brevo_send_url_missing")
+    if not settings.brevo_sender_number:
+        return BrevoSendResult(ok=False, dry_run=False, error="brevo_sender_number_missing")
+
+    recipient = normalize_phone(to_phone)
+    sender = normalize_phone(settings.brevo_sender_number)
+    if not recipient:
+        return BrevoSendResult(ok=False, dry_run=False, error="recipient_phone_missing")
+    if not sender:
+        return BrevoSendResult(ok=False, dry_run=False, error="brevo_sender_number_invalid")
+
+    send_url = (settings.brevo_send_url or BREVO_WHATSAPP_SEND_URL).strip()
 
     payload: dict[str, Any] = {
-        "to": to_phone,
+        "contactNumbers": [recipient],
+        "senderNumber": sender,
         "text": text,
     }
-    if settings.brevo_sender_number:
-        payload["senderNumber"] = settings.brevo_sender_number
 
     headers = {
         "accept": "application/json",
@@ -38,16 +51,25 @@ async def send_whatsapp_reply(to_phone: str | None, text: str) -> BrevoSendResul
     }
 
     async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(settings.brevo_send_url, json=payload, headers=headers)
+        resp = await client.post(send_url, json=payload, headers=headers)
         try:
             body = resp.json()
         except Exception:
             body = {"text": resp.text[:500]}
 
+    ok = 200 <= resp.status_code < 300
+    if not ok:
+        print("[brevo.send] failed", {
+            "status_code": resp.status_code,
+            "recipient_present": bool(recipient),
+            "sender_present": bool(sender),
+            "response_preview": str(body)[:300],
+        })
+
     return BrevoSendResult(
-        ok=200 <= resp.status_code < 300,
+        ok=ok,
         dry_run=False,
         status_code=resp.status_code,
         provider_response=body,
-        error=None if 200 <= resp.status_code < 300 else "brevo_send_failed",
+        error=None if ok else "brevo_send_failed",
     )

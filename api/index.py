@@ -99,7 +99,9 @@ async def health():
         "openai_key_length": len(openai_key),
         "openai_model": settings.openai_model,
         "database_configured": bool(settings.database_url),
-        "brevo_send_configured": bool(settings.brevo_send_url and settings.brevo_api_key),
+        "brevo_send_configured": bool(settings.brevo_api_key and settings.brevo_sender_number),
+        "brevo_reply_mode": settings.brevo_reply_mode,
+        "brevo_live_send_enabled": (not settings.dry_run and settings.brevo_reply_mode.lower() != "dry_run"),
         "dry_run": settings.dry_run,
     }
 
