@@ -109,6 +109,7 @@ async def health():
         ),
         "brevo_reply_mode": settings.brevo_reply_mode,
         "brevo_live_send_enabled": (not settings.dry_run and settings.brevo_reply_mode.lower() != "dry_run"),
+        "brevo_webhook_secret_configured": bool(settings.brevo_webhook_secret),
         "dry_run": settings.dry_run,
     }
 

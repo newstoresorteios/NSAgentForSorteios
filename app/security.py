@@ -11,10 +11,11 @@ async def verify_brevo_webhook(request: Request, x_webhook_token: str | None = H
     """Validate a simple shared-secret header for Brevo webhook calls.
 
     Configure Brevo to send header: X-Webhook-Token: <BREVO_WEBHOOK_SECRET>
+    or URL query param ?token=<BREVO_WEBHOOK_SECRET>
     """
     settings = get_settings()
     if not settings.brevo_webhook_secret:
-        # Never allow an unprotected webhook in production.
+        print("[brevo.webhook.auth] webhook_secret_not_configured")
         if settings.environment.lower() == "production":
             raise HTTPException(status_code=500, detail="webhook_secret_not_configured")
         return
@@ -22,7 +23,16 @@ async def verify_brevo_webhook(request: Request, x_webhook_token: str | None = H
     query_token = request.query_params.get("token")
     provided_token = x_webhook_token or query_token
 
-    if not provided_token or not _secure_equals(provided_token, settings.brevo_webhook_secret):
+    if not provided_token:
+        print("[brevo.webhook.auth] missing_webhook_token")
+        raise HTTPException(status_code=401, detail="invalid_webhook_token")
+
+    if provided_token == "replace-with-a-random-secret":
+        print("[brevo.webhook.auth] placeholder_token_in_request")
+        raise HTTPException(status_code=401, detail="invalid_webhook_token")
+
+    if not _secure_equals(provided_token, settings.brevo_webhook_secret):
+        print("[brevo.webhook.auth] invalid_webhook_token")
         raise HTTPException(status_code=401, detail="invalid_webhook_token")
 
 
