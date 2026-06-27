@@ -20,6 +20,22 @@ def detect_blocked_request(text: str) -> str | None:
     return None
 
 
+BALANCE_KEYWORDS = (
+    "saldo",
+    "meu saldo",
+    "consultar saldo",
+    "ver saldo",
+    "quanto tenho",
+    "valor do cupom",
+    "cupom",
+)
+
+
+def detect_balance_inquiry(text: str) -> bool:
+    normalized = (text or "").lower()
+    return any(keyword in normalized for keyword in BALANCE_KEYWORDS)
+
+
 def default_safe_handoff() -> str:
     return (
         "Para sua segurança, vou encaminhar esse atendimento para a equipe da New Store. "

@@ -5,7 +5,8 @@ import re
 from openai import APIStatusError, OpenAI
 from .config import get_settings
 from .models import IncomingMessage, AgentResult
-from .guardrails import detect_blocked_request, default_safe_handoff
+from .guardrails import detect_blocked_request, detect_balance_inquiry, default_safe_handoff
+from .repository import find_coupon_balance_by_phone
 
 
 SYSTEM_INSTRUCTIONS = """
@@ -18,7 +19,7 @@ Regras obrigatórias:
 - Não altere dados do cliente.
 - Não prometa resultado, vantagem, ganho, prêmio ou benefício financeiro.
 - Não incentive compras, apostas, jogos de azar ou participação em atividades restritas.
-- Se o pedido exigir verificação de identidade, dados financeiros, saldo detalhado ou ação sensível, encaminhe para atendimento humano ou oriente o cliente a acessar a área logada do site.
+- Se o pedido exigir verificação de identidade ou ação sensível não coberta pelo fluxo automático, encaminhe para atendimento humano ou oriente o cliente a acessar a área logada do site.
 - Quando não tiver certeza, diga que vai encaminhar para a equipe.
 
 Você pode ajudar com:
@@ -55,6 +56,57 @@ Responda com uma mensagem segura para WhatsApp.
 """.strip()
 
 
+def _build_balance_reply(message: IncomingMessage) -> AgentResult:
+    balance = find_coupon_balance_by_phone(message.sender_phone)
+
+    if balance.get("error") == "phone_missing":
+        return AgentResult(
+            reply_text=(
+                "Não consegui identificar seu telefone nesta conversa. "
+                "Tente novamente ou acesse a área logada no site."
+            ),
+            intent="balance_inquiry",
+            handoff_required=True,
+            safety_reason="phone_missing",
+        )
+
+    if balance.get("error") == "database_not_configured":
+        return AgentResult(
+            reply_text=default_safe_handoff(),
+            intent="balance_inquiry",
+            handoff_required=True,
+            safety_reason="database_not_configured",
+        )
+
+    if balance.get("lookup_error"):
+        return AgentResult(
+            reply_text=default_safe_handoff(),
+            intent="balance_inquiry",
+            handoff_required=True,
+            safety_reason="balance_lookup_failed",
+        )
+
+    if not balance.get("found"):
+        return AgentResult(
+            reply_text=(
+                "Não encontramos cadastro vinculado a este telefone. "
+                "Confira se o WhatsApp usado é o mesmo do cadastro ou acesse a área logada no site."
+            ),
+            intent="balance_inquiry",
+            handoff_required=False,
+        )
+
+    name = (balance.get("name") or message.sender_name or "").strip()
+    greeting = f"Olá, {name}!" if name else "Olá!"
+    amount = balance["balance_brl"]
+
+    return AgentResult(
+        reply_text=f"{greeting} Seu saldo disponível é {amount}.",
+        intent="balance_inquiry",
+        handoff_required=False,
+    )
+
+
 def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> AgentResult:
     settings = get_settings()
 
@@ -66,6 +118,9 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
             handoff_required=True,
             safety_reason=blocked_reason,
         )
+
+    if detect_balance_inquiry(message.text):
+        return _build_balance_reply(message)
 
     if not settings.openai_api_key:
         return AgentResult(
