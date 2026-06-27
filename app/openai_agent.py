@@ -3,30 +3,44 @@ from __future__ import annotations
 import re
 
 from openai import APIStatusError, OpenAI
+from .agent_replies import (
+    build_balance_reply,
+    build_coupon_code_reply,
+    build_current_raffle_reply,
+    build_raffle_history_reply,
+    build_rules_reply_result,
+    build_simulation_reply,
+    _third_party_reply,
+)
 from .config import get_settings
+from .guardrails import (
+    detect_balance_inquiry,
+    detect_blocked_request,
+    detect_coupon_code_inquiry,
+    detect_current_raffle_inquiry,
+    detect_raffle_history_inquiry,
+    detect_rules_inquiry,
+    detect_simulation_inquiry,
+    default_safe_handoff,
+)
 from .models import IncomingMessage, AgentResult
-from .guardrails import detect_blocked_request, detect_balance_inquiry, default_safe_handoff
-from .repository import find_coupon_balance_by_phone
+from .repository import detect_third_party_account_inquiry
+from .site_knowledge import build_site_knowledge_text
 
 
-SYSTEM_INSTRUCTIONS = """
-Você é o NewStoreAgent, um atendente virtual cordial, objetivo e seguro.
+SYSTEM_INSTRUCTIONS = f"""
+Você é o NewStoreAgent, atendente virtual da New Store Sorteios.
+
+{build_site_knowledge_text()}
 
 Regras obrigatórias:
-- Responda em português do Brasil.
-- Seja curto, claro e prestativo.
-- Não solicite dados sensíveis por WhatsApp.
-- Não altere dados do cliente.
-- Não prometa resultado, vantagem, ganho, prêmio ou benefício financeiro.
-- Não incentive compras, apostas, jogos de azar ou participação em atividades restritas.
-- Se o pedido exigir verificação de identidade ou ação sensível não coberta pelo fluxo automático, encaminhe para atendimento humano ou oriente o cliente a acessar a área logada do site.
-- Quando não tiver certeza, diga que vai encaminhar para a equipe.
-
-Você pode ajudar com:
-- orientar o cliente a acessar a área logada;
-- explicar passos gerais de suporte;
-- registrar intenção de atendimento;
-- responder dúvidas institucionais simples.
+- Responda em português do Brasil, de forma curta e clara.
+- Use apenas as informações acima e o contexto recebido.
+- Nunca consulte ou revele dados de outra pessoa.
+- Se o cliente não tiver telefone cadastrado, oriente a acessar https://www.sorteionewstore.com.br/ e incluir o telefone no perfil.
+- Não altere cadastro, pagamentos ou participações pelo WhatsApp.
+- Não prometa ganhar sorteio; explique regras oficiais.
+- Se não souber, oriente o site ou encaminhe para a equipe.
 """.strip()
 
 
@@ -52,59 +66,8 @@ Mensagem recebida via WhatsApp:
 Contexto mínimo do cadastro:
 {customer_context}
 
-Responda com uma mensagem segura para WhatsApp.
+Responda com base na base oficial do site. Não invente saldo, cupom ou resultados.
 """.strip()
-
-
-def _build_balance_reply(message: IncomingMessage) -> AgentResult:
-    balance = find_coupon_balance_by_phone(message.sender_phone)
-
-    if balance.get("error") == "phone_missing":
-        return AgentResult(
-            reply_text=(
-                "Não consegui identificar seu telefone nesta conversa. "
-                "Tente novamente ou acesse a área logada no site."
-            ),
-            intent="balance_inquiry",
-            handoff_required=True,
-            safety_reason="phone_missing",
-        )
-
-    if balance.get("error") == "database_not_configured":
-        return AgentResult(
-            reply_text=default_safe_handoff(),
-            intent="balance_inquiry",
-            handoff_required=True,
-            safety_reason="database_not_configured",
-        )
-
-    if balance.get("lookup_error"):
-        return AgentResult(
-            reply_text=default_safe_handoff(),
-            intent="balance_inquiry",
-            handoff_required=True,
-            safety_reason="balance_lookup_failed",
-        )
-
-    if not balance.get("found"):
-        return AgentResult(
-            reply_text=(
-                "Não encontramos cadastro vinculado a este telefone. "
-                "Confira se o WhatsApp usado é o mesmo do cadastro ou acesse a área logada no site."
-            ),
-            intent="balance_inquiry",
-            handoff_required=False,
-        )
-
-    name = (balance.get("name") or message.sender_name or "").strip()
-    greeting = f"Olá, {name}!" if name else "Olá!"
-    amount = balance["balance_brl"]
-
-    return AgentResult(
-        reply_text=f"{greeting} Seu saldo disponível é {amount}.",
-        intent="balance_inquiry",
-        handoff_required=False,
-    )
 
 
 def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> AgentResult:
@@ -119,8 +82,21 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
             safety_reason=blocked_reason,
         )
 
+    if detect_third_party_account_inquiry(message.text, message.sender_phone):
+        return _third_party_reply()
+
     if detect_balance_inquiry(message.text):
-        return _build_balance_reply(message)
+        return build_balance_reply(message)
+    if detect_coupon_code_inquiry(message.text):
+        return build_coupon_code_reply(message)
+    if detect_simulation_inquiry(message.text):
+        return build_simulation_reply(message)
+    if detect_current_raffle_inquiry(message.text):
+        return build_current_raffle_reply()
+    if detect_raffle_history_inquiry(message.text):
+        return build_raffle_history_reply(message)
+    if detect_rules_inquiry(message.text):
+        return build_rules_reply_result()
 
     if not settings.openai_api_key:
         return AgentResult(
