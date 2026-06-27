@@ -1,5 +1,5 @@
 from __future__ import annotations
-from openai import OpenAI
+from openai import APIStatusError, OpenAI
 from .config import get_settings
 from .models import IncomingMessage, AgentResult
 from .guardrails import detect_blocked_request, default_safe_handoff
@@ -68,11 +68,32 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         )
 
     client = OpenAI(api_key=settings.openai_api_key)
-    response = client.responses.create(
-        model=settings.openai_model,
-        instructions=SYSTEM_INSTRUCTIONS,
-        input=build_agent_input(message, customer_context),
-    )
+    try:
+        response = client.responses.create(
+            model=settings.openai_model,
+            instructions=SYSTEM_INSTRUCTIONS,
+            input=build_agent_input(message, customer_context),
+        )
+    except APIStatusError as exc:
+        print("[openai.agent] request_failed", {
+            "status_code": exc.status_code,
+            "error_type": type(exc).__name__,
+            "model": settings.openai_model,
+            "message": str(exc)[:300],
+        })
+        if exc.status_code == 401:
+            return AgentResult(
+                reply_text=default_safe_handoff(),
+                intent="handoff",
+                handoff_required=True,
+                safety_reason="openai_auth_failed",
+            )
+        return AgentResult(
+            reply_text=default_safe_handoff(),
+            intent="handoff",
+            handoff_required=True,
+            safety_reason=f"openai_error_{exc.status_code}",
+        )
 
     reply = _truncate(response.output_text or default_safe_handoff(), settings.max_reply_chars)
     return AgentResult(

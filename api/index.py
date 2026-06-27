@@ -91,9 +91,13 @@ async def root():
 @app.get("/api/health")
 async def health():
     settings = get_settings()
+    openai_key = settings.openai_api_key
     return {
         "ok": True,
-        "openai_configured": bool(settings.openai_api_key),
+        "openai_configured": bool(openai_key),
+        "openai_key_format_ok": openai_key.startswith(("sk-", "sk-proj-")),
+        "openai_key_length": len(openai_key),
+        "openai_model": settings.openai_model,
         "database_configured": bool(settings.database_url),
         "brevo_send_configured": bool(settings.brevo_send_url and settings.brevo_api_key),
         "dry_run": settings.dry_run,
