@@ -69,6 +69,34 @@ def format_cents_to_brl(cents: int | None) -> str:
     return f"R$ {reais_str},{centavos:02d}"
 
 
+def format_payment_numbers(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        cleaned = [str(item).strip() for item in raw if str(item).strip()]
+        return ", ".join(cleaned) if cleaned else None
+    if isinstance(raw, str):
+        text = raw.strip()
+        return text or None
+    return str(raw)
+
+
+def _format_participated_at(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _draw_label(draw_id: Any, title: Any) -> str:
+    if title:
+        return str(title)
+    if draw_id is not None:
+        return f"Sorteio #{draw_id}"
+    return "Sorteio"
+
+
 def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
     phone_digits = normalized
     phone_with_country = phone_digits if phone_digits.startswith("55") else f"55{phone_digits}"
@@ -255,14 +283,34 @@ def find_last_payment_participation(user_id: int) -> dict[str, Any]:
         SELECT
           p.id,
           p.user_id,
-          coalesce(p.paid_at, p.created_at) AS participated_at,
-          p.raffle_id,
-          p.sorteio_id,
+          coalesce(p.created_at, p.paid_at) AS participated_at,
+          p.draw_id,
+          p.numbers,
           p.amount_cents,
-          r.title AS raffle_title
+          coalesce(d.title, r.title) AS raffle_title,
+          coalesce(d.winning_number, r.winning_number) AS winning_number
         FROM public.payments p
-        LEFT JOIN public.raffles r ON r.id = coalesce(p.raffle_id, p.sorteio_id)
+        LEFT JOIN public.draws d ON d.id = p.draw_id
+        LEFT JOIN public.raffles r ON r.id = p.draw_id
         WHERE p.user_id = %(user_id)s
+          AND lower(coalesce(p.status, '')) = 'approved'
+        ORDER BY coalesce(p.created_at, p.paid_at) DESC NULLS LAST, p.id DESC
+        LIMIT 1
+        """,
+        """
+        SELECT
+          p.id,
+          p.user_id,
+          coalesce(p.paid_at, p.created_at) AS participated_at,
+          coalesce(p.draw_id, p.raffle_id, p.sorteio_id) AS draw_id,
+          p.numbers,
+          p.amount_cents,
+          r.title AS raffle_title,
+          r.winning_number
+        FROM public.payments p
+        LEFT JOIN public.raffles r ON r.id = coalesce(p.raffle_id, p.sorteio_id, p.draw_id)
+        WHERE p.user_id = %(user_id)s
+          AND lower(coalesce(p.status, '')) = 'approved'
         ORDER BY coalesce(p.paid_at, p.created_at) DESC NULLS LAST, p.id DESC
         LIMIT 1
         """,
@@ -270,26 +318,15 @@ def find_last_payment_participation(user_id: int) -> dict[str, Any]:
         SELECT
           p.id,
           p.user_id,
-          coalesce(p.payment_date, p.created_at) AS participated_at,
-          p.raffle_id,
-          p.amount_cents,
-          r.title AS raffle_title
-        FROM public.payments p
-        LEFT JOIN public.raffles r ON r.id = p.raffle_id
-        WHERE p.user_id = %(user_id)s
-        ORDER BY coalesce(p.payment_date, p.created_at) DESC NULLS LAST, p.id DESC
-        LIMIT 1
-        """,
-        """
-        SELECT
-          p.id,
-          p.user_id,
           p.created_at AS participated_at,
-          p.raffle_id,
+          p.draw_id,
+          p.numbers,
           p.amount_cents,
-          NULL::text AS raffle_title
+          NULL::text AS raffle_title,
+          NULL::text AS winning_number
         FROM public.payments p
         WHERE p.user_id = %(user_id)s
+          AND lower(coalesce(p.status, '')) = 'approved'
         ORDER BY p.created_at DESC NULLS LAST, p.id DESC
         LIMIT 1
         """,
@@ -303,13 +340,19 @@ def find_last_payment_participation(user_id: int) -> dict[str, Any]:
                     cur.execute(sql, {"user_id": user_id})
                     row = cur.fetchone()
                     if row:
-                        participated_at = row.get("participated_at")
+                        participated_at = _format_participated_at(row.get("participated_at"))
+                        draw_id = row.get("draw_id")
+                        title = row.get("raffle_title")
+                        numbers = format_payment_numbers(row.get("numbers"))
                         return {
                             "found": True,
                             "payment_id": row.get("id"),
-                            "participated_at": participated_at.isoformat() if hasattr(participated_at, "isoformat") else str(participated_at),
-                            "raffle_title": row.get("raffle_title"),
+                            "draw_id": draw_id,
+                            "participated_at": participated_at,
+                            "raffle_title": title or _draw_label(draw_id, None),
+                            "numbers": numbers,
                             "amount_brl": format_cents_to_brl(row.get("amount_cents")),
+                            "winning_number": row.get("winning_number"),
                         }
         except Exception as exc:
             last_error = str(exc)[:180]
@@ -328,34 +371,51 @@ def find_user_raffle_participation(user_id: int) -> dict[str, Any]:
     queries = (
         """
         SELECT
-          r.id AS raffle_id,
-          r.title,
-          r.winning_number,
-          r.status,
-          u.name AS winner_name,
-          string_agg(DISTINCT e.number::text, ', ' ORDER BY e.number::text) AS numbers
-        FROM public.raffle_entries e
-        JOIN public.raffles r ON r.id = e.raffle_id
-        LEFT JOIN public.users u ON u.id = r.winner_user_id
-        WHERE e.user_id = %(user_id)s
-        GROUP BY r.id, r.title, r.winning_number, r.status, u.name
-        ORDER BY r.id DESC
-        LIMIT 5
+          p.draw_id,
+          p.numbers,
+          p.amount_cents,
+          coalesce(p.created_at, p.paid_at) AS participated_at,
+          coalesce(d.title, r.title) AS title,
+          coalesce(d.winning_number, r.winning_number) AS winning_number,
+          coalesce(d.status, r.status) AS status
+        FROM public.payments p
+        LEFT JOIN public.draws d ON d.id = p.draw_id
+        LEFT JOIN public.raffles r ON r.id = p.draw_id
+        WHERE p.user_id = %(user_id)s
+          AND lower(coalesce(p.status, '')) = 'approved'
+        ORDER BY coalesce(p.created_at, p.paid_at) DESC NULLS LAST, p.id DESC
+        LIMIT 50
         """,
         """
         SELECT
-          r.id AS raffle_id,
+          coalesce(p.draw_id, p.raffle_id, p.sorteio_id) AS draw_id,
+          p.numbers,
+          p.amount_cents,
+          coalesce(p.paid_at, p.created_at) AS participated_at,
           r.title,
           r.winning_number,
-          r.status,
-          NULL AS winner_name,
-          string_agg(DISTINCT p.number::text, ', ' ORDER BY p.number::text) AS numbers
-        FROM public.raffle_participations p
-        JOIN public.raffles r ON r.id = p.raffle_id
+          r.status
+        FROM public.payments p
+        LEFT JOIN public.raffles r ON r.id = coalesce(p.draw_id, p.raffle_id, p.sorteio_id)
         WHERE p.user_id = %(user_id)s
-        GROUP BY r.id, r.title, r.winning_number, r.status
-        ORDER BY r.id DESC
-        LIMIT 5
+          AND lower(coalesce(p.status, '')) = 'approved'
+        ORDER BY coalesce(p.paid_at, p.created_at) DESC NULLS LAST, p.id DESC
+        LIMIT 50
+        """,
+        """
+        SELECT
+          p.draw_id,
+          p.numbers,
+          p.amount_cents,
+          p.created_at AS participated_at,
+          NULL::text AS title,
+          NULL::text AS winning_number,
+          NULL::text AS status
+        FROM public.payments p
+        WHERE p.user_id = %(user_id)s
+          AND lower(coalesce(p.status, '')) = 'approved'
+        ORDER BY p.created_at DESC NULLS LAST, p.id DESC
+        LIMIT 50
         """,
     )
 
@@ -367,17 +427,59 @@ def find_user_raffle_participation(user_id: int) -> dict[str, Any]:
                     cur.execute(sql, {"user_id": user_id})
                     rows = cur.fetchall()
                     if rows:
-                        items = [
-                            {
-                                "title": row.get("title"),
-                                "numbers": row.get("numbers"),
-                                "winning_number": row.get("winning_number"),
-                                "winner_name": row.get("winner_name"),
-                                "status": row.get("status"),
-                            }
-                            for row in rows
-                        ]
-                        return {"found": True, "items": items}
+                        grouped: dict[Any, dict[str, Any]] = {}
+                        for row in rows:
+                            draw_id = row.get("draw_id")
+                            if draw_id is None:
+                                continue
+                            bucket = grouped.get(draw_id)
+                            participated_at = _format_participated_at(row.get("participated_at"))
+                            numbers = format_payment_numbers(row.get("numbers"))
+                            amount_cents = int(row.get("amount_cents") or 0)
+                            if bucket is None:
+                                grouped[draw_id] = {
+                                    "draw_id": draw_id,
+                                    "title": row.get("title") or _draw_label(draw_id, None),
+                                    "numbers_parts": [numbers] if numbers else [],
+                                    "winning_number": row.get("winning_number"),
+                                    "winner_name": None,
+                                    "status": row.get("status"),
+                                    "participated_at": participated_at,
+                                    "amount_cents": amount_cents,
+                                }
+                                continue
+
+                            if numbers and numbers not in bucket["numbers_parts"]:
+                                bucket["numbers_parts"].append(numbers)
+                            bucket["amount_cents"] += amount_cents
+                            if participated_at and (
+                                not bucket["participated_at"] or participated_at > bucket["participated_at"]
+                            ):
+                                bucket["participated_at"] = participated_at
+                            if row.get("title"):
+                                bucket["title"] = row.get("title")
+                            if row.get("winning_number"):
+                                bucket["winning_number"] = row.get("winning_number")
+                            if row.get("status"):
+                                bucket["status"] = row.get("status")
+
+                        items = []
+                        for draw_id, bucket in grouped.items():
+                            numbers = " | ".join(bucket["numbers_parts"]) if bucket["numbers_parts"] else None
+                            items.append(
+                                {
+                                    "draw_id": draw_id,
+                                    "title": bucket["title"],
+                                    "numbers": numbers,
+                                    "winning_number": bucket["winning_number"],
+                                    "winner_name": bucket["winner_name"],
+                                    "status": bucket["status"],
+                                    "participated_at": bucket["participated_at"],
+                                    "amount_brl": format_cents_to_brl(bucket["amount_cents"]),
+                                }
+                            )
+                        items.sort(key=lambda item: item.get("participated_at") or "", reverse=True)
+                        return {"found": True, "items": items[:5]}
         except Exception as exc:
             last_error = str(exc)[:180]
             continue

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .guardrails import default_safe_handoff
+from .guardrails import default_safe_handoff, detect_last_participation_inquiry
 from .models import AgentResult, IncomingMessage
 from .repository import (
     find_coupon_balance_by_phone,
@@ -52,8 +52,26 @@ def _format_last_participation(user_id: int) -> str | None:
         parts.append(str(last_payment["raffle_title"]))
     if last_payment.get("participated_at"):
         parts.append(f"em {last_payment['participated_at'][:10]}")
+    if last_payment.get("numbers"):
+        parts.append(f"números {last_payment['numbers']}")
     if last_payment.get("amount_brl"):
         parts.append(f"({last_payment['amount_brl']})")
+    return " ".join(parts)
+
+
+def _build_last_participation_reply(last_payment: dict[str, Any]) -> str:
+    title = last_payment.get("raffle_title") or "sorteio"
+    date_label = (last_payment.get("participated_at") or "")[:10]
+    parts = [f"Sua última participação foi em *{title}*"]
+    if date_label:
+        parts[0] += f", em {date_label}"
+    parts[0] += "."
+    if last_payment.get("numbers"):
+        parts.append(f"Seus números: {last_payment['numbers']}.")
+    if last_payment.get("amount_brl"):
+        parts.append(f"Valor: {last_payment['amount_brl']}.")
+    if last_payment.get("winning_number"):
+        parts.append(f"Número sorteado: {last_payment['winning_number']}.")
     return " ".join(parts)
 
 
@@ -301,50 +319,63 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
     if not account.get("found"):
         return AgentResult(reply_text=REGISTER_PHONE_MESSAGE, intent="raffle_history", handoff_required=False)
 
-    history = find_user_raffle_participation(account["user_id"])
-    last_payment = find_last_payment_participation(int(account["user_id"]))
-    if history.get("lookup_error"):
-        return AgentResult(reply_text=default_safe_handoff(), intent="raffle_history", handoff_required=True)
+    user_id = int(account["user_id"])
+    last_payment = find_last_payment_participation(user_id)
+    history = find_user_raffle_participation(user_id)
 
-    if not history.get("found"):
-        if last_payment.get("found"):
-            title = last_payment.get("raffle_title") or "sorteio"
-            return AgentResult(
-                reply_text=(
-                    f"Sua última participação registrada foi em {last_payment['participated_at'][:10]} "
-                    f"({title})."
-                ),
-                intent="raffle_history",
-                handoff_required=False,
-            )
+    if detect_last_participation_inquiry(message.text) and last_payment.get("found"):
+        reply_text = _build_last_participation_reply(last_payment)
+        vip = get_vip_profile(message.sender_phone)
+        if vip:
+            nickname = pick_vip_nickname(vip, message.text)
+            reply_text = build_vip_general_reply(vip, nickname, reply_text)
         return AgentResult(
-            reply_text=(
-                f"Ainda não encontramos participações vinculadas ao seu cadastro. "
-                f"Confira sorteios passados e resultados em {SITE_URL}."
-            ),
+            reply_text=reply_text,
             intent="raffle_history",
             handoff_required=False,
         )
 
-    chunks: list[str] = []
-    for item in history.get("items", [])[:5]:
-        parts = [item.get("title") or "Sorteio"]
-        if item.get("numbers"):
-            parts.append(f"seus números: {item['numbers']}")
-        if item.get("winning_number"):
-            parts.append(f"número sorteado: {item['winning_number']}")
-        if item.get("winner_name"):
-            parts.append(f"vencedor: {item['winner_name']}")
-        chunks.append(" | ".join(parts))
+    if history.get("lookup_error") and last_payment.get("lookup_error"):
+        return AgentResult(reply_text=default_safe_handoff(), intent="raffle_history", handoff_required=True)
 
-    reply_text = "Suas participações recentes: " + " // ".join(chunks)
-    vip = get_vip_profile(message.sender_phone)
-    if vip:
-        nickname = pick_vip_nickname(vip, message.text)
-        reply_text = build_vip_general_reply(vip, nickname, reply_text)
+    if history.get("found"):
+        chunks: list[str] = []
+        for item in history.get("items", [])[:5]:
+            parts = [item.get("title") or "Sorteio"]
+            if item.get("participated_at"):
+                parts.append(f"em {item['participated_at'][:10]}")
+            if item.get("numbers"):
+                parts.append(f"seus números: {item['numbers']}")
+            if item.get("amount_brl"):
+                parts.append(f"valor {item['amount_brl']}")
+            if item.get("winning_number"):
+                parts.append(f"número sorteado: {item['winning_number']}")
+            chunks.append(" | ".join(parts))
+
+        reply_text = "Suas participações recentes: " + " // ".join(chunks)
+        vip = get_vip_profile(message.sender_phone)
+        if vip:
+            nickname = pick_vip_nickname(vip, message.text)
+            reply_text = build_vip_general_reply(vip, nickname, reply_text)
+
+        return AgentResult(
+            reply_text=reply_text,
+            intent="raffle_history",
+            handoff_required=False,
+        )
+
+    if last_payment.get("found"):
+        return AgentResult(
+            reply_text=_build_last_participation_reply(last_payment),
+            intent="raffle_history",
+            handoff_required=False,
+        )
 
     return AgentResult(
-        reply_text=reply_text,
+        reply_text=(
+            f"Ainda não encontramos participações aprovadas no seu cadastro. "
+            f"Confira sorteios passados e resultados em {SITE_URL}."
+        ),
         intent="raffle_history",
         handoff_required=False,
     )

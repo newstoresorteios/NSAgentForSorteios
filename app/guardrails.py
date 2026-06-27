@@ -40,6 +40,10 @@ CURRENT_RAFFLE_KEYWORDS = (
 RAFFLE_HISTORY_KEYWORDS = (
     "sorteios passados",
     "sorteio passado",
+    "ultimo sorteio",
+    "último sorteio",
+    "ultima participacao",
+    "última participação",
     "vencedor",
     "numero sorteado",
     "número sorteado",
@@ -49,6 +53,8 @@ RAFFLE_HISTORY_KEYWORDS = (
     "participação",
     "participacao",
     "resultado do sorteio",
+    "sorteios que participei",
+    "sorteio que participei",
 )
 
 RULES_KEYWORDS = (
@@ -110,6 +116,19 @@ def detect_current_raffle_inquiry(text: str) -> bool:
 def detect_raffle_history_inquiry(text: str) -> bool:
     normalized = (text or "").lower()
     return any(keyword in normalized for keyword in RAFFLE_HISTORY_KEYWORDS)
+
+
+def detect_last_participation_inquiry(text: str) -> bool:
+    normalized = (text or "").lower()
+    phrases = (
+        "ultimo sorteio",
+        "último sorteio",
+        "ultima participacao",
+        "última participação",
+        "ultimo que participei",
+        "último que participei",
+    )
+    return any(phrase in normalized for phrase in phrases)
 
 
 def detect_rules_inquiry(text: str) -> bool:
