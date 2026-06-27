@@ -7,11 +7,13 @@ from .agent_replies import (
     build_balance_reply,
     build_coupon_code_reply,
     build_current_raffle_reply,
+    build_preferred_name_reply,
     build_raffle_history_reply,
     build_rules_reply_result,
     build_simulation_reply,
     _third_party_reply,
 )
+from .repository import find_coupon_balance_by_phone
 from .config import get_settings
 from .guardrails import (
     detect_balance_inquiry,
@@ -84,6 +86,11 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
 
     if detect_third_party_account_inquiry(message.text, message.sender_phone):
         return _third_party_reply()
+
+    account = find_coupon_balance_by_phone(message.sender_phone, message.text)
+    preferred_reply = build_preferred_name_reply(message, account)
+    if preferred_reply:
+        return preferred_reply
 
     if detect_balance_inquiry(message.text):
         return build_balance_reply(message)

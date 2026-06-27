@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from .guardrails import default_safe_handoff
 from .models import AgentResult, IncomingMessage
 from .repository import (
     find_coupon_balance_by_phone,
     find_current_raffle,
+    find_last_payment_participation,
     find_user_coupon_code,
     find_user_raffle_participation,
     format_cents_to_brl,
+)
+from .user_preferences import (
+    detect_preferred_name_update,
+    get_user_preferences,
+    mark_preferred_name_prompted,
+    resolve_display_name,
+    save_preferred_name,
 )
 from .site_knowledge import (
     REGISTER_PHONE_MESSAGE,
@@ -21,9 +30,46 @@ from .site_knowledge import (
 )
 
 
-def _greeting(name: str | None) -> str:
-    cleaned = (name or "").strip()
+def _greeting(display_name: str | None) -> str:
+    cleaned = (display_name or "").strip()
     return f"Olá, {cleaned}!" if cleaned else "Olá!"
+
+
+def _format_last_participation(user_id: int) -> str | None:
+    last_payment = find_last_payment_participation(user_id)
+    if not last_payment.get("found"):
+        return None
+
+    parts: list[str] = ["Última participação:"]
+    if last_payment.get("raffle_title"):
+        parts.append(str(last_payment["raffle_title"]))
+    if last_payment.get("participated_at"):
+        parts.append(f"em {last_payment['participated_at'][:10]}")
+    if last_payment.get("amount_brl"):
+        parts.append(f"({last_payment['amount_brl']})")
+    return " ".join(parts)
+
+
+def _personalized_suffix(user_id: int, preferences: dict[str, Any]) -> str:
+    if preferences.get("preferred_name"):
+        return ""
+    if not preferences.get("ask_preferred_name", True):
+        return ""
+    mark_preferred_name_prompted(user_id)
+    return " Prefere ser chamado por outro nome? É só me dizer."
+
+
+def build_preferred_name_reply(message: IncomingMessage, account: dict[str, Any]) -> AgentResult | None:
+    preferred_name = detect_preferred_name_update(message.text)
+    if not preferred_name or not account.get("found"):
+        return None
+
+    save_preferred_name(int(account["user_id"]), preferred_name)
+    return AgentResult(
+        reply_text=f"Perfeito! A partir de agora vou te chamar de {preferred_name}.",
+        intent="preferred_name_update",
+        handoff_required=False,
+    )
 
 
 def _account_missing_reply(intent: str) -> AgentResult:
@@ -84,9 +130,19 @@ def build_balance_reply(message: IncomingMessage) -> AgentResult:
             handoff_required=False,
         )
 
-    name = account.get("name") or message.sender_name
+    user_id = int(account["user_id"])
+    preferences = get_user_preferences(user_id)
+    display_name = resolve_display_name(account.get("name"), preferences)
+    parts = [f"{_greeting(display_name)} Seu saldo disponível é {account['balance_brl']}."]
+
+    last_participation = _format_last_participation(user_id)
+    if last_participation:
+        parts.append(last_participation)
+
+    parts.append(_personalized_suffix(user_id, preferences).strip())
+
     return AgentResult(
-        reply_text=f"{_greeting(name)} Seu saldo disponível é {account['balance_brl']}.",
+        reply_text=" ".join(part for part in parts if part),
         intent="balance_inquiry",
         handoff_required=False,
     )
@@ -108,11 +164,14 @@ def build_coupon_code_reply(message: IncomingMessage) -> AgentResult:
 
     code = account.get("coupon_code") or "indisponível"
     balance = account.get("balance_brl") or format_cents_to_brl(0)
-    name = account.get("name") or message.sender_name
+    user_id = int(account["user_id"])
+    preferences = get_user_preferences(user_id)
+    display_name = resolve_display_name(account.get("name"), preferences)
+    suffix = _personalized_suffix(user_id, preferences)
     return AgentResult(
         reply_text=(
-            f"{_greeting(name)} Seu Cartão Presente: código *{code}* | saldo {balance}. "
-            f"Use em {STORE_URL} no checkout. Código pessoal e intransferível."
+            f"{_greeting(display_name)} Seu Cartão Presente: código *{code}* | saldo {balance}. "
+            f"Use em {STORE_URL} no checkout. Código pessoal e intransferível.{suffix}"
         ),
         intent="coupon_code",
         handoff_required=False,
@@ -188,10 +247,21 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
         return AgentResult(reply_text=REGISTER_PHONE_MESSAGE, intent="raffle_history", handoff_required=False)
 
     history = find_user_raffle_participation(account["user_id"])
+    last_payment = find_last_payment_participation(int(account["user_id"]))
     if history.get("lookup_error"):
         return AgentResult(reply_text=default_safe_handoff(), intent="raffle_history", handoff_required=True)
 
     if not history.get("found"):
+        if last_payment.get("found"):
+            title = last_payment.get("raffle_title") or "sorteio"
+            return AgentResult(
+                reply_text=(
+                    f"Sua última participação registrada foi em {last_payment['participated_at'][:10]} "
+                    f"({title})."
+                ),
+                intent="raffle_history",
+                handoff_required=False,
+            )
         return AgentResult(
             reply_text=(
                 f"Ainda não encontramos participações vinculadas ao seu cadastro. "

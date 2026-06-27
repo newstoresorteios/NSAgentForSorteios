@@ -70,23 +70,55 @@ def format_cents_to_brl(cents: int | None) -> str:
 
 
 def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
+    phone_digits = normalized
+    phone_with_country = phone_digits if phone_digits.startswith("55") else f"55{phone_digits}"
+    suffix = normalized[-9:]
+
     queries = (
         """
         SELECT id, name, email, phone, coupon_value_cents, coupon_code
         FROM public.users
-        WHERE regexp_replace(coalesce(phone, ''), '\\D', '', 'g') LIKE %(phone_like)s
-        ORDER BY id DESC
+        WHERE nullif(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), '') IS NOT NULL
+          AND (
+            regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = %(exact)s
+            OR regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = %(with_country)s
+            OR regexp_replace(coalesce(phone, ''), '\\D', '', 'g') LIKE %(suffix_like)s
+          )
+        ORDER BY
+          CASE
+            WHEN regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = %(exact)s THEN 0
+            WHEN regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = %(with_country)s THEN 1
+            ELSE 2
+          END,
+          length(regexp_replace(coalesce(phone, ''), '\\D', '', 'g')) DESC,
+          id DESC
         LIMIT 1
         """,
         """
         SELECT id, name, email, phone, coupon_value_cents
         FROM public.users
-        WHERE regexp_replace(coalesce(phone, ''), '\\D', '', 'g') LIKE %(phone_like)s
-        ORDER BY id DESC
+        WHERE nullif(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), '') IS NOT NULL
+          AND (
+            regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = %(exact)s
+            OR regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = %(with_country)s
+            OR regexp_replace(coalesce(phone, ''), '\\D', '', 'g') LIKE %(suffix_like)s
+          )
+        ORDER BY
+          CASE
+            WHEN regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = %(exact)s THEN 0
+            WHEN regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = %(with_country)s THEN 1
+            ELSE 2
+          END,
+          length(regexp_replace(coalesce(phone, ''), '\\D', '', 'g')) DESC,
+          id DESC
         LIMIT 1
         """,
     )
-    params = {"phone_like": f"%{normalized[-9:]}"}
+    params = {
+        "exact": phone_digits,
+        "with_country": phone_with_country,
+        "suffix_like": f"%{suffix}",
+    }
     for sql in queries:
         try:
             cur.execute(sql, params)
@@ -203,6 +235,81 @@ def find_current_raffle() -> dict[str, Any]:
                             "status": row.get("status"),
                             "winning_number": row.get("winning_number"),
                             "quota_price_brl": format_cents_to_brl(quota) if quota is not None else None,
+                        }
+        except Exception as exc:
+            last_error = str(exc)[:180]
+            continue
+
+    if last_error:
+        return {"found": False, "lookup_error": last_error}
+    return {"found": False}
+
+
+def find_last_payment_participation(user_id: int) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.database_url:
+        return {"found": False, "error": "database_not_configured"}
+
+    queries = (
+        """
+        SELECT
+          p.id,
+          p.user_id,
+          coalesce(p.paid_at, p.created_at) AS participated_at,
+          p.raffle_id,
+          p.sorteio_id,
+          p.amount_cents,
+          r.title AS raffle_title
+        FROM public.payments p
+        LEFT JOIN public.raffles r ON r.id = coalesce(p.raffle_id, p.sorteio_id)
+        WHERE p.user_id = %(user_id)s
+        ORDER BY coalesce(p.paid_at, p.created_at) DESC NULLS LAST, p.id DESC
+        LIMIT 1
+        """,
+        """
+        SELECT
+          p.id,
+          p.user_id,
+          coalesce(p.payment_date, p.created_at) AS participated_at,
+          p.raffle_id,
+          p.amount_cents,
+          r.title AS raffle_title
+        FROM public.payments p
+        LEFT JOIN public.raffles r ON r.id = p.raffle_id
+        WHERE p.user_id = %(user_id)s
+        ORDER BY coalesce(p.payment_date, p.created_at) DESC NULLS LAST, p.id DESC
+        LIMIT 1
+        """,
+        """
+        SELECT
+          p.id,
+          p.user_id,
+          p.created_at AS participated_at,
+          p.raffle_id,
+          p.amount_cents,
+          NULL::text AS raffle_title
+        FROM public.payments p
+        WHERE p.user_id = %(user_id)s
+        ORDER BY p.created_at DESC NULLS LAST, p.id DESC
+        LIMIT 1
+        """,
+    )
+
+    last_error: str | None = None
+    for sql in queries:
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, {"user_id": user_id})
+                    row = cur.fetchone()
+                    if row:
+                        participated_at = row.get("participated_at")
+                        return {
+                            "found": True,
+                            "payment_id": row.get("id"),
+                            "participated_at": participated_at.isoformat() if hasattr(participated_at, "isoformat") else str(participated_at),
+                            "raffle_title": row.get("raffle_title"),
+                            "amount_brl": format_cents_to_brl(row.get("amount_cents")),
                         }
         except Exception as exc:
             last_error = str(exc)[:180]
