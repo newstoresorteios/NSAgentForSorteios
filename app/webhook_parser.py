@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from typing import Any
 from .models import IncomingMessage
 
@@ -34,13 +35,47 @@ def _extract_from_messages_array(payload: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _extract_last_visitor_message(payload: dict[str, Any]) -> dict[str, Any]:
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return {}
+
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("type") == "visitor":
+            return message
+    return {}
+
+
+def _extract_visitor(payload: dict[str, Any]) -> dict[str, Any]:
+    visitor = payload.get("visitor")
+    return visitor if isinstance(visitor, dict) else {}
+
+
+def should_skip_auto_reply(payload: dict[str, Any]) -> bool:
+    """Skip when the latest message in a Conversations fragment is not from the visitor."""
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return False
+
+    last = messages[-1]
+    if not isinstance(last, dict):
+        return False
+
+    if last.get("type") != "visitor":
+        return True
+
+    return bool(last.get("isPushed") or last.get("isTrigger"))
+
+
 def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
     """Parse Brevo/WhatsApp-like webhook payloads defensively.
 
-    Brevo payloads vary by product and configuration. This parser extracts common
-    fields without assuming one exact schema, then keeps the full raw payload for audit.
+    Supports simplified test payloads and Brevo Conversations webhooks
+    (`conversationStarted`, `conversationFragment`).
     """
     message_obj = _extract_from_messages_array(payload)
+    visitor_obj = _extract_visitor(payload)
+    last_visitor_message = _extract_last_visitor_message(payload)
 
     text = _first_non_empty(
         payload.get("text"),
@@ -52,6 +87,8 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         _get_nested(message_obj, "text", "body"),
         message_obj.get("body") if isinstance(message_obj, dict) else None,
         message_obj.get("text") if isinstance(message_obj, dict) else None,
+        last_visitor_message.get("text"),
+        _get_nested(payload, "message", "text") if isinstance(payload.get("message"), dict) else None,
     ) or ""
 
     sender_phone = _first_non_empty(
@@ -64,6 +101,11 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         _get_nested(payload, "contact", "whatsapp"),
         _get_nested(payload, "sender", "phone"),
         _get_nested(payload, "from", "phone"),
+        _get_nested(visitor_obj, "attributes", "SMS"),
+        _get_nested(visitor_obj, "attributes", "WHATSAPP"),
+        _get_nested(visitor_obj, "contactAttributes", "SMS"),
+        _get_nested(visitor_obj, "contactAttributes", "WHATSAPP"),
+        _get_nested(visitor_obj, "formattedAttributes", "SMS"),
         message_obj.get("from") if isinstance(message_obj, dict) else None,
     )
 
@@ -73,14 +115,39 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         payload.get("sender_name"),
         _get_nested(payload, "contact", "name"),
         _get_nested(payload, "sender", "name"),
+        _get_nested(visitor_obj, "displayedName"),
+        _get_nested(visitor_obj, "attributes", "FIRSTNAME"),
+        _get_nested(visitor_obj, "integrationAttributes", "FIRSTNAME"),
         _get_nested(message_obj, "profile", "name"),
+    )
+
+    visitor_id = _first_non_empty(
+        payload.get("visitorId"),
+        visitor_obj.get("id"),
     )
 
     return IncomingMessage(
         provider="brevo",
-        event_type=_first_non_empty(payload.get("event"), payload.get("type"), payload.get("eventType")),
-        message_id=_first_non_empty(payload.get("id"), payload.get("messageId"), payload.get("message_id"), message_obj.get("id") if isinstance(message_obj, dict) else None),
-        conversation_id=_first_non_empty(payload.get("conversationId"), payload.get("conversation_id"), payload.get("threadId")),
+        event_type=_first_non_empty(
+            payload.get("eventName"),
+            payload.get("event"),
+            payload.get("type"),
+            payload.get("eventType"),
+        ),
+        message_id=_first_non_empty(
+            payload.get("id"),
+            payload.get("messageId"),
+            payload.get("message_id"),
+            last_visitor_message.get("id"),
+            message_obj.get("id") if isinstance(message_obj, dict) else None,
+        ),
+        conversation_id=_first_non_empty(
+            payload.get("conversationId"),
+            payload.get("conversation_id"),
+            payload.get("threadId"),
+            visitor_obj.get("threadId"),
+        ),
+        visitor_id=visitor_id,
         sender_phone=sender_phone,
         sender_name=sender_name,
         text=text,

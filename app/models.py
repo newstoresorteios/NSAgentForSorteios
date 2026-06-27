@@ -7,6 +7,7 @@ class IncomingMessage(BaseModel):
     event_type: str | None = None
     message_id: str | None = None
     conversation_id: str | None = None
+    visitor_id: str | None = None
     sender_phone: str | None = None
     sender_name: str | None = None
     text: str = ""

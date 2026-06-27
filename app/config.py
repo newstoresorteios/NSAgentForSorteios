@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     brevo_send_url: str = Field(default="", alias="BREVO_SEND_URL")
     brevo_sender_number: str = Field(default="", alias="BREVO_SENDER_NUMBER")
     brevo_reply_mode: str = Field(default="dry_run", alias="BREVO_REPLY_MODE")
+    brevo_agent_id: str = Field(default="", alias="BREVO_AGENT_ID")
+    brevo_agent_email: str = Field(default="", alias="BREVO_AGENT_EMAIL")
+    brevo_agent_name: str = Field(default="NewStoreAgent", alias="BREVO_AGENT_NAME")
+    brevo_received_from: str = Field(default="NewStoreAgent", alias="BREVO_RECEIVED_FROM")
 
     max_reply_chars: int = Field(default=900, alias="MAX_REPLY_CHARS")
 

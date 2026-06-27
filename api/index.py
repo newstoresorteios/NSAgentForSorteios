@@ -7,10 +7,10 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token
-from app.webhook_parser import parse_brevo_whatsapp_payload
+from app.webhook_parser import parse_brevo_whatsapp_payload, should_skip_auto_reply
 from app.repository import find_customer_profile_by_phone
 from app.openai_agent import generate_agent_reply
-from app.brevo_client import send_whatsapp_reply
+from app.brevo_client import send_brevo_reply
 from app.db import insert_inbound_message, insert_agent_response
 from app.config import get_settings
 
@@ -99,7 +99,14 @@ async def health():
         "openai_key_length": len(openai_key),
         "openai_model": settings.openai_model,
         "database_configured": bool(settings.database_url),
-        "brevo_send_configured": bool(settings.brevo_api_key and settings.brevo_sender_number),
+        "brevo_send_configured": bool(
+            settings.brevo_api_key
+            and (
+                settings.brevo_agent_id
+                or (settings.brevo_agent_email and settings.brevo_agent_name)
+                or settings.brevo_sender_number
+            )
+        ),
         "brevo_reply_mode": settings.brevo_reply_mode,
         "brevo_live_send_enabled": (not settings.dry_run and settings.brevo_reply_mode.lower() != "dry_run"),
         "dry_run": settings.dry_run,
@@ -114,10 +121,23 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "content_type": request.headers.get("content-type"),
         "has_body": True,
         "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
-        "event": payload.get("event") if isinstance(payload, dict) else None,
+        "event": payload.get("eventName") or payload.get("event") if isinstance(payload, dict) else None,
     })
 
+    if should_skip_auto_reply(payload):
+        return JSONResponse({"ok": True, "skipped": True, "reason": "no_visitor_message"})
+
     incoming = parse_brevo_whatsapp_payload(payload)
+
+    print("[brevo.webhook] parsed", {
+        "event_type": incoming.event_type,
+        "has_visitor_id": bool(incoming.visitor_id),
+        "has_sender_phone": bool(incoming.sender_phone),
+        "has_text": bool(incoming.text),
+    })
+
+    if not incoming.text.strip():
+        return JSONResponse({"ok": True, "skipped": True, "reason": "empty_text"})
 
     try:
         inbound_id = insert_inbound_message(incoming.model_dump())
@@ -139,7 +159,7 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
 
     customer_context = find_customer_profile_by_phone(incoming.sender_phone)
     agent_result = generate_agent_reply(incoming, customer_context)
-    send_result = await send_whatsapp_reply(incoming.sender_phone, agent_result.reply_text)
+    send_result = await send_brevo_reply(incoming, agent_result.reply_text)
 
     try:
         insert_agent_response(
