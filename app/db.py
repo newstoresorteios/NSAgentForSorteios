@@ -42,13 +42,13 @@ def get_conn() -> Iterator[psycopg.Connection]:
 
 def ensure_tables() -> None:
     settings = get_settings()
-    if not settings.auto_create_tables:
+    if not settings.database_url or not settings.auto_create_tables:
         return
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS ai_inbound_messages (
+                CREATE TABLE IF NOT EXISTS public.ai_inbound_messages (
                   id bigserial PRIMARY KEY,
                   provider text NOT NULL DEFAULT 'brevo',
                   event_type text NULL,
@@ -61,9 +61,15 @@ def ensure_tables() -> None:
                   created_at timestamptz NOT NULL DEFAULT now()
                 );
 
-                CREATE TABLE IF NOT EXISTS ai_agent_responses (
+                CREATE INDEX IF NOT EXISTS idx_ai_inbound_messages_sender_phone
+                ON public.ai_inbound_messages(sender_phone);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_inbound_messages_created_at
+                ON public.ai_inbound_messages(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS public.ai_agent_responses (
                   id bigserial PRIMARY KEY,
-                  inbound_id bigint NULL REFERENCES ai_inbound_messages(id) ON DELETE SET NULL,
+                  inbound_id bigint NULL REFERENCES public.ai_inbound_messages(id) ON DELETE SET NULL,
                   sender_phone text NULL,
                   reply_text text NOT NULL,
                   intent text NULL,
@@ -73,6 +79,12 @@ def ensure_tables() -> None:
                   provider_response jsonb NULL,
                   created_at timestamptz NOT NULL DEFAULT now()
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_inbound_id
+                ON public.ai_agent_responses(inbound_id);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_created_at
+                ON public.ai_agent_responses(created_at DESC);
                 """
             )
 
@@ -101,7 +113,7 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO ai_inbound_messages
+                INSERT INTO public.ai_inbound_messages
                   (
                     provider,
                     event_type,
@@ -156,7 +168,7 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO ai_agent_responses
+                INSERT INTO public.ai_agent_responses
                   (
                     inbound_id,
                     sender_phone,

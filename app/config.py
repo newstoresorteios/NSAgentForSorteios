@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     openai_agent_name: str = Field(default="NewStoreAgent", alias="OPENAI_AGENT_NAME")
 
     database_url: str = Field(default="", alias="DATABASE_URL")
-    auto_create_tables: bool = Field(default=False, alias="AUTO_CREATE_TABLES")
+    auto_create_tables: bool = Field(default=True, alias="AUTO_CREATE_TABLES")
 
     brevo_api_key: str = Field(default="", alias="BREVO_API_KEY")
     brevo_send_url: str = Field(default="", alias="BREVO_SEND_URL")
