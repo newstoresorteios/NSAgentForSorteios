@@ -28,6 +28,7 @@ from .guardrails import (
 from .models import IncomingMessage, AgentResult
 from .repository import detect_third_party_account_inquiry
 from .site_knowledge import build_site_knowledge_text
+from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
 
 
 SYSTEM_INSTRUCTIONS = f"""
@@ -59,6 +60,12 @@ def _sanitize_log_message(text: str) -> str:
 
 
 def build_agent_input(message: IncomingMessage, customer_context: dict) -> str:
+    vip_block = ""
+    vip = get_vip_profile(message.sender_phone)
+    if vip:
+        nickname = pick_vip_nickname(vip, message.text)
+        vip_block = f"\n\n{build_vip_openai_context(vip, nickname)}\n"
+
     return f"""
 Mensagem recebida via WhatsApp:
 - Nome informado: {message.sender_name or 'não informado'}
@@ -67,7 +74,7 @@ Mensagem recebida via WhatsApp:
 
 Contexto mínimo do cadastro:
 {customer_context}
-
+{vip_block}
 Responda com base na base oficial do site. Não invente saldo, cupom ou resultados.
 """.strip()
 
@@ -99,11 +106,11 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
     if detect_simulation_inquiry(message.text):
         return build_simulation_reply(message)
     if detect_current_raffle_inquiry(message.text):
-        return build_current_raffle_reply()
+        return build_current_raffle_reply(message)
     if detect_raffle_history_inquiry(message.text):
         return build_raffle_history_reply(message)
     if detect_rules_inquiry(message.text):
-        return build_rules_reply_result()
+        return build_rules_reply_result(message)
 
     if not settings.openai_api_key:
         return AgentResult(
