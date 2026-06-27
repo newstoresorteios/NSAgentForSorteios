@@ -1,5 +1,9 @@
 from __future__ import annotations
-from fastapi import Depends, FastAPI, Request
+
+import json
+from json import JSONDecodeError
+
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token
@@ -11,6 +15,66 @@ from app.db import insert_inbound_message, insert_agent_response
 from app.config import get_settings
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
+
+
+async def read_request_payload(request: Request) -> dict:
+    """Read request body defensively.
+
+    Accepts:
+    - application/json
+    - x-www-form-urlencoded with payload/data/body/json containing JSON
+    - plain JSON body
+
+    Never lets JSONDecodeError crash the ASGI app.
+    """
+    raw_body = await request.body()
+
+    if not raw_body:
+        return {}
+
+    content_type = (request.headers.get("content-type") or "").lower()
+    raw_text = raw_body.decode("utf-8", errors="replace").strip()
+
+    # 1) JSON direto
+    try:
+        parsed = json.loads(raw_text)
+        if isinstance(parsed, dict):
+            return parsed
+        return {"value": parsed}
+    except JSONDecodeError:
+        pass
+
+    # 2) Form-data / x-www-form-urlencoded
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        try:
+            form = await request.form()
+            form_data = dict(form)
+
+            for key in ("payload", "data", "body", "json"):
+                value = form_data.get(key)
+                if isinstance(value, str) and value.strip():
+                    try:
+                        parsed = json.loads(value)
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except JSONDecodeError:
+                        continue
+
+            return form_data
+        except Exception:
+            pass
+
+    # 3) Erro controlado, sem derrubar ASGI/Vercel
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": "invalid_json_body",
+            "message": "O body recebido não é um JSON válido.",
+            "content_type": content_type,
+            "raw_preview": raw_text[:200],
+            "hint": "Envie Content-Type: application/json com propriedades entre aspas duplas.",
+        },
+    )
 
 
 @app.get("/")
@@ -38,7 +102,15 @@ async def health():
 
 @app.post("/api/webhooks/brevo/whatsapp")
 async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brevo_webhook)):
-    payload = await request.json()
+    payload = await read_request_payload(request)
+
+    print("[brevo.webhook] received", {
+        "content_type": request.headers.get("content-type"),
+        "has_body": True,
+        "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
+        "event": payload.get("event") if isinstance(payload, dict) else None,
+    })
+
     incoming = parse_brevo_whatsapp_payload(payload)
 
     inbound_id = insert_inbound_message(incoming.model_dump())
@@ -72,7 +144,14 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
 
 @app.post("/api/test/agent")
 async def test_agent(request: Request, _: None = Depends(verify_admin_token)):
-    payload = await request.json()
+    payload = await read_request_payload(request)
+
+    print("[agent.test] received", {
+        "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
+        "has_phone": bool(payload.get("phone")) if isinstance(payload, dict) else False,
+        "has_text": bool(payload.get("text")) if isinstance(payload, dict) else False,
+    })
+
     incoming = parse_brevo_whatsapp_payload(
         {
             "text": payload.get("text", "Olá"),
@@ -90,4 +169,15 @@ async def test_agent(request: Request, _: None = Depends(verify_admin_token)):
         "handoff_required": agent_result.handoff_required,
         "safety_reason": agent_result.safety_reason,
         "customer_context": customer_context,
+    }
+
+
+@app.post("/api/debug/echo")
+async def debug_echo(request: Request, _: None = Depends(verify_admin_token)):
+    payload = await read_request_payload(request)
+    return {
+        "ok": True,
+        "content_type": request.headers.get("content-type"),
+        "keys": list(payload.keys()) if isinstance(payload, dict) else [],
+        "payload": payload,
     }

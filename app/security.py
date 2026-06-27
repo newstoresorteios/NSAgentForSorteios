@@ -19,7 +19,10 @@ async def verify_brevo_webhook(request: Request, x_webhook_token: str | None = H
             raise HTTPException(status_code=500, detail="webhook_secret_not_configured")
         return
 
-    if not x_webhook_token or not _secure_equals(x_webhook_token, settings.brevo_webhook_secret):
+    query_token = request.query_params.get("token")
+    provided_token = x_webhook_token or query_token
+
+    if not provided_token or not _secure_equals(provided_token, settings.brevo_webhook_secret):
         raise HTTPException(status_code=401, detail="invalid_webhook_token")
 
 
