@@ -97,6 +97,17 @@ def _draw_label(draw_id: Any, title: Any) -> str:
     return "Sorteio"
 
 
+def normalize_draw_number(value: str, width: int = 2) -> str:
+    cleaned = str(value).strip()
+    if cleaned.isdigit():
+        return cleaned.zfill(width)
+    return cleaned
+
+
+def default_draw_number_pool(width: int = 2, total: int = 100) -> list[str]:
+    return [str(number).zfill(width) for number in range(total)]
+
+
 def expand_payment_number_list(raw: Any) -> list[str]:
     if raw is None:
         return []
@@ -117,59 +128,78 @@ def parse_draw_number_pool(draw: dict[str, Any]) -> list[str]:
     for key in ("numbers", "number_pool", "all_numbers", "draw_numbers"):
         raw_numbers = draw.get(key)
         if isinstance(raw_numbers, list) and raw_numbers:
-            return expand_payment_number_list(raw_numbers)
+            expanded = expand_payment_number_list(raw_numbers)
+            width = max((len(item) for item in expanded if item.isdigit()), default=2)
+            return [normalize_draw_number(item, width) for item in expanded]
 
+    max_number = draw.get("max_number")
+    min_number = draw.get("min_number")
+    start_number = draw.get("start_number")
     total = (
         draw.get("total_numbers")
         or draw.get("total_spots")
         or draw.get("quota_count")
-        or draw.get("max_number")
         or draw.get("number_count")
     )
-    start = draw.get("min_number") or draw.get("start_number") or 1
+
+    if max_number is not None:
+        begin = int(min_number if min_number is not None else (start_number if start_number is not None else 0))
+        end = int(max_number)
+        width = 2 if end <= 99 else max(2, len(str(end)))
+        if end >= begin:
+            return [str(number).zfill(width) for number in range(begin, end + 1)]
+
     if total:
         try:
-            end = int(total)
-            begin = int(start)
-            if end >= begin:
-                return [str(number) for number in range(begin, end + 1)]
+            count = int(total)
+            begin = int(min_number if min_number is not None else (start_number if start_number is not None else 0))
+            if count == 100 and begin in (0, 1):
+                return default_draw_number_pool()
+            end = begin + count - 1
+            width = 2 if end <= 99 else max(2, len(str(end)))
+            return [str(number).zfill(width) for number in range(begin, end + 1)]
         except (TypeError, ValueError):
             pass
+
+    if draw.get("id") is not None:
+        return default_draw_number_pool()
     return []
 
 
-def compute_available_numbers(pool: list[str], taken: set[str]) -> list[str]:
-    available = [number for number in pool if number not in taken]
+def _draw_number_width(pool: list[str], payment_rows: list[dict[str, Any]]) -> int:
+    lengths: list[int] = [len(item) for item in pool if item.isdigit()]
+    for row in payment_rows:
+        for item in expand_payment_number_list(row.get("numbers")):
+            if item.isdigit():
+                lengths.append(len(item))
+    return max(lengths) if lengths else 2
+
+
+def compute_available_numbers(pool: list[str], taken: set[str], width: int = 2) -> list[str]:
+    normalized_pool = [normalize_draw_number(number, width) for number in pool]
+    taken_normalized = {normalize_draw_number(number, width) for number in taken}
+    available = [number for number in normalized_pool if number not in taken_normalized]
     try:
-        return sorted(available, key=lambda value: int(value))
+        return sorted(set(available), key=lambda value: int(value))
     except ValueError:
-        return sorted(available)
+        return sorted(set(available))
 
 
-def collect_taken_numbers(payment_rows: list[dict[str, Any]]) -> set[str]:
+def collect_taken_numbers(payment_rows: list[dict[str, Any]], width: int = 2) -> set[str]:
     taken: set[str] = set()
     for row in payment_rows:
         if (row.get("status") or "").lower() != "approved":
             continue
-        taken.update(expand_payment_number_list(row.get("numbers")))
+        for number in expand_payment_number_list(row.get("numbers")):
+            taken.add(normalize_draw_number(number, width))
     return taken
 
 
 def resolve_available_numbers(draw: dict[str, Any], payment_rows: list[dict[str, Any]]) -> list[str]:
     pool = parse_draw_number_pool(draw)
-    taken = collect_taken_numbers(payment_rows)
-    if pool:
-        return compute_available_numbers(pool, taken)
-
-    free_numbers: set[str] = set()
-    for row in payment_rows:
-        if (row.get("status") or "").lower() == "approved":
-            continue
-        free_numbers.update(expand_payment_number_list(row.get("numbers")))
-    try:
-        return sorted(free_numbers, key=lambda value: int(value))
-    except ValueError:
-        return sorted(free_numbers)
+    width = _draw_number_width(pool, payment_rows)
+    taken = collect_taken_numbers(payment_rows, width=width)
+    return compute_available_numbers(pool, taken, width=width)
 
 
 def _normalize_draw_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -485,8 +515,9 @@ def find_open_draw_context() -> dict[str, Any]:
 
     payment_rows = payments.get("items", [])
     pool = parse_draw_number_pool(draw)
+    width = _draw_number_width(pool, payment_rows)
     available = resolve_available_numbers(draw, payment_rows)
-    taken = collect_taken_numbers(payment_rows)
+    taken = collect_taken_numbers(payment_rows, width=width)
 
     prize_name = config.get("prize_name") if config.get("found") else None
     price_brl = config.get("price_brl") if config.get("found") else None

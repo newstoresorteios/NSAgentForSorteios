@@ -126,6 +126,16 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
             safety_reason="human_support_requested",
         )
 
+    if message.input_modality == "audio" and not (message.text or "").strip():
+        return AgentResult(
+            reply_text=(
+                "Recebi seu áudio, mas não consegui transcrever agora. "
+                "Pode repetir por texto ou enviar outro áudio?"
+            ),
+            intent="audio_transcription_failed",
+            handoff_required=False,
+        )
+
     if not settings.openai_api_key:
         return AgentResult(
             reply_text=(

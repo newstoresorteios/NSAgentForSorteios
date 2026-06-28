@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-3.5-turbo", alias="OPENAI_MODEL")
     openai_agent_name: str = Field(default="NewStoreAgent", alias="OPENAI_AGENT_NAME")
+    openai_transcribe_model: str = Field(default="whisper-1", alias="OPENAI_TRANSCRIBE_MODEL")
+    openai_tts_model: str = Field(default="gpt-4o-mini-tts", alias="OPENAI_TTS_MODEL")
+    openai_tts_voice: str = Field(default="nova", alias="OPENAI_TTS_VOICE")
+
+    audio_inbound_enabled: bool = Field(default=True, alias="AUDIO_INBOUND_ENABLED")
+    audio_outbound_enabled: bool = Field(default=True, alias="AUDIO_OUTBOUND_ENABLED")
+    audio_public_base_url: str = Field(default="", alias="AUDIO_PUBLIC_BASE_URL")
+
+    supabase_url: str = Field(default="", alias="SUPABASE_URL")
+    supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
+    supabase_audio_bucket: str = Field(default="agent-audio", alias="SUPABASE_AUDIO_BUCKET")
 
     database_url: str = Field(default="", alias="DATABASE_URL")
     auto_create_tables: bool = Field(default=True, alias="AUTO_CREATE_TABLES")
@@ -44,6 +55,13 @@ class Settings(BaseSettings):
     @field_validator("openai_api_key", "admin_api_token", "brevo_webhook_secret", "brevo_api_key", mode="before")
     @classmethod
     def normalize_secret(cls, value: object) -> object:
+        if isinstance(value, str):
+            return _strip_secret(value)
+        return value
+
+    @field_validator("supabase_service_key", mode="before")
+    @classmethod
+    def normalize_supabase_key(cls, value: object) -> object:
         if isinstance(value, str):
             return _strip_secret(value)
         return value

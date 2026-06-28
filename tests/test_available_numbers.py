@@ -1,59 +1,54 @@
-from app.guardrails import detect_available_numbers_inquiry
+from app.audio_service import is_placeholder_audio_text, should_transcribe_incoming
 from app.repository import (
     collect_taken_numbers,
     compute_available_numbers,
-    expand_payment_number_list,
+    default_draw_number_pool,
+    normalize_draw_number,
     parse_draw_number_pool,
+    resolve_available_numbers,
 )
 
 
-def test_detect_available_numbers_inquiry():
-    assert detect_available_numbers_inquiry("quais numeros estao disponiveis nesse sorteio?") is True
-    assert detect_available_numbers_inquiry("qual meu saldo") is False
+def test_default_pool_is_00_to_99():
+    pool = default_draw_number_pool()
+    assert len(pool) == 100
+    assert pool[0] == "00"
+    assert pool[99] == "99"
 
 
-def test_compute_available_numbers():
-    pool = ["1", "2", "3", "4", "5"]
-    taken = {"2", "4"}
-    assert compute_available_numbers(pool, taken) == ["1", "3", "5"]
+def test_parse_draw_number_pool_defaults_for_open_draw():
+    pool = parse_draw_number_pool({"id": 116, "status": "open"})
+    assert len(pool) == 100
+    assert pool[3] == "03"
 
 
-def test_collect_taken_numbers_only_approved():
+def test_normalize_draw_number():
+    assert normalize_draw_number("3") == "03"
+    assert normalize_draw_number("03") == "03"
+    assert normalize_draw_number("97") == "97"
+
+
+def test_available_numbers_exclude_only_approved():
+    draw = {"id": 116}
     rows = [
-        {"numbers": ["1", "2"], "status": "approved"},
-        {"numbers": ["3"], "status": "pending"},
+        {"numbers": ["00"], "status": "approved"},
+        {"numbers": ["01"], "status": "approved"},
+        {"numbers": ["02"], "status": "approved"},
+        {"numbers": ["03"], "status": "pending"},
     ]
-    assert collect_taken_numbers(rows) == {"1", "2"}
+    available = resolve_available_numbers(draw, rows)
+    assert "00" not in available
+    assert "01" not in available
+    assert "02" not in available
+    assert "03" in available
+    assert "12" in available
+    assert len(available) == 97
 
 
-def test_resolve_available_numbers_with_pool():
-    from app.repository import resolve_available_numbers
-
-    draw = {"numbers": ["1", "2", "3", "4"]}
-    rows = [
-        {"numbers": ["2"], "status": "approved"},
-        {"numbers": ["3"], "status": "pending"},
-    ]
-    assert resolve_available_numbers(draw, rows) == ["1", "3", "4"]
+def test_should_transcribe_when_text_is_filename():
+    assert should_transcribe_incoming("audio.ogg", "https://x/audio.ogg", "audio.ogg") is True
 
 
-def test_resolve_available_numbers_without_pool_uses_non_approved():
-    from app.repository import resolve_available_numbers
-
-    draw: dict = {}
-    rows = [
-        {"numbers": ["2"], "status": "approved"},
-        {"numbers": ["3", "5"], "status": "pending"},
-    ]
-    assert resolve_available_numbers(draw, rows) == ["3", "5"]
-
-
-def test_parse_draw_number_pool_from_total():
-    draw = {"total_numbers": 5, "min_number": 1}
-    assert parse_draw_number_pool(draw) == ["1", "2", "3", "4", "5"]
-
-
-def test_detect_current_raffle_inquiry_open_draw():
-    from app.guardrails import detect_current_raffle_inquiry
-
-    assert detect_current_raffle_inquiry("qual sorteio esta aberto?") is True
+def test_is_placeholder_audio_text():
+    assert is_placeholder_audio_text("audio.ogg", "audio.ogg") is True
+    assert is_placeholder_audio_text("qual meu saldo", None) is False

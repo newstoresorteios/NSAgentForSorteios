@@ -11,6 +11,10 @@ class IncomingMessage(BaseModel):
     sender_phone: str | None = None
     sender_name: str | None = None
     text: str = ""
+    input_modality: str = "text"
+    audio_url: str | None = None
+    audio_mime_type: str | None = None
+    audio_filename: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -20,6 +24,12 @@ class AgentResult(BaseModel):
     confidence: float | None = None
     handoff_required: bool = False
     safety_reason: str | None = None
+    reply_modality: str = "text"
+    reply_audio_bytes: bytes | None = None
+    reply_audio_mime_type: str | None = None
+    reply_audio_url: str | None = None
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class BrevoSendResult(BaseModel):

@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from .config import get_settings
-from .models import BrevoSendResult, IncomingMessage
+from .models import BrevoSendResult, AgentResult, IncomingMessage
 from .repository import normalize_phone
 
 BREVO_WHATSAPP_SEND_URL = "https://api.brevo.com/v3/whatsapp/sendMessage"
@@ -131,10 +131,19 @@ async def _send_whatsapp_transactional_reply(incoming: IncomingMessage, text: st
     )
 
 
-async def send_brevo_reply(incoming: IncomingMessage, text: str) -> BrevoSendResult:
+async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str) -> BrevoSendResult:
     """Send a reply back to the user through Brevo."""
     settings = get_settings()
+    text = result.reply_text if isinstance(result, AgentResult) else str(result)
+    if isinstance(result, AgentResult) and result.reply_audio_url:
+        text = f"Resposta em áudio: {result.reply_audio_url}\n\n{text}"
     mode = (settings.brevo_reply_mode or "dry_run").lower()
+
+    if isinstance(result, AgentResult) and result.reply_modality == "audio" and not result.reply_audio_url:
+        print("[brevo.send] audio_reply_fallback_to_text", {
+            "reason": "supabase_upload_or_tts_failed",
+            "audio_bytes": len(result.reply_audio_bytes or b""),
+        })
 
     if settings.dry_run or mode == "dry_run":
         return BrevoSendResult(
@@ -145,6 +154,7 @@ async def send_brevo_reply(incoming: IncomingMessage, text: str) -> BrevoSendRes
                 "to": incoming.sender_phone,
                 "visitor_id": incoming.visitor_id,
                 "text": text,
+                "reply_modality": result.reply_modality if isinstance(result, AgentResult) else "text",
             },
         )
 

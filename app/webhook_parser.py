@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any
+
+from .audio_service import extract_audio_attachment, is_audio_attachment
 from .models import IncomingMessage
 
 
@@ -126,6 +128,20 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         visitor_obj.get("id"),
     )
 
+    audio_file = extract_audio_attachment(payload)
+    input_modality = "text"
+    audio_url = None
+    audio_mime_type = None
+    audio_filename = None
+    if audio_file:
+        input_modality = "audio"
+        audio_url = audio_file.get("link")
+        audio_mime_type = audio_file.get("mimeType")
+        audio_filename = audio_file.get("name")
+
+    if not text.strip() and audio_file and not is_audio_attachment(audio_file):
+        text = _first_non_empty(audio_file.get("name")) or text
+
     return IncomingMessage(
         provider="brevo",
         event_type=_first_non_empty(
@@ -151,5 +167,9 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         sender_phone=sender_phone,
         sender_name=sender_name,
         text=text,
+        input_modality=input_modality,
+        audio_url=audio_url,
+        audio_mime_type=audio_mime_type,
+        audio_filename=audio_filename,
         raw=payload,
     )

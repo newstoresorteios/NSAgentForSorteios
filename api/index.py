@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from app.security import verify_brevo_webhook, verify_admin_token
 from app.webhook_parser import parse_brevo_whatsapp_payload, should_skip_auto_reply
 from app.repository import find_customer_profile_by_phone
-from app.openai_agent import generate_agent_reply
+from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
 from app.db import insert_inbound_message, insert_agent_response
 from app.config import get_settings
@@ -110,6 +110,9 @@ async def health():
         "brevo_reply_mode": settings.brevo_reply_mode,
         "brevo_live_send_enabled": (not settings.dry_run and settings.brevo_reply_mode.lower() != "dry_run"),
         "brevo_webhook_secret_configured": bool(settings.brevo_webhook_secret),
+        "audio_inbound_enabled": settings.audio_inbound_enabled,
+        "audio_outbound_enabled": settings.audio_outbound_enabled,
+        "supabase_storage_configured": bool(settings.supabase_url and settings.supabase_service_key),
         "dry_run": settings.dry_run,
     }
 
@@ -137,7 +140,7 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "has_text": bool(incoming.text),
     })
 
-    if not incoming.text.strip():
+    if not incoming.text.strip() and not incoming.audio_url:
         return JSONResponse({"ok": True, "skipped": True, "reason": "empty_text"})
 
     try:
@@ -159,8 +162,8 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         ) from exc
 
     customer_context = find_customer_profile_by_phone(incoming.sender_phone)
-    agent_result = generate_agent_reply(incoming, customer_context)
-    send_result = await send_brevo_reply(incoming, agent_result.reply_text)
+    agent_result = await process_incoming_message(incoming, customer_context)
+    send_result = await send_brevo_reply(incoming, agent_result)
 
     try:
         insert_agent_response(
@@ -219,10 +222,13 @@ async def test_agent(request: Request, _: None = Depends(verify_admin_token)):
         }
     )
     customer_context = find_customer_profile_by_phone(incoming.sender_phone)
-    agent_result = generate_agent_reply(incoming, customer_context)
+    agent_result = await process_incoming_message(incoming, customer_context)
     return {
         "ok": True,
         "reply_text": agent_result.reply_text,
+        "reply_modality": agent_result.reply_modality,
+        "input_modality": incoming.input_modality,
+        "transcribed_text": incoming.text if incoming.input_modality == "audio" else None,
         "intent": agent_result.intent,
         "handoff_required": agent_result.handoff_required,
         "safety_reason": agent_result.safety_reason,
