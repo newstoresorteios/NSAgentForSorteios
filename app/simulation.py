@@ -4,7 +4,12 @@ import re
 from typing import Any
 
 from .repository import format_cents_to_brl
-from .site_knowledge import CARD_USAGE_TABLE, min_purchase_for_credit_cents
+from .site_knowledge import (
+    CARD_USAGE_TABLE,
+    credit_band_for_amount,
+    max_applicable_credit_for_product_cents,
+    min_purchase_for_credit_cents,
+)
 
 
 PURCHASE_SIMULATION_PHRASES = (
@@ -166,9 +171,11 @@ def detect_payment_method(text: str | None) -> str | None:
 
 
 def simulate_purchase(credit_cents: int, product_cents: int) -> dict[str, Any]:
-    min_purchase_cents = min_purchase_for_credit_cents(credit_cents)
-    applied_cents = min(max(credit_cents, 0), max(product_cents, 0))
+    max_applicable = max_applicable_credit_for_product_cents(product_cents)
+    applied_cents = min(max(credit_cents, 0), max_applicable, max(product_cents, 0))
     final_cents = max(product_cents - applied_cents, 0)
+    can_apply_full_balance = credit_cents > 0 and applied_cents >= credit_cents
+    min_purchase_cents = min_purchase_for_credit_cents(applied_cents) if applied_cents else None
 
     eligible = True
     reason = None
@@ -178,21 +185,38 @@ def simulate_purchase(credit_cents: int, product_cents: int) -> dict[str, Any]:
             f"O simulador oficial considera saldos a partir de {format_cents_to_brl(CARD_USAGE_TABLE[0][0])}. "
             "Confirme seu saldo ou fale com a equipe."
         )
-    elif min_purchase_cents is not None and product_cents <= min_purchase_cents:
+    elif max_applicable <= 0:
         eligible = False
         reason = (
-            f"Para usar {format_cents_to_brl(credit_cents)}, a compra deve ser superior a "
-            f"{format_cents_to_brl(min_purchase_cents)} (tabela oficial)."
+            f"Para usar Cartão Presente, o produto deve ser superior a "
+            f"{format_cents_to_brl(CARD_USAGE_TABLE[0][2])} (tabela oficial)."
         )
+    elif applied_cents <= 0:
+        eligible = False
+        band = credit_band_for_amount(credit_cents)
+        if band:
+            _, _, min_required = band
+            reason = (
+                f"Para aplicar {format_cents_to_brl(credit_cents)}, a compra deve ser superior a "
+                f"{format_cents_to_brl(min_required)} (tabela oficial)."
+            )
+        else:
+            reason = (
+                "Neste valor de produto, a tabela permite aplicar até "
+                f"{format_cents_to_brl(max_applicable)}, inferior ao saldo informado."
+            )
 
     return {
         "eligible": eligible,
         "reason": reason,
         "credit_cents": credit_cents,
         "product_cents": product_cents,
+        "max_applicable_cents": max_applicable,
         "applied_cents": applied_cents if eligible else 0,
         "final_cents": final_cents if eligible else product_cents,
         "min_purchase_cents": min_purchase_cents,
+        "can_apply_full_balance": can_apply_full_balance if eligible else False,
+        "remaining_balance_cents": max(credit_cents - applied_cents, 0) if eligible else credit_cents,
     }
 
 
@@ -230,16 +254,34 @@ def build_purchase_simulation_reply(
 
     applied_label = format_cents_to_brl(result["applied_cents"])
     final_label = format_cents_to_brl(result["final_cents"])
-    min_label = format_cents_to_brl(result["min_purchase_cents"] or 0)
+    max_applicable_label = format_cents_to_brl(result["max_applicable_cents"])
+    remaining_label = format_cents_to_brl(result["remaining_balance_cents"])
+
+    if result["can_apply_full_balance"]:
+        summary = (
+            f"{greeting} Sim, dá para abater todo o saldo de {credit_label} "
+            f"no relógio de {product_label}."
+        )
+    else:
+        summary = (
+            f"{greeting} Não dá para abater todo o saldo de {credit_label} "
+            f"no relógio de {product_label}. "
+            f"Pela tabela oficial, nesta compra o máximo aplicável é {max_applicable_label}."
+        )
 
     lines = [
-        f"{greeting} Com seu saldo de {credit_label}, dá para usar no relógio de {product_label}.",
+        summary,
         "",
         "Simulação:",
         f"• Valor do produto: {product_label}",
+        f"• Saldo informado: {credit_label}",
+        f"• Máximo aplicável nesta compra (tabela): {max_applicable_label}",
         f"• Cartão Presente aplicado: {applied_label}",
         f"• Valor a pagar: {final_label}",
     ]
+
+    if result["remaining_balance_cents"] > 0:
+        lines.append(f"• Saldo que sobra no cartão: {remaining_label}")
 
     if payment_method == "credit" and result["final_cents"] > 0:
         installment = result["final_cents"] / 12
@@ -248,7 +290,8 @@ def build_purchase_simulation_reply(
     lines.extend(
         [
             "",
-            f"Tabela: saldo {credit_label} exige compra acima de {min_label}.",
+            "A tabela limita quanto do cartão pode ser usado conforme o valor do produto; "
+            "o saldo disponível pode ser maior que o permitido na compra.",
             "O desconto segue a forma de pagamento escolhida (Pix ou crédito). Compras via Pix podem precisar de aplicação manual pela equipe.",
             "Válido em compra única; dá para usar só parte do saldo. Simule também em https://www.newstorerj.com.br/",
         ]

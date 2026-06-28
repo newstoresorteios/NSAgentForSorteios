@@ -152,8 +152,11 @@ def gather_customer_facts(message: IncomingMessage, customer_context: dict[str, 
             simulation_payload.update(
                 {
                     "eligible": result["eligible"],
+                    "max_applicable_brl": format_cents_to_brl(result["max_applicable_cents"]),
                     "applied_brl": format_cents_to_brl(result["applied_cents"]),
                     "final_brl": format_cents_to_brl(result["final_cents"]),
+                    "remaining_balance_brl": format_cents_to_brl(result["remaining_balance_cents"]),
+                    "can_apply_full_balance": result["can_apply_full_balance"],
                     "min_purchase_brl": format_cents_to_brl(result["min_purchase_cents"])
                     if result["min_purchase_cents"]
                     else None,
@@ -206,7 +209,8 @@ def format_facts_for_prompt(facts: dict[str, Any]) -> str:
         "- Responda PRIMEIRO à pergunta literal do cliente.\n"
         "- Se simulation.uses_hypothetical_credit for true, responda usando credit_brl informado pelo cliente, "
         "não account_balance_brl.\n"
-        "- Se simulation tiver applied_brl e final_brl, explique quanto abate e quanto fica a pagar.\n"
+        "- Se simulation.can_apply_full_balance for false, deixe claro que NÃO dá para abater todo o saldo "
+        "e use max_applicable_brl, applied_brl e final_brl.\n"
         "- Não repita saldo/última participação se o cliente não pediu isso.\n"
         "- Nunca pergunte como prefere ser chamado.\n"
         "- Resposta curta para WhatsApp, em português do Brasil."

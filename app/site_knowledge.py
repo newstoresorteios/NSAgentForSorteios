@@ -39,6 +39,26 @@ def min_purchase_for_credit_cents(credit_cents: int) -> int | None:
     return None
 
 
+def credit_band_for_amount(credit_cents: int) -> tuple[int, int, int] | None:
+    for band in CARD_USAGE_TABLE:
+        low, high, min_purchase = band
+        if low <= credit_cents <= high:
+            return band
+    return None
+
+
+def max_applicable_credit_for_product_cents(product_cents: int) -> int:
+    """Máximo de cartão aplicável dado o valor do produto (tabela oficial)."""
+    if product_cents <= 0:
+        return 0
+
+    max_credit = 0
+    for low, high, min_purchase in CARD_USAGE_TABLE:
+        if product_cents > min_purchase:
+            max_credit = max(max_credit, high)
+    return max_credit
+
+
 def format_card_usage_table_text() -> str:
     from .repository import format_cents_to_brl
 
@@ -48,8 +68,9 @@ def format_card_usage_table_text() -> str:
             f"- {format_cents_to_brl(low)} a {format_cents_to_brl(high)} → compra deve ser > {format_cents_to_brl(min_purchase)}"
         )
     lines.append(
-        "A tabela é referência; o simulador sempre desconta o valor aplicado do cupom. "
-        "Sempre considerar o valor integral do produto na forma de pagamento escolhida (Pix ou crédito)."
+        "A tabela é referência; o simulador desconta o valor aplicado respeitando o teto por faixa. "
+        "O valor do produto define quanto de cartão pode ser aplicado; o saldo disponível pode ser maior "
+        "do que o permitido naquela compra. Sempre considerar o valor integral do produto na forma de pagamento escolhida (Pix ou crédito)."
     )
     return "\n".join(lines)
 
