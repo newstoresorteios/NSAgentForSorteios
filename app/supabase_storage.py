@@ -7,14 +7,18 @@ import httpx
 from .config import get_settings
 
 
-async def upload_public_audio(audio_bytes: bytes, content_type: str = "audio/mpeg") -> str:
+async def upload_public_audio(
+    audio_bytes: bytes,
+    content_type: str = "audio/ogg; codecs=opus",
+    filename: str = "resposta.ogg",
+) -> str:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_key:
         raise RuntimeError("supabase_storage_not_configured")
     if not settings.supabase_audio_bucket:
         raise RuntimeError("supabase_audio_bucket_missing")
 
-    object_name = f"agent-replies/{uuid.uuid4().hex}.mp3"
+    object_name = f"agent-replies/{uuid.uuid4().hex}-{filename}"
     upload_url = (
         f"{settings.supabase_url.rstrip('/')}/storage/v1/object/"
         f"{settings.supabase_audio_bucket}/{object_name}"

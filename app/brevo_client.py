@@ -27,7 +27,25 @@ def _agent_payload(settings: Any) -> dict[str, str]:
     return {}
 
 
-async def _send_conversations_reply(incoming: IncomingMessage, text: str) -> BrevoSendResult:
+def _build_brevo_audio_file(
+    url: str,
+    size: int,
+    filename: str = "resposta.ogg",
+    mime_type: str = "audio/ogg; codecs=opus",
+) -> dict[str, Any]:
+    return {
+        "name": filename,
+        "link": url,
+        "mimeType": mime_type,
+        "size": max(size, 1),
+    }
+
+
+async def _send_conversations_reply(
+    incoming: IncomingMessage,
+    text: str,
+    audio_file: dict[str, Any] | None = None,
+) -> BrevoSendResult:
     settings = get_settings()
 
     if not settings.brevo_api_key:
@@ -41,10 +59,12 @@ async def _send_conversations_reply(incoming: IncomingMessage, text: str) -> Bre
         return BrevoSendResult(ok=False, dry_run=False, error="brevo_agent_not_configured")
 
     payload: dict[str, Any] = {
-        "text": text,
+        "text": text or "Resposta em áudio",
         "visitorId": incoming.visitor_id,
         **agent_payload,
     }
+    if audio_file:
+        payload["file"] = audio_file
 
     headers = {
         "accept": "application/json",
@@ -135,9 +155,25 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
     """Send a reply back to the user through Brevo."""
     settings = get_settings()
     text = result.reply_text if isinstance(result, AgentResult) else str(result)
-    if isinstance(result, AgentResult) and result.reply_audio_url:
-        text = f"Resposta em áudio: {result.reply_audio_url}\n\n{text}"
+    audio_file: dict[str, Any] | None = None
     mode = (settings.brevo_reply_mode or "dry_run").lower()
+
+    if (
+        isinstance(result, AgentResult)
+        and result.reply_modality == "audio"
+        and result.reply_audio_url
+        and settings.brevo_send_audio_as_attachment
+    ):
+        audio_file = _build_brevo_audio_file(
+            url=result.reply_audio_url,
+            size=len(result.reply_audio_bytes or b""),
+            filename="resposta.ogg" if result.reply_audio_url.endswith(".ogg") else "resposta.mp3",
+            mime_type=result.reply_audio_mime_type or "audio/ogg; codecs=opus",
+        )
+        if not text.strip():
+            text = "Resposta em áudio"
+    elif isinstance(result, AgentResult) and result.reply_audio_url and not settings.brevo_send_audio_as_attachment:
+        text = f"{text}\n\nOuça: {result.reply_audio_url}".strip()
 
     if isinstance(result, AgentResult) and result.reply_modality == "audio" and not result.reply_audio_url:
         print("[brevo.send] audio_reply_fallback_to_text", {
@@ -155,6 +191,7 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
                 "visitor_id": incoming.visitor_id,
                 "text": text,
                 "reply_modality": result.reply_modality if isinstance(result, AgentResult) else "text",
+                "audio_file": audio_file,
             },
         )
 
@@ -163,7 +200,7 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
 
     # Default live mode for Brevo Conversations inbound webhooks.
     if incoming.visitor_id:
-        return await _send_conversations_reply(incoming, text)
+        return await _send_conversations_reply(incoming, text, audio_file=audio_file)
 
     if incoming.sender_phone:
         return await _send_whatsapp_transactional_reply(incoming, text)

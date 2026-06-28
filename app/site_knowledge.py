@@ -20,7 +20,7 @@ THIRD_PARTY_REFUSAL = (
     "Não é possível consultar dados de outras pessoas pelo WhatsApp."
 )
 
-# Tabela de referência do site (cartão presente x valor mínimo de compra).
+# Tabela de referência do site (cartão presente x valor mínimo de compra), em centavos.
 CARD_USAGE_TABLE = (
     (50_00, 250_00, 150_000),
     (251_00, 600_00, 350_000),
@@ -39,6 +39,21 @@ def min_purchase_for_credit_cents(credit_cents: int) -> int | None:
     return None
 
 
+def format_card_usage_table_text() -> str:
+    from .repository import format_cents_to_brl
+
+    lines = ["Tabela para utilização do Cartão Presente (referência):"]
+    for low, high, min_purchase in CARD_USAGE_TABLE:
+        lines.append(
+            f"- {format_cents_to_brl(low)} a {format_cents_to_brl(high)} → compra deve ser > {format_cents_to_brl(min_purchase)}"
+        )
+    lines.append(
+        "A tabela é referência; o simulador sempre desconta o valor aplicado do cupom. "
+        "Sempre considerar o valor integral do produto na forma de pagamento escolhida (Pix ou crédito)."
+    )
+    return "\n".join(lines)
+
+
 def build_site_knowledge_text() -> str:
     return f"""
 Base oficial New Store Sorteios ({SITE_URL}):
@@ -47,23 +62,36 @@ Proposta:
 - Sorteio em que você concorre a prêmios e recebe 100% do valor investido de volta em Cartão Presente Digital.
 - Sorteio válido até preencher a tabela, com base no resultado oficial da Lotomania (Caixa).
 
-Como funciona:
-- A vaga só é confirmada após compensação do pagamento.
-- O sorteio acontece quando todos os números são vendidos.
-- Ganhador: participante com o último número sorteado pela Lotomania.
+Regras do sorteio:
+- A vaga só é confirmada após a compensação do pagamento.
+- O sorteio é realizado assim que todos os números são vendidos.
+- O ganhador é o participante com o último número sorteado pela Lotomania.
 - Prazo máximo: 7 dias após abertura da rodada.
-- Frete do prêmio: por conta do vencedor.
-- Cartão Presente não é cumulativo com prêmio nem com outras promoções.
+- Envio do prêmio: frete por conta do vencedor.
+- O Cartão Presente não é cumulativo com o prêmio nem com outras promoções do site.
+- Transparência total: o resultado pode ser conferido publicamente no site oficial da Caixa Econômica Federal.
 
 Cartão Presente Digital:
-- Saldo acumulativo em um único cartão.
-- Validade de 6 meses, renovada a cada nova participação.
+- Cada participação gera crédito acumulativo em um único cartão.
+- Validade de 6 meses, renovada automaticamente a cada nova participação.
 - Uso exclusivo no site da New Store Relógios ({STORE_URL}).
 - Código pessoal e intransferível.
 - Sem conversão em dinheiro.
-- Não compra outro cartão-presente com crédito de sorteio.
-- Pode usar parte do saldo ou em mais de um produto, respeitando a tabela.
-- Desconto Pix pode exigir aplicação manual pela equipe.
+- Não é possível comprar outro cartão-presente com crédito de sorteio.
+- Utilização em uma única compra; pode usar em mais de um produto na mesma compra e também só parte do saldo acumulado.
+- Solicitar orientação no grupo oficial quando precisar usar parte do saldo.
+- A New Store não se responsabiliza por perda, extravio ou validade expirada.
+- O cartão não é cumulativo com outros cupons de desconto.
+- Sempre considerar o valor integral do produto na forma de pagamento escolhida (Pix ou crédito).
+- Desconto Pix pode exigir aplicação manual pela equipe da loja.
+
+{format_card_usage_table_text()}
+
+Exemplo prático (referência do site):
+- Relógio Tissot PRX Powermatic 80 no crédito: R$ 6.799,99.
+- Aplicando R$ 800,00 de Cartão Presente → valor a pagar R$ 5.999,99 (até 12x sem juros).
+- À vista no Pix: R$ 5.779,99; com R$ 800,00 de cartão → R$ 4.979,99.
+- Importante: o desconto segue a forma de pagamento; compras via Pix podem ter desconto aplicado manualmente pela equipe.
 
 Atendimento humano (vendas e dúvidas): WhatsApp {NS_SALES_WHATSAPP}.
 
@@ -75,8 +103,6 @@ FAQ resumido:
 5. Crédito não transferível.
 6. Frete do prêmio não incluso.
 7. Resultados e novas rodadas também no grupo oficial WhatsApp.
-
-Transparência: resultado conferível no site oficial da Caixa Econômica Federal.
 """.strip()
 
 
@@ -85,27 +111,16 @@ def build_rules_reply() -> str:
         "Sorteio New Store: você concorre ao prêmio e recebe 100% do valor investido em Cartão Presente Digital "
         f"para usar em {STORE_URL}. "
         "O sorteio usa a Lotomania (último número sorteado vence). "
-        "A vaga confirma após pagamento; o sorteio ocorre quando a tabela enche. "
-        "Cartão: validade 6 meses (renovável), pessoal, sem dinheiro, uso exclusivo no site. "
+        "A vaga confirma após pagamento; o sorteio ocorre quando a tabela enche (prazo máximo 7 dias). "
+        "Frete do prêmio por conta do vencedor. "
+        "Cartão: validade 6 meses (renovável), pessoal, sem dinheiro, uso exclusivo no site, "
+        "não cumulativo com prêmio nem com outros cupons. "
         f"Dúvidas e novas rodadas: {SITE_URL} e grupo oficial WhatsApp. "
         f"Atendimento humano (vendas): {NS_SALES_WHATSAPP}."
     )
 
 
-def build_simulation_reply(credit_cents: int) -> str:
-    from .repository import format_cents_to_brl
+def build_simulation_reply(credit_cents: int, product_cents: int | None = None) -> str:
+    from .simulation import build_purchase_simulation_reply
 
-    credit_label = format_cents_to_brl(credit_cents)
-    min_purchase = min_purchase_for_credit_cents(credit_cents)
-    if min_purchase is None:
-        return (
-            f"Com crédito de {credit_label}, consulte a tabela completa em {SITE_URL} "
-            "ou informe um valor dentro das faixas publicadas no simulador do site."
-        )
-
-    min_label = format_cents_to_brl(min_purchase)
-    return (
-        f"Simulação: com {credit_label} de Cartão Presente, a compra deve ser superior a {min_label} "
-        f"(referência da tabela oficial em {SITE_URL}). "
-        f"Use o código no checkout de {STORE_URL}. Compras via Pix podem precisar de aplicação manual pela equipe."
-    )
+    return build_purchase_simulation_reply(credit_cents, product_cents=product_cents)

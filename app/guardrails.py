@@ -27,6 +27,7 @@ SIMULATION_KEYWORDS = (
     "simulacao",
     "quanto posso usar",
     "tabela de uso",
+    "simulador",
 )
 
 AVAILABLE_NUMBERS_KEYWORDS = (
@@ -129,8 +130,12 @@ def detect_coupon_code_inquiry(text: str) -> bool:
 
 
 def detect_simulation_inquiry(text: str) -> bool:
+    from .simulation import detect_purchase_simulation_inquiry
+
     normalized = (text or "").lower()
-    return any(keyword in normalized for keyword in SIMULATION_KEYWORDS)
+    if any(keyword in normalized for keyword in SIMULATION_KEYWORDS):
+        return True
+    return detect_purchase_simulation_inquiry(text)
 
 
 def detect_current_raffle_inquiry(text: str) -> bool:

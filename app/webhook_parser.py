@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .audio_service import extract_audio_attachment, is_audio_attachment
+from .audio_service import extract_audio_attachment, is_audio_attachment, is_placeholder_audio_text
 from .models import IncomingMessage
 
 
@@ -28,15 +28,6 @@ def _first_non_empty(*values: Any) -> str | None:
     return None
 
 
-def _extract_from_messages_array(payload: dict[str, Any]) -> dict[str, Any]:
-    messages = payload.get("messages")
-    if isinstance(messages, list) and messages:
-        first = messages[0]
-        if isinstance(first, dict):
-            return first
-    return {}
-
-
 def _extract_last_visitor_message(payload: dict[str, Any]) -> dict[str, Any]:
     messages = payload.get("messages")
     if not isinstance(messages, list):
@@ -46,6 +37,23 @@ def _extract_last_visitor_message(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(message, dict) and message.get("type") == "visitor":
             return message
     return {}
+
+
+def _extract_audio_from_message(message: dict[str, Any]) -> dict[str, Any] | None:
+    if not message:
+        return None
+
+    file_obj = message.get("file")
+    if isinstance(file_obj, dict) and is_audio_attachment(file_obj) and file_obj.get("link"):
+        return file_obj
+
+    attachments = message.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if isinstance(attachment, dict) and is_audio_attachment(attachment) and attachment.get("link"):
+                return attachment
+
+    return None
 
 
 def _extract_visitor(payload: dict[str, Any]) -> dict[str, Any]:
@@ -69,27 +77,36 @@ def should_skip_auto_reply(payload: dict[str, Any]) -> bool:
     return bool(last.get("isPushed") or last.get("isTrigger"))
 
 
-def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
-    """Parse Brevo/WhatsApp-like webhook payloads defensively.
+def _extract_primary_message(payload: dict[str, Any]) -> dict[str, Any]:
+    last_visitor = _extract_last_visitor_message(payload)
+    if last_visitor:
+        return last_visitor
 
-    Supports simplified test payloads and Brevo Conversations webhooks
-    (`conversationStarted`, `conversationFragment`).
-    """
-    message_obj = _extract_from_messages_array(payload)
+    messages = payload.get("messages")
+    if isinstance(messages, list) and messages:
+        last = messages[-1]
+        if isinstance(last, dict):
+            return last
+    return {}
+
+
+def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
+    """Parse Brevo/WhatsApp-like webhook payloads defensively."""
     visitor_obj = _extract_visitor(payload)
-    last_visitor_message = _extract_last_visitor_message(payload)
+    last_visitor_message = _extract_primary_message(payload)
+
+    audio_file = _extract_audio_from_message(last_visitor_message) or extract_audio_attachment(payload)
 
     text = _first_non_empty(
+        last_visitor_message.get("text") if isinstance(last_visitor_message.get("text"), str) else None,
+        last_visitor_message.get("body") if isinstance(last_visitor_message.get("body"), str) else None,
+        _get_nested(last_visitor_message, "text", "body"),
         payload.get("text"),
         payload.get("message"),
         payload.get("body"),
         payload.get("content"),
         _get_nested(payload, "text", "body"),
         _get_nested(payload, "message", "text"),
-        _get_nested(message_obj, "text", "body"),
-        message_obj.get("body") if isinstance(message_obj, dict) else None,
-        message_obj.get("text") if isinstance(message_obj, dict) else None,
-        last_visitor_message.get("text"),
         _get_nested(payload, "message", "text") if isinstance(payload.get("message"), dict) else None,
     ) or ""
 
@@ -108,7 +125,7 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         _get_nested(visitor_obj, "contactAttributes", "SMS"),
         _get_nested(visitor_obj, "contactAttributes", "WHATSAPP"),
         _get_nested(visitor_obj, "formattedAttributes", "SMS"),
-        message_obj.get("from") if isinstance(message_obj, dict) else None,
+        last_visitor_message.get("from"),
     )
 
     sender_name = _first_non_empty(
@@ -120,7 +137,7 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         _get_nested(visitor_obj, "displayedName"),
         _get_nested(visitor_obj, "attributes", "FIRSTNAME"),
         _get_nested(visitor_obj, "integrationAttributes", "FIRSTNAME"),
-        _get_nested(message_obj, "profile", "name"),
+        _get_nested(last_visitor_message, "profile", "name"),
     )
 
     visitor_id = _first_non_empty(
@@ -128,7 +145,6 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         visitor_obj.get("id"),
     )
 
-    audio_file = extract_audio_attachment(payload)
     input_modality = "text"
     audio_url = None
     audio_mime_type = None
@@ -138,6 +154,8 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         audio_url = audio_file.get("link")
         audio_mime_type = audio_file.get("mimeType")
         audio_filename = audio_file.get("name")
+        if is_placeholder_audio_text(text, audio_filename):
+            text = ""
 
     if not text.strip() and audio_file and not is_audio_attachment(audio_file):
         text = _first_non_empty(audio_file.get("name")) or text
@@ -155,7 +173,6 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
             payload.get("messageId"),
             payload.get("message_id"),
             last_visitor_message.get("id"),
-            message_obj.get("id") if isinstance(message_obj, dict) else None,
         ),
         conversation_id=_first_non_empty(
             payload.get("conversationId"),

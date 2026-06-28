@@ -88,12 +88,17 @@ async def root():
     }
 
 
+AGENT_VERSION = "openai-db-context-v2"
+
+
 @app.get("/api/health")
 async def health():
     settings = get_settings()
     openai_key = settings.openai_api_key
     return {
         "ok": True,
+        "agent_version": AGENT_VERSION,
+        "agent_mode": "openai_with_db_context",
         "openai_configured": bool(openai_key),
         "openai_key_format_ok": openai_key.startswith(("sk-", "sk-proj-")),
         "openai_key_length": len(openai_key),
@@ -138,6 +143,9 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "has_visitor_id": bool(incoming.visitor_id),
         "has_sender_phone": bool(incoming.sender_phone),
         "has_text": bool(incoming.text),
+        "input_modality": incoming.input_modality,
+        "has_audio_url": bool(incoming.audio_url),
+        "text_preview": incoming.text[:120] if incoming.text else None,
     })
 
     if not incoming.text.strip() and not incoming.audio_url:
@@ -164,6 +172,13 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
     customer_context = find_customer_profile_by_phone(incoming.sender_phone)
     agent_result = await process_incoming_message(incoming, customer_context)
     send_result = await send_brevo_reply(incoming, agent_result)
+
+    print("[brevo.webhook] agent_result", {
+        "intent": agent_result.intent,
+        "reply_preview": agent_result.reply_text[:160],
+        "input_modality": incoming.input_modality,
+        "transcription_failed": incoming.transcription_failed,
+    })
 
     try:
         insert_agent_response(

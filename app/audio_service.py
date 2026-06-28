@@ -37,9 +37,7 @@ def is_placeholder_audio_text(text: str | None, filename: str | None = None) -> 
 
 
 def should_transcribe_incoming(text: str | None, audio_url: str | None, filename: str | None = None) -> bool:
-    if not audio_url:
-        return False
-    return is_placeholder_audio_text(text, filename)
+    return bool(audio_url)
 
 
 def is_audio_attachment(file_obj: dict[str, Any] | None) -> bool:
@@ -81,11 +79,17 @@ def extract_audio_attachment(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 async def download_audio_file(url: str) -> tuple[bytes, str]:
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+    headers = {
+        "User-Agent": "NewStoreAgent/1.0",
+        "Accept": "audio/*,*/*",
+    }
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True, headers=headers) as client:
         response = await client.get(url)
         response.raise_for_status()
 
     content_type = (response.headers.get("content-type") or "audio/ogg").split(";")[0].strip()
+    if not content_type.startswith("audio/") and content_type not in AUDIO_MIME_TYPES:
+        content_type = "audio/ogg"
     return response.content, content_type
 
 
@@ -125,6 +129,10 @@ async def transcribe_audio_url(url: str, filename: str | None = None) -> str:
                 model=settings.openai_transcribe_model,
                 file=audio_file,
                 language="pt",
+                prompt=(
+                    "Transcrição de mensagem de WhatsApp em português do Brasil sobre "
+                    "sorteios New Store, saldo, cartão presente, relógios e simulação de compra."
+                ),
             )
     except APIStatusError as exc:
         raise RuntimeError(f"openai_transcription_failed_{exc.status_code}") from exc
@@ -137,7 +145,7 @@ async def transcribe_audio_url(url: str, filename: str | None = None) -> str:
     return text
 
 
-def synthesize_reply_audio(text: str) -> bytes:
+def synthesize_reply_audio(text: str) -> tuple[bytes, str, str]:
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("openai_api_key_missing")
@@ -146,15 +154,18 @@ def synthesize_reply_audio(text: str) -> bytes:
     if not trimmed:
         raise RuntimeError("empty_tts_text")
 
+    response_format = settings.openai_tts_format
     client = OpenAI(api_key=settings.openai_api_key)
     try:
         response = client.audio.speech.create(
             model=settings.openai_tts_model,
             voice=settings.openai_tts_voice,
             input=trimmed[:4096],
-            response_format="mp3",
+            response_format=response_format,
         )
     except APIStatusError as exc:
         raise RuntimeError(f"openai_tts_failed_{exc.status_code}") from exc
 
-    return response.content
+    if response_format == "opus":
+        return response.content, "audio/ogg; codecs=opus", "resposta.ogg"
+    return response.content, "audio/mpeg", "resposta.mp3"

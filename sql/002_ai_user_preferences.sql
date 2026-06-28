@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS public.ai_user_preferences (
   id bigserial PRIMARY KEY,
   user_id bigint NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   preferred_name text NULL,
-  ask_preferred_name boolean NOT NULL DEFAULT true,
+  ask_preferred_name boolean NOT NULL DEFAULT false,
   last_preferred_name_prompt_at timestamptz NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),

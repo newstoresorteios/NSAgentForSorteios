@@ -36,7 +36,6 @@ from .site_knowledge import (
     THIRD_PARTY_REFUSAL,
     NS_SALES_WHATSAPP,
     build_rules_reply,
-    build_simulation_reply as build_simulation_text,
 )
 
 
@@ -78,12 +77,19 @@ def _build_last_participation_reply(last_payment: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def _personalized_suffix(user_id: int, preferences: dict[str, Any], phone: str | None = None) -> str:
+def _personalized_suffix(
+    user_id: int,
+    preferences: dict[str, Any],
+    phone: str | None = None,
+    display_name: str | None = None,
+) -> str:
     if get_vip_profile(phone):
+        return ""
+    if (display_name or "").strip():
         return ""
     if preferences.get("preferred_name"):
         return ""
-    if not preferences.get("ask_preferred_name", True):
+    if not preferences.get("ask_preferred_name", False):
         return ""
     mark_preferred_name_prompted(user_id)
     return " Prefere ser chamado por outro nome? É só me dizer."
@@ -190,7 +196,9 @@ def build_balance_reply(message: IncomingMessage) -> AgentResult:
     if last_participation:
         parts.append(last_participation)
 
-    parts.append(_personalized_suffix(user_id, preferences, message.sender_phone).strip())
+    parts.append(
+        _personalized_suffix(user_id, preferences, message.sender_phone, display_name).strip()
+    )
 
     return AgentResult(
         reply_text=" ".join(part for part in parts if part),
@@ -227,7 +235,7 @@ def build_coupon_code_reply(message: IncomingMessage) -> AgentResult:
     user_id = int(account["user_id"])
     preferences = get_user_preferences(user_id)
     display_name = resolve_display_name(account.get("name"), preferences)
-    suffix = _personalized_suffix(user_id, preferences, message.sender_phone)
+    suffix = _personalized_suffix(user_id, preferences, message.sender_phone, display_name)
     return AgentResult(
         reply_text=(
             f"{_greeting(display_name)} Seu Cartão Presente: código *{code}* | saldo {balance}. "
@@ -239,37 +247,71 @@ def build_coupon_code_reply(message: IncomingMessage) -> AgentResult:
 
 
 def build_simulation_reply(message: IncomingMessage) -> AgentResult:
+    from .simulation import (
+        build_purchase_simulation_reply,
+        detect_payment_method,
+        parse_all_brl_cents,
+        parse_product_price_cents,
+    )
+
     account = find_coupon_balance_by_phone(message.sender_phone, message.text)
     if account.get("error") == "third_party_inquiry":
         return _third_party_reply()
 
-    amount_match = re.search(r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?|\d+)", message.text or "")
     if account.get("found"):
+        user_id = int(account["user_id"])
+        preferences = get_user_preferences(user_id)
+        display_name = resolve_display_name(account.get("name"), preferences)
         credit_cents = int(account.get("coupon_value_cents") or 0)
-    elif amount_match:
-        raw = amount_match.group(1).replace(".", "").replace(",", ".")
-        try:
-            credit_cents = int(float(raw) * 100)
-        except ValueError:
-            credit_cents = 0
     else:
+        user_id = None
+        preferences = {}
+        display_name = None
+        credit_cents = 0
+        amounts = parse_all_brl_cents(message.text)
+        if len(amounts) == 1:
+            credit_cents = amounts[0]
+        elif len(amounts) >= 2:
+            credit_cents = min(amounts)
+
+    product_cents = parse_product_price_cents(message.text, credit_cents=credit_cents if credit_cents else None)
+    payment_method = detect_payment_method(message.text)
+
+    if not account.get("found") and credit_cents <= 0 and product_cents is None:
         return AgentResult(
             reply_text=(
-                f"Para simular o uso do Cartão Presente, informe um valor (ex.: R$ 800) ou cadastre seu telefone em {SITE_URL} "
-                "para eu usar seu saldo real."
+                f"Para simular o uso do Cartão Presente, informe o valor do relógio (ex.: de R$ 10 mil) "
+                f"ou cadastre seu telefone em {SITE_URL} para eu usar seu saldo real."
             ),
             intent="simulation",
             handoff_required=False,
         )
 
-    reply_text = build_simulation_text(credit_cents)
+    if not account.get("found") and credit_cents <= 0 and product_cents is not None:
+        return AgentResult(
+            reply_text=(
+                f"Consigo simular o desconto no produto de {format_cents_to_brl(product_cents)}, "
+                f"mas preciso do seu saldo. Cadastre seu telefone em {SITE_URL} ou informe quanto quer aplicar "
+                f"(ex.: R$ 800 de Cartão Presente)."
+            ),
+            intent="simulation",
+            handoff_required=False,
+        )
+
+    reply_text = build_purchase_simulation_reply(
+        credit_cents=credit_cents,
+        product_cents=product_cents,
+        payment_method=payment_method,
+        display_name=display_name,
+    )
+
     vip = get_vip_profile(message.sender_phone)
     if vip:
         nickname = pick_vip_nickname(vip, message.text)
         reply_text = build_vip_general_reply(
             vip,
             nickname,
-            f"Simulação do cartão: {reply_text}",
+            reply_text,
         )
 
     return AgentResult(

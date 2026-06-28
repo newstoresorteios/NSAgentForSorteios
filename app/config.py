@@ -29,9 +29,11 @@ class Settings(BaseSettings):
     openai_transcribe_model: str = Field(default="whisper-1", alias="OPENAI_TRANSCRIBE_MODEL")
     openai_tts_model: str = Field(default="gpt-4o-mini-tts", alias="OPENAI_TTS_MODEL")
     openai_tts_voice: str = Field(default="nova", alias="OPENAI_TTS_VOICE")
+    openai_tts_format: str = Field(default="opus", alias="OPENAI_TTS_FORMAT")
 
     audio_inbound_enabled: bool = Field(default=True, alias="AUDIO_INBOUND_ENABLED")
     audio_outbound_enabled: bool = Field(default=True, alias="AUDIO_OUTBOUND_ENABLED")
+    brevo_send_audio_as_attachment: bool = Field(default=True, alias="BREVO_SEND_AUDIO_AS_ATTACHMENT")
     audio_public_base_url: str = Field(default="", alias="AUDIO_PUBLIC_BASE_URL")
 
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
