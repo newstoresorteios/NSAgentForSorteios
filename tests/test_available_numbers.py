@@ -26,6 +26,28 @@ def test_collect_taken_numbers_only_approved():
     assert collect_taken_numbers(rows) == {"1", "2"}
 
 
+def test_resolve_available_numbers_with_pool():
+    from app.repository import resolve_available_numbers
+
+    draw = {"numbers": ["1", "2", "3", "4"]}
+    rows = [
+        {"numbers": ["2"], "status": "approved"},
+        {"numbers": ["3"], "status": "pending"},
+    ]
+    assert resolve_available_numbers(draw, rows) == ["1", "3", "4"]
+
+
+def test_resolve_available_numbers_without_pool_uses_non_approved():
+    from app.repository import resolve_available_numbers
+
+    draw: dict = {}
+    rows = [
+        {"numbers": ["2"], "status": "approved"},
+        {"numbers": ["3", "5"], "status": "pending"},
+    ]
+    assert resolve_available_numbers(draw, rows) == ["3", "5"]
+
+
 def test_parse_draw_number_pool_from_total():
     draw = {"total_numbers": 5, "min_number": 1}
     assert parse_draw_number_pool(draw) == ["1", "2", "3", "4", "5"]

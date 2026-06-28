@@ -114,15 +114,17 @@ def expand_payment_number_list(raw: Any) -> list[str]:
 
 
 def parse_draw_number_pool(draw: dict[str, Any]) -> list[str]:
-    raw_numbers = draw.get("numbers")
-    if isinstance(raw_numbers, list) and raw_numbers:
-        return expand_payment_number_list(raw_numbers)
+    for key in ("numbers", "number_pool", "all_numbers", "draw_numbers"):
+        raw_numbers = draw.get(key)
+        if isinstance(raw_numbers, list) and raw_numbers:
+            return expand_payment_number_list(raw_numbers)
 
     total = (
         draw.get("total_numbers")
         or draw.get("total_spots")
         or draw.get("quota_count")
         or draw.get("max_number")
+        or draw.get("number_count")
     )
     start = draw.get("min_number") or draw.get("start_number") or 1
     if total:
@@ -151,6 +153,30 @@ def collect_taken_numbers(payment_rows: list[dict[str, Any]]) -> set[str]:
             continue
         taken.update(expand_payment_number_list(row.get("numbers")))
     return taken
+
+
+def resolve_available_numbers(draw: dict[str, Any], payment_rows: list[dict[str, Any]]) -> list[str]:
+    pool = parse_draw_number_pool(draw)
+    taken = collect_taken_numbers(payment_rows)
+    if pool:
+        return compute_available_numbers(pool, taken)
+
+    free_numbers: set[str] = set()
+    for row in payment_rows:
+        if (row.get("status") or "").lower() == "approved":
+            continue
+        free_numbers.update(expand_payment_number_list(row.get("numbers")))
+    try:
+        return sorted(free_numbers, key=lambda value: int(value))
+    except ValueError:
+        return sorted(free_numbers)
+
+
+def _normalize_draw_row(row: dict[str, Any]) -> dict[str, Any]:
+    data = dict(row)
+    if not data.get("title"):
+        data["title"] = data.get("name") or data.get("draw_name")
+    return data
 
 
 def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
@@ -357,28 +383,20 @@ def find_draw_app_config(draw_id: int) -> dict[str, Any]:
 
 
 def find_current_raffle() -> dict[str, Any]:
-    draw = find_open_draw()
-    if draw.get("error") or draw.get("lookup_error") or not draw.get("found"):
-        return draw
-
-    draw_id = int(draw["id"])
-    config = find_draw_app_config(draw_id)
-
-    prize_name = draw.get("prize_name")
-    quota_price_brl = None
-    if config.get("found"):
-        prize_name = config.get("prize_name") or prize_name
-        quota_price_brl = config.get("price_brl")
+    context = find_open_draw_context()
+    if not context.get("found"):
+        return context
 
     return {
         "found": True,
-        "id": draw_id,
-        "draw_id": draw_id,
-        "title": draw.get("title"),
-        "prize_name": prize_name,
-        "status": draw.get("status"),
-        "winning_number": draw.get("winning_number"),
-        "quota_price_brl": quota_price_brl,
+        "id": context["draw_id"],
+        "draw_id": context["draw_id"],
+        "title": context.get("title"),
+        "prize_name": context.get("prize_name"),
+        "status": context.get("status"),
+        "quota_price_brl": context.get("price_brl"),
+        "available_numbers": context.get("available_numbers") or [],
+        "available_count": len(context.get("available_numbers") or []),
     }
 
 
@@ -389,43 +407,44 @@ def find_open_draw() -> dict[str, Any]:
 
     queries = (
         """
-        SELECT
-          id,
-          title,
-          status,
-          numbers,
-          total_numbers,
-          total_spots,
-          quota_count,
-          min_number,
-          start_number,
-          max_number
-        FROM public.draws
-        WHERE lower(coalesce(status, '')) IN ('open', 'active', 'available', 'aberto', 'aberta')
+        SELECT *
+        FROM public.draw
+        WHERE lower(trim(coalesce(status, ''))) = 'open'
         ORDER BY id DESC
         LIMIT 1
         """,
         """
-        SELECT
-          id,
-          title,
-          status,
-          numbers,
-          total_numbers,
-          total_spots,
-          quota_count,
-          min_number,
-          start_number,
-          max_number
-        FROM public.draws
-        WHERE is_current = true
+        SELECT id, title, status, numbers, total_numbers, total_spots, quota_count, min_number, start_number, max_number
+        FROM public.draw
+        WHERE lower(trim(coalesce(status, ''))) = 'open'
         ORDER BY id DESC
         LIMIT 1
         """,
         """
-        SELECT id, title, status
+        SELECT *
         FROM public.draws
-        WHERE lower(coalesce(status, '')) IN ('open', 'active', 'available', 'aberto', 'aberta')
+        WHERE lower(trim(coalesce(status, ''))) = 'open'
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        """
+        SELECT id, title, status, numbers, total_numbers, total_spots, quota_count, min_number, start_number, max_number
+        FROM public.draws
+        WHERE lower(trim(coalesce(status, ''))) = 'open'
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        """
+        SELECT id, title, name, status
+        FROM public.draw
+        WHERE lower(trim(coalesce(status, ''))) IN ('open', 'aberto', 'active')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        """
+        SELECT id, title, name, status
+        FROM public.draws
+        WHERE lower(trim(coalesce(status, ''))) IN ('open', 'aberto', 'active')
         ORDER BY id DESC
         LIMIT 1
         """,
@@ -439,7 +458,7 @@ def find_open_draw() -> dict[str, Any]:
                     cur.execute(sql)
                     row = cur.fetchone()
                     if row:
-                        return {"found": True, **dict(row)}
+                        return {"found": True, **_normalize_draw_row(dict(row))}
         except Exception as exc:
             last_error = str(exc)[:180]
             continue
@@ -447,6 +466,42 @@ def find_open_draw() -> dict[str, Any]:
     if last_error:
         return {"found": False, "lookup_error": last_error}
     return {"found": False}
+
+
+def find_open_draw_context() -> dict[str, Any]:
+    draw = find_open_draw()
+    if draw.get("error") == "database_not_configured":
+        return {"found": False, "error": "database_not_configured"}
+    if draw.get("lookup_error"):
+        return {"found": False, "lookup_error": draw["lookup_error"]}
+    if not draw.get("found"):
+        return {"found": False, "error": "no_open_draw"}
+
+    draw_id = int(draw["id"])
+    config = find_draw_app_config(draw_id)
+    payments = find_draw_payments(draw_id)
+    if payments.get("lookup_error"):
+        return {"found": False, "lookup_error": payments["lookup_error"]}
+
+    payment_rows = payments.get("items", [])
+    pool = parse_draw_number_pool(draw)
+    available = resolve_available_numbers(draw, payment_rows)
+    taken = collect_taken_numbers(payment_rows)
+
+    prize_name = config.get("prize_name") if config.get("found") else None
+    price_brl = config.get("price_brl") if config.get("found") else None
+
+    return {
+        "found": True,
+        "draw_id": draw_id,
+        "title": draw.get("title") or _draw_label(draw_id, None),
+        "status": draw.get("status"),
+        "prize_name": prize_name,
+        "price_brl": price_brl,
+        "available_numbers": available,
+        "taken_count": len(taken),
+        "total_count": len(pool) if pool else None,
+    }
 
 
 def find_draw_payments(draw_id: int) -> dict[str, Any]:
@@ -459,11 +514,6 @@ def find_draw_payments(draw_id: int) -> dict[str, Any]:
         SELECT numbers, status
         FROM public.payments
         WHERE draw_id = %(draw_id)s
-        """,
-        """
-        SELECT numbers, status
-        FROM public.payments
-        WHERE coalesce(draw_id, raffle_id, sorteio_id) = %(draw_id)s
         """,
     )
 
@@ -485,41 +535,7 @@ def find_draw_payments(draw_id: int) -> dict[str, Any]:
 
 
 def find_available_numbers_for_open_draw() -> dict[str, Any]:
-    draw = find_open_draw()
-    if draw.get("error") == "database_not_configured":
-        return {"found": False, "error": "database_not_configured"}
-    if draw.get("lookup_error"):
-        return {"found": False, "lookup_error": draw["lookup_error"]}
-    if not draw.get("found"):
-        return {"found": False, "error": "no_open_draw"}
-
-    draw_id = int(draw["id"])
-    config = find_draw_app_config(draw_id)
-    payments = find_draw_payments(draw_id)
-    if payments.get("lookup_error"):
-        return {"found": False, "lookup_error": payments["lookup_error"]}
-
-    taken = collect_taken_numbers(payments.get("items", []))
-    pool = parse_draw_number_pool(draw)
-    if pool:
-        available = compute_available_numbers(pool, taken)
-    else:
-        available = []
-
-    prize_name = config.get("prize_name") if config.get("found") else None
-    price_brl = config.get("price_brl") if config.get("found") else None
-
-    return {
-        "found": True,
-        "draw_id": draw_id,
-        "title": draw.get("title") or _draw_label(draw_id, None),
-        "status": draw.get("status"),
-        "prize_name": prize_name,
-        "price_brl": price_brl,
-        "available_numbers": available,
-        "taken_count": len(taken),
-        "total_count": len(pool) if pool else None,
-    }
+    return find_open_draw_context()
 
 
 def find_last_payment_participation(user_id: int) -> dict[str, Any]:

@@ -95,6 +95,11 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
             safety_reason=blocked_reason,
         )
 
+    if detect_available_numbers_inquiry(message.text):
+        return build_available_numbers_reply(message)
+    if detect_current_raffle_inquiry(message.text):
+        return build_current_raffle_reply(message)
+
     if detect_third_party_account_inquiry(message.text, message.sender_phone):
         return _third_party_reply()
 
@@ -109,10 +114,6 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         return build_coupon_code_reply(message)
     if detect_simulation_inquiry(message.text):
         return build_simulation_reply(message)
-    if detect_available_numbers_inquiry(message.text):
-        return build_available_numbers_reply(message)
-    if detect_current_raffle_inquiry(message.text):
-        return build_current_raffle_reply(message)
     if detect_raffle_history_inquiry(message.text):
         return build_raffle_history_reply(message)
     if detect_rules_inquiry(message.text):

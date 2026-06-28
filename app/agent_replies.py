@@ -280,15 +280,35 @@ def build_simulation_reply(message: IncomingMessage) -> AgentResult:
 
 
 def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentResult:
+    settings = get_settings()
     raffle = find_current_raffle()
     if raffle.get("lookup_error"):
-        return AgentResult(reply_text=default_safe_handoff(), intent="current_raffle", handoff_required=True)
+        return AgentResult(
+            reply_text=(
+                f"Não consegui consultar o sorteio aberto agora. "
+                f"Tente novamente em instantes ou acesse {SITE_URL}."
+            ),
+            intent="current_raffle",
+            handoff_required=False,
+            safety_reason="current_raffle_lookup_failed",
+        )
+
+    if raffle.get("error") == "database_not_configured":
+        return AgentResult(
+            reply_text=(
+                f"Consulta de sorteio indisponível no momento. "
+                f"Acompanhe a rodada aberta em {SITE_URL}."
+            ),
+            intent="current_raffle",
+            handoff_required=False,
+            safety_reason="database_not_configured",
+        )
 
     if not raffle.get("found"):
         return AgentResult(
             reply_text=(
-                f"Consulte o sorteio atual em {SITE_URL}. "
-                "Quando a rodada estiver aberta, você escolhe o número na página e acompanha pelo grupo oficial."
+                f"No momento não há sorteio com status aberto. "
+                f"Acompanhe novas rodadas em {SITE_URL}."
             ),
             intent="current_raffle",
             handoff_required=False,
@@ -297,10 +317,14 @@ def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentR
     lines = [
         f"Sorteio aberto: *{raffle.get('title') or 'Rodada aberta'}*.",
         f"Prêmio: {raffle.get('prize_name') or 'consulte o site'}.",
-        f"Status: {raffle.get('status') or 'aberto'}.",
+        f"Status: {raffle.get('status') or 'open'}.",
     ]
     if raffle.get("quota_price_brl"):
         lines.append(f"Valor do sorteio: {raffle['quota_price_brl']}.")
+    available = raffle.get("available_numbers") or []
+    if available:
+        preview = _format_available_numbers_list(available, max_chars=280)
+        lines.append(f"Números disponíveis ({len(available)}): {preview}.")
     lines.append(f"Participe em {SITE_URL}.")
     reply_text = " ".join(lines)
     if message:
@@ -309,7 +333,7 @@ def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentR
             nickname = pick_vip_nickname(vip, message.text)
             reply_text = build_vip_general_reply(vip, nickname, reply_text)
     return AgentResult(
-        reply_text=reply_text,
+        reply_text=reply_text[: settings.max_reply_chars],
         intent="current_raffle",
         handoff_required=False,
     )
@@ -344,16 +368,22 @@ def build_available_numbers_reply(message: IncomingMessage) -> AgentResult:
 
     if result.get("error") == "database_not_configured":
         return AgentResult(
-            reply_text=default_safe_handoff(),
+            reply_text=(
+                f"Consulta de números indisponível no momento. "
+                f"Veja a grade em {SITE_URL}."
+            ),
             intent="available_numbers",
-            handoff_required=True,
+            handoff_required=False,
             safety_reason="database_not_configured",
         )
     if result.get("lookup_error"):
         return AgentResult(
-            reply_text=default_safe_handoff(),
+            reply_text=(
+                f"Não consegui listar os números agora. "
+                f"Consulte a grade disponível em {SITE_URL}."
+            ),
             intent="available_numbers",
-            handoff_required=True,
+            handoff_required=False,
             safety_reason="available_numbers_lookup_failed",
         )
     if result.get("error") == "no_open_draw":
