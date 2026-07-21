@@ -13,6 +13,7 @@ from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
 from app.db import insert_inbound_message, insert_agent_response
 from app.config import get_settings
+from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
 
@@ -119,6 +120,30 @@ async def health():
         "audio_outbound_enabled": settings.audio_outbound_enabled,
         "supabase_storage_configured": bool(settings.supabase_url and settings.supabase_service_key),
         "dry_run": settings.dry_run,
+        "tray_adapter_configured": bool(settings.tray_adapter_url and settings.tray_adapter_token),
+        "tray_tools_enabled": bool(settings.tray_adapter_url and settings.tray_adapter_token),
+    }
+
+
+@app.get("/api/integrations/tray/test", dependencies=[Depends(verify_admin_token)])
+async def test_tray_integration():
+    try:
+        await TrayAdapterClient().search_products(limit=1)
+    except TrayAdapterError as exc:
+        print("[tray.integration] diagnostic_failed", {"status_code": exc.status_code})
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "tray_adapter_connected": False,
+                "products_accessible": False,
+                "error": "tray_adapter_unavailable",
+            },
+        )
+    return {
+        "success": True,
+        "tray_adapter_connected": True,
+        "products_accessible": True,
     }
 
 

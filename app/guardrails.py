@@ -138,6 +138,25 @@ def detect_simulation_inquiry(text: str) -> bool:
     return detect_purchase_simulation_inquiry(text)
 
 
+def detect_commerce_inquiry(text: str | None) -> bool:
+    normalized = (text or "").lower()
+    if not normalized:
+        return False
+    phrases = (
+        "tem estoque", "tem produto", "vocês têm", "voces tem", "vocês tem",
+        "vende", "quanto custa", "qual o preço", "qual o preco", "preço",
+        "preco", "quanto fica", "disponibilidade", "referência", "referencia", "sku", "ean",
+        "pix", "parcelamento", "parcelar", "promoção", "promocao",
+        "cupom comercial", "produto", "produtos", "relógio", "relogio",
+        "marca", "modelo",
+    )
+    unicode_phrases = (
+        "voc\u00eas t\u00eam", "voc\u00eas tem", "qual o pre\u00e7o", "pre\u00e7o",
+        "disponibilidade", "refer\u00eancia", "promo\u00e7\u00e3o", "rel\u00f3gio",
+    )
+    return any(phrase in normalized for phrase in phrases + unicode_phrases)
+
+
 def detect_current_raffle_inquiry(text: str) -> bool:
     normalized = (text or "").lower()
     return any(keyword in normalized for keyword in CURRENT_RAFFLE_KEYWORDS)

@@ -19,6 +19,7 @@ INTENT_TOPIC_LABELS: dict[str, str] = {
     "rules_inquiry": "regras do sorteio",
     "preferred_name_update": "preferência de nome",
     "human_support": "atendimento humano",
+    "commerce": "catálogo e produtos",
     "general_support": "dúvida geral",
 }
 

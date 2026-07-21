@@ -5,6 +5,7 @@ from typing import Any
 
 from .guardrails import (
     detect_balance_inquiry,
+    detect_commerce_inquiry,
     detect_coupon_code_inquiry,
     detect_current_raffle_inquiry,
     detect_human_support_request,
@@ -40,6 +41,7 @@ INTENT_PRIORITY = (
     "current_raffle",
     "rules",
     "human_support",
+    "commerce",
     "general",
 )
 
@@ -47,8 +49,14 @@ INTENT_PRIORITY = (
 def detect_customer_intents(text: str | None) -> list[str]:
     normalized = text or ""
     intents: list[str] = []
+    commerce = detect_commerce_inquiry(normalized)
 
-    if detect_simulation_inquiry(normalized):
+    # "quanto fica no Pix?" is a commercial question; retain simulation only
+    # when the customer is actually discussing personal credit/saldo.
+    has_personal_credit_signal = detect_balance_inquiry(normalized) or detect_coupon_code_inquiry(normalized) or any(
+        phrase in normalized.lower() for phrase in ("meu saldo", "meu cartao", "meu cartão", "cartão presente")
+    )
+    if detect_simulation_inquiry(normalized) and not (commerce and not has_personal_credit_signal):
         intents.append("simulation")
     if detect_balance_inquiry(normalized):
         intents.append("balance")
@@ -62,6 +70,8 @@ def detect_customer_intents(text: str | None) -> list[str]:
         intents.append("rules")
     if detect_human_support_request(normalized):
         intents.append("human_support")
+    if commerce:
+        intents.append("commerce")
     if not intents:
         intents.append("general")
     return intents
@@ -96,14 +106,19 @@ def gather_customer_facts(message: IncomingMessage, customer_context: dict[str, 
     intents = detect_customer_intents(text)
     primary_intent = _primary_intent(intents)
 
-    account = find_coupon_balance_by_phone(message.sender_phone, text)
+    local_account_intents = {"balance", "coupon_code", "simulation", "raffle_history"}
+    account = find_coupon_balance_by_phone(message.sender_phone, text) if primary_intent in local_account_intents else {"found": False}
     facts: dict[str, Any] = {
         "primary_intent": primary_intent,
         "intents": intents,
         "input_modality": message.input_modality,
         "transcribed_from_audio": message.input_modality == "audio",
-        "account": _serialize_account(account),
+        "account": _serialize_account(account) if primary_intent in local_account_intents else {"found": False},
     }
+
+    if primary_intent in {"commerce", "general"} and customer_context.get("found"):
+        if customer_context.get("name"):
+            facts["display_name"] = customer_context["name"]
 
     if account.get("found"):
         user_id = int(account["user_id"])

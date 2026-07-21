@@ -12,8 +12,10 @@ from .agent_replies import (
 from .config import get_settings
 from .context_builder import (
     build_template_fallback,
+    detect_customer_intents,
     format_facts_for_prompt,
     gather_customer_facts,
+    _primary_intent,
 )
 from .guardrails import (
     detect_available_numbers_inquiry,
@@ -48,7 +50,15 @@ Regras obrigatórias:
 - Para produtos, pre\u00e7os, estoque, clientes e cupons, use as ferramentas de consulta quando dispon\u00edveis.
 - Nunca invente pre\u00e7o, estoque, parcelamento ou validade de cupom. `promotional_price` nulo n\u00e3o \u00e9 promo\u00e7\u00e3o.
 - Para estoque, considere todos os campos retornados, n\u00e3o apenas `stock > 0`.
+- O banco local \u00e9 a fonte oficial para saldo, Cart\u00e3o Presente pessoal, sorteios, participa\u00e7\u00f5es, n\u00fameros e hist\u00f3rico.
+- O TrayAdapter \u00e9 a fonte oficial para cat\u00e1logo, produtos, marcas, pre\u00e7os, estoque, EAN, refer\u00eancia e condi\u00e7\u00f5es comerciais.
+- Para qualquer informa\u00e7\u00e3o comercial atual, use as tools do TrayAdapter; nunca use exemplos do site como pre\u00e7o ou estoque atual.
 """.strip()
+
+
+def _needs_local_account_lookup(message: IncomingMessage) -> bool:
+    primary = _primary_intent(detect_customer_intents(message.text))
+    return primary in {"balance", "coupon_code", "simulation", "raffle_history"}
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -159,7 +169,7 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
     if detect_third_party_account_inquiry(message.text, message.sender_phone):
         return _third_party_reply()
 
-    account = find_coupon_balance_by_phone(message.sender_phone, message.text)
+    account = find_coupon_balance_by_phone(message.sender_phone, message.text) if _needs_local_account_lookup(message) else {"found": False}
     preferred_reply = build_preferred_name_reply(message, account)
     if preferred_reply:
         return preferred_reply
@@ -243,7 +253,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         return build_available_numbers_reply(message)
     if detect_third_party_account_inquiry(message.text, message.sender_phone):
         return _third_party_reply()
-    account = find_coupon_balance_by_phone(message.sender_phone, message.text)
+    account = find_coupon_balance_by_phone(message.sender_phone, message.text) if _needs_local_account_lookup(message) else {"found": False}
     preferred_reply = build_preferred_name_reply(message, account)
     if preferred_reply:
         return preferred_reply
