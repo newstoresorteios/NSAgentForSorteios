@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.config import get_settings
 from app.models import AgentResult, IncomingMessage
-from app.openai_agent import generate_agent_reply
+from app.openai_agent import generate_agent_reply_async
 from app.user_preferences import enrich_customer_context, learn_from_incoming_message, record_interaction_memory
 from app.audio_service import should_transcribe_incoming
 
@@ -82,7 +82,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         )
         customer_context = enrich_customer_context(customer_context)
 
-    result = generate_agent_reply(incoming, customer_context)
+    result = await generate_agent_reply_async(incoming, customer_context)
 
     if customer_context.get("found") and user_id:
         record_interaction_memory(int(user_id), result.intent, incoming.text)

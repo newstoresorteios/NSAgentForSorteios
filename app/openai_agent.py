@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+import json
 
-from openai import APIStatusError, OpenAI
+from openai import APIStatusError, AsyncOpenAI, OpenAI
 from .agent_replies import (
     build_available_numbers_reply,
     build_preferred_name_reply,
@@ -23,6 +24,7 @@ from .models import IncomingMessage, AgentResult
 from .repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
 from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
 from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
+from .tray_tools import TOOL_SCHEMAS, execute_tool
 
 
 SYSTEM_INSTRUCTIONS = f"""
@@ -43,6 +45,9 @@ Regras obrigatórias:
 - Use a memória do cliente quando disponível; não repita perguntas sobre nome ou preferências já registradas.
 - Adapte tom e tamanho da resposta ao estilo preferido do cliente.
 - Se a mensagem veio de áudio transcrito, responda naturalmente ao conteúdo falado.
+- Para produtos, pre\u00e7os, estoque, clientes e cupons, use as ferramentas de consulta quando dispon\u00edveis.
+- Nunca invente pre\u00e7o, estoque, parcelamento ou validade de cupom. `promotional_price` nulo n\u00e3o \u00e9 promo\u00e7\u00e3o.
+- Para estoque, considere todos os campos retornados, n\u00e3o apenas `stock > 0`.
 """.strip()
 
 
@@ -189,3 +194,61 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         "transcription_failed": message.transcription_failed,
     })
     return generate_openai_reply(message, customer_context, facts)
+
+
+async def generate_openai_reply_async(message: IncomingMessage, customer_context: dict, facts: dict) -> AgentResult:
+    settings = get_settings()
+    if not settings.openai_api_key:
+        return generate_openai_reply(message, customer_context, facts)
+
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    messages: list[dict] = [
+        {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+        {"role": "user", "content": build_agent_input(message, customer_context, facts)},
+    ]
+    tools = TOOL_SCHEMAS if settings.tray_adapter_url and settings.tray_adapter_token else None
+    try:
+        for _ in range(3):
+            kwargs = {"model": settings.openai_model, "messages": messages, "temperature": 0.3}
+            if tools:
+                kwargs.update({"tools": tools, "tool_choice": "auto"})
+            response = await client.chat.completions.create(**kwargs)
+            choice = response.choices[0] if response.choices else None
+            assistant = choice.message if choice else None
+            tool_calls = getattr(assistant, "tool_calls", None) if assistant else None
+            if not tool_calls:
+                reply = _truncate(
+                    (getattr(assistant, "content", None) if assistant else None)
+                    or build_template_fallback(message, facts)
+                    or default_safe_handoff(), settings.max_reply_chars,
+                )
+                return AgentResult(reply_text=reply, intent=str(facts.get("primary_intent") or "general_support"))
+            messages.append({"role": "assistant", "content": getattr(assistant, "content", None), "tool_calls": [call.model_dump() for call in tool_calls]})
+            for call in tool_calls:
+                result = await execute_tool(call.function.name, json.loads(call.function.arguments or "{}"))
+                if "error" in result:
+                    return AgentResult(reply_text="N\u00e3o consegui consultar o sistema da loja neste momento.", intent="store_lookup", safety_reason="tray_adapter_unavailable")
+                messages.append({"role": "tool", "tool_call_id": call.id, "name": call.function.name, "content": json.dumps(result, ensure_ascii=False)})
+        return AgentResult(reply_text="NÃ£o consegui concluir a consulta agora. Pode tentar novamente?", intent="store_lookup", safety_reason="tool_loop_limit")
+    except (APIStatusError, json.JSONDecodeError, ValueError) as exc:
+        print("[openai.agent] tools_request_failed", {"error_type": type(exc).__name__, "message": _sanitize_log_message(str(exc))})
+        return AgentResult(reply_text=default_safe_handoff(), intent="store_lookup", safety_reason="tools_request_failed")
+
+
+async def generate_agent_reply_async(message: IncomingMessage, customer_context: dict) -> AgentResult:
+    blocked_reason = detect_blocked_request(message.text)
+    if blocked_reason:
+        return AgentResult(reply_text=default_safe_handoff(), intent="handoff", handoff_required=True, safety_reason=blocked_reason)
+    if detect_available_numbers_inquiry(message.text):
+        return build_available_numbers_reply(message)
+    if detect_third_party_account_inquiry(message.text, message.sender_phone):
+        return _third_party_reply()
+    account = find_coupon_balance_by_phone(message.sender_phone, message.text)
+    preferred_reply = build_preferred_name_reply(message, account)
+    if preferred_reply:
+        return preferred_reply
+    if message.input_modality == "audio" and (message.transcription_failed or not (message.text or "").strip()):
+        return generate_agent_reply(message, customer_context)
+    facts = gather_customer_facts(message, customer_context)
+    print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})
+    return await generate_openai_reply_async(message, customer_context, facts)

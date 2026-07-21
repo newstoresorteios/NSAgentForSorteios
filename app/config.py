@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     openai_tts_voice: str = Field(default="nova", alias="OPENAI_TTS_VOICE")
     openai_tts_format: str = Field(default="opus", alias="OPENAI_TTS_FORMAT")
 
+    tray_adapter_url: str = Field(default="", alias="TRAY_ADAPTER_URL")
+    tray_adapter_token: str = Field(default="", alias="TRAY_ADAPTER_TOKEN")
+
     audio_inbound_enabled: bool = Field(default=True, alias="AUDIO_INBOUND_ENABLED")
     audio_outbound_enabled: bool = Field(default=True, alias="AUDIO_OUTBOUND_ENABLED")
     brevo_send_audio_as_attachment: bool = Field(default=True, alias="BREVO_SEND_AUDIO_AS_ATTACHMENT")
@@ -54,7 +57,10 @@ class Settings(BaseSettings):
 
     max_reply_chars: int = Field(default=900, alias="MAX_REPLY_CHARS")
 
-    @field_validator("openai_api_key", "admin_api_token", "brevo_webhook_secret", "brevo_api_key", mode="before")
+    @field_validator(
+        "openai_api_key", "admin_api_token", "brevo_webhook_secret", "brevo_api_key",
+        "tray_adapter_token", mode="before"
+    )
     @classmethod
     def normalize_secret(cls, value: object) -> object:
         if isinstance(value, str):
