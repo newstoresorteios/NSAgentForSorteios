@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from .tray_adapter_client import TrayAdapterClient, TrayAdapterError
@@ -65,7 +66,7 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
     return {"products": []}
 
 
-async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
+async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
     client = client or TrayAdapterClient()
     try:
         if name == "search_products":
@@ -86,3 +87,15 @@ async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapter
     except TrayAdapterError as exc:
         print("[tray.tool] request_failed", {"tool": name, "status_code": exc.status_code})
         return {"error": "Não consegui consultar o sistema da loja neste momento."}
+async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        result = await _execute_tool(name, arguments, client)
+        ok = "error" not in result
+        print("[tray.tool] executed", {"tool": name, "ok": ok, "elapsed_ms": round((time.perf_counter() - started) * 1000)})
+        if not ok:
+            return {"error": "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."}
+        return result
+    except Exception as exc:
+        print("[tray.tool] executed", {"tool": name, "ok": False, "elapsed_ms": round((time.perf_counter() - started) * 1000), "error_type": type(exc).__name__})
+        return {"error": "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."}

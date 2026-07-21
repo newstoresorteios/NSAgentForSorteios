@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import json
 
-from openai import APIStatusError, AsyncOpenAI, OpenAI
+from openai import APIError, AsyncOpenAI, OpenAI
 from .agent_replies import (
     build_available_numbers_reply,
     build_preferred_name_reply,
@@ -54,6 +54,9 @@ Regras obrigatórias:
 - Para qualquer informa\u00e7\u00e3o comercial atual, use as tools do TrayAdapter; nunca use exemplos do site como pre\u00e7o ou estoque atual.
 """.strip()
 
+STORE_LOOKUP_UNAVAILABLE = "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."
+GENERAL_GREETING_FALLBACK = "Ol\u00e1! Como posso ajudar?"
+
 
 def _preferred_name_reply_if_requested(message: IncomingMessage, facts: dict) -> AgentResult | None:
     if not detect_preferred_name_update(message.text):
@@ -74,6 +77,17 @@ def _truncate(text: str, max_chars: int) -> str:
 def _sanitize_log_message(text: str) -> str:
     redacted = re.sub(r"sk-(?:proj-)?[^\s'\"]+", "sk-***", text or "")
     return redacted[:300]
+
+
+def _non_handoff_fallback(message: IncomingMessage, facts: dict) -> str:
+    fallback = build_template_fallback(message, facts)
+    if fallback:
+        return fallback
+    if facts.get("primary_intent") == "commerce":
+        return STORE_LOOKUP_UNAVAILABLE
+    if facts.get("primary_intent") == "general":
+        return GENERAL_GREETING_FALLBACK
+    return "N\u00e3o consegui concluir a consulta neste momento. Tente novamente em instantes."
 
 
 def build_agent_input(message: IncomingMessage, customer_context: dict, facts: dict) -> str:
@@ -109,12 +123,11 @@ def generate_openai_reply(
 ) -> AgentResult:
     settings = get_settings()
     if not settings.openai_api_key:
-        fallback = build_template_fallback(message, facts)
         return AgentResult(
-            reply_text=fallback or default_safe_handoff(),
+            reply_text=_non_handoff_fallback(message, facts),
             intent=str(facts.get("primary_intent") or "general_support"),
-            handoff_required=fallback is None,
-            safety_reason=None if fallback else "openai_api_key_missing",
+            handoff_required=False,
+            safety_reason="openai_api_key_missing",
         )
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -128,25 +141,24 @@ def generate_openai_reply(
             ],
             temperature=0.3,
         )
-    except APIStatusError as exc:
+    except APIError as exc:
+        status_code = getattr(exc, "status_code", None)
         print("[openai.agent] request_failed", {
-            "status_code": exc.status_code,
+            "status_code": status_code,
             "error_type": type(exc).__name__,
             "model": settings.openai_model,
             "message": _sanitize_log_message(str(exc)),
         })
-        fallback = build_template_fallback(message, facts) or default_safe_handoff()
         return AgentResult(
-            reply_text=fallback,
+            reply_text=_non_handoff_fallback(message, facts),
             intent=str(facts.get("primary_intent") or "general_support"),
-            handoff_required=exc.status_code == 401,
-            safety_reason=f"openai_error_{exc.status_code}",
+            handoff_required=False,
+            safety_reason=f"openai_error_{status_code or type(exc).__name__}",
         )
 
     reply = _truncate(
         (response.choices[0].message.content if response.choices else None)
-        or build_template_fallback(message, facts)
-        or default_safe_handoff(),
+        or _non_handoff_fallback(message, facts),
         settings.max_reply_chars,
     )
     return AgentResult(
@@ -229,20 +241,19 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
             if not tool_calls:
                 reply = _truncate(
                     (getattr(assistant, "content", None) if assistant else None)
-                    or build_template_fallback(message, facts)
-                    or default_safe_handoff(), settings.max_reply_chars,
+                    or _non_handoff_fallback(message, facts), settings.max_reply_chars,
                 )
                 return AgentResult(reply_text=reply, intent=str(facts.get("primary_intent") or "general_support"))
             messages.append({"role": "assistant", "content": getattr(assistant, "content", None), "tool_calls": [call.model_dump() for call in tool_calls]})
             for call in tool_calls:
                 result = await execute_tool(call.function.name, json.loads(call.function.arguments or "{}"))
                 if "error" in result:
-                    return AgentResult(reply_text="N\u00e3o consegui consultar o sistema da loja neste momento.", intent="store_lookup", safety_reason="tray_adapter_unavailable")
+                    return AgentResult(reply_text=STORE_LOOKUP_UNAVAILABLE, intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tray_adapter_unavailable")
                 messages.append({"role": "tool", "tool_call_id": call.id, "name": call.function.name, "content": json.dumps(result, ensure_ascii=False)})
-        return AgentResult(reply_text="NÃ£o consegui concluir a consulta agora. Pode tentar novamente?", intent="store_lookup", safety_reason="tool_loop_limit")
-    except (APIStatusError, json.JSONDecodeError, ValueError) as exc:
+        return AgentResult(reply_text=STORE_LOOKUP_UNAVAILABLE, intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tool_loop_limit")
+    except (APIError, json.JSONDecodeError, ValueError) as exc:
         print("[openai.agent] tools_request_failed", {"error_type": type(exc).__name__, "message": _sanitize_log_message(str(exc))})
-        return AgentResult(reply_text=default_safe_handoff(), intent="store_lookup", safety_reason="tools_request_failed")
+        return AgentResult(reply_text=STORE_LOOKUP_UNAVAILABLE, intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tools_request_failed")
 
 
 async def generate_agent_reply_async(message: IncomingMessage, customer_context: dict) -> AgentResult:

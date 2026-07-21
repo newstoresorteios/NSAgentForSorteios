@@ -207,6 +207,8 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
 
     print("[brevo.webhook] agent_result", {
         "intent": agent_result.intent,
+        "handoff_required": agent_result.handoff_required,
+        "safety_reason": agent_result.safety_reason,
         "reply_preview": agent_result.reply_text[:160],
         "input_modality": incoming.input_modality,
         "transcription_failed": incoming.transcription_failed,

@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from .config import get_settings
-from .guardrails import default_safe_handoff, detect_last_participation_inquiry
+from .guardrails import detect_last_participation_inquiry
 from .models import AgentResult, IncomingMessage
 from .repository import (
     find_coupon_balance_by_phone,
@@ -37,6 +37,8 @@ from .site_knowledge import (
     NS_SALES_WHATSAPP,
     build_rules_reply,
 )
+
+LOCAL_LOOKUP_UNAVAILABLE = "N\u00e3o consegui consultar seus dados neste momento. Tente novamente em instantes."
 
 
 def _greeting(display_name: str | None) -> str:
@@ -153,17 +155,17 @@ def build_balance_reply(message: IncomingMessage) -> AgentResult:
 
     if account.get("error") == "database_not_configured":
         return AgentResult(
-            reply_text=default_safe_handoff(),
+            reply_text=LOCAL_LOOKUP_UNAVAILABLE,
             intent="balance_inquiry",
-            handoff_required=True,
+            handoff_required=False,
             safety_reason="database_not_configured",
         )
 
     if account.get("lookup_error"):
         return AgentResult(
-            reply_text=default_safe_handoff(),
+            reply_text=LOCAL_LOOKUP_UNAVAILABLE,
             intent="balance_inquiry",
-            handoff_required=True,
+            handoff_required=False,
             safety_reason="balance_lookup_failed",
         )
 
@@ -219,7 +221,7 @@ def build_coupon_code_reply(message: IncomingMessage) -> AgentResult:
     if not account.get("found"):
         return AgentResult(reply_text=REGISTER_PHONE_MESSAGE, intent="coupon_code", handoff_required=False)
     if account.get("lookup_error"):
-        return AgentResult(reply_text=default_safe_handoff(), intent="coupon_code", handoff_required=True)
+        return AgentResult(reply_text=LOCAL_LOOKUP_UNAVAILABLE, intent="coupon_code", handoff_required=False, safety_reason="coupon_lookup_failed")
 
     code = account.get("coupon_code") or "indisponível"
     balance = account.get("balance_brl") or format_cents_to_brl(0)
@@ -501,7 +503,7 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
         )
 
     if history.get("lookup_error") and last_payment.get("lookup_error"):
-        return AgentResult(reply_text=default_safe_handoff(), intent="raffle_history", handoff_required=True)
+        return AgentResult(reply_text=LOCAL_LOOKUP_UNAVAILABLE, intent="raffle_history", handoff_required=False, safety_reason="raffle_history_lookup_failed")
 
     if history.get("found"):
         chunks: list[str] = []
