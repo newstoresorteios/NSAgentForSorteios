@@ -144,6 +144,32 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
             return get_returning_id(row)
 
 
+def inbound_message_exists(provider: str | None, message_id: str | None) -> bool:
+    """Return whether this provider message was already recorded.
+
+    Missing IDs are intentionally never deduplicated because two identical texts
+    can be legitimate separate messages.
+    """
+    settings = get_settings()
+    if not settings.database_url or not provider or not message_id:
+        return False
+
+    ensure_tables()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM public.ai_inbound_messages
+                WHERE provider = %(provider)s
+                  AND message_id = %(message_id)s
+                LIMIT 1
+                """,
+                {"provider": provider, "message_id": message_id},
+            )
+            return cur.fetchone() is not None
+
+
 def insert_agent_response(data: dict[str, Any]) -> int | None:
     settings = get_settings()
 

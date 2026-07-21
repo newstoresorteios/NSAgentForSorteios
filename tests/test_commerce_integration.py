@@ -56,6 +56,18 @@ async def test_third_party_balance_remains_blocked(monkeypatch):
     assert result.intent == "security_refusal"
 
 
+@pytest.mark.asyncio
+async def test_greeting_does_not_lookup_account_or_handoff(monkeypatch):
+    from app import openai_agent
+
+    monkeypatch.setattr(openai_agent, "get_settings", lambda: _settings(openai_api_key=""))
+    monkeypatch.setattr(openai_agent, "find_coupon_balance_by_phone", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("greeting must not lookup account")))
+    result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="olá"), {})
+    assert result.intent == "general"
+    assert result.handoff_required is False
+    assert result.reply_text
+
+
 def test_commerce_facts_do_not_lookup_personal_balance(monkeypatch):
     def fail_account_lookup(*args, **kwargs):
         raise AssertionError("commerce must not query local account")
@@ -81,9 +93,6 @@ async def test_async_agent_does_not_preload_account_for_commerce(monkeypatch):
         {},
     )
     assert result is not None
-    assert openai_agent._needs_local_account_lookup(
-        IncomingMessage(text="Quanto fica no Pix?")
-    ) is False
 
 
 @pytest.mark.asyncio
@@ -129,3 +138,23 @@ async def test_tray_diagnostic_uses_client_and_is_admin_protected(monkeypatch):
         "products_accessible": True,
     }
     assert calls == [{"limit": 1}]
+
+
+@pytest.mark.asyncio
+async def test_brevo_duplicate_message_is_skipped_before_processing(monkeypatch):
+    import api.index as index
+
+    monkeypatch.setattr(index, "inbound_message_exists", lambda provider, message_id: provider == "brevo" and message_id == "msg-1")
+    monkeypatch.setattr(index, "insert_inbound_message", lambda *_: (_ for _ in ()).throw(AssertionError("duplicate must not be inserted")))
+    monkeypatch.setattr(index, "process_incoming_message", lambda *_: (_ for _ in ()).throw(AssertionError("duplicate must not be processed")))
+    index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=index.app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/webhooks/brevo/whatsapp",
+                json={"id": "msg-1", "from": "5511999999999", "text": "olá"},
+            )
+    finally:
+        index.app.dependency_overrides.pop(index.verify_brevo_webhook, None)
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "skipped": True, "reason": "duplicate_message"}

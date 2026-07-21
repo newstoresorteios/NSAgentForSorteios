@@ -12,10 +12,8 @@ from .agent_replies import (
 from .config import get_settings
 from .context_builder import (
     build_template_fallback,
-    detect_customer_intents,
     format_facts_for_prompt,
     gather_customer_facts,
-    _primary_intent,
 )
 from .guardrails import (
     detect_available_numbers_inquiry,
@@ -26,6 +24,7 @@ from .models import IncomingMessage, AgentResult
 from .repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
 from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
 from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
+from .user_preferences import detect_preferred_name_update
 from .tray_tools import TOOL_SCHEMAS, execute_tool
 
 
@@ -56,9 +55,13 @@ Regras obrigatórias:
 """.strip()
 
 
-def _needs_local_account_lookup(message: IncomingMessage) -> bool:
-    primary = _primary_intent(detect_customer_intents(message.text))
-    return primary in {"balance", "coupon_code", "simulation", "raffle_history"}
+def _preferred_name_reply_if_requested(message: IncomingMessage, facts: dict) -> AgentResult | None:
+    if not detect_preferred_name_update(message.text):
+        return None
+    account = facts.get("account") or {}
+    if not account.get("found"):
+        account = find_coupon_balance_by_phone(message.sender_phone, message.text)
+    return build_preferred_name_reply(message, account)
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -163,16 +166,8 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
             safety_reason=blocked_reason,
         )
 
-    if detect_available_numbers_inquiry(message.text):
-        return build_available_numbers_reply(message)
-
     if detect_third_party_account_inquiry(message.text, message.sender_phone):
         return _third_party_reply()
-
-    account = find_coupon_balance_by_phone(message.sender_phone, message.text) if _needs_local_account_lookup(message) else {"found": False}
-    preferred_reply = build_preferred_name_reply(message, account)
-    if preferred_reply:
-        return preferred_reply
 
     if message.input_modality == "audio" and message.transcription_failed:
         return AgentResult(
@@ -195,6 +190,11 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         )
 
     facts = gather_customer_facts(message, customer_context)
+    preferred_reply = _preferred_name_reply_if_requested(message, facts)
+    if preferred_reply:
+        return preferred_reply
+    if detect_available_numbers_inquiry(message.text):
+        return build_available_numbers_reply(message)
     print("[openai.agent] routing", {
         "mode": "openai_with_db_context",
         "primary_intent": facts.get("primary_intent"),
@@ -249,16 +249,15 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     blocked_reason = detect_blocked_request(message.text)
     if blocked_reason:
         return AgentResult(reply_text=default_safe_handoff(), intent="handoff", handoff_required=True, safety_reason=blocked_reason)
-    if detect_available_numbers_inquiry(message.text):
-        return build_available_numbers_reply(message)
     if detect_third_party_account_inquiry(message.text, message.sender_phone):
         return _third_party_reply()
-    account = find_coupon_balance_by_phone(message.sender_phone, message.text) if _needs_local_account_lookup(message) else {"found": False}
-    preferred_reply = build_preferred_name_reply(message, account)
-    if preferred_reply:
-        return preferred_reply
     if message.input_modality == "audio" and (message.transcription_failed or not (message.text or "").strip()):
         return generate_agent_reply(message, customer_context)
     facts = gather_customer_facts(message, customer_context)
+    preferred_reply = _preferred_name_reply_if_requested(message, facts)
+    if preferred_reply:
+        return preferred_reply
+    if detect_available_numbers_inquiry(message.text):
+        return build_available_numbers_reply(message)
     print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})
     return await generate_openai_reply_async(message, customer_context, facts)

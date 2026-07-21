@@ -11,7 +11,7 @@ from app.webhook_parser import parse_brevo_whatsapp_payload, should_skip_auto_re
 from app.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
-from app.db import insert_inbound_message, insert_agent_response
+from app.db import inbound_message_exists, insert_inbound_message, insert_agent_response
 from app.config import get_settings
 from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
@@ -172,6 +172,13 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "has_audio_url": bool(incoming.audio_url),
         "text_preview": incoming.text[:120] if incoming.text else None,
     })
+
+    if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
+        print("[brevo.webhook] duplicate_message", {
+            "provider": incoming.provider,
+            "message_id": incoming.message_id,
+        })
+        return JSONResponse({"ok": True, "skipped": True, "reason": "duplicate_message"})
 
     if not incoming.text.strip() and not incoming.audio_url:
         return JSONResponse({"ok": True, "skipped": True, "reason": "empty_text"})

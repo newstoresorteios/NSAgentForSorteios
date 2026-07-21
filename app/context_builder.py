@@ -261,4 +261,7 @@ def build_template_fallback(message: IncomingMessage, facts: dict[str, Any]) -> 
             )
         return " ".join(parts)
 
+    if primary in {"general", "commerce"}:
+        return "Ol\u00e1! Como posso ajudar?"
+
     return None
