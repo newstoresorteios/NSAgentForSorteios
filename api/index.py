@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token
-from app.webhook_parser import parse_brevo_whatsapp_payload, should_skip_auto_reply
+from app.webhook_parser import inbound_skip_reason, parse_brevo_whatsapp_payload
 from app.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
@@ -149,7 +149,11 @@ async def test_tray_integration():
 
 @app.post("/api/webhooks/brevo/whatsapp")
 async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brevo_webhook)):
-    payload = await read_request_payload(request)
+    try:
+        payload = await read_request_payload(request)
+    except HTTPException:
+        print("[brevo.webhook] skipped", {"reason": "invalid_payload"})
+        raise
 
     print("[brevo.webhook] received", {
         "content_type": request.headers.get("content-type"),
@@ -158,30 +162,53 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "event": payload.get("eventName") or payload.get("event") if isinstance(payload, dict) else None,
     })
 
-    if should_skip_auto_reply(payload):
-        return JSONResponse({"ok": True, "skipped": True, "reason": "no_visitor_message"})
-
-    incoming = parse_brevo_whatsapp_payload(payload)
+    try:
+        incoming = parse_brevo_whatsapp_payload(payload)
+    except Exception as exc:
+        print("[brevo.webhook] parsed", {
+            "parsed": False,
+            "event_name": payload.get("eventName") if isinstance(payload, dict) else None,
+            "message_id_present": False,
+            "conversation_id_present": False,
+            "sender_phone_present": False,
+            "text_present": False,
+            "direction": None,
+        })
+        print("[brevo.webhook] skipped", {"reason": "invalid_payload", "error_type": type(exc).__name__})
+        return JSONResponse({"ok": True, "skipped": True, "reason": "invalid_payload"})
 
     print("[brevo.webhook] parsed", {
-        "event_type": incoming.event_type,
-        "has_visitor_id": bool(incoming.visitor_id),
-        "has_sender_phone": bool(incoming.sender_phone),
-        "has_text": bool(incoming.text),
-        "input_modality": incoming.input_modality,
-        "has_audio_url": bool(incoming.audio_url),
-        "text_preview": incoming.text[:120] if incoming.text else None,
+        "parsed": True,
+        "event_name": incoming.event_type,
+        "message_id_present": bool(incoming.message_id),
+        "conversation_id_present": bool(incoming.conversation_id),
+        "sender_phone_present": bool(incoming.sender_phone),
+        "text_present": bool(incoming.text),
+        "direction": payload.get("direction") or payload.get("type") or payload.get("eventType") or (
+            payload.get("messages", [])[-1].get("type")
+            if isinstance(payload.get("messages"), list)
+            and payload.get("messages")
+            and isinstance(payload.get("messages", [])[-1], dict)
+            else None
+        ),
     })
 
+    skip_reason = inbound_skip_reason(payload)
+    if skip_reason:
+        print("[brevo.webhook] skipped", {"reason": skip_reason})
+        return JSONResponse({"ok": True, "skipped": True, "reason": skip_reason})
+
+    if not incoming.sender_phone:
+        print("[brevo.webhook] skipped", {"reason": "missing_sender"})
+        return JSONResponse({"ok": True, "skipped": True, "reason": "missing_sender"})
+
     if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
-        print("[brevo.webhook] duplicate_message", {
-            "provider": incoming.provider,
-            "message_id": incoming.message_id,
-        })
+        print("[brevo.webhook] skipped", {"reason": "duplicate_message"})
         return JSONResponse({"ok": True, "skipped": True, "reason": "duplicate_message"})
 
     if not incoming.text.strip() and not incoming.audio_url:
-        return JSONResponse({"ok": True, "skipped": True, "reason": "empty_text"})
+        print("[brevo.webhook] skipped", {"reason": "no_text"})
+        return JSONResponse({"ok": True, "skipped": True, "reason": "no_text"})
 
     try:
         inbound_id = insert_inbound_message(incoming.model_dump())
@@ -202,6 +229,10 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         ) from exc
 
     customer_context = find_customer_profile_by_phone(incoming.sender_phone)
+    print("[brevo.webhook] processing", {
+        "message_id_present": bool(incoming.message_id),
+        "event_name": incoming.event_type,
+    })
     agent_result = await process_incoming_message(incoming, customer_context)
     send_result = await send_brevo_reply(incoming, agent_result)
 

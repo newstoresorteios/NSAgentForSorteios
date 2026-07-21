@@ -28,13 +28,37 @@ def _first_non_empty(*values: Any) -> str | None:
     return None
 
 
+def _message_type(message: dict[str, Any]) -> str:
+    value = _first_non_empty(
+        message.get("type"),
+        message.get("role"),
+        message.get("senderType"),
+        message.get("authorType"),
+        message.get("direction"),
+    )
+    return (value or "").lower()
+
+
+def _is_visitor_message(message: dict[str, Any]) -> bool:
+    return _message_type(message) in {"visitor", "client", "customer", "user", "inbound"}
+
+
+def _message_id(message: dict[str, Any]) -> str | None:
+    return _first_non_empty(
+        message.get("id"),
+        message.get("messageId"),
+        message.get("message_id"),
+        message.get("uuid"),
+    )
+
+
 def _extract_last_visitor_message(payload: dict[str, Any]) -> dict[str, Any]:
     messages = payload.get("messages")
     if not isinstance(messages, list):
         return {}
 
     for message in reversed(messages):
-        if isinstance(message, dict) and message.get("type") == "visitor":
+        if isinstance(message, dict) and _is_visitor_message(message):
             return message
     return {}
 
@@ -65,16 +89,33 @@ def should_skip_auto_reply(payload: dict[str, Any]) -> bool:
     """Skip when the latest message in a Conversations fragment is not from the visitor."""
     messages = payload.get("messages")
     if not isinstance(messages, list) or not messages:
-        return False
+        return payload.get("eventName") == "conversationFragment"
 
     last = messages[-1]
     if not isinstance(last, dict):
         return False
 
-    if last.get("type") != "visitor":
+    if not _is_visitor_message(last):
         return True
 
     return bool(last.get("isPushed") or last.get("isTrigger"))
+
+
+def inbound_skip_reason(payload: dict[str, Any]) -> str | None:
+    """Explain why a webhook should not enter the agent pipeline."""
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return "no_inbound_message" if payload.get("eventName") == "conversationFragment" else None
+
+    last = messages[-1]
+    if not isinstance(last, dict):
+        return "invalid_payload"
+    if not _is_visitor_message(last):
+        message_type = _message_type(last)
+        return "agent_message" if message_type in {"agent", "bot", "assistant"} else "outbound_message"
+    if last.get("isPushed") or last.get("isTrigger"):
+        return "agent_message"
+    return None
 
 
 def _extract_primary_message(payload: dict[str, Any]) -> dict[str, Any]:
@@ -169,10 +210,10 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
             payload.get("eventType"),
         ),
         message_id=_first_non_empty(
-            payload.get("id"),
+            _message_id(last_visitor_message),
             payload.get("messageId"),
             payload.get("message_id"),
-            last_visitor_message.get("id"),
+            payload.get("id"),
         ),
         conversation_id=_first_non_empty(
             payload.get("conversationId"),

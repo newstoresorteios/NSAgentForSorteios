@@ -1,4 +1,4 @@
-from app.webhook_parser import parse_brevo_whatsapp_payload, should_skip_auto_reply
+from app.webhook_parser import inbound_skip_reason, parse_brevo_whatsapp_payload, should_skip_auto_reply
 
 
 def test_parse_basic_payload():
@@ -44,3 +44,31 @@ def test_should_skip_when_last_message_is_agent():
         ]
     }
     assert should_skip_auto_reply(payload) is True
+
+
+def test_fragment_uses_latest_visitor_message_and_its_message_id():
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conv-1",
+        "messages": [
+            {"type": "visitor", "id": "old", "text": "Mensagem antiga"},
+            {"type": "agent", "id": "agent-1", "text": "Resposta anterior"},
+            {"type": "visitor", "messageId": "new", "text": "Tem Tissot?"},
+        ],
+        "visitor": {"id": "visitor-1", "attributes": {"SMS": "5511999999999"}},
+    }
+    incoming = parse_brevo_whatsapp_payload(payload)
+    assert incoming.message_id == "new"
+    assert incoming.text == "Tem Tissot?"
+    assert inbound_skip_reason(payload) is None
+
+
+def test_fragment_with_latest_agent_is_skipped_as_agent_message():
+    payload = {
+        "eventName": "conversationFragment",
+        "messages": [
+            {"type": "visitor", "id": "visitor-1", "text": "Oi"},
+            {"type": "agent", "id": "agent-1", "text": "Olá"},
+        ],
+    }
+    assert inbound_skip_reason(payload) == "agent_message"
