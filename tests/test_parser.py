@@ -72,3 +72,30 @@ def test_fragment_with_latest_agent_is_skipped_as_agent_message():
         ],
     }
     assert inbound_skip_reason(payload) == "agent_message"
+
+
+def test_fragment_selects_latest_timestamp_even_when_array_is_reversed():
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conv-1",
+        "messages": [
+            {"type": "visitor", "id": "new", "createdAt": "2026-07-22T12:00:02Z", "text": "Tem Tissot Seastar?"},
+            {"type": "visitor", "id": "old", "createdAt": "2026-07-22T12:00:01Z", "text": "saldo do João"},
+        ],
+    }
+    incoming = parse_brevo_whatsapp_payload(payload)
+    assert incoming.message_id == "new"
+    assert incoming.text == "Tem Tissot Seastar?"
+    assert inbound_skip_reason(payload) is None
+
+
+def test_fragment_does_not_replace_selected_visitor_text_with_payload_text():
+    payload = {
+        "eventName": "conversationFragment",
+        "messages": [
+            {"type": "visitor", "id": "new", "createdAt": "2026-07-22T12:00:02Z", "text": "oi"},
+            {"type": "visitor", "id": "old", "createdAt": "2026-07-22T12:00:01Z", "text": "Tem Tissot?"},
+        ],
+        "text": "saldo do João",
+    }
+    assert parse_brevo_whatsapp_payload(payload).text == "oi"

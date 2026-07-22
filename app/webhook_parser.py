@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from .audio_service import extract_audio_attachment, is_audio_attachment, is_placeholder_audio_text
@@ -52,15 +53,58 @@ def _message_id(message: dict[str, Any]) -> str | None:
     )
 
 
-def _extract_last_visitor_message(payload: dict[str, Any]) -> dict[str, Any]:
+def _message_timestamp(message: dict[str, Any]) -> float | None:
+    for field in ("createdAt", "created_at", "timestamp", "date", "updatedAt"):
+        value = message.get(field)
+        if value is None or value == "":
+            continue
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip()
+            try:
+                return float(text)
+            except ValueError:
+                try:
+                    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    return parsed.timestamp()
+                except ValueError:
+                    continue
+    return None
+
+
+def select_effective_inbound_message(payload: dict[str, Any]) -> dict[str, Any]:
+    """Select the chronologically newest fragment item, regardless of array order."""
     messages = payload.get("messages")
     if not isinstance(messages, list):
         return {}
 
-    for message in reversed(messages):
-        if isinstance(message, dict) and _is_visitor_message(message):
-            return message
-    return {}
+    valid_messages = [message for message in messages if isinstance(message, dict)]
+    if not valid_messages:
+        return {}
+
+    timestamped = [
+        (timestamp, index, message)
+        for index, message in enumerate(valid_messages)
+        if (timestamp := _message_timestamp(message)) is not None
+    ]
+    if timestamped:
+        return max(timestamped, key=lambda item: (item[0], item[1]))[2]
+    return valid_messages[-1]
+
+
+def selected_message_info(payload: dict[str, Any], message: dict[str, Any] | None = None) -> dict[str, Any]:
+    selected = message if message is not None else select_effective_inbound_message(payload)
+    return {
+        "role": _message_type(selected) or None,
+        "timestamp_present": _message_timestamp(selected) is not None,
+        "ordering_fallback": bool(
+            isinstance(payload.get("messages"), list)
+            and any(isinstance(item, dict) and _message_timestamp(item) is not None for item in payload.get("messages", [])) is False
+        ),
+    }
 
 
 def _extract_audio_from_message(message: dict[str, Any]) -> dict[str, Any] | None:
@@ -91,14 +135,14 @@ def should_skip_auto_reply(payload: dict[str, Any]) -> bool:
     if not isinstance(messages, list) or not messages:
         return payload.get("eventName") == "conversationFragment"
 
-    last = messages[-1]
-    if not isinstance(last, dict):
+    selected = select_effective_inbound_message(payload)
+    if not selected:
         return False
 
-    if not _is_visitor_message(last):
+    if not _is_visitor_message(selected):
         return True
 
-    return bool(last.get("isPushed") or last.get("isTrigger"))
+    return bool(selected.get("isPushed") or selected.get("isTrigger"))
 
 
 def inbound_skip_reason(payload: dict[str, Any]) -> str | None:
@@ -107,28 +151,19 @@ def inbound_skip_reason(payload: dict[str, Any]) -> str | None:
     if not isinstance(messages, list) or not messages:
         return "no_inbound_message" if payload.get("eventName") == "conversationFragment" else None
 
-    last = messages[-1]
-    if not isinstance(last, dict):
+    selected = select_effective_inbound_message(payload)
+    if not selected:
         return "invalid_payload"
-    if not _is_visitor_message(last):
-        message_type = _message_type(last)
+    if not _is_visitor_message(selected):
+        message_type = _message_type(selected)
         return "agent_message" if message_type in {"agent", "bot", "assistant"} else "outbound_message"
-    if last.get("isPushed") or last.get("isTrigger"):
+    if selected.get("isPushed") or selected.get("isTrigger"):
         return "agent_message"
     return None
 
 
 def _extract_primary_message(payload: dict[str, Any]) -> dict[str, Any]:
-    last_visitor = _extract_last_visitor_message(payload)
-    if last_visitor:
-        return last_visitor
-
-    messages = payload.get("messages")
-    if isinstance(messages, list) and messages:
-        last = messages[-1]
-        if isinstance(last, dict):
-            return last
-    return {}
+    return select_effective_inbound_message(payload)
 
 
 def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
@@ -138,17 +173,21 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
 
     audio_file = _extract_audio_from_message(last_visitor_message) or extract_audio_attachment(payload)
 
-    text = _first_non_empty(
+    message_text = _first_non_empty(
         last_visitor_message.get("text") if isinstance(last_visitor_message.get("text"), str) else None,
         last_visitor_message.get("body") if isinstance(last_visitor_message.get("body"), str) else None,
         _get_nested(last_visitor_message, "text", "body"),
-        payload.get("text"),
-        payload.get("message"),
-        payload.get("body"),
-        payload.get("content"),
-        _get_nested(payload, "text", "body"),
-        _get_nested(payload, "message", "text"),
-        _get_nested(payload, "message", "text") if isinstance(payload.get("message"), dict) else None,
+    )
+    is_fragment = payload.get("eventName") == "conversationFragment"
+    text = _first_non_empty(
+        message_text,
+        None if is_fragment else payload.get("text"),
+        None if is_fragment else payload.get("message"),
+        None if is_fragment else payload.get("body"),
+        None if is_fragment else payload.get("content"),
+        None if is_fragment else _get_nested(payload, "text", "body"),
+        None if is_fragment else _get_nested(payload, "message", "text"),
+        None if is_fragment else _get_nested(payload, "message", "text") if isinstance(payload.get("message"), dict) else None,
     ) or ""
 
     sender_phone = _first_non_empty(
@@ -209,11 +248,8 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
             payload.get("type"),
             payload.get("eventType"),
         ),
-        message_id=_first_non_empty(
-            _message_id(last_visitor_message),
-            payload.get("messageId"),
-            payload.get("message_id"),
-            payload.get("id"),
+        message_id=_message_id(last_visitor_message) or (
+            None if is_fragment else _first_non_empty(payload.get("messageId"), payload.get("message_id"), payload.get("id"))
         ),
         conversation_id=_first_non_empty(
             payload.get("conversationId"),

@@ -84,6 +84,11 @@ def _primary_intent(intents: list[str]) -> str:
     return intents[0] if intents else "general"
 
 
+def detect_primary_intent(text: str | None) -> str:
+    """Classify intent without loading account, raffle, or customer data."""
+    return _primary_intent(detect_customer_intents(text))
+
+
 def _serialize_account(account: dict[str, Any]) -> dict[str, Any]:
     if not account.get("found"):
         return {

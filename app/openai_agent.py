@@ -12,6 +12,7 @@ from .agent_replies import (
 from .config import get_settings
 from .context_builder import (
     build_template_fallback,
+    detect_primary_intent,
     format_facts_for_prompt,
     gather_customer_facts,
 )
@@ -26,7 +27,8 @@ from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS
 from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
 from .user_preferences import detect_preferred_name_update
 from .tray_tools import TOOL_SCHEMAS, execute_tool
-from .commerce_router import handle_commerce_message, resolve_commerce_action
+from .commerce_router import resolve_commerce_action
+from .sales_agent import handle_sales_message
 
 
 SYSTEM_INSTRUCTIONS = f"""
@@ -89,6 +91,16 @@ def _non_handoff_fallback(message: IncomingMessage, facts: dict) -> str:
     if facts.get("primary_intent") == "general":
         return GENERAL_GREETING_FALLBACK
     return "N\u00e3o consegui concluir a consulta neste momento. Tente novamente em instantes."
+
+
+def _is_personal_intent(intent: str) -> bool:
+    return intent in {"balance", "coupon_code", "raffle_history", "simulation"}
+
+
+def _third_party_guardrail(message: IncomingMessage, primary_intent: str) -> AgentResult | None:
+    if _is_personal_intent(primary_intent) and detect_third_party_account_inquiry(message.text, message.sender_phone):
+        return _third_party_reply()
+    return None
 
 
 def build_agent_input(message: IncomingMessage, customer_context: dict, facts: dict) -> str:
@@ -179,8 +191,11 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
             safety_reason=blocked_reason,
         )
 
-    if detect_third_party_account_inquiry(message.text, message.sender_phone):
-        return _third_party_reply()
+    primary_intent = detect_primary_intent(message.text)
+    print("[agent.route]", {"inbound_id": (message.raw or {}).get("inbound_id"), "primary_intent": primary_intent})
+    third_party_reply = _third_party_guardrail(message, primary_intent)
+    if third_party_reply:
+        return third_party_reply
 
     if message.input_modality == "audio" and message.transcription_failed:
         return AgentResult(
@@ -229,7 +244,11 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
         {"role": "system", "content": SYSTEM_INSTRUCTIONS},
         {"role": "user", "content": build_agent_input(message, customer_context, facts)},
     ]
-    tools = TOOL_SCHEMAS if settings.tray_adapter_url and settings.tray_adapter_token else None
+    tools = (
+        TOOL_SCHEMAS
+        if facts.get("primary_intent") == "commerce" and settings.tray_adapter_url and settings.tray_adapter_token
+        else None
+    )
     try:
         for _ in range(3):
             kwargs = {"model": settings.openai_model, "messages": messages, "temperature": 0.3}
@@ -249,20 +268,23 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
             for call in tool_calls:
                 result = await execute_tool(call.function.name, json.loads(call.function.arguments or "{}"))
                 if "error" in result:
-                    return AgentResult(reply_text=STORE_LOOKUP_UNAVAILABLE, intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tray_adapter_unavailable")
+                    return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tray_adapter_unavailable")
                 messages.append({"role": "tool", "tool_call_id": call.id, "name": call.function.name, "content": json.dumps(result, ensure_ascii=False)})
-        return AgentResult(reply_text=STORE_LOOKUP_UNAVAILABLE, intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tool_loop_limit")
+        return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tool_loop_limit")
     except (APIError, json.JSONDecodeError, ValueError) as exc:
         print("[openai.agent] tools_request_failed", {"error_type": type(exc).__name__, "message": _sanitize_log_message(str(exc))})
-        return AgentResult(reply_text=STORE_LOOKUP_UNAVAILABLE, intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tools_request_failed")
+        return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tools_request_failed")
 
 
 async def generate_agent_reply_async(message: IncomingMessage, customer_context: dict) -> AgentResult:
     blocked_reason = detect_blocked_request(message.text)
     if blocked_reason:
         return AgentResult(reply_text=default_safe_handoff(), intent="handoff", handoff_required=True, safety_reason=blocked_reason)
-    if detect_third_party_account_inquiry(message.text, message.sender_phone):
-        return _third_party_reply()
+    primary_intent = detect_primary_intent(message.text)
+    print("[agent.route]", {"inbound_id": (message.raw or {}).get("inbound_id"), "primary_intent": primary_intent})
+    third_party_reply = _third_party_guardrail(message, primary_intent)
+    if third_party_reply:
+        return third_party_reply
     if message.input_modality == "audio" and (message.transcription_failed or not (message.text or "").strip()):
         return generate_agent_reply(message, customer_context)
     facts = gather_customer_facts(message, customer_context)
@@ -272,7 +294,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     if detect_available_numbers_inquiry(message.text):
         return build_available_numbers_reply(message)
     if facts.get("primary_intent") == "commerce" or resolve_commerce_action(message.text):
-        commerce_result = await handle_commerce_message(message, facts, customer_context)
+        commerce_result = await handle_sales_message(message, facts, customer_context)
         if commerce_result is not None:
             return commerce_result
     print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})

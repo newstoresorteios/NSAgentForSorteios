@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from json import JSONDecodeError
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token
-from app.webhook_parser import inbound_skip_reason, parse_brevo_whatsapp_payload
+from app.webhook_parser import inbound_skip_reason, parse_brevo_whatsapp_payload, select_effective_inbound_message, selected_message_info
 from app.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
-from app.db import inbound_message_exists, insert_inbound_message, insert_agent_response
+from app.db import claim_inbound_message, inbound_message_exists, insert_agent_response, insert_inbound_message, is_latest_inbound_message
 from app.config import get_settings
 from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
@@ -184,13 +185,18 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "conversation_id_present": bool(incoming.conversation_id),
         "sender_phone_present": bool(incoming.sender_phone),
         "text_present": bool(incoming.text),
-        "direction": payload.get("direction") or payload.get("type") or payload.get("eventType") or (
-            payload.get("messages", [])[-1].get("type")
-            if isinstance(payload.get("messages"), list)
-            and payload.get("messages")
-            and isinstance(payload.get("messages", [])[-1], dict)
-            else None
-        ),
+        "direction": selected_message_info(payload).get("role"),
+    })
+
+    selected = select_effective_inbound_message(payload)
+    selection_info = selected_message_info(payload, selected)
+    print("[brevo.webhook] selected_message", {
+        "message_id_present": bool(incoming.message_id),
+        "role": selection_info.get("role"),
+        "timestamp_present": selection_info.get("timestamp_present"),
+        "text_length": len(incoming.text or ""),
+        "text_hash": hashlib.sha256((incoming.text or "").encode("utf-8")).hexdigest()[:12],
+        "ordering_fallback": selection_info.get("ordering_fallback"),
     })
 
     skip_reason = inbound_skip_reason(payload)
@@ -202,16 +208,18 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         print("[brevo.webhook] skipped", {"reason": "missing_sender"})
         return JSONResponse({"ok": True, "skipped": True, "reason": "missing_sender"})
 
-    if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
-        print("[brevo.webhook] skipped", {"reason": "duplicate_message"})
-        return JSONResponse({"ok": True, "skipped": True, "reason": "duplicate_message"})
-
     if not incoming.text.strip() and not incoming.audio_url:
         print("[brevo.webhook] skipped", {"reason": "no_text"})
         return JSONResponse({"ok": True, "skipped": True, "reason": "no_text"})
 
+    # Fast path for already-seen IDs; claim_inbound_message remains the
+    # authoritative atomic check for concurrent requests.
+    if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
+        print("[brevo.webhook] skipped", {"reason": "duplicate_message"})
+        return JSONResponse({"ok": True, "skipped": True, "reason": "duplicate_message"})
+
     try:
-        inbound_id = insert_inbound_message(incoming.model_dump())
+        claimed, inbound_id = claim_inbound_message(incoming.model_dump())
     except Exception as exc:
         print("[brevo.webhook] inbound_insert_failed", {
             "error_type": type(exc).__name__,
@@ -220,21 +228,19 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
             "has_sender_phone": bool(incoming.sender_phone),
             "has_text": bool(incoming.text),
         })
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "inbound_insert_failed",
-                "message": "Falha ao registrar mensagem recebida.",
-            },
-        ) from exc
+        raise HTTPException(status_code=500, detail={"error": "inbound_insert_failed"}) from exc
+    if not claimed:
+        print("[brevo.webhook] skipped", {"reason": "duplicate_message"})
+        return JSONResponse({"ok": True, "skipped": True, "reason": "duplicate_message"})
 
+    if isinstance(incoming.raw, dict):
+        incoming.raw["inbound_id"] = inbound_id
     customer_context = find_customer_profile_by_phone(incoming.sender_phone)
     print("[brevo.webhook] processing", {
         "message_id_present": bool(incoming.message_id),
         "event_name": incoming.event_type,
     })
     agent_result = await process_incoming_message(incoming, customer_context)
-    send_result = await send_brevo_reply(incoming, agent_result)
 
     print("[brevo.webhook] agent_result", {
         "intent": agent_result.intent,
@@ -245,6 +251,16 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "transcription_failed": incoming.transcription_failed,
     })
 
+    if not is_latest_inbound_message(inbound_id, incoming.conversation_id, incoming.sender_phone):
+        print("[brevo.webhook] skipped_reply", {"reason": "stale_inbound", "inbound_id": inbound_id})
+        send_result = None
+        provider_send_ok = False
+        provider_response = {"skipped": True, "reason": "stale_inbound"}
+    else:
+        send_result = await send_brevo_reply(incoming, agent_result)
+        provider_send_ok = send_result.ok
+        provider_response = send_result.model_dump()
+
     try:
         insert_agent_response(
             {
@@ -254,8 +270,8 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
                 "intent": agent_result.intent,
                 "handoff_required": agent_result.handoff_required,
                 "safety_reason": agent_result.safety_reason,
-                "provider_send_ok": send_result.ok,
-                "provider_response": send_result.model_dump(),
+                "provider_send_ok": provider_send_ok,
+                "provider_response": provider_response,
             }
         )
     except Exception as exc:
@@ -276,9 +292,10 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         {
             "ok": True,
             "inbound_id": inbound_id,
-            "reply_dry_run": send_result.dry_run,
-            "reply_sent": send_result.ok,
+            "reply_dry_run": send_result.dry_run if send_result else False,
+            "reply_sent": send_result.ok if send_result else False,
             "handoff_required": agent_result.handoff_required,
+            "skipped_reply": not bool(send_result),
         }
     )
 

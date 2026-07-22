@@ -170,6 +170,96 @@ def inbound_message_exists(provider: str | None, message_id: str | None) -> bool
             return cur.fetchone() is not None
 
 
+def claim_inbound_message(message: dict[str, Any]) -> tuple[bool, int | None]:
+    """Atomically claim an inbound message using a PostgreSQL transaction lock."""
+    settings = get_settings()
+    if not settings.database_url:
+        return True, None
+
+    safe_message = dict(message or {})
+    safe_message.setdefault("provider", "brevo")
+    safe_message.setdefault("event_type", None)
+    safe_message.setdefault("message_id", None)
+    safe_message.setdefault("conversation_id", None)
+    safe_message.setdefault("sender_phone", None)
+    safe_message.setdefault("sender_name", None)
+    safe_message.setdefault("text", None)
+    safe_message["raw"] = to_jsonb(safe_message.get("raw") or {})
+
+    if not safe_message.get("message_id"):
+        return True, insert_inbound_message(message)
+
+    ensure_tables()
+    lock_key = f"{safe_message['provider']}:{safe_message['message_id']}"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%(lock_key)s, 0))",
+                {"lock_key": lock_key},
+            )
+            cur.execute(
+                """
+                SELECT id
+                FROM public.ai_inbound_messages
+                WHERE provider = %(provider)s AND message_id = %(message_id)s
+                LIMIT 1
+                """,
+                safe_message,
+            )
+            existing = cur.fetchone()
+            if existing:
+                return False, get_returning_id(existing)
+
+            cur.execute(
+                """
+                INSERT INTO public.ai_inbound_messages
+                  (provider, event_type, message_id, conversation_id, sender_phone, sender_name, text, raw)
+                VALUES
+                  (%(provider)s, %(event_type)s, %(message_id)s, %(conversation_id)s,
+                   %(sender_phone)s, %(sender_name)s, %(text)s, %(raw)s)
+                RETURNING id
+                """,
+                safe_message,
+            )
+            return True, get_returning_id(cur.fetchone())
+
+
+def is_latest_inbound_message(
+    inbound_id: int | None,
+    conversation_id: str | None,
+    sender_phone: str | None,
+) -> bool:
+    """Check whether no later inbound row exists for this conversation/contact."""
+    settings = get_settings()
+    if not settings.database_url or not inbound_id:
+        return True
+    if not conversation_id and not sender_phone:
+        return True
+
+    ensure_tables()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if conversation_id:
+                cur.execute(
+                    """
+                    SELECT 1 FROM public.ai_inbound_messages
+                    WHERE id > %(inbound_id)s AND conversation_id = %(conversation_id)s
+                    LIMIT 1
+                    """,
+                    {"inbound_id": inbound_id, "conversation_id": conversation_id},
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT 1 FROM public.ai_inbound_messages
+                    WHERE id > %(inbound_id)s AND sender_phone = %(sender_phone)s
+                    LIMIT 1
+                    """,
+                    {"inbound_id": inbound_id, "sender_phone": sender_phone},
+                )
+            return cur.fetchone() is None
+
+
 def insert_agent_response(data: dict[str, Any]) -> int | None:
     settings = get_settings()
 
