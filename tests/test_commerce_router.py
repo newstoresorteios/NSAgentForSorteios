@@ -47,10 +47,13 @@ async def test_agent_commerce_calls_tray_before_openai(monkeypatch):
     async def openai_must_not_run(*args, **kwargs):
         raise AssertionError("OpenAI must not decide the first commerce lookup")
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.sales_agent.execute_tool", fake_execute)
     monkeypatch.setattr(openai_agent, "generate_openai_reply_async", openai_must_not_run)
     result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="Tem Tissot Seastar?"), {})
-    assert calls[0] == ("search_products", {"query": "Tissot Seastar", "limit": 3})
+    assert calls[0] == (
+        "search_products",
+        {"name": "Tissot Seastar", "available": True, "limit": 20, "page": 1},
+    )
     assert result.intent == "commerce"
 
 

@@ -10,7 +10,7 @@ from .tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 
 TOOL_SCHEMAS = [
-    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 5}}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "available": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product", "description": "Consultar detalhes atuais de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_inventory", "description": "Confirmar estoque e regras de disponibilidade de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "search_customer", "description": "Pesquisar um cliente com filtro específico, quando necessário.", "parameters": {"type": "object", "properties": {"email": {"type": "string"}, "cpf": {"type": "string"}, "cnpj": {"type": "string"}, "name": {"type": "string"}, "limit": {"type": "integer", "maximum": 5}}, "additionalProperties": False}}},
@@ -24,7 +24,7 @@ TOOL_REGISTRY = {
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
-_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_id", "attributes", "color", "style", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "payment_option", "payment_option_details", "url")
+_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_id", "attributes", "properties", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "payment_option", "payment_option_details", "url")
 _CUSTOMER_FIELDS = ("id", "name", "email", "city", "state", "last_purchase", "total_orders")
 _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", "type", "value_start", "value_end", "usage_counter_limit", "usage_counter_limit_customer", "coupon_type", "local_application", "freight_application")
 
@@ -103,8 +103,9 @@ def _reduce(item: Any, fields: tuple[str, ...]) -> dict[str, Any]:
     return result
 
 
-def _reduce_products(payload: Any) -> dict[str, Any]:
-    return {"products": [_reduce(item, _PRODUCT_FIELDS) for item in _items(payload)[:5]]}
+def _reduce_products(payload: Any, limit: int = 5) -> dict[str, Any]:
+    safe_limit = min(max(int(limit), 1), 20)
+    return {"products": [_reduce(item, _PRODUCT_FIELDS) for item in _items(payload)[:safe_limit]]}
 
 
 def _query_filters(query: str) -> list[dict[str, str]]:
@@ -116,18 +117,20 @@ def _query_filters(query: str) -> list[dict[str, str]]:
         return [{"ean": value}, {"reference": value}]
     if re.search(r"[./_-]", value) or (re.search(r"\d", value) and re.search(r"[A-Za-z]", value)):
         return [{"reference": value}, {"name": value}]
-    return [{"name": value}, {"brand": value}]
+    return [{"name": value}]
 
 
 async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, Any]:
     query = (args.pop("query", None) or "").strip()
-    explicit = {key: args.get(key) for key in ("name", "reference", "ean", "brand") if args.get(key) is not None}
+    supported = ("name", "reference", "ean", "brand", "category_id", "available", "stock", "promotion", "page")
+    explicit = {key: args.get(key) for key in supported if args.get(key) is not None}
     attempts = [explicit or filters for filters in _query_filters(query)] if query else [explicit]
+    limit = min(max(int(args.get("limit", 5)), 1), 20)
     for filters in attempts:
         if not filters:
             continue
-        payload = await client.search_products(**filters, limit=args.get("limit", 5))
-        result = _reduce_products(payload)
+        payload = await client.search_products(**filters, limit=limit)
+        result = _reduce_products(payload, limit)
         if result["products"] or len(attempts) == 1:
             return result
     return {"products": []}

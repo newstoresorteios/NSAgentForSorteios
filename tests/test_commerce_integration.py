@@ -123,13 +123,14 @@ async def test_ean_is_commerce_not_third_party(monkeypatch):
         return {"products": []}
 
     monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.sales_agent.execute_tool", fake_execute)
     result = await openai_agent.generate_agent_reply_async(
         IncomingMessage(text="Tem o EAN 7611608287637?"),
         {},
     )
     assert result.intent == "commerce"
     assert result.safety_reason == "product_not_found"
-    assert calls == [("search_products", {"query": "EAN 7611608287637", "limit": 3})]
+    assert calls == [("search_products", {"ean": "7611608287637", "limit": 20, "page": 1})]
 
 
 @pytest.mark.asyncio
@@ -211,6 +212,10 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
     calls = []
 
     class FakeCompletions:
+        async def parse(self, **kwargs):
+            selection = SimpleNamespace(selected_product_ids=["2"])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=selection))])
+
         async def create(self, **kwargs):
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Encontrei uma opção dentro da faixa informada."))])
 
@@ -222,7 +227,7 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
         calls.append((name, arguments))
         return {"products": [{"id": "2", "name": "Relógio esportivo preto", "current_price": 4500}]}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="quero comprar um relógio por menos de 5 mil"),
@@ -239,7 +244,7 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
             confidence=0.94,
         ),
     )
-    assert calls == [("search_products", {"query": "relógio", "limit": 3})]
+    assert calls == [("search_products", {"name": "relógio", "available": True, "limit": 20, "page": 1})]
     assert result.reply_text == "Encontrei uma opção dentro da faixa informada."
     assert result.safety_reason != "recommendation_not_found"
     assert result.response_metadata["used_tray"] is True
@@ -254,12 +259,12 @@ async def test_product_search_uses_progressive_strategies(monkeypatch):
     calls = []
 
     async def fake_execute(name, arguments):
-        calls.append(arguments["query"])
-        if arguments["query"] == "Seastar":
+        calls.append(arguments)
+        if arguments.get("name") == "Seastar":
             return {"products": [{"id": "3", "name": "Tissot Seastar"}]}
         return {"products": []}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="Tem Tissot Seastar?"),
         {"primary_intent": "commerce"},
@@ -275,7 +280,10 @@ async def test_product_search_uses_progressive_strategies(monkeypatch):
             confidence=0.98,
         ),
     )
-    assert calls == ["Tissot Seastar", "Seastar"]
+    assert calls == [
+        {"name": "Tissot Seastar", "brand": "Tissot", "limit": 20, "page": 1},
+        {"name": "Seastar", "brand": "Tissot", "limit": 20, "page": 1},
+    ]
     assert "Tissot Seastar" in result.reply_text
 
 

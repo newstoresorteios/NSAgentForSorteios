@@ -70,7 +70,7 @@ class TrayAdapterClient:
         return await self._request("GET", "/internal/products", params={
             "name": name, "reference": reference, "ean": ean, "brand": brand,
             "category_id": category_id, "available": available, "stock": stock,
-            "promotion": promotion, "limit": min(max(limit, 1), 5), "page": page,
+            "promotion": promotion, "limit": min(max(limit, 1), 20), "page": page,
         })
 
     async def get_product(self, product_id: str | int) -> Any:

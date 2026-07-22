@@ -31,7 +31,7 @@ async def test_product_search_sends_bearer_params_and_limit():
     args, kwargs = fake.calls[0]
     assert args == ("GET", "https://tray.example/internal/products")
     assert kwargs["headers"] == {"Authorization": "Bearer secret"}
-    assert kwargs["params"] == {"name": "Tissot", "limit": 5}
+    assert kwargs["params"] == {"name": "Tissot", "limit": 20}
 
 
 @pytest.mark.asyncio

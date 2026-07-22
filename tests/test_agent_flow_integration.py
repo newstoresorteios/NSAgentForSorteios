@@ -127,7 +127,7 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
     async def fake_execute(name, arguments):
         return {"products": [{"id": "1", "name": "Relógio esportivo", "style": "esportivo"}]}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
 
     index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
     try:
@@ -211,7 +211,7 @@ async def test_valid_commerce_interpretation_reaches_openai_sales_responder(monk
     monkeypatch.setattr(openai_agent, "interpret_message", fake_interpret)
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings())
     monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeOpenAI)
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
         "app.commerce_router.resolve_commerce_action",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("structured action must not be reclassified")),
@@ -227,7 +227,10 @@ async def test_valid_commerce_interpretation_reaches_openai_sales_responder(monk
     )
 
     assert result.reply_text == "Encontrei um Tissot Seastar que combina com o que você procura."
-    assert tool_calls == [("search_products", {"query": "Tissot Seastar", "limit": 3})]
+    assert tool_calls == [(
+        "search_products",
+        {"name": "Tissot Seastar", "brand": "Tissot", "limit": 20, "page": 1},
+    )]
     assert result.response_metadata["used_openai_interpreter"] is True
     assert result.response_metadata["used_openai_responder"] is True
     assert result.response_metadata["used_tray"] is True

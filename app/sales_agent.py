@@ -24,6 +24,14 @@ from .guardrails import (
     detect_coupon_code_inquiry,
 )
 from .models import AgentResult, IncomingMessage, SalesInterpretation
+from .product_retrieval import (
+    CUSTOMER_RESULT_LIMIT,
+    ProductRetrievalCompiler,
+    hard_filter_products,
+    rerank_products,
+    semantic_preferences,
+)
+from .tray_tools import execute_tool
 
 
 SALES_PLANNER_INSTRUCTIONS = """
@@ -489,11 +497,6 @@ async def interpret_message(
         return fallback
 
 
-def _brand_from_query(query: str) -> str | None:
-    first = query.split(maxsplit=1)[0] if query else ""
-    return first or None
-
-
 def deterministic_sales_plan(text: str | None) -> dict[str, Any] | None:
     normalized = (text or "").lower()
     purchase = any(term in normalized for term in ("quero comprar", "quero adquirir", "quero um ", "quero uma ", "gostaria de comprar", "gostaria de um ", "procuro", "busco", "recomende"))
@@ -511,20 +514,30 @@ def deterministic_sales_plan(text: str | None) -> dict[str, Any] | None:
         query = (query[:budget_match.start()] + query[budget_match.end():]).strip(" ,-")
     if query.lower().strip() in {"alguma coisa", "algo", "qualquer coisa", "um produto", "uma coisa"}:
         query = ""
+    ean_match = re.fullmatch(r"(?:ean\s+)?(\d{8,14})", query, flags=re.IGNORECASE)
+    reference = None
+    if not ean_match and query and (
+        re.search(r"[./_-]", query)
+        or (re.search(r"\d", query) and re.search(r"[A-Za-z]", query) and " " not in query)
+    ):
+        reference = re.sub(r"^(?:sku|ref(?:er[êe]ncia)?)\s+", "", query, flags=re.IGNORECASE)
+    fallback_product_type = None
+    if query and not ean_match and not reference:
+        fallback_product_type = query.split()[0] if action == "purchase_intent" else query
     plan: dict[str, Any] = {
         "intent": "purchase_intent" if action == "purchase_intent" else _ACTION_TO_PLAN.get(action, "product_search"),
         "query": query,
         "filters": {"budget_max": budget_max} if budget_max is not None else {},
         "goal": "recommend" if budget_max is not None or (len(query.split()) > 1 and action == "purchase_intent") else ("buy" if action == "purchase_intent" else None),
-        "subject": {"product_type": query.split()[0] if query else None, "query": query},
+        "subject": {
+            "product_type": fallback_product_type,
+            "query": query,
+            "ean": ean_match.group(1) if ean_match else None,
+            "reference": reference,
+        },
         "constraints": {"budget_max": budget_max, "attributes": query.split()[1:] if budget_max is not None and len(query.split()) > 1 else []},
     }
-    if query and plan["intent"] in {"product_search", "price", "inventory", "recommendation"}:
-        if len(query.split()) > 1 and not re.fullmatch(r"[A-Za-z0-9._/-]+", query):
-            plan["filters"]["brand"] = _brand_from_query(query)
-    brand = plan["filters"].get("brand")
-    subject_model = " ".join(query.split()[1:]) if brand and len(query.split()) > 1 else None
-    plan["subject"].update({"brand": brand, "model": subject_model})
+    plan["subject"].update({"brand": None, "model": None})
     return plan
 
 
@@ -929,6 +942,116 @@ async def _sales_response_with_openai(
         return None
 
 
+async def _execute_compiled_product_retrieval(
+    interpretation: SalesInterpretation,
+) -> AgentResult | None:
+    retrieval_plan = ProductRetrievalCompiler.compile(interpretation)
+    preferences = semantic_preferences(interpretation)
+    has_budget = any((
+        interpretation.preferences.budget_min is not None,
+        interpretation.preferences.budget_max is not None,
+    ))
+    print("[sales.retrieval.plan]", {
+        "goal": interpretation.goal,
+        "has_product_type": bool(interpretation.subject.product_type),
+        "has_brand": bool(interpretation.subject.brand),
+        "has_model": bool(interpretation.subject.model),
+        "has_budget": has_budget,
+        "semantic_preferences_count": len(preferences),
+        "candidate_limit": retrieval_plan.candidate_limit,
+    })
+    if not retrieval_plan.requests:
+        return None
+
+    candidates: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    hard_filtered: list[dict[str, Any]] = []
+    for request in retrieval_plan.requests:
+        arguments = request.tool_arguments()
+        print("[sales.retrieval.request]", {
+            "strategy": request.strategy,
+            "has_name_filter": bool(request.name),
+            "has_brand_filter": bool(request.brand),
+            "has_budget_filter": has_budget,
+            "limit": request.limit,
+        })
+        result = await execute_tool("search_products", arguments)
+        if "error" in result:
+            return AgentResult(
+                reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="tray_adapter_unavailable",
+            )
+        raw_products = result.get("products") if isinstance(result.get("products"), list) else []
+        for product in raw_products:
+            if not isinstance(product, dict) or product.get("id") is None:
+                continue
+            product_id = str(product["id"])
+            if product_id in seen_ids:
+                continue
+            seen_ids.add(product_id)
+            candidates.append(product)
+            if len(candidates) >= retrieval_plan.candidate_limit:
+                break
+        hard_filtered = hard_filter_products(
+            candidates,
+            interpretation,
+            mode=retrieval_plan.mode,
+        )
+        print("[sales.retrieval.result]", {
+            "strategy": request.strategy,
+            "raw_candidate_count": len(raw_products),
+            "hard_filtered_count": len(hard_filtered),
+        })
+        if len(candidates) >= retrieval_plan.candidate_limit:
+            break
+        if retrieval_plan.mode == "exact" and hard_filtered:
+            break
+
+    if not candidates:
+        reason = "exact_product_not_found" if retrieval_plan.mode == "exact" else "catalog_empty"
+        print("[sales.retrieval.empty]", {"reason": reason})
+        if retrieval_plan.mode == "exact":
+            return AgentResult(
+                reply_text="Não encontrei esse produto no catálogo agora.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="product_not_found",
+            )
+        return AgentResult(
+            reply_text="Não encontrei opções disponíveis para esses critérios agora.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="recommendation_no_match",
+        )
+    if not hard_filtered:
+        reason = "exact_product_not_found" if retrieval_plan.mode == "exact" else "hard_filter_empty"
+        print("[sales.retrieval.empty]", {"reason": reason})
+        if retrieval_plan.mode == "exact":
+            return AgentResult(
+                reply_text="Não encontrei esse produto no catálogo agora.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="product_not_found",
+            )
+        return AgentResult(
+            reply_text="Encontrei produtos no catálogo, mas nenhum atende aos critérios objetivos informados agora.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="recommendation_no_match",
+        )
+
+    if retrieval_plan.mode == "recommendation":
+        ranked = await rerank_products(hard_filtered, interpretation)
+    else:
+        ranked = hard_filtered
+    selected = ranked[:CUSTOMER_RESULT_LIMIT]
+    from .commerce_router import _product_result
+
+    return _product_result("product_search", selected)
+
+
 async def handle_sales_message(
     message: IncomingMessage,
     facts: dict[str, Any],
@@ -1007,44 +1130,47 @@ async def handle_sales_message(
     if not action:
         return None
 
-    queries = [str(plan.get("query") or "").strip()]
-    code_value = re.sub(r"^(?:ean|sku|ref(?:er[êe]ncia)?)\s+", "", queries[0], flags=re.IGNORECASE)
-    code_query = bool(re.fullmatch(r"[A-Za-z0-9._/-]+", code_value)) and any(char.isdigit() for char in code_value)
-    subject = plan.get("subject") or {}
-    if action == "product_search" and not code_query:
-        model = str(subject.get("model") or "").strip()
-        brand = str(subject.get("brand") or "").strip()
-        if model:
-            queries.append(model)
-        if brand:
-            queries.append(brand)
-    queries = list(dict.fromkeys(query for query in queries if query or action == "coupon_search"))
-    tray_result = None
-    last_raw_result = None
-    for attempt, query in enumerate(queries[:3], start=1):
-        attempt_plan = {**plan, "query": query, "subject": {**(plan.get("subject") or {}), "query": query}}
-        print("[sales.agent] tray_request", {"capability": action, "attempt": attempt, "strategy": "initial" if attempt == 1 else "progressive"})
-        raw_result = await handle_commerce_message(
-            message,
-            facts,
-            customer_context,
-            action=action,
-            query=query,
-        )
-        last_raw_result = raw_result
-        print("[sales.agent] tray_result", {"ok": raw_result is not None and raw_result.safety_reason != "tray_adapter_unavailable", "results_count": len((raw_result.commercial_data or {}).get("products", [])) if raw_result else 0})
-        tray_result = _ranked_result(raw_result, attempt_plan) if raw_result else None
-        if tray_result:
-            print("[sales.agent] ranking", {"input_count": len((raw_result.commercial_data or {}).get("products", [])), "output_count": len((tray_result.commercial_data or {}).get("products", []))})
-            break
-        if raw_result and raw_result.safety_reason == "tray_adapter_unavailable":
-            tray_result = raw_result
-            break
-        if raw_result and raw_result.safety_reason not in {"product_not_found", "ambiguous_product"}:
-            tray_result = raw_result
-            break
-    if tray_result is None:
-        tray_result = last_raw_result
+    if interpretation is not None and action == "product_search":
+        tray_result = await _execute_compiled_product_retrieval(interpretation)
+    else:
+        queries = [str(plan.get("query") or "").strip()]
+        code_value = re.sub(r"^(?:ean|sku|ref(?:er[êe]ncia)?)\s+", "", queries[0], flags=re.IGNORECASE)
+        code_query = bool(re.fullmatch(r"[A-Za-z0-9._/-]+", code_value)) and any(char.isdigit() for char in code_value)
+        subject = plan.get("subject") or {}
+        if action == "product_search" and not code_query:
+            model = str(subject.get("model") or "").strip()
+            brand = str(subject.get("brand") or "").strip()
+            if model:
+                queries.append(model)
+            if brand:
+                queries.append(brand)
+        queries = list(dict.fromkeys(query for query in queries if query or action == "coupon_search"))
+        tray_result = None
+        last_raw_result = None
+        for attempt, query in enumerate(queries[:3], start=1):
+            attempt_plan = {**plan, "query": query, "subject": {**(plan.get("subject") or {}), "query": query}}
+            print("[sales.agent] tray_request", {"capability": action, "attempt": attempt, "strategy": "initial" if attempt == 1 else "progressive"})
+            raw_result = await handle_commerce_message(
+                message,
+                facts,
+                customer_context,
+                action=action,
+                query=query,
+            )
+            last_raw_result = raw_result
+            print("[sales.agent] tray_result", {"ok": raw_result is not None and raw_result.safety_reason != "tray_adapter_unavailable", "results_count": len((raw_result.commercial_data or {}).get("products", [])) if raw_result else 0})
+            tray_result = _ranked_result(raw_result, attempt_plan) if raw_result else None
+            if tray_result:
+                print("[sales.agent] ranking", {"input_count": len((raw_result.commercial_data or {}).get("products", [])), "output_count": len((tray_result.commercial_data or {}).get("products", []))})
+                break
+            if raw_result and raw_result.safety_reason == "tray_adapter_unavailable":
+                tray_result = raw_result
+                break
+            if raw_result and raw_result.safety_reason not in {"product_not_found", "ambiguous_product"}:
+                tray_result = raw_result
+                break
+        if tray_result is None:
+            tray_result = last_raw_result
     if tray_result is None:
         return None
     if (
