@@ -197,8 +197,13 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
 
     captured = {}
     rows = [
-        {"id": 12, "text": "menos de 5 mil", "reply_text": None},
-        {"id": 10, "text": "quero comprar um relógio", "reply_text": "Qual estilo você prefere?"},
+        {"id": 12, "text": "menos de 5 mil", "reply_text": None, "safety_reason": None},
+        {
+            "id": 10,
+            "text": "quero comprar um relógio",
+            "reply_text": "Qual estilo você prefere?",
+            "safety_reason": "commerce_clarification",
+        },
     ]
 
     class FakeCursor:
@@ -235,13 +240,18 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
 
     assert turns == [
         {"role": "user", "content": "quero comprar um relógio"},
-        {"role": "assistant", "content": "Qual estilo você prefere?"},
+        {
+            "role": "assistant",
+            "content": "Qual estilo você prefere?",
+            "metadata": {"safety_reason": "commerce_clarification"},
+        },
         {"role": "user", "content": "menos de 5 mil"},
     ]
     assert captured["params"]["conversation_id"] == "conversation-1"
     assert "sender_phone" not in captured["params"]
     assert captured["params"]["before_inbound_id"] == 20
     assert "provider_send_ok = true" in captured["query"]
+    assert "response.safety_reason" in captured["query"]
     assert "inbound.id < %(before_inbound_id)s" in captured["query"]
 
 

@@ -203,7 +203,7 @@ async def test_purchase_intent_uses_product_entity_not_full_sentence(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_broad_recommendation_clarifies_without_false_not_found(monkeypatch):
+async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
     import app.sales_agent as sales_agent
 
     settings = _settings(openai_api_key="test-key")
@@ -212,7 +212,7 @@ async def test_broad_recommendation_clarifies_without_false_not_found(monkeypatc
 
     class FakeCompletions:
         async def create(self, **kwargs):
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Você tem alguma marca ou estilo de preferência?"))])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Encontrei uma opção dentro da faixa informada."))])
 
     class FakeClient:
         def __init__(self, **kwargs):
@@ -239,10 +239,10 @@ async def test_broad_recommendation_clarifies_without_false_not_found(monkeypatc
             confidence=0.94,
         ),
     )
-    assert calls == []
-    assert result.reply_text == "Você tem alguma marca ou estilo de preferência?"
+    assert calls == [("search_products", {"query": "relógio", "limit": 3})]
+    assert result.reply_text == "Encontrei uma opção dentro da faixa informada."
     assert result.safety_reason != "recommendation_not_found"
-    assert result.response_metadata["used_tray"] is False
+    assert result.response_metadata["used_tray"] is True
 
 
 @pytest.mark.asyncio

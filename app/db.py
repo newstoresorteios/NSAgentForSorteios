@@ -266,7 +266,7 @@ def load_recent_conversation_turns(
     sender_phone: str | None,
     before_inbound_id: int | None,
     limit: int = 8,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Load a small, chronological transcript containing only delivered replies."""
     settings = get_settings()
     if not settings.database_url or (not conversation_id and not sender_phone):
@@ -294,10 +294,10 @@ def load_recent_conversation_turns(
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT inbound.id, inbound.text, delivered.reply_text
+                    SELECT inbound.id, inbound.text, delivered.reply_text, delivered.safety_reason
                     FROM public.ai_inbound_messages AS inbound
                     LEFT JOIN LATERAL (
-                        SELECT response.reply_text
+                        SELECT response.reply_text, response.safety_reason
                         FROM public.ai_agent_responses AS response
                         WHERE response.inbound_id = inbound.id
                           AND response.provider_send_ok = true
@@ -316,14 +316,17 @@ def load_recent_conversation_turns(
         print("[sales.context] load_failed", {"error_type": type(exc).__name__})
         return []
 
-    turns: list[dict[str, str]] = []
+    turns: list[dict[str, Any]] = []
     for row in reversed(rows):
         inbound_text = str(row.get("text") or "").strip()
         reply_text = str(row.get("reply_text") or "").strip()
         if inbound_text:
             turns.append({"role": "user", "content": inbound_text})
         if reply_text:
-            turns.append({"role": "assistant", "content": reply_text})
+            assistant_turn: dict[str, Any] = {"role": "assistant", "content": reply_text}
+            if row.get("safety_reason"):
+                assistant_turn["metadata"] = {"safety_reason": str(row["safety_reason"])}
+            turns.append(assistant_turn)
     return turns[-safe_limit:]
 
 

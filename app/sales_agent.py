@@ -29,10 +29,12 @@ from .models import AgentResult, IncomingMessage, SalesInterpretation
 SALES_PLANNER_INSTRUCTIONS = """
 Você planeja consultas comerciais para a New Store. Retorne somente JSON válido.
 Use este formato: domain, goal, subject, constraints, information_needed,
+enough_information_to_search, ready_for_retrieval, stop_clarification,
 needs_clarification e clarification_question.
 goal deve ser discover, find, recommend, compare, inspect, buy ou after_sales.
 subject deve conter product_type, query, brand, model, reference e ean.
-constraints deve conter budget_min, budget_max, attributes, color e style.
+constraints deve conter budget_min, budget_max, attributes, color, style, material e
+explicit_no_preferences.
 Não produza fatos comerciais nem diga que um produto existe.
 """.strip()
 
@@ -42,15 +44,21 @@ Use exclusivamente os fatos comerciais retornados pelo TrayAdapter no bloco FACT
 Não invente produto, preço, estoque, promoção, disponibilidade, Pix, parcelamento ou cupom.
 Se um fato não estiver em FACTS, diga que não foi informado.
 Responda em português do Brasil, de forma curta para WhatsApp.
+Apresente normalmente no máximo três opções relevantes. Não termine toda resposta
+automaticamente com outra pergunta; deixe o cliente reagir quando os produtos já foram apresentados.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
 Você é um vendedor da NewStore no WhatsApp.
-Faça somente UMA pergunta curta e útil para entender melhor o que o cliente procura.
-Considere o histórico e a interpretação estruturada fornecidos.
-Não transforme a conversa em questionário e não repita uma pergunta já respondida.
+Faça uma resposta curta para obter no máximo DUAS informações relacionadas que
+realmente mudariam a busca. Considere o histórico, a interpretação e DISCOVERY_STATE.
+Não transforme a conversa em questionário. Não pergunte novamente informação já
+fornecida, presente em known_preferences ou em recent_questions. Não pergunte por uma
+preferência listada em explicit_no_preferences; isso significa que o cliente disse que
+não possui preferência naquele critério.
 Não afirme produto, preço, estoque, promoção ou condição comercial, pois a Tray ainda
-não foi consultada. Responda apenas com a pergunta ao cliente.
+não foi consultada. Responda apenas com uma frase curta ou até duas perguntas simples
+e relacionadas.
 """.strip()
 
 OUT_OF_SCOPE_REPLY = "Posso ajudar com produtos, compras, pedidos e informações da NewStore, além dos sorteios da loja."
@@ -102,6 +110,25 @@ Não copie uma fala anterior como fato comercial. Preserve produto, preferência
 orçamento que estejam evidentes no contexto. confidence deve refletir a certeza da
 interpretação entre 0 e 1. Em information_needed, indique somente os fatos necessários:
 catalog, price, inventory, coupons ou payment.
+
+Decida também:
+- enough_information_to_search=true quando já existe produto/categoria identificável e
+  informação suficiente para iniciar uma busca útil. Uma preferência relevante costuma
+  bastar; não exija cor, material, estilo, tamanho, marca e funções ao mesmo tempo.
+- ready_for_retrieval=true quando o cliente pede semanticamente para ver, buscar ou receber
+  opções/catálogo agora.
+- stop_clarification=true quando o cliente demonstra atrito, pede para agir, diz que já
+  respondeu, não sabe, não tem preferência ou quer encerrar as perguntas.
+- preferences.explicit_no_preferences deve listar os critérios em que o cliente declarou
+  não ter preferência, usando somente os nomes canônicos budget, brand, color, style,
+  material, occasion, recipient ou attributes. null significa apenas desconhecido.
+
+Mensagens curtas podem atualizar uma preferência anterior. Quando houver mudança, a
+preferência explícita mais recente vence; não mantenha o valor substituído em attributes.
+Se ready_for_retrieval ou stop_clarification for true e houver subject identificável,
+needs_clarification deve ser false.
+Quando needs_clarification=true, clarification_question deve conter uma frase curta com
+no máximo duas perguntas relacionadas e não pode repetir algo já respondido no histórico.
 """.strip()
 
 _ACTION_TO_PLAN = {
@@ -162,7 +189,15 @@ def _normalize_semantic_plan(parsed: dict[str, Any]) -> dict[str, Any] | None:
         "intent": action,
         "goal": goal or {"purchase_intent": "buy", "product_search": "find", "recommendation": "recommend", "product_comparison": "compare", "product_price": "inspect", "product_inventory": "inspect", "coupon_search": "inspect", "clarification": "discover"}.get(action),
         "subject": {"product_type": subject.get("product_type") or parsed.get("product_type"), "query": str(query).strip(), "brand": filters.get("brand"), "model": filters.get("model"), "reference": filters.get("reference"), "ean": filters.get("ean")},
-        "constraints": {"budget_min": filters.get("budget_min"), "budget_max": filters.get("budget_max"), "attributes": filters.get("attributes") or [], "color": constraints_input.get("color"), "style": constraints_input.get("style")},
+        "constraints": {
+            "budget_min": filters.get("budget_min"),
+            "budget_max": filters.get("budget_max"),
+            "attributes": filters.get("attributes") or [],
+            "color": constraints_input.get("color"),
+            "style": constraints_input.get("style"),
+            "material": constraints_input.get("material"),
+            "explicit_no_preferences": constraints_input.get("explicit_no_preferences") or [],
+        },
         "information_needed": parsed.get("information_needed") or ["catalog"],
         "needs_clarification": bool(parsed.get("needs_clarification")),
         "clarification_question": parsed.get("clarification_question"),
@@ -215,10 +250,15 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
             "budget_max": constraints.get("budget_max") or filters.get("budget_max"),
             "color": constraints.get("color") or filters.get("color"),
             "style": constraints.get("style") or filters.get("style"),
+            "material": constraints.get("material") or filters.get("material"),
             "attributes": constraints.get("attributes") or filters.get("attributes") or [],
+            "explicit_no_preferences": constraints.get("explicit_no_preferences") or [],
         },
         information_needed=["catalog"] if legacy.get("domain") == "commerce" else [],
         references_previous_context=False,
+        enough_information_to_search=False,
+        ready_for_retrieval=False,
+        stop_clarification=False,
         needs_clarification=bool(legacy.get("needs_clarification")),
         clarification_question=legacy.get("clarification_question"),
         confidence=0.6,
@@ -246,6 +286,9 @@ def _log_interpretation(
         "has_style": bool(preferences.style),
         "has_color": bool(preferences.color),
         "has_budget": preferences.budget_min is not None or preferences.budget_max is not None,
+        "enough_information_to_search": interpretation.enough_information_to_search,
+        "ready_for_retrieval": interpretation.ready_for_retrieval,
+        "stop_clarification": interpretation.stop_clarification,
         "needs_clarification": interpretation.needs_clarification,
     }
     if fallback_reason:
@@ -254,7 +297,7 @@ def _log_interpretation(
 
 
 def _normalize_interpreter_history(
-    recent_turns: list[dict[str, str]] | None,
+    recent_turns: list[dict[str, Any]] | None,
 ) -> list[dict[str, str]]:
     normalized: list[dict[str, str]] = []
     for turn in recent_turns or []:
@@ -328,10 +371,18 @@ def interpretation_to_plan(
         "buy": "purchase_intent",
         "after_sales": "clarification",
     }
-    intent = "clarification" if interpretation.needs_clarification else goal_to_intent.get(
-        interpretation.goal or "discover",
-        "clarification",
-    )
+    retrieval_signal = any((
+        interpretation.enough_information_to_search,
+        interpretation.ready_for_retrieval,
+        interpretation.stop_clarification,
+    ))
+    if retrieval_signal and interpretation.goal in {"discover", "recommend", "buy"}:
+        intent = "recommendation"
+    else:
+        intent = "clarification" if interpretation.needs_clarification else goal_to_intent.get(
+            interpretation.goal or "discover",
+            "clarification",
+        )
     filters = {
         key: value
         for key, value in {
@@ -344,6 +395,7 @@ def interpretation_to_plan(
             "attributes": preferences.get("attributes"),
             "color": preferences.get("color"),
             "style": preferences.get("style"),
+            "material": preferences.get("material"),
         }.items()
         if value not in (None, [], "")
     }
@@ -360,6 +412,9 @@ def interpretation_to_plan(
         "needs_clarification": interpretation.needs_clarification,
         "clarification_question": interpretation.clarification_question,
         "information_needed": interpretation.information_needed,
+        "enough_information_to_search": interpretation.enough_information_to_search,
+        "ready_for_retrieval": interpretation.ready_for_retrieval,
+        "stop_clarification": interpretation.stop_clarification,
         "_source": interpretation._source,
     }
 
@@ -367,7 +422,7 @@ def interpretation_to_plan(
 async def interpret_message(
     message: IncomingMessage,
     *,
-    recent_turns: list[dict[str, str]] | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> SalesInterpretation:
     settings = get_settings()
     if _is_greeting(message.text):
@@ -626,31 +681,139 @@ def _mark_sales_result(
     )
 
 
+CLARIFICATION_BUDGET = 2
+
+
+def _is_clarification_turn(turn: dict[str, Any]) -> bool:
+    metadata = turn.get("metadata") if isinstance(turn, dict) else None
+    return (
+        turn.get("role") == "assistant"
+        and isinstance(metadata, dict)
+        and metadata.get("safety_reason") == "commerce_clarification"
+    )
+
+
+def _consecutive_clarification_count(recent_turns: list[dict[str, Any]] | None) -> int:
+    count = 0
+    for turn in reversed(recent_turns or []):
+        if turn.get("role") == "user":
+            continue
+        if not _is_clarification_turn(turn):
+            break
+        count += 1
+    return count
+
+
+def _known_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
+    preferences = interpretation.preferences
+    known: dict[str, Any] = {}
+    if preferences.budget_min is not None or preferences.budget_max is not None:
+        known["budget"] = {
+            "min": preferences.budget_min,
+            "max": preferences.budget_max,
+        }
+    for field in ("color", "style", "material", "occasion", "recipient"):
+        value = getattr(preferences, field)
+        if value:
+            known[field] = value
+    if interpretation.subject.brand:
+        known["brand"] = interpretation.subject.brand
+    if preferences.attributes:
+        known["attributes"] = preferences.attributes
+    return known
+
+
+def _subject_identifiable(interpretation: SalesInterpretation) -> bool:
+    subject = interpretation.subject
+    return any((subject.product_type, subject.brand, subject.model, subject.reference, subject.ean))
+
+
+def _discovery_state(
+    interpretation: SalesInterpretation,
+    recent_turns: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    clarification_count = _consecutive_clarification_count(recent_turns)
+    known_preferences = _known_preferences(interpretation)
+    explicit_no_preferences = list(dict.fromkeys(interpretation.preferences.explicit_no_preferences))
+    known_preferences_count = len(known_preferences) + len(explicit_no_preferences)
+    subject_identifiable = _subject_identifiable(interpretation)
+    enough_information = interpretation.enough_information_to_search or (
+        subject_identifiable and known_preferences_count > 0
+    )
+    budget_remaining = max(0, CLARIFICATION_BUDGET - clarification_count)
+    force_retrieval = subject_identifiable and any((
+        enough_information,
+        budget_remaining == 0,
+        interpretation.ready_for_retrieval,
+        interpretation.stop_clarification,
+    ))
+    recent_questions = [
+        str(turn.get("content") or "").strip()
+        for turn in recent_turns or []
+        if _is_clarification_turn(turn) and str(turn.get("content") or "").strip()
+    ][-CLARIFICATION_BUDGET:]
+    preference_fields = {"budget", "brand", "color", "style", "material", "occasion", "recipient", "attributes"}
+    unknown_preferences = sorted(
+        preference_fields - set(known_preferences) - set(explicit_no_preferences)
+    )
+    return {
+        "clarification_count": clarification_count,
+        "clarification_budget_remaining": budget_remaining,
+        "enough_information_to_search": enough_information,
+        "ready_for_retrieval": interpretation.ready_for_retrieval,
+        "stop_clarification": interpretation.stop_clarification,
+        "known_preferences": known_preferences,
+        "known_preferences_count": known_preferences_count,
+        "unknown_preferences": unknown_preferences,
+        "explicit_no_preferences": explicit_no_preferences,
+        "recent_questions": recent_questions,
+        "subject_identifiable": subject_identifiable,
+        "force_retrieval": force_retrieval,
+    }
+
+
 def _needs_clarification_before_retrieval(
     interpretation: SalesInterpretation,
     plan: dict[str, Any],
+    discovery_state: dict[str, Any],
 ) -> bool:
+    if discovery_state["force_retrieval"]:
+        return False
     if interpretation.needs_clarification or interpretation.goal == "discover":
         return True
     if plan.get("intent") not in {"purchase_intent", "recommendation"}:
         return False
-    subject = interpretation.subject
-    return not any((subject.brand, subject.model, subject.reference, subject.ean))
+    return not discovery_state["subject_identifiable"]
 
 
 async def generate_clarification_reply(
     *,
     message: IncomingMessage,
     interpretation: SalesInterpretation,
-    recent_turns: list[dict[str, str]] | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
     context_note: str | None = None,
     used_tray: bool = False,
+    discovery_state: dict[str, Any] | None = None,
 ) -> AgentResult:
     settings = get_settings()
     deterministic_question = (
         interpretation.clarification_question
         or "Qual característica ou preferência é mais importante para você?"
     )
+    if interpretation._source == "openai" and interpretation.clarification_question:
+        return _mark_sales_result(
+            AgentResult(
+                reply_text=html.unescape(interpretation.clarification_question.strip()),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="commerce_clarification",
+            ),
+            interpretation=interpretation,
+            goal=interpretation.goal,
+            response_source="openai",
+            used_openai_responder=False,
+            used_tray=used_tray,
+        )
     if not settings.openai_api_key:
         return _mark_sales_result(
             AgentResult(
@@ -672,6 +835,7 @@ async def generate_clarification_reply(
         "current_message": message.text,
         "interpretation": interpretation.model_dump(),
         "context_note": context_note,
+        "DISCOVERY_STATE": discovery_state or _discovery_state(interpretation, recent_turns),
     }
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -770,7 +934,7 @@ async def handle_sales_message(
     facts: dict[str, Any],
     customer_context: dict[str, Any],
     semantic_plan: dict[str, Any] | SalesInterpretation | None = None,
-    recent_turns: list[dict[str, str]] | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> AgentResult | None:
     interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
     if isinstance(semantic_plan, SalesInterpretation):
@@ -781,6 +945,9 @@ async def handle_sales_message(
         plan = await plan_sales_request(message)
     if not plan:
         return None
+    discovery_state = _discovery_state(interpretation, recent_turns) if interpretation else None
+    if discovery_state and discovery_state["force_retrieval"] and plan.get("intent") == "clarification":
+        plan = {**plan, "intent": "recommendation"}
     print("[sales.agent] planner", {
         "source": plan.get("_source", "fallback"),
         "action": plan.get("intent"),
@@ -788,18 +955,29 @@ async def handle_sales_message(
         "has_brand": bool((plan.get("filters") or {}).get("brand")),
         "has_model": bool((plan.get("filters") or {}).get("model")),
     })
+    if discovery_state:
+        print("[sales.discovery]", {
+            "clarification_count": discovery_state["clarification_count"],
+            "clarification_budget_remaining": discovery_state["clarification_budget_remaining"],
+            "enough_information_to_search": discovery_state["enough_information_to_search"],
+            "ready_for_retrieval": discovery_state["ready_for_retrieval"],
+            "stop_clarification": discovery_state["stop_clarification"],
+            "known_preferences_count": discovery_state["known_preferences_count"],
+        })
     vague_query = str(plan.get("query") or "").strip().lower() in {"", "alguma coisa", "algo", "qualquer coisa", "um produto", "uma coisa", "produto"}
-    if interpretation and _needs_clarification_before_retrieval(interpretation, plan):
+    if interpretation and discovery_state and _needs_clarification_before_retrieval(interpretation, plan, discovery_state):
         return await generate_clarification_reply(
             message=message,
             interpretation=interpretation,
             recent_turns=recent_turns,
+            discovery_state=discovery_state,
         )
-    if interpretation and vague_query:
+    if interpretation and discovery_state and vague_query and not discovery_state["force_retrieval"]:
         return await generate_clarification_reply(
             message=message,
             interpretation=interpretation,
             recent_turns=recent_turns,
+            discovery_state=discovery_state,
         )
     if plan.get("intent") == "clarification" or vague_query:
         result = AgentResult(
@@ -869,7 +1047,11 @@ async def handle_sales_message(
         tray_result = last_raw_result
     if tray_result is None:
         return None
-    if plan.get("intent") in {"purchase_intent", "recommendation", "clarification"} and tray_result.safety_reason == "product_not_found":
+    if (
+        plan.get("intent") in {"purchase_intent", "recommendation", "clarification"}
+        and tray_result.safety_reason == "product_not_found"
+        and not (discovery_state and discovery_state["force_retrieval"])
+    ):
         if interpretation:
             return await generate_clarification_reply(
                 message=message,
@@ -877,6 +1059,7 @@ async def handle_sales_message(
                 recent_turns=recent_turns,
                 context_note="A busca atual não trouxe candidatos confiáveis; peça um critério diferente sem afirmar que o produto não existe.",
                 used_tray=True,
+                discovery_state=discovery_state,
             )
     final = await _sales_response_with_openai(message, plan, tray_result, interpretation)
     print("[sales.agent] responder", {"source": "openai" if final else "deterministic_fallback"})

@@ -15,9 +15,13 @@ class ProductPreferences(BaseModel):
     budget_max: float | None = None
     color: str | None = None
     style: str | None = None
+    material: str | None = None
     occasion: str | None = None
     recipient: str | None = None
     attributes: list[str] = Field(default_factory=list)
+    explicit_no_preferences: list[
+        Literal["budget", "brand", "color", "style", "material", "occasion", "recipient", "attributes"]
+    ] = Field(default_factory=list)
 
 
 class SalesInterpretation(BaseModel):
@@ -43,6 +47,9 @@ class SalesInterpretation(BaseModel):
         Literal["catalog", "price", "inventory", "coupons", "payment"]
     ] = Field(default_factory=list)
     references_previous_context: bool
+    enough_information_to_search: bool = Field(default_factory=bool)
+    ready_for_retrieval: bool = Field(default_factory=bool)
+    stop_clarification: bool = Field(default_factory=bool)
     needs_clarification: bool
     clarification_question: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)

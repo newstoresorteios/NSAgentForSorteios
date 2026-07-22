@@ -61,7 +61,10 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
                 None,
             )
             if delivered:
-                turns.append({"role": "assistant", "content": delivered["reply_text"]})
+                assistant_turn = {"role": "assistant", "content": delivered["reply_text"]}
+                if delivered.get("safety_reason"):
+                    assistant_turn["metadata"] = {"safety_reason": delivered["safety_reason"]}
+                turns.append(assistant_turn)
         return turns[-limit:]
 
     class FakeCompletions:
@@ -95,6 +98,10 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
             )
 
         async def create(self, **kwargs):
+            if kwargs["messages"][0]["content"] == sales_agent.SALES_RESPONDER_INSTRUCTIONS:
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content="Encontrei opções esportivas para você."))]
+                )
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(content=next(clarification_replies)))]
             )
@@ -117,10 +124,10 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
     monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", load_turns)
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings())
     monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeOpenAI)
-    monkeypatch.setattr(
-        "app.commerce_router.execute_tool",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("discovery must not call Tray")),
-    )
+    async def fake_execute(name, arguments):
+        return {"products": [{"id": "1", "name": "Relógio esportivo", "style": "esportivo"}]}
+
+    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
 
     index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
     try:
