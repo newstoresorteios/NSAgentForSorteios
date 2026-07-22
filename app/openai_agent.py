@@ -28,7 +28,7 @@ from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_ni
 from .user_preferences import detect_preferred_name_update
 from .tray_tools import TOOL_SCHEMAS, execute_tool
 from .commerce_router import resolve_commerce_action
-from .sales_agent import handle_sales_message
+from .sales_agent import GREETING_REPLY, OUT_OF_SCOPE_REPLY, deterministic_scope, handle_sales_message, interpret_message
 
 
 SYSTEM_INSTRUCTIONS = f"""
@@ -55,6 +55,7 @@ Regras obrigatórias:
 - O banco local \u00e9 a fonte oficial para saldo, Cart\u00e3o Presente pessoal, sorteios, participa\u00e7\u00f5es, n\u00fameros e hist\u00f3rico.
 - O TrayAdapter \u00e9 a fonte oficial para cat\u00e1logo, produtos, marcas, pre\u00e7os, estoque, EAN, refer\u00eancia e condi\u00e7\u00f5es comerciais.
 - Para qualquer informa\u00e7\u00e3o comercial atual, use as tools do TrayAdapter; nunca use exemplos do site como pre\u00e7o ou estoque atual.
+- Responda somente sobre a NewStore, seus produtos, compras, atendimento comercial e sorteios; para assuntos externos, use a recusa curta de escopo.
 """.strip()
 
 STORE_LOOKUP_UNAVAILABLE = "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."
@@ -191,6 +192,12 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
             safety_reason=blocked_reason,
         )
 
+    scope = deterministic_scope(message.text)
+    print("[agent.scope]", {"domain": scope.get("domain")})
+    if scope.get("domain") == "out_of_scope":
+        return AgentResult(reply_text=OUT_OF_SCOPE_REPLY, intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal")
+    if scope.get("domain") == "greeting":
+        return AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False)
     primary_intent = detect_primary_intent(message.text)
     print("[agent.route]", {"inbound_id": (message.raw or {}).get("inbound_id"), "primary_intent": primary_intent})
     third_party_reply = _third_party_guardrail(message, primary_intent)
@@ -280,6 +287,12 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     blocked_reason = detect_blocked_request(message.text)
     if blocked_reason:
         return AgentResult(reply_text=default_safe_handoff(), intent="handoff", handoff_required=True, safety_reason=blocked_reason)
+    scope = await interpret_message(message)
+    print("[agent.scope]", {"domain": scope.get("domain")})
+    if scope.get("domain") == "out_of_scope":
+        return AgentResult(reply_text=OUT_OF_SCOPE_REPLY, intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal")
+    if scope.get("domain") == "greeting":
+        return AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False)
     primary_intent = detect_primary_intent(message.text)
     print("[agent.route]", {"inbound_id": (message.raw or {}).get("inbound_id"), "primary_intent": primary_intent})
     third_party_reply = _third_party_guardrail(message, primary_intent)
@@ -288,13 +301,15 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     if message.input_modality == "audio" and (message.transcription_failed or not (message.text or "").strip()):
         return generate_agent_reply(message, customer_context)
     facts = gather_customer_facts(message, customer_context)
+    if scope.get("domain") == "commerce":
+        facts = {**facts, "primary_intent": "commerce", "intents": [*facts.get("intents", []), "commerce"]}
     preferred_reply = _preferred_name_reply_if_requested(message, facts)
     if preferred_reply:
         return preferred_reply
     if detect_available_numbers_inquiry(message.text):
         return build_available_numbers_reply(message)
-    if facts.get("primary_intent") == "commerce" or resolve_commerce_action(message.text):
-        commerce_result = await handle_sales_message(message, facts, customer_context)
+    if scope.get("domain") == "commerce" or facts.get("primary_intent") == "commerce" or resolve_commerce_action(message.text):
+        commerce_result = await handle_sales_message(message, facts, customer_context, scope)
         if commerce_result is not None:
             return commerce_result
     print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})

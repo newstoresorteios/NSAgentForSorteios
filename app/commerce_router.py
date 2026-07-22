@@ -42,6 +42,7 @@ def extract_product_query(text: str | None) -> str:
     value = " ".join((text or "").strip().split())
     value = re.sub(r"^e\s+", "", value, count=1, flags=re.IGNORECASE)
     prefixes = (
+        r"gostaria\s+de\s+(?:comprar\s+)?", r"quero\s+(?:comprar\s+|adquirir\s+)?", r"procuro\s+", r"busco\s+",
         r"voc\u00eas\s+t\u00eam", r"voces\s+tem", r"voc\u00eas\s+tem",
         r"voc\u00eas\s+vendem", r"voces\s+vendem", r"tem\s+estoque\s+(?:de|do|da)",
         r"tem\s+estoque", r"qual\s+o\s+pre\u00e7o\s+(?:de|do|da)",

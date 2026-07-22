@@ -45,6 +45,9 @@ def _reduce_products(payload: Any) -> dict[str, Any]:
 
 def _query_filters(query: str) -> list[dict[str, str]]:
     value = query.strip()
+    ean_match = re.fullmatch(r"ean\s+(\d{8,14})", value, flags=re.IGNORECASE)
+    if ean_match:
+        return [{"ean": ean_match.group(1)}]
     if re.fullmatch(r"\d{8,14}", value):
         return [{"ean": value}, {"reference": value}]
     if re.search(r"[./_-]", value) or (re.search(r"\d", value) and re.search(r"[A-Za-z]", value)):

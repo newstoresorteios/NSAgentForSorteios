@@ -129,6 +129,93 @@ async def test_general_does_not_send_tray_tools_or_commercial_fallback(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_out_of_scope_is_refused_without_openai_answer_or_tray(monkeypatch):
+    from app import openai_agent
+    import app.sales_agent as sales_agent
+
+    settings = _settings(openai_api_key="")
+    monkeypatch.setattr(openai_agent, "get_settings", lambda: settings)
+    monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
+    monkeypatch.setattr("app.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("out of scope must not call Tray")))
+    result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="quem ganhou o jogo ontem?"), {})
+    assert result.intent == "out_of_scope"
+    assert "NewStore" in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_purchase_intent_uses_product_entity_not_full_sentence(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    settings = _settings(openai_api_key="")
+    monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
+    calls = []
+
+    async def fake_execute(name, arguments):
+        calls.append((name, arguments))
+        return {"products": [{"id": "1", "name": "Relógio esportivo", "current_price": 1000}]}
+
+    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="quero comprar um relógio"),
+        {"primary_intent": "commerce"},
+        {},
+        {"domain": "commerce", "intent": "purchase_intent", "query": "relógio", "filters": {}, "_source": "openai"},
+    )
+    assert calls[0] == ("search_products", {"query": "relógio", "limit": 3})
+    assert "quero comprar" not in calls[0][1]["query"]
+    assert result.intent == "commerce"
+
+
+@pytest.mark.asyncio
+async def test_recommendation_uses_real_catalog_results(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    settings = _settings(openai_api_key="")
+    monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
+    calls = []
+
+    async def fake_execute(name, arguments):
+        calls.append((name, arguments))
+        return {"products": [{"id": "2", "name": "Relógio esportivo preto", "current_price": 4500}]}
+
+    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="quero um relógio preto esportivo até 5000"),
+        {"primary_intent": "commerce"},
+        {},
+        {"domain": "commerce", "intent": "recommendation", "query": "relógio preto esportivo", "filters": {"budget_max": 5000}, "_source": "openai"},
+    )
+    assert calls[0][0] == "search_products"
+    assert "relógio preto esportivo" in calls[0][1]["query"]
+    assert "Relógio esportivo preto" in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_product_search_uses_progressive_strategies(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    settings = _settings(openai_api_key="")
+    monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
+    calls = []
+
+    async def fake_execute(name, arguments):
+        calls.append(arguments["query"])
+        if arguments["query"] == "Seastar":
+            return {"products": [{"id": "3", "name": "Tissot Seastar"}]}
+        return {"products": []}
+
+    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="Tem Tissot Seastar?"),
+        {"primary_intent": "commerce"},
+        {},
+        {"domain": "commerce", "intent": "product_search", "query": "Tissot Seastar", "filters": {"brand": "Tissot"}, "_source": "openai"},
+    )
+    assert calls == ["Tissot Seastar", "Seastar"]
+    assert "Tissot Seastar" in result.reply_text
+
+
+@pytest.mark.asyncio
 async def test_stale_inbound_does_not_send_old_agent_reply(monkeypatch):
     import api.index as index
 
