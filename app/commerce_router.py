@@ -106,6 +106,29 @@ def _price_label(value: Any) -> str | None:
     return str(value)
 
 
+def _payment_label(value: Any) -> str | None:
+    if not value:
+        return None
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, dict):
+        return None
+    parts: list[str] = []
+    pix = value.get("pix")
+    if isinstance(pix, dict) and pix.get("value") is not None:
+        parts.append(f"Pix: {_price_label(pix['value'])}")
+    installments = value.get("installments")
+    if isinstance(installments, list):
+        for item in installments[:3]:
+            if not isinstance(item, dict):
+                continue
+            count = item.get("count") or "?"
+            amount = _price_label(item.get("value"))
+            interest = " com juros" if item.get("interest") else " sem juros"
+            parts.append(f"{count}x{interest}" + (f" de {amount}" if amount else ""))
+    return ", ".join(parts) or None
+
+
 def _product_lines(products: list[dict[str, Any]], inventory: dict[str, Any] | None = None) -> list[str]:
     lines: list[str] = []
     for product in products:
@@ -116,10 +139,9 @@ def _product_lines(products: list[dict[str, Any]], inventory: dict[str, Any] | N
         price = _price(product)
         if price is not None:
             parts.append(f"Pre\u00e7o: {_price_label(price)}")
-        if product.get("payment_option") is not None:
-            parts.append(f"Pagamento: {product['payment_option']}")
-        if product.get("payment_option_details") is not None:
-            parts.append(f"Condi\u00e7\u00f5es: {product['payment_option_details']}")
+        payment = _payment_label(product.get("payment_option_details")) or _payment_label(product.get("payment_option"))
+        if payment:
+            parts.append(f"Condi\u00e7\u00f5es comerciais: {payment}")
         if inventory:
             if inventory.get("stock") is not None:
                 parts.append(f"Estoque: {inventory['stock']}")
@@ -138,7 +160,7 @@ def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
     if not products:
         return AgentResult(reply_text="N\u00e3o encontrei esse produto no cat\u00e1logo agora.", intent="commerce", handoff_required=False, safety_reason="product_not_found")
     prefix = "Sim, encontrei:" if action != "product_price" else "Encontrei:"
-    return AgentResult(reply_text=prefix + "\n" + "\n".join(_product_lines(products)), intent="commerce", handoff_required=False)
+    return AgentResult(reply_text=prefix + "\n" + "\n".join(_product_lines(products)), intent="commerce", handoff_required=False, commercial_data={"products": products})
 
 
 async def handle_commerce_message(message: IncomingMessage, facts: dict[str, Any], customer_context: dict[str, Any]) -> AgentResult | None:
@@ -174,7 +196,7 @@ async def handle_commerce_message(message: IncomingMessage, facts: dict[str, Any
             inventory = await execute_tool("check_inventory", {"product_id": product_id})
             if "error" in inventory:
                 return AgentResult(reply_text=COMMERCE_UNAVAILABLE, intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
-            return AgentResult(reply_text="Consulta de estoque:\n" + "\n".join(_product_lines([remembered], inventory)), intent="commerce", handoff_required=False)
+            return AgentResult(reply_text="Consulta de estoque:\n" + "\n".join(_product_lines([remembered], inventory)), intent="commerce", handoff_required=False, commercial_data={"products": [remembered], "inventory": inventory})
         _log_route(action, "get_product", False)
         current = await execute_tool("get_product", {"product_id": product_id})
         if "error" in current:
@@ -213,4 +235,4 @@ async def handle_commerce_message(message: IncomingMessage, facts: dict[str, Any
     inventory = await execute_tool("check_inventory", {"product_id": str(product_id)})
     if "error" in inventory:
         return AgentResult(reply_text=COMMERCE_UNAVAILABLE, intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
-    return AgentResult(reply_text="Consulta de estoque:\n" + "\n".join(_product_lines(products, inventory)), intent="commerce", handoff_required=False)
+    return AgentResult(reply_text="Consulta de estoque:\n" + "\n".join(_product_lines(products, inventory)), intent="commerce", handoff_required=False, commercial_data={"products": products, "inventory": inventory})

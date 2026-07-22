@@ -1,6 +1,6 @@
 import pytest
 
-from app.tray_tools import execute_tool, search_products
+from app.tray_tools import _reduce, execute_tool, search_products
 
 
 class FakeTray:
@@ -36,3 +36,22 @@ async def test_product_and_inventory_tools_call_expected_methods():
     assert inventory["stock"] == 0
     assert inventory["upon_request"] is True
     assert [call[0] for call in client.calls] == ["get_product", "get_product_stock"]
+
+
+def test_tray_text_and_payment_options_are_normalized():
+    result = _reduce(
+        {
+            "name": "Relógio &agrave; vista",
+            "payment_option_details": [
+                {"display_name": "Pix - Vindi", "type": "pix", "plots": "1", "value": "5439.99", "tax": "0.00"},
+                {"display_name": "Cartão", "type": "credit", "plots": "12", "value": "533.33", "tax": "0.00"},
+            ],
+        },
+        ("name", "payment_option_details"),
+    )
+    assert result["name"] == "Relógio à vista"
+    assert result["payment_option_details"] == {
+        "pix": {"value": 5439.99},
+        "installments": [{"count": 12, "value": 533.33, "interest": False}],
+    }
+    assert "display_name" not in str(result)

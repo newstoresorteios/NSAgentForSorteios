@@ -6,6 +6,12 @@ import json
 from openai import APIError, AsyncOpenAI, OpenAI
 from .agent_replies import (
     build_available_numbers_reply,
+    build_balance_reply,
+    build_coupon_code_reply,
+    build_current_raffle_reply,
+    build_raffle_history_reply,
+    build_rules_reply_result,
+    build_simulation_reply,
     build_preferred_name_reply,
     _third_party_reply,
 )
@@ -60,6 +66,7 @@ Regras obrigatórias:
 
 STORE_LOOKUP_UNAVAILABLE = "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."
 GENERAL_GREETING_FALLBACK = "Ol\u00e1! Como posso ajudar?"
+STORE_KNOWLEDGE_UNAVAILABLE = "Ainda não tenho essa informação oficial da loja disponível neste atendimento."
 
 
 def _preferred_name_reply_if_requested(message: IncomingMessage, facts: dict) -> AgentResult | None:
@@ -90,6 +97,8 @@ def _non_handoff_fallback(message: IncomingMessage, facts: dict) -> str:
     if facts.get("primary_intent") == "commerce":
         return STORE_LOOKUP_UNAVAILABLE
     if facts.get("primary_intent") == "general":
+        if facts.get("scope_domain") == "store_general":
+            return STORE_KNOWLEDGE_UNAVAILABLE
         return GENERAL_GREETING_FALLBACK
     return "N\u00e3o consegui concluir a consulta neste momento. Tente novamente em instantes."
 
@@ -102,6 +111,21 @@ def _third_party_guardrail(message: IncomingMessage, primary_intent: str) -> Age
     if _is_personal_intent(primary_intent) and detect_third_party_account_inquiry(message.text, message.sender_phone):
         return _third_party_reply()
     return None
+
+
+def _local_raffle_reply(message: IncomingMessage, facts: dict) -> AgentResult | None:
+    handlers = {
+        "balance": build_balance_reply,
+        "coupon_code": build_coupon_code_reply,
+        "simulation": build_simulation_reply,
+        "raffle_history": build_raffle_history_reply,
+        "current_raffle": build_current_raffle_reply,
+        "rules": build_rules_reply_result,
+    }
+    handler = handlers.get(str(facts.get("primary_intent")))
+    if handler:
+        print("[raffle.route]", {"intent": facts.get("primary_intent")})
+    return handler(message) if handler else None
 
 
 def build_agent_input(message: IncomingMessage, customer_context: dict, facts: dict) -> str:
@@ -225,9 +249,13 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         )
 
     facts = gather_customer_facts(message, customer_context)
+    facts["scope_domain"] = scope.get("domain")
     preferred_reply = _preferred_name_reply_if_requested(message, facts)
     if preferred_reply:
         return preferred_reply
+    local_reply = _local_raffle_reply(message, facts)
+    if local_reply:
+        return local_reply
     if detect_available_numbers_inquiry(message.text):
         return build_available_numbers_reply(message)
     print("[openai.agent] routing", {
@@ -301,11 +329,15 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     if message.input_modality == "audio" and (message.transcription_failed or not (message.text or "").strip()):
         return generate_agent_reply(message, customer_context)
     facts = gather_customer_facts(message, customer_context)
+    facts["scope_domain"] = scope.get("domain")
     if scope.get("domain") == "commerce":
         facts = {**facts, "primary_intent": "commerce", "intents": [*facts.get("intents", []), "commerce"]}
     preferred_reply = _preferred_name_reply_if_requested(message, facts)
     if preferred_reply:
         return preferred_reply
+    local_reply = _local_raffle_reply(message, facts)
+    if local_reply:
+        return local_reply
     if detect_available_numbers_inquiry(message.text):
         return build_available_numbers_reply(message)
     if scope.get("domain") == "commerce" or facts.get("primary_intent") == "commerce" or resolve_commerce_action(message.text):

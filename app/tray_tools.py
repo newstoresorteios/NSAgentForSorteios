@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import time
+import html
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .tray_adapter_client import TrayAdapterClient, TrayAdapterError
@@ -17,9 +19,66 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "get_coupon", "description": "Consultar detalhes de um cupom.", "parameters": {"type": "object", "properties": {"coupon_id": {"type": "string"}}, "required": ["coupon_id"], "additionalProperties": False}}},
 ]
 
-_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "payment_option", "payment_option_details", "url")
+TOOL_REGISTRY = {
+    "commerce": ("search_products", "get_product", "check_inventory", "search_customer", "get_customer", "list_coupons", "get_coupon"),
+    "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
+}
+
+_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_id", "attributes", "color", "style", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "payment_option", "payment_option_details", "url")
 _CUSTOMER_FIELDS = ("id", "name", "email", "city", "state", "last_purchase", "total_orders")
 _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", "type", "value_start", "value_end", "usage_counter_limit", "usage_counter_limit_customer", "coupon_type", "local_application", "freight_application")
+
+
+def _clean_text(value: str) -> str:
+    return html.unescape(value).strip()
+
+
+def _clean_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _clean_text(value)
+    if isinstance(value, list):
+        return [_clean_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clean_value(item) for key, item in value.items()}
+    return value
+
+
+def _number(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(Decimal(str(value).replace(",", ".")))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _normalize_payment_options(value: Any) -> Any:
+    if not isinstance(value, list):
+        return _clean_value(value)
+    normalized: dict[str, Any] = {"pix": None, "installments": []}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or item.get("display_name") or "").lower()
+        amount = _number(item.get("value"))
+        if "pix" in kind:
+            normalized["pix"] = {"value": amount} if amount is not None else {}
+            continue
+        count = item.get("plots") or item.get("installments") or item.get("count")
+        try:
+            count = int(count) if count is not None else None
+        except (TypeError, ValueError):
+            count = None
+        normalized["installments"].append({
+            "count": count,
+            "value": amount,
+            "interest": bool(_number(item.get("tax")) or 0),
+        })
+    if normalized["pix"] is None:
+        normalized.pop("pix")
+    if not normalized["installments"]:
+        normalized.pop("installments")
+    return normalized
 
 
 def _items(payload: Any) -> list[Any]:
@@ -36,7 +95,12 @@ def _items(payload: Any) -> list[Any]:
 def _reduce(item: Any, fields: tuple[str, ...]) -> dict[str, Any]:
     if not isinstance(item, dict):
         return {"value": item}
-    return {key: item[key] for key in fields if key in item and item[key] is not None}
+    result: dict[str, Any] = {}
+    for key in fields:
+        if key not in item or item[key] is None:
+            continue
+        result[key] = _normalize_payment_options(item[key]) if key in {"payment_option", "payment_option_details"} else _clean_value(item[key])
+    return result
 
 
 def _reduce_products(payload: Any) -> dict[str, Any]:

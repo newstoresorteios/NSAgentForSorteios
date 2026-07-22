@@ -44,6 +44,22 @@ def test_commerce_intents_and_local_intents_remain_distinct():
     assert "commerce" not in detect_customer_intents("saldo do João")
 
 
+def test_semantic_sales_plan_is_generic_and_preserves_constraints():
+    from app.sales_agent import _normalize_semantic_plan
+
+    plan = _normalize_semantic_plan({
+        "domain": "commerce",
+        "goal": "recommend",
+        "subject": {"product_type": "relógio", "query": "Citizen elegante", "brand": "Citizen"},
+        "constraints": {"budget_max": 3000, "attributes": ["elegante"]},
+        "information_needed": ["catalog"],
+    })
+    assert plan["goal"] == "recommend"
+    assert plan["subject"]["brand"] == "Citizen"
+    assert plan["constraints"]["budget_max"] == 3000
+    assert "Citizen elegante" in plan["query"]
+
+
 @pytest.mark.asyncio
 async def test_third_party_balance_remains_blocked(monkeypatch):
     from app import openai_agent
@@ -161,8 +177,9 @@ async def test_purchase_intent_uses_product_entity_not_full_sentence(monkeypatch
         {},
         {"domain": "commerce", "intent": "purchase_intent", "query": "relógio", "filters": {}, "_source": "openai"},
     )
-    assert calls[0] == ("search_products", {"query": "relógio", "limit": 3})
-    assert "quero comprar" not in calls[0][1]["query"]
+    assert calls == []
+    assert result.safety_reason == "commerce_discovery"
+    assert "esportivo" in result.reply_text
     assert result.intent == "commerce"
 
 
@@ -213,6 +230,44 @@ async def test_product_search_uses_progressive_strategies(monkeypatch):
     )
     assert calls == ["Tissot Seastar", "Seastar"]
     assert "Tissot Seastar" in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_ranking_removes_incompatible_brand_model_candidate(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    settings = _settings(openai_api_key="")
+    monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
+
+    async def fake_execute(name, arguments):
+        return {"products": [
+            {"id": "1", "name": "Tissot Seastar preto", "brand": "Tissot", "model": "Seastar", "current_price": 5000},
+            {"id": "2", "name": "Tissot Tradition", "brand": "Tissot", "model": "Tradition", "current_price": 4000},
+        ]}
+
+    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="Tem Tissot Seastar?"),
+        {"primary_intent": "commerce"},
+        {},
+        {"domain": "commerce", "intent": "product_search", "goal": "find", "query": "Tissot Seastar", "subject": {"query": "Tissot Seastar", "brand": "Tissot", "model": "Seastar"}, "constraints": {}, "filters": {"brand": "Tissot", "model": "Seastar"}, "_source": "openai"},
+    )
+    assert "Tissot Seastar" in result.reply_text
+    assert "Tissot Tradition" not in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_rules_use_local_flow_without_tray(monkeypatch):
+    from app import openai_agent
+    import app.sales_agent as sales_agent
+
+    settings = _settings(openai_api_key="")
+    monkeypatch.setattr(openai_agent, "get_settings", lambda: settings)
+    monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
+    monkeypatch.setattr("app.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("rules must not call Tray")))
+    result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="como funciona o sorteio?"), {})
+    assert result.intent == "rules_faq"
+    assert "Lotomania" in result.reply_text
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,7 @@ class AgentResult(BaseModel):
     reply_audio_bytes: bytes | None = None
     reply_audio_mime_type: str | None = None
     reply_audio_url: str | None = None
+    commercial_data: dict[str, Any] | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
