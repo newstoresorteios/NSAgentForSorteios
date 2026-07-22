@@ -260,6 +260,73 @@ def is_latest_inbound_message(
             return cur.fetchone() is None
 
 
+def load_recent_conversation_turns(
+    *,
+    conversation_id: str | None,
+    sender_phone: str | None,
+    before_inbound_id: int | None,
+    limit: int = 8,
+) -> list[dict[str, str]]:
+    """Load a small, chronological transcript containing only delivered replies."""
+    settings = get_settings()
+    if not settings.database_url or (not conversation_id and not sender_phone):
+        return []
+
+    safe_limit = max(1, min(int(limit), 8))
+    params: dict[str, Any] = {
+        "before_inbound_id": before_inbound_id,
+        "limit": safe_limit,
+    }
+    if conversation_id:
+        conversation_filter = "inbound.conversation_id = %(conversation_id)s"
+        params["conversation_id"] = conversation_id
+    else:
+        conversation_filter = "inbound.sender_phone = %(sender_phone)s"
+        params["sender_phone"] = sender_phone
+
+    before_filter = (
+        "AND inbound.id < %(before_inbound_id)s"
+        if before_inbound_id is not None
+        else ""
+    )
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT inbound.id, inbound.text, delivered.reply_text
+                    FROM public.ai_inbound_messages AS inbound
+                    LEFT JOIN LATERAL (
+                        SELECT response.reply_text
+                        FROM public.ai_agent_responses AS response
+                        WHERE response.inbound_id = inbound.id
+                          AND response.provider_send_ok = true
+                        ORDER BY response.id DESC
+                        LIMIT 1
+                    ) AS delivered ON true
+                    WHERE {conversation_filter}
+                      {before_filter}
+                    ORDER BY inbound.id DESC
+                    LIMIT %(limit)s
+                    """,
+                    params,
+                )
+                rows = list(cur.fetchall() or [])
+    except (psycopg.Error, RuntimeError) as exc:
+        print("[sales.context] load_failed", {"error_type": type(exc).__name__})
+        return []
+
+    turns: list[dict[str, str]] = []
+    for row in reversed(rows):
+        inbound_text = str(row.get("text") or "").strip()
+        reply_text = str(row.get("reply_text") or "").strip()
+        if inbound_text:
+            turns.append({"role": "user", "content": inbound_text})
+        if reply_text:
+            turns.append({"role": "assistant", "content": reply_text})
+    return turns[-safe_limit:]
+
+
 def insert_agent_response(data: dict[str, Any]) -> int | None:
     settings = get_settings()
 

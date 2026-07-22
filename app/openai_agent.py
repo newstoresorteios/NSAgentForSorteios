@@ -16,6 +16,7 @@ from .agent_replies import (
     _third_party_reply,
 )
 from .config import get_settings
+from .db import load_recent_conversation_turns
 from .context_builder import (
     build_template_fallback,
     detect_primary_intent,
@@ -315,13 +316,33 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     blocked_reason = detect_blocked_request(message.text)
     if blocked_reason:
         return AgentResult(reply_text=default_safe_handoff(), intent="handoff", handoff_required=True, safety_reason=blocked_reason)
-    scope = await interpret_message(message)
-    print("[agent.scope]", {"domain": scope.get("domain")})
-    if scope.get("domain") == "out_of_scope":
-        return AgentResult(reply_text=OUT_OF_SCOPE_REPLY, intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal")
-    if scope.get("domain") == "greeting":
-        return AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False)
+
+    raw_inbound_id = (message.raw or {}).get("inbound_id")
+    try:
+        inbound_id = int(raw_inbound_id) if raw_inbound_id is not None else None
+    except (TypeError, ValueError):
+        inbound_id = None
+    recent_turns = load_recent_conversation_turns(
+        conversation_id=message.conversation_id,
+        sender_phone=message.sender_phone,
+        before_inbound_id=inbound_id,
+        limit=8,
+    )
+    context_source = "conversation_id" if message.conversation_id else ("sender_phone" if message.sender_phone else "none")
+    print("[sales.context]", {
+        "history_turns": len(recent_turns),
+        "conversation_id_present": bool(message.conversation_id),
+        "context_source": context_source,
+    })
+    interpretation = await interpret_message(message, recent_turns=recent_turns)
     primary_intent = detect_primary_intent(message.text)
+    raffle_intents = {"balance", "coupon_code", "simulation", "raffle_history", "current_raffle", "rules"}
+    scope_domain = "raffle" if primary_intent in raffle_intents else interpretation.domain
+    print("[agent.scope]", {"domain": scope_domain})
+    if scope_domain == "out_of_scope":
+        return AgentResult(reply_text=OUT_OF_SCOPE_REPLY, intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal")
+    if scope_domain == "greeting":
+        return AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False)
     print("[agent.route]", {"inbound_id": (message.raw or {}).get("inbound_id"), "primary_intent": primary_intent})
     third_party_reply = _third_party_guardrail(message, primary_intent)
     if third_party_reply:
@@ -329,8 +350,8 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     if message.input_modality == "audio" and (message.transcription_failed or not (message.text or "").strip()):
         return generate_agent_reply(message, customer_context)
     facts = gather_customer_facts(message, customer_context)
-    facts["scope_domain"] = scope.get("domain")
-    if scope.get("domain") == "commerce":
+    facts["scope_domain"] = scope_domain
+    if scope_domain == "commerce":
         facts = {**facts, "primary_intent": "commerce", "intents": [*facts.get("intents", []), "commerce"]}
     preferred_reply = _preferred_name_reply_if_requested(message, facts)
     if preferred_reply:
@@ -340,8 +361,8 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         return local_reply
     if detect_available_numbers_inquiry(message.text):
         return build_available_numbers_reply(message)
-    if scope.get("domain") == "commerce" or facts.get("primary_intent") == "commerce" or resolve_commerce_action(message.text):
-        commerce_result = await handle_sales_message(message, facts, customer_context, scope)
+    if scope_domain == "commerce" or facts.get("primary_intent") == "commerce" or resolve_commerce_action(message.text):
+        commerce_result = await handle_sales_message(message, facts, customer_context, interpretation)
         if commerce_result is not None:
             return commerce_result
     print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     admin_api_token: str = Field(default="", alias="ADMIN_API_TOKEN")
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-3.5-turbo", alias="OPENAI_MODEL")
+    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
     openai_agent_name: str = Field(default="NewStoreAgent", alias="OPENAI_AGENT_NAME")
     openai_transcribe_model: str = Field(default="whisper-1", alias="OPENAI_TRANSCRIBE_MODEL")
     openai_tts_model: str = Field(default="gpt-4o-mini-tts", alias="OPENAI_TTS_MODEL")

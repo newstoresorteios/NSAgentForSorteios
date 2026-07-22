@@ -6,6 +6,7 @@ import html
 from typing import Any
 
 from openai import APIError, AsyncOpenAI
+from pydantic import ValidationError
 
 from .commerce_router import (
     extract_product_query,
@@ -22,7 +23,7 @@ from .guardrails import (
     detect_balance_inquiry,
     detect_coupon_code_inquiry,
 )
-from .models import AgentResult, IncomingMessage
+from .models import AgentResult, IncomingMessage, SalesInterpretation
 
 
 SALES_PLANNER_INSTRUCTIONS = """
@@ -45,14 +46,52 @@ Responda em português do Brasil, de forma curta para WhatsApp.
 
 OUT_OF_SCOPE_REPLY = "Posso ajudar com produtos, compras, pedidos e informações da NewStore, além dos sorteios da loja."
 GREETING_REPLY = "Olá! Como posso ajudar?"
-SCOPE_INSTRUCTIONS = """
-Classifique a mensagem para um vendedor da NewStore. Retorne somente JSON válido.
-domain deve ser commerce, raffle, greeting ou out_of_scope.
-Para commerce, action deve ser purchase_intent, product_search, recommendation,
-product_price, product_inventory, product_comparison, coupon_search ou clarification.
-Extraia product_type, product_query, brand, model, reference, ean, budget_min,
-budget_max e attributes quando existirem. Nunca produza fatos comerciais.
-Assuntos externos à NewStore e aos sorteios são out_of_scope.
+SALES_INTERPRETER_INSTRUCTIONS = """
+Você interpreta mensagens do atendimento da NewStore.
+
+NÃO responda ao cliente. Analise a mensagem atual considerando o histórico
+imediatamente anterior e extraia o estado comercial evidente. Mensagens curtas
+frequentemente complementam uma conversa anterior. Nunca invente fatos comerciais.
+
+Use domain=commerce para produtos, compras e continuações de uma descoberta de
+produto; raffle para sorteios da NewStore; store_general para assuntos da loja sem
+produto específico; greeting para saudação; out_of_scope somente quando a mensagem,
+considerada junto ao histórico, não tiver relação com a NewStore.
+
+Exemplo 1:
+Histórico: cliente quer comprar um relógio; atendente pergunta se prefere esportivo,
+social ou casual. Atual: esportivo.
+Interpretação: domain=commerce, goal=discover, product_type=relógio,
+style=esportivo, references_previous_context=true.
+
+Exemplo 2:
+Histórico: produto=relógio e style=esportivo. Atual: menos de 5 mil.
+Interpretação: domain=commerce, goal=recommend, product_type=relógio,
+style=esportivo, budget_max=5000, references_previous_context=true.
+
+Exemplo 3:
+Histórico: cliente pede recomendação de relógios; atendente pergunta o estilo.
+Atual: social.
+Interpretação: domain=commerce, product_type=relógio, style=social,
+references_previous_context=true.
+
+Exemplo 4:
+Atual: preciso de um relógio para dar de presente, não queria gastar muito.
+Interpretação: domain=commerce, goal=discover, product_type=relógio,
+occasion=presente, needs_clarification=true. Como não há valor numérico, faça uma
+única pergunta curta sobre a faixa aproximada em clarification_question.
+
+Exemplo 5:
+Atual: Tem Tissot Seastar?
+Interpretação: domain=commerce, goal=find, brand=Tissot, model=Seastar.
+
+Exemplo 6:
+Atual sem contexto comercial: quem ganhou o jogo ontem?
+Interpretação: domain=out_of_scope.
+
+Não copie uma fala anterior como fato comercial. Preserve produto, preferências e
+orçamento que estejam evidentes no contexto. confidence deve refletir a certeza da
+interpretação entre 0 e 1.
 """.strip()
 
 _ACTION_TO_PLAN = {
@@ -136,27 +175,164 @@ def _parse_scope(content: str | None) -> dict[str, Any] | None:
     return _normalize_semantic_plan(parsed) if isinstance(parsed, dict) else None
 
 
-async def interpret_message(message: IncomingMessage) -> dict[str, Any]:
-    fallback = deterministic_scope(message.text)
-    if fallback.get("domain") == "greeting":
-        return fallback
+def _fallback_interpretation(text: str | None) -> SalesInterpretation:
+    legacy = deterministic_scope(text)
+    subject = legacy.get("subject") if isinstance(legacy.get("subject"), dict) else {}
+    constraints = legacy.get("constraints") if isinstance(legacy.get("constraints"), dict) else {}
+    filters = legacy.get("filters") if isinstance(legacy.get("filters"), dict) else {}
+    fallback_goal = legacy.get("goal") or {
+        "purchase_intent": "buy",
+        "product_search": "find",
+        "price": "inspect",
+        "inventory": "inspect",
+        "coupon": "inspect",
+        "recommendation": "recommend",
+        "product_comparison": "compare",
+        "clarification": "discover",
+    }.get(legacy.get("intent"))
+    interpretation = SalesInterpretation(
+        domain=legacy.get("domain", "out_of_scope"),
+        goal=fallback_goal,
+        subject={
+            "product_type": subject.get("product_type") or legacy.get("product_type"),
+            "brand": subject.get("brand") or filters.get("brand"),
+            "model": subject.get("model") or filters.get("model"),
+            "reference": subject.get("reference") or filters.get("reference"),
+            "ean": subject.get("ean") or filters.get("ean"),
+        },
+        preferences={
+            "budget_min": constraints.get("budget_min") or filters.get("budget_min"),
+            "budget_max": constraints.get("budget_max") or filters.get("budget_max"),
+            "color": constraints.get("color") or filters.get("color"),
+            "style": constraints.get("style") or filters.get("style"),
+            "attributes": constraints.get("attributes") or filters.get("attributes") or [],
+        },
+        needs_clarification=bool(legacy.get("needs_clarification")),
+        clarification_question=legacy.get("clarification_question"),
+        confidence=0.6,
+    )
+    interpretation._source = "deterministic_fallback"
+    return interpretation
+
+
+def _log_interpretation(interpretation: SalesInterpretation, model: str) -> None:
+    preferences = interpretation.preferences
+    print("[sales.interpreter]", {
+        "source": interpretation._source,
+        "model": model,
+        "domain": interpretation.domain,
+        "goal": interpretation.goal,
+        "confidence": interpretation.confidence,
+        "references_previous_context": interpretation.references_previous_context,
+        "has_product_type": bool(interpretation.subject.product_type),
+        "has_brand": bool(interpretation.subject.brand),
+        "has_style": bool(preferences.style),
+        "has_color": bool(preferences.color),
+        "has_budget": preferences.budget_min is not None or preferences.budget_max is not None,
+        "needs_clarification": interpretation.needs_clarification,
+    })
+
+
+def interpretation_to_plan(
+    interpretation: SalesInterpretation,
+    text: str | None = None,
+) -> dict[str, Any]:
+    subject = interpretation.subject.model_dump()
+    preferences = interpretation.preferences.model_dump()
+    if subject.get("reference"):
+        query_parts = [str(subject["reference"])]
+    elif subject.get("ean"):
+        query_parts = [str(subject["ean"])]
+    elif subject.get("brand") or subject.get("model"):
+        query_parts = [str(value) for value in (subject.get("brand"), subject.get("model")) if value]
+    elif subject.get("product_type"):
+        query_parts = [str(subject["product_type"])]
+    else:
+        query_parts = []
+    query = " ".join(query_parts).strip()
+
+    resolved_action = resolve_commerce_action(text)
+    goal_to_intent = {
+        "discover": "clarification",
+        "find": "product_search",
+        "recommend": "recommendation",
+        "compare": "product_comparison",
+        "inspect": _ACTION_TO_PLAN.get(resolved_action or "", "product_search"),
+        "buy": "purchase_intent",
+        "after_sales": "clarification",
+    }
+    intent = "clarification" if interpretation.needs_clarification else goal_to_intent.get(
+        interpretation.goal or "discover",
+        "clarification",
+    )
+    filters = {
+        key: value
+        for key, value in {
+            "brand": subject.get("brand"),
+            "model": subject.get("model"),
+            "reference": subject.get("reference"),
+            "ean": subject.get("ean"),
+            "budget_min": preferences.get("budget_min"),
+            "budget_max": preferences.get("budget_max"),
+            "attributes": preferences.get("attributes"),
+            "color": preferences.get("color"),
+            "style": preferences.get("style"),
+        }.items()
+        if value not in (None, [], "")
+    }
+    return {
+        "domain": interpretation.domain,
+        "intent": intent,
+        "goal": interpretation.goal,
+        "subject": {**subject, "query": query},
+        "constraints": preferences,
+        "query": query,
+        "filters": filters,
+        "budget_max": preferences.get("budget_max"),
+        "product_type": subject.get("product_type"),
+        "needs_clarification": interpretation.needs_clarification,
+        "clarification_question": interpretation.clarification_question,
+        "_source": interpretation._source,
+    }
+
+
+async def interpret_message(
+    message: IncomingMessage,
+    *,
+    recent_turns: list[dict[str, str]] | None = None,
+) -> SalesInterpretation:
     settings = get_settings()
-    if not settings.openai_api_key:
+    if _is_greeting(message.text) or not settings.openai_api_key:
+        fallback = _fallback_interpretation(message.text)
+        _log_interpretation(fallback, settings.openai_model)
         return fallback
+
+    messages = [
+        {"role": "system", "content": SALES_INTERPRETER_INSTRUCTIONS},
+        *(recent_turns or []),
+        {"role": "user", "content": message.text or ""},
+    ]
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.create(
+        response = await client.chat.completions.parse(
             model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": SCOPE_INSTRUCTIONS},
-                {"role": "user", "content": message.text or ""},
-            ],
+            messages=messages,
             temperature=0,
-            response_format={"type": "json_object"},
+            response_format=SalesInterpretation,
         )
-        return _parse_scope(response.choices[0].message.content if response.choices else None) or fallback
-    except (APIError, ValueError, TypeError) as exc:
-        print("[sales.scope] failed", {"error_type": type(exc).__name__})
+        parsed_message = response.choices[0].message if response.choices else None
+        if parsed_message is None or getattr(parsed_message, "refusal", None):
+            raise ValueError("interpreter_refusal_or_empty_response")
+        interpretation = getattr(parsed_message, "parsed", None)
+        if not isinstance(interpretation, SalesInterpretation):
+            raise ValueError("interpreter_schema_missing")
+        interpretation._source = "openai"
+        _log_interpretation(interpretation, settings.openai_model)
+        return interpretation
+    except (APIError, ValidationError, ValueError, TypeError) as exc:
+        print("[sales.interpreter] failed", {"error_type": type(exc).__name__})
+        fallback = _fallback_interpretation(message.text)
+        _log_interpretation(fallback, settings.openai_model)
         return fallback
 
 
@@ -228,27 +404,10 @@ def _parse_plan(content: str | None) -> dict[str, Any] | None:
 
 
 async def plan_sales_request(message: IncomingMessage) -> dict[str, Any] | None:
-    fallback = deterministic_sales_plan(message.text)
-    settings = get_settings()
-    if not fallback or not settings.openai_api_key:
-        return fallback
-
-    try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": SALES_PLANNER_INSTRUCTIONS},
-                {"role": "user", "content": message.text or ""},
-            ],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-        parsed = _parse_scope(response.choices[0].message.content if response.choices else None)
-        return parsed if parsed and parsed.get("domain") == "commerce" else fallback
-    except (APIError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        print("[sales.planner] failed", {"error_type": type(exc).__name__})
-        return fallback
+    interpretation = await interpret_message(message)
+    if interpretation.domain != "commerce":
+        return None
+    return interpretation_to_plan(interpretation, message.text)
 
 
 def _planned_message(message: IncomingMessage, plan: dict[str, Any]) -> IncomingMessage:
@@ -402,9 +561,14 @@ async def handle_sales_message(
     message: IncomingMessage,
     facts: dict[str, Any],
     customer_context: dict[str, Any],
-    semantic_plan: dict[str, Any] | None = None,
+    semantic_plan: dict[str, Any] | SalesInterpretation | None = None,
 ) -> AgentResult | None:
-    plan = semantic_plan if semantic_plan and semantic_plan.get("domain") == "commerce" else await plan_sales_request(message)
+    if isinstance(semantic_plan, SalesInterpretation):
+        plan = interpretation_to_plan(semantic_plan, message.text)
+    elif semantic_plan and semantic_plan.get("domain") == "commerce":
+        plan = semantic_plan
+    else:
+        plan = await plan_sales_request(message)
     if not plan:
         return None
     print("[sales.agent] planner", {
