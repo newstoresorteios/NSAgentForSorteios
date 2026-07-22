@@ -5,7 +5,7 @@ import re
 import html
 from typing import Any
 
-from openai import APIError, AsyncOpenAI
+from openai import APIError, AsyncOpenAI, BadRequestError
 from pydantic import ValidationError
 
 from .commerce_router import (
@@ -207,6 +207,7 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
             "style": constraints.get("style") or filters.get("style"),
             "attributes": constraints.get("attributes") or filters.get("attributes") or [],
         },
+        references_previous_context=False,
         needs_clarification=bool(legacy.get("needs_clarification")),
         clarification_question=legacy.get("clarification_question"),
         confidence=0.6,
@@ -215,9 +216,14 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
     return interpretation
 
 
-def _log_interpretation(interpretation: SalesInterpretation, model: str) -> None:
+def _log_interpretation(
+    interpretation: SalesInterpretation,
+    model: str,
+    *,
+    fallback_reason: str | None = None,
+) -> None:
     preferences = interpretation.preferences
-    print("[sales.interpreter]", {
+    payload = {
         "source": interpretation._source,
         "model": model,
         "domain": interpretation.domain,
@@ -230,7 +236,51 @@ def _log_interpretation(interpretation: SalesInterpretation, model: str) -> None
         "has_color": bool(preferences.color),
         "has_budget": preferences.budget_min is not None or preferences.budget_max is not None,
         "needs_clarification": interpretation.needs_clarification,
-    })
+    }
+    if fallback_reason:
+        payload["fallback_reason"] = fallback_reason
+    print("[sales.interpreter]", payload)
+
+
+def _normalize_interpreter_history(
+    recent_turns: list[dict[str, str]] | None,
+) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for turn in recent_turns or []:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        content = turn.get("content")
+        if role not in {"system", "user", "assistant"} or not isinstance(content, str):
+            continue
+        content = content.strip()
+        if not content:
+            continue
+        normalized.append({"role": role, "content": content})
+    return normalized
+
+
+def _sanitize_openai_error_message(value: object) -> str:
+    message = str(value or "OpenAI rejected the interpreter request")
+    message = re.sub(r"sk-(?:proj-)?[A-Za-z0-9_-]+", "sk-***", message)
+    message = re.sub(r"(?i)(authorization\s*[:=]?\s*bearer)\s+\S+", r"\1 ***", message)
+    return message[:600]
+
+
+def _bad_request_details(exc: BadRequestError, model: str) -> dict[str, Any]:
+    body = exc.body if isinstance(exc.body, dict) else {}
+    body_error = body.get("error") if isinstance(body.get("error"), dict) else body
+    code = getattr(exc, "code", None) or body_error.get("code")
+    param = getattr(exc, "param", None) or body_error.get("param")
+    message = getattr(exc, "message", None) or body_error.get("message") or str(exc)
+    return {
+        "error_type": type(exc).__name__,
+        "status_code": getattr(exc, "status_code", None),
+        "error_code": code,
+        "error_param": param,
+        "error_message": _sanitize_openai_error_message(message),
+        "model": model,
+    }
 
 
 def interpretation_to_plan(
@@ -302,16 +352,35 @@ async def interpret_message(
     recent_turns: list[dict[str, str]] | None = None,
 ) -> SalesInterpretation:
     settings = get_settings()
-    if _is_greeting(message.text) or not settings.openai_api_key:
+    if _is_greeting(message.text):
         fallback = _fallback_interpretation(message.text)
-        _log_interpretation(fallback, settings.openai_model)
+        _log_interpretation(fallback, settings.openai_model, fallback_reason="greeting_fast_path")
+        return fallback
+    if not settings.openai_api_key:
+        fallback = _fallback_interpretation(message.text)
+        _log_interpretation(fallback, settings.openai_model, fallback_reason="openai_api_key_missing")
+        return fallback
+    current_text = (message.text or "").strip()
+    if not current_text:
+        fallback = _fallback_interpretation(message.text)
+        _log_interpretation(fallback, settings.openai_model, fallback_reason="empty_message")
         return fallback
 
+    normalized_history = _normalize_interpreter_history(recent_turns)
     messages = [
         {"role": "system", "content": SALES_INTERPRETER_INSTRUCTIONS},
-        *(recent_turns or []),
-        {"role": "user", "content": message.text or ""},
+        *normalized_history,
+        {"role": "user", "content": current_text},
     ]
+    print("[sales.interpreter.request]", {
+        "model": settings.openai_model,
+        "structured_output": True,
+        "history_turns": len(normalized_history),
+        "message_count": len(messages),
+        "has_temperature": True,
+        "has_max_tokens": False,
+        "has_tools": False,
+    })
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.parse(
@@ -329,10 +398,16 @@ async def interpret_message(
         interpretation._source = "openai"
         _log_interpretation(interpretation, settings.openai_model)
         return interpretation
+    except BadRequestError as exc:
+        print("[sales.interpreter.error]", _bad_request_details(exc, settings.openai_model))
+        fallback = _fallback_interpretation(message.text)
+        _log_interpretation(fallback, settings.openai_model, fallback_reason="openai_bad_request")
+        return fallback
     except (APIError, ValidationError, ValueError, TypeError) as exc:
         print("[sales.interpreter] failed", {"error_type": type(exc).__name__})
         fallback = _fallback_interpretation(message.text)
-        _log_interpretation(fallback, settings.openai_model)
+        fallback_reason = "openai_request_failed" if isinstance(exc, APIError) else "openai_invalid_response"
+        _log_interpretation(fallback, settings.openai_model, fallback_reason=fallback_reason)
         return fallback
 
 

@@ -39,10 +39,10 @@ class SalesInterpretation(BaseModel):
     ] | None = None
     subject: ProductSubject = Field(default_factory=ProductSubject)
     preferences: ProductPreferences = Field(default_factory=ProductPreferences)
-    references_previous_context: bool = False
-    needs_clarification: bool = False
+    references_previous_context: bool
+    needs_clarification: bool
     clarification_question: str | None = None
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
 
     _source: str = PrivateAttr(default="openai")
 

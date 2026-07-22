@@ -40,6 +40,7 @@ def _fake_openai(monkeypatch, interpretation: SalesInterpretation, captured: dic
                 subject={"product_type": "relógio"},
                 preferences={"style": "esportivo"},
                 references_previous_context=True,
+                needs_clarification=False,
                 confidence=0.98,
             ),
             "esportivo",
@@ -57,6 +58,7 @@ def _fake_openai(monkeypatch, interpretation: SalesInterpretation, captured: dic
                 subject={"product_type": "relógio"},
                 preferences={"style": "esportivo", "budget_max": 5000},
                 references_previous_context=True,
+                needs_clarification=False,
                 confidence=0.98,
             ),
             "esportivo",
@@ -74,6 +76,7 @@ def _fake_openai(monkeypatch, interpretation: SalesInterpretation, captured: dic
                 subject={"product_type": "relógio"},
                 preferences={"style": "social"},
                 references_previous_context=True,
+                needs_clarification=False,
                 confidence=0.97,
             ),
             "social",
@@ -114,8 +117,8 @@ async def test_interpreter_uses_recent_turns_for_short_followups(
 @pytest.mark.parametrize(
     ("text", "interpretation", "expected_domain"),
     [
-        ("quem ganhou o jogo ontem?", SalesInterpretation(domain="out_of_scope", confidence=0.99), "out_of_scope"),
-        ("como funciona o sorteio?", SalesInterpretation(domain="raffle", confidence=0.99), "raffle"),
+        ("quem ganhou o jogo ontem?", SalesInterpretation(domain="out_of_scope", references_previous_context=False, needs_clarification=False, confidence=0.99), "out_of_scope"),
+        ("como funciona o sorteio?", SalesInterpretation(domain="raffle", references_previous_context=False, needs_clarification=False, confidence=0.99), "raffle"),
         (
             "preciso de um relógio para dar de presente, não queria gastar muito",
             SalesInterpretation(
@@ -123,6 +126,7 @@ async def test_interpreter_uses_recent_turns_for_short_followups(
                 goal="discover",
                 subject={"product_type": "relógio"},
                 preferences={"occasion": "presente"},
+                references_previous_context=False,
                 needs_clarification=True,
                 clarification_question="Qual faixa de preço você tem em mente?",
                 confidence=0.96,
@@ -171,6 +175,7 @@ async def test_openai_is_attempted_before_deterministic_fallback(monkeypatch):
         subject={"product_type": "relógio"},
         preferences={"style": "esportivo"},
         references_previous_context=True,
+        needs_clarification=False,
         confidence=0.95,
     )
     captured = {}
