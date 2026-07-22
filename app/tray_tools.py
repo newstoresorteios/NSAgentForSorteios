@@ -160,9 +160,11 @@ async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapter
         result = await _execute_tool(name, arguments, client)
         ok = "error" not in result
         print("[tray.tool] executed", {"tool": name, "ok": ok, "elapsed_ms": round((time.perf_counter() - started) * 1000)})
+        print("[sales.tool]", {"tool": name, "success": ok})
         if not ok:
             return {"error": "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."}
         return result
     except Exception as exc:
         print("[tray.tool] executed", {"tool": name, "ok": False, "elapsed_ms": round((time.perf_counter() - started) * 1000), "error_type": type(exc).__name__})
+        print("[sales.tool]", {"tool": name, "success": False})
         return {"error": "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."}

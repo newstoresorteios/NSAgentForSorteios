@@ -84,6 +84,18 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
 
     result = await generate_agent_reply_async(incoming, customer_context)
 
+    response_metadata = result.response_metadata or {}
+    print("[agent.response]", {
+        "domain": response_metadata.get("domain"),
+        "goal": response_metadata.get("goal"),
+        "response_source": response_metadata.get("response_source"),
+        "used_openai_interpreter": bool(response_metadata.get("used_openai_interpreter")),
+        "used_openai_responder": bool(response_metadata.get("used_openai_responder")),
+        "used_tray": bool(response_metadata.get("used_tray")),
+        "fallback_reason": response_metadata.get("fallback_reason"),
+        "safety_reason": result.safety_reason,
+    })
+
     if customer_context.get("found") and user_id:
         record_interaction_memory(int(user_id), result.intent, incoming.text)
 

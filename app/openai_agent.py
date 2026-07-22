@@ -34,7 +34,6 @@ from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS
 from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
 from .user_preferences import detect_preferred_name_update
 from .tray_tools import TOOL_SCHEMAS, execute_tool
-from .commerce_router import resolve_commerce_action
 from .sales_agent import GREETING_REPLY, OUT_OF_SCOPE_REPLY, deterministic_scope, handle_sales_message, interpret_message
 
 
@@ -68,6 +67,13 @@ Regras obrigatórias:
 STORE_LOOKUP_UNAVAILABLE = "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."
 GENERAL_GREETING_FALLBACK = "Ol\u00e1! Como posso ajudar?"
 STORE_KNOWLEDGE_UNAVAILABLE = "Ainda não tenho essa informação oficial da loja disponível neste atendimento."
+
+
+def _annotate_agent_result(result: AgentResult, **metadata: object) -> AgentResult:
+    for key, value in metadata.items():
+        if value is not None and key not in result.response_metadata:
+            result.response_metadata[key] = value
+    return result
 
 
 def _preferred_name_reply_if_requested(message: IncomingMessage, facts: dict) -> AgentResult | None:
@@ -315,7 +321,14 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
 async def generate_agent_reply_async(message: IncomingMessage, customer_context: dict) -> AgentResult:
     blocked_reason = detect_blocked_request(message.text)
     if blocked_reason:
-        return AgentResult(reply_text=default_safe_handoff(), intent="handoff", handoff_required=True, safety_reason=blocked_reason)
+        return _annotate_agent_result(
+            AgentResult(reply_text=default_safe_handoff(), intent="handoff", handoff_required=True, safety_reason=blocked_reason),
+            domain="guardrail",
+            response_source="guardrail",
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+        )
 
     raw_inbound_id = (message.raw or {}).get("inbound_id")
     try:
@@ -331,39 +344,128 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     context_source = "conversation_id" if message.conversation_id else ("sender_phone" if message.sender_phone else "none")
     print("[sales.context]", {
         "history_turns": len(recent_turns),
+        "history_user_turns": sum(1 for turn in recent_turns if turn.get("role") == "user"),
+        "history_assistant_turns": sum(1 for turn in recent_turns if turn.get("role") == "assistant"),
         "conversation_id_present": bool(message.conversation_id),
+        "before_inbound_id_present": inbound_id is not None,
         "context_source": context_source,
     })
     interpretation = await interpret_message(message, recent_turns=recent_turns)
+    used_openai_interpreter = interpretation._source == "openai"
     primary_intent = detect_primary_intent(message.text)
     raffle_intents = {"balance", "coupon_code", "simulation", "raffle_history", "current_raffle", "rules"}
-    scope_domain = "raffle" if primary_intent in raffle_intents else interpretation.domain
+    scope_domain = (
+        "raffle"
+        if not used_openai_interpreter and primary_intent in raffle_intents
+        else interpretation.domain
+    )
     print("[agent.scope]", {"domain": scope_domain})
     if scope_domain == "out_of_scope":
-        return AgentResult(reply_text=OUT_OF_SCOPE_REPLY, intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal")
+        return _annotate_agent_result(
+            AgentResult(reply_text=OUT_OF_SCOPE_REPLY, intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal"),
+            domain=scope_domain,
+            goal=interpretation.goal,
+            response_source="guardrail" if used_openai_interpreter else "deterministic_fallback",
+            used_openai_interpreter=used_openai_interpreter,
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason=interpretation._fallback_reason,
+        )
     if scope_domain == "greeting":
-        return AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False)
+        return _annotate_agent_result(
+            AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False),
+            domain="greeting",
+            response_source="local_greeting",
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason=interpretation._fallback_reason,
+        )
     print("[agent.route]", {"inbound_id": (message.raw or {}).get("inbound_id"), "primary_intent": primary_intent})
     third_party_reply = _third_party_guardrail(message, primary_intent)
     if third_party_reply:
-        return third_party_reply
+        return _annotate_agent_result(
+            third_party_reply,
+            domain=scope_domain,
+            goal=interpretation.goal,
+            response_source="guardrail",
+            used_openai_interpreter=used_openai_interpreter,
+            used_openai_responder=False,
+            used_tray=False,
+        )
     if message.input_modality == "audio" and (message.transcription_failed or not (message.text or "").strip()):
-        return generate_agent_reply(message, customer_context)
+        return _annotate_agent_result(
+            generate_agent_reply(message, customer_context),
+            domain=scope_domain,
+            goal=interpretation.goal,
+            response_source="technical_fallback",
+            used_openai_interpreter=used_openai_interpreter,
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason="audio_transcription_failed",
+        )
     facts = gather_customer_facts(message, customer_context)
     facts["scope_domain"] = scope_domain
     if scope_domain == "commerce":
         facts = {**facts, "primary_intent": "commerce", "intents": [*facts.get("intents", []), "commerce"]}
     preferred_reply = _preferred_name_reply_if_requested(message, facts)
     if preferred_reply:
-        return preferred_reply
-    local_reply = _local_raffle_reply(message, facts)
-    if local_reply:
-        return local_reply
-    if detect_available_numbers_inquiry(message.text):
-        return build_available_numbers_reply(message)
-    if scope_domain == "commerce" or facts.get("primary_intent") == "commerce" or resolve_commerce_action(message.text):
-        commerce_result = await handle_sales_message(message, facts, customer_context, interpretation)
+        return _annotate_agent_result(
+            preferred_reply,
+            domain=scope_domain,
+            goal=interpretation.goal,
+            response_source="deterministic_fallback",
+            used_openai_interpreter=used_openai_interpreter,
+            used_openai_responder=False,
+            used_tray=False,
+        )
+    if scope_domain == "raffle":
+        local_reply = _local_raffle_reply(message, facts)
+        if local_reply:
+            return _annotate_agent_result(
+                local_reply,
+                domain="raffle",
+                goal=interpretation.goal,
+                response_source="local_raffle",
+                used_openai_interpreter=used_openai_interpreter,
+                used_openai_responder=False,
+                used_tray=False,
+            )
+        if detect_available_numbers_inquiry(message.text):
+            return _annotate_agent_result(
+                build_available_numbers_reply(message),
+                domain="raffle",
+                goal=interpretation.goal,
+                response_source="local_raffle",
+                used_openai_interpreter=used_openai_interpreter,
+                used_openai_responder=False,
+                used_tray=False,
+            )
+    if scope_domain == "commerce":
+        commerce_result = await handle_sales_message(
+            message,
+            facts,
+            customer_context,
+            interpretation,
+            recent_turns=recent_turns,
+        )
         if commerce_result is not None:
-            return commerce_result
+            return _annotate_agent_result(
+                commerce_result,
+                domain="commerce",
+                goal=interpretation.goal,
+                used_openai_interpreter=used_openai_interpreter,
+                fallback_reason=interpretation._fallback_reason,
+            )
     print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})
-    return await generate_openai_reply_async(message, customer_context, facts)
+    result = await generate_openai_reply_async(message, customer_context, facts)
+    return _annotate_agent_result(
+        result,
+        domain=scope_domain,
+        goal=interpretation.goal,
+        response_source="technical_fallback" if result.safety_reason else "openai",
+        used_openai_interpreter=used_openai_interpreter,
+        used_openai_responder=not bool(result.safety_reason),
+        used_tray=False,
+        fallback_reason=result.safety_reason or interpretation._fallback_reason,
+    )

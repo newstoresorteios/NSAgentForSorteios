@@ -44,6 +44,15 @@ Se um fato não estiver em FACTS, diga que não foi informado.
 Responda em português do Brasil, de forma curta para WhatsApp.
 """.strip()
 
+SALES_CLARIFICATION_INSTRUCTIONS = """
+Você é um vendedor da NewStore no WhatsApp.
+Faça somente UMA pergunta curta e útil para entender melhor o que o cliente procura.
+Considere o histórico e a interpretação estruturada fornecidos.
+Não transforme a conversa em questionário e não repita uma pergunta já respondida.
+Não afirme produto, preço, estoque, promoção ou condição comercial, pois a Tray ainda
+não foi consultada. Responda apenas com a pergunta ao cliente.
+""".strip()
+
 OUT_OF_SCOPE_REPLY = "Posso ajudar com produtos, compras, pedidos e informações da NewStore, além dos sorteios da loja."
 GREETING_REPLY = "Olá! Como posso ajudar?"
 SALES_INTERPRETER_INSTRUCTIONS = """
@@ -91,7 +100,8 @@ Interpretação: domain=out_of_scope.
 
 Não copie uma fala anterior como fato comercial. Preserve produto, preferências e
 orçamento que estejam evidentes no contexto. confidence deve refletir a certeza da
-interpretação entre 0 e 1.
+interpretação entre 0 e 1. Em information_needed, indique somente os fatos necessários:
+catalog, price, inventory, coupons ou payment.
 """.strip()
 
 _ACTION_TO_PLAN = {
@@ -207,6 +217,7 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
             "style": constraints.get("style") or filters.get("style"),
             "attributes": constraints.get("attributes") or filters.get("attributes") or [],
         },
+        information_needed=["catalog"] if legacy.get("domain") == "commerce" else [],
         references_previous_context=False,
         needs_clarification=bool(legacy.get("needs_clarification")),
         clarification_question=legacy.get("clarification_question"),
@@ -301,13 +312,19 @@ def interpretation_to_plan(
         query_parts = []
     query = " ".join(query_parts).strip()
 
-    resolved_action = resolve_commerce_action(text)
+    information_needed = set(interpretation.information_needed)
+    inspect_intent = (
+        "inventory" if "inventory" in information_needed
+        else "coupon" if "coupons" in information_needed
+        else "price" if information_needed.intersection({"price", "payment"})
+        else "product_search"
+    )
     goal_to_intent = {
         "discover": "clarification",
         "find": "product_search",
         "recommend": "recommendation",
         "compare": "product_comparison",
-        "inspect": _ACTION_TO_PLAN.get(resolved_action or "", "product_search"),
+        "inspect": inspect_intent,
         "buy": "purchase_intent",
         "after_sales": "clarification",
     }
@@ -342,6 +359,7 @@ def interpretation_to_plan(
         "product_type": subject.get("product_type"),
         "needs_clarification": interpretation.needs_clarification,
         "clarification_question": interpretation.clarification_question,
+        "information_needed": interpretation.information_needed,
         "_source": interpretation._source,
     }
 
@@ -354,15 +372,18 @@ async def interpret_message(
     settings = get_settings()
     if _is_greeting(message.text):
         fallback = _fallback_interpretation(message.text)
+        fallback._fallback_reason = "greeting_fast_path"
         _log_interpretation(fallback, settings.openai_model, fallback_reason="greeting_fast_path")
         return fallback
     if not settings.openai_api_key:
         fallback = _fallback_interpretation(message.text)
+        fallback._fallback_reason = "openai_api_key_missing"
         _log_interpretation(fallback, settings.openai_model, fallback_reason="openai_api_key_missing")
         return fallback
     current_text = (message.text or "").strip()
     if not current_text:
         fallback = _fallback_interpretation(message.text)
+        fallback._fallback_reason = "empty_message"
         _log_interpretation(fallback, settings.openai_model, fallback_reason="empty_message")
         return fallback
 
@@ -401,12 +422,14 @@ async def interpret_message(
     except BadRequestError as exc:
         print("[sales.interpreter.error]", _bad_request_details(exc, settings.openai_model))
         fallback = _fallback_interpretation(message.text)
+        fallback._fallback_reason = "openai_bad_request"
         _log_interpretation(fallback, settings.openai_model, fallback_reason="openai_bad_request")
         return fallback
     except (APIError, ValidationError, ValueError, TypeError) as exc:
         print("[sales.interpreter] failed", {"error_type": type(exc).__name__})
         fallback = _fallback_interpretation(message.text)
         fallback_reason = "openai_request_failed" if isinstance(exc, APIError) else "openai_invalid_response"
+        fallback._fallback_reason = fallback_reason
         _log_interpretation(fallback, settings.openai_model, fallback_reason=fallback_reason)
         return fallback
 
@@ -483,22 +506,6 @@ async def plan_sales_request(message: IncomingMessage) -> dict[str, Any] | None:
     if interpretation.domain != "commerce":
         return None
     return interpretation_to_plan(interpretation, message.text)
-
-
-def _planned_message(message: IncomingMessage, plan: dict[str, Any]) -> IncomingMessage:
-    query = str(plan.get("query") or "").strip()
-    intent = plan.get("intent")
-    if intent == "inventory":
-        routed_text = f"Tem estoque de {query}?" if query else "Tem estoque?"
-    elif intent == "price":
-        routed_text = f"Quanto custa {query}?" if query else "Quanto custa?"
-    elif intent == "coupon":
-        routed_text = "Tem algum cupom comercial disponível?"
-    elif intent in {"product_search", "purchase_intent", "recommendation", "product_comparison"}:
-        routed_text = f"Tem {query}?" if query else message.text
-    else:
-        routed_text = message.text
-    return message.model_copy(update={"text": routed_text})
 
 
 def _fold(value: Any) -> str:
@@ -597,10 +604,125 @@ def _ranked_result(result: AgentResult, plan: dict[str, Any]) -> AgentResult | N
     return ranked
 
 
+def _mark_sales_result(
+    result: AgentResult,
+    *,
+    interpretation: SalesInterpretation | None,
+    goal: str | None,
+    response_source: str,
+    used_openai_responder: bool,
+    used_tray: bool,
+    fallback_reason: str | None = None,
+) -> AgentResult:
+    interpreter_source = interpretation._source if interpretation else None
+    return result.with_response_metadata(
+        domain="commerce",
+        goal=goal,
+        response_source=response_source,
+        used_openai_interpreter=interpreter_source == "openai",
+        used_openai_responder=used_openai_responder,
+        used_tray=used_tray,
+        fallback_reason=fallback_reason or (interpretation._fallback_reason if interpretation else None),
+    )
+
+
+def _needs_clarification_before_retrieval(
+    interpretation: SalesInterpretation,
+    plan: dict[str, Any],
+) -> bool:
+    if interpretation.needs_clarification or interpretation.goal == "discover":
+        return True
+    if plan.get("intent") not in {"purchase_intent", "recommendation"}:
+        return False
+    subject = interpretation.subject
+    return not any((subject.brand, subject.model, subject.reference, subject.ean))
+
+
+async def generate_clarification_reply(
+    *,
+    message: IncomingMessage,
+    interpretation: SalesInterpretation,
+    recent_turns: list[dict[str, str]] | None = None,
+    context_note: str | None = None,
+    used_tray: bool = False,
+) -> AgentResult:
+    settings = get_settings()
+    deterministic_question = (
+        interpretation.clarification_question
+        or "Qual característica ou preferência é mais importante para você?"
+    )
+    if not settings.openai_api_key:
+        return _mark_sales_result(
+            AgentResult(
+                reply_text=deterministic_question,
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="commerce_clarification",
+            ),
+            interpretation=interpretation,
+            goal=interpretation.goal,
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=used_tray,
+            fallback_reason="openai_api_key_missing",
+        )
+
+    normalized_history = _normalize_interpreter_history(recent_turns)
+    request_context = {
+        "current_message": message.text,
+        "interpretation": interpretation.model_dump(),
+        "context_note": context_note,
+    }
+    try:
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": SALES_CLARIFICATION_INSTRUCTIONS},
+                *normalized_history,
+                {"role": "user", "content": json.dumps(request_context, ensure_ascii=False)},
+            ],
+            temperature=0.3,
+        )
+        content = response.choices[0].message.content if response.choices else None
+        if not content or not content.strip():
+            raise ValueError("clarification_response_empty")
+        return _mark_sales_result(
+            AgentResult(
+                reply_text=html.unescape(content.strip()),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="commerce_clarification",
+            ),
+            interpretation=interpretation,
+            goal=interpretation.goal,
+            response_source="openai",
+            used_openai_responder=True,
+            used_tray=used_tray,
+        )
+    except (APIError, ValueError, TypeError) as exc:
+        print("[sales.clarification] failed", {"error_type": type(exc).__name__})
+        return _mark_sales_result(
+            AgentResult(
+                reply_text=deterministic_question,
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="commerce_clarification",
+            ),
+            interpretation=interpretation,
+            goal=interpretation.goal,
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=used_tray,
+            fallback_reason="clarification_responder_failed",
+        )
+
+
 async def _sales_response_with_openai(
     message: IncomingMessage,
     plan: dict[str, Any],
     tray_result: AgentResult,
+    interpretation: SalesInterpretation | None = None,
 ) -> AgentResult | None:
     settings = get_settings()
     if not settings.openai_api_key or tray_result.safety_reason in {
@@ -616,7 +738,11 @@ async def _sales_response_with_openai(
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {"original_message": message.text, "plan": plan, "FACTS": tray_result.reply_text},
+                        {
+                            "original_message": message.text,
+                            "plan": plan,
+                            "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},
+                        },
                         ensure_ascii=False,
                     ),
                 },
@@ -626,7 +752,14 @@ async def _sales_response_with_openai(
         content = response.choices[0].message.content if response.choices else None
         if not content or not content.strip():
             return None
-        return AgentResult(reply_text=html.unescape(content.strip()), intent="commerce", handoff_required=False)
+        return _mark_sales_result(
+            AgentResult(reply_text=html.unescape(content.strip()), intent="commerce", handoff_required=False),
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source="openai",
+            used_openai_responder=True,
+            used_tray=True,
+        )
     except (APIError, ValueError, TypeError) as exc:
         print("[sales.responder] failed", {"error_type": type(exc).__name__})
         return None
@@ -637,7 +770,9 @@ async def handle_sales_message(
     facts: dict[str, Any],
     customer_context: dict[str, Any],
     semantic_plan: dict[str, Any] | SalesInterpretation | None = None,
+    recent_turns: list[dict[str, str]] | None = None,
 ) -> AgentResult | None:
+    interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
     if isinstance(semantic_plan, SalesInterpretation):
         plan = interpretation_to_plan(semantic_plan, message.text)
     elif semantic_plan and semantic_plan.get("domain") == "commerce":
@@ -654,31 +789,70 @@ async def handle_sales_message(
         "has_model": bool((plan.get("filters") or {}).get("model")),
     })
     vague_query = str(plan.get("query") or "").strip().lower() in {"", "alguma coisa", "algo", "qualquer coisa", "um produto", "uma coisa", "produto"}
-    if plan.get("intent") == "clarification":
-        question = plan.get("clarification_question") or "Claro. Está procurando relógio, acessório ou outro tipo de produto?"
-        return AgentResult(reply_text=str(question), intent="commerce", handoff_required=False, safety_reason="commerce_clarification")
-    if plan.get("intent") in {"purchase_intent", "recommendation"} and vague_query:
-        return AgentResult(reply_text="Claro. Está procurando relógio, acessório ou outro tipo de produto?", intent="commerce", handoff_required=False, safety_reason="commerce_clarification")
-    if plan.get("intent") == "product_search" and vague_query:
-        return AgentResult(reply_text="Qual produto você quer encontrar? Informe o nome, modelo ou referência.", intent="commerce", handoff_required=False, safety_reason="commerce_clarification")
-    constraints = plan.get("constraints") or {}
-    if plan.get("intent") == "purchase_intent" and plan.get("query") and not any(constraints.get(key) for key in ("budget_min", "budget_max", "attributes", "color", "style")):
-        return AgentResult(reply_text="Claro. Você procura algo mais esportivo, social ou casual? Tem alguma faixa de preço em mente?", intent="commerce", handoff_required=False, safety_reason="commerce_discovery")
-    routed_message = _planned_message(message, plan)
+    if interpretation and _needs_clarification_before_retrieval(interpretation, plan):
+        return await generate_clarification_reply(
+            message=message,
+            interpretation=interpretation,
+            recent_turns=recent_turns,
+        )
+    if interpretation and vague_query:
+        return await generate_clarification_reply(
+            message=message,
+            interpretation=interpretation,
+            recent_turns=recent_turns,
+        )
+    if plan.get("intent") == "clarification" or vague_query:
+        result = AgentResult(
+            reply_text=str(plan.get("clarification_question") or "Qual característica ou preferência é mais importante para você?"),
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="commerce_clarification",
+        )
+        return _mark_sales_result(
+            result,
+            interpretation=None,
+            goal=plan.get("goal"),
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=False,
+        )
+
+    action = {
+        "product_search": "product_search",
+        "purchase_intent": "product_search",
+        "recommendation": "product_search",
+        "product_comparison": "product_search",
+        "price": "product_price",
+        "inventory": "product_inventory",
+        "coupon": "coupon_search",
+    }.get(str(plan.get("intent")))
+    if not action:
+        return None
+
     queries = [str(plan.get("query") or "").strip()]
     code_value = re.sub(r"^(?:ean|sku|ref(?:er[êe]ncia)?)\s+", "", queries[0], flags=re.IGNORECASE)
     code_query = bool(re.fullmatch(r"[A-Za-z0-9._/-]+", code_value)) and any(char.isdigit() for char in code_value)
-    if plan.get("intent") == "product_search" and len(queries[0].split()) > 1 and not code_query:
-        queries.append(queries[0].split()[-1])
-        brand = (plan.get("filters") or {}).get("brand")
+    subject = plan.get("subject") or {}
+    if action == "product_search" and not code_query:
+        model = str(subject.get("model") or "").strip()
+        brand = str(subject.get("brand") or "").strip()
+        if model:
+            queries.append(model)
         if brand:
-            queries.append(str(brand))
+            queries.append(brand)
+    queries = list(dict.fromkeys(query for query in queries if query or action == "coupon_search"))
     tray_result = None
     last_raw_result = None
     for attempt, query in enumerate(queries[:3], start=1):
         attempt_plan = {**plan, "query": query, "subject": {**(plan.get("subject") or {}), "query": query}}
-        print("[sales.agent] tray_request", {"tool": "search_products", "attempt": attempt, "strategy": "initial" if attempt == 1 else "progressive"})
-        raw_result = await handle_commerce_message(_planned_message(message, attempt_plan), facts, customer_context)
+        print("[sales.agent] tray_request", {"capability": action, "attempt": attempt, "strategy": "initial" if attempt == 1 else "progressive"})
+        raw_result = await handle_commerce_message(
+            message,
+            facts,
+            customer_context,
+            action=action,
+            query=query,
+        )
         last_raw_result = raw_result
         print("[sales.agent] tray_result", {"ok": raw_result is not None and raw_result.safety_reason != "tray_adapter_unavailable", "results_count": len((raw_result.commercial_data or {}).get("products", [])) if raw_result else 0})
         tray_result = _ranked_result(raw_result, attempt_plan) if raw_result else None
@@ -696,7 +870,25 @@ async def handle_sales_message(
     if tray_result is None:
         return None
     if plan.get("intent") in {"purchase_intent", "recommendation", "clarification"} and tray_result.safety_reason == "product_not_found":
-        return AgentResult(reply_text="Não encontrei opções compatíveis no catálogo agora. Posso tentar outro tipo ou faixa de produto?", intent="commerce", handoff_required=False, safety_reason="recommendation_not_found")
-    final = await _sales_response_with_openai(message, plan, tray_result)
+        if interpretation:
+            return await generate_clarification_reply(
+                message=message,
+                interpretation=interpretation,
+                recent_turns=recent_turns,
+                context_note="A busca atual não trouxe candidatos confiáveis; peça um critério diferente sem afirmar que o produto não existe.",
+                used_tray=True,
+            )
+    final = await _sales_response_with_openai(message, plan, tray_result, interpretation)
     print("[sales.agent] responder", {"source": "openai" if final else "deterministic_fallback"})
-    return final or tray_result
+    if final:
+        return final
+    response_source = "technical_fallback" if tray_result.safety_reason == "tray_adapter_unavailable" else "deterministic_fallback"
+    return _mark_sales_result(
+        tray_result,
+        interpretation=interpretation,
+        goal=plan.get("goal"),
+        response_source=response_source,
+        used_openai_responder=False,
+        used_tray=True,
+        fallback_reason=("tray_adapter_unavailable" if response_source == "technical_fallback" else "sales_responder_unavailable"),
+    )

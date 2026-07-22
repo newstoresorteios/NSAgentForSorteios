@@ -272,12 +272,18 @@ async def test_async_agent_passes_loaded_history_to_interpreter(monkeypatch):
         captured["history"] = recent_turns
         return interpretation
 
-    async def fake_handle(message, facts, customer_context, semantic_plan):
+    async def fake_handle(message, facts, customer_context, semantic_plan, recent_turns=None):
         captured["plan"] = semantic_plan
+        captured["sales_history"] = recent_turns
         return AgentResult(reply_text="Qual faixa de preço você prefere?", intent="commerce")
 
     monkeypatch.setattr(openai_agent, "interpret_message", fake_interpret)
     monkeypatch.setattr(openai_agent, "handle_sales_message", fake_handle)
+    monkeypatch.setattr(
+        openai_agent,
+        "deterministic_scope",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("valid OpenAI interpretation must not be reclassified")),
+    )
 
     result = await openai_agent.generate_agent_reply_async(
         IncomingMessage(
@@ -290,5 +296,7 @@ async def test_async_agent_passes_loaded_history_to_interpreter(monkeypatch):
     )
 
     assert result.intent == "commerce"
+    assert result.reply_text != openai_agent.OUT_OF_SCOPE_REPLY
     assert captured["history"] == history
+    assert captured["sales_history"] == history
     assert captured["plan"] is interpretation

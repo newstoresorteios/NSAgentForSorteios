@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.models import AgentResult, IncomingMessage
+from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.context_builder import detect_customer_intents, gather_customer_facts, _primary_intent
 
 
@@ -162,49 +162,87 @@ async def test_out_of_scope_is_refused_without_openai_answer_or_tray(monkeypatch
 async def test_purchase_intent_uses_product_entity_not_full_sentence(monkeypatch):
     import app.sales_agent as sales_agent
 
-    settings = _settings(openai_api_key="")
+    settings = _settings(openai_api_key="test-key")
     monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
     calls = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Qual preferência é mais importante para você?"))])
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
 
     async def fake_execute(name, arguments):
         calls.append((name, arguments))
         return {"products": [{"id": "1", "name": "Relógio esportivo", "current_price": 1000}]}
 
     monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="quero comprar um relógio"),
         {"primary_intent": "commerce"},
         {},
-        {"domain": "commerce", "intent": "purchase_intent", "query": "relógio", "filters": {}, "_source": "openai"},
+        SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"product_type": "relógio"},
+            preferences={},
+            references_previous_context=False,
+            needs_clarification=True,
+            clarification_question=None,
+            confidence=0.95,
+        ),
     )
     assert calls == []
-    assert result.safety_reason == "commerce_discovery"
-    assert "esportivo" in result.reply_text
+    assert result.safety_reason == "commerce_clarification"
+    assert result.reply_text == "Qual preferência é mais importante para você?"
+    assert result.response_metadata["used_openai_responder"] is True
     assert result.intent == "commerce"
 
 
 @pytest.mark.asyncio
-async def test_recommendation_uses_real_catalog_results(monkeypatch):
+async def test_broad_recommendation_clarifies_without_false_not_found(monkeypatch):
     import app.sales_agent as sales_agent
 
-    settings = _settings(openai_api_key="")
+    settings = _settings(openai_api_key="test-key")
     monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
     calls = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Você tem alguma marca ou estilo de preferência?"))])
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
 
     async def fake_execute(name, arguments):
         calls.append((name, arguments))
         return {"products": [{"id": "2", "name": "Relógio esportivo preto", "current_price": 4500}]}
 
     monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
     result = await sales_agent.handle_sales_message(
-        IncomingMessage(text="quero um relógio preto esportivo até 5000"),
+        IncomingMessage(text="quero comprar um relógio por menos de 5 mil"),
         {"primary_intent": "commerce"},
         {},
-        {"domain": "commerce", "intent": "recommendation", "query": "relógio preto esportivo", "filters": {"budget_max": 5000}, "_source": "openai"},
+        SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"product_type": "relógio"},
+            preferences={"budget_max": 5000},
+            references_previous_context=False,
+            needs_clarification=False,
+            clarification_question=None,
+            confidence=0.94,
+        ),
     )
-    assert calls[0][0] == "search_products"
-    assert "relógio preto esportivo" in calls[0][1]["query"]
-    assert "Relógio esportivo preto" in result.reply_text
+    assert calls == []
+    assert result.reply_text == "Você tem alguma marca ou estilo de preferência?"
+    assert result.safety_reason != "recommendation_not_found"
+    assert result.response_metadata["used_tray"] is False
 
 
 @pytest.mark.asyncio
@@ -226,7 +264,16 @@ async def test_product_search_uses_progressive_strategies(monkeypatch):
         IncomingMessage(text="Tem Tissot Seastar?"),
         {"primary_intent": "commerce"},
         {},
-        {"domain": "commerce", "intent": "product_search", "query": "Tissot Seastar", "filters": {"brand": "Tissot"}, "_source": "openai"},
+        SalesInterpretation(
+            domain="commerce",
+            goal="find",
+            subject={"brand": "Tissot", "model": "Seastar"},
+            preferences={},
+            references_previous_context=False,
+            needs_clarification=False,
+            clarification_question=None,
+            confidence=0.98,
+        ),
     )
     assert calls == ["Tissot Seastar", "Seastar"]
     assert "Tissot Seastar" in result.reply_text

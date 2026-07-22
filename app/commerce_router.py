@@ -163,13 +163,20 @@ def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
     return AgentResult(reply_text=prefix + "\n" + "\n".join(_product_lines(products)), intent="commerce", handoff_required=False, commercial_data={"products": products})
 
 
-async def handle_commerce_message(message: IncomingMessage, facts: dict[str, Any], customer_context: dict[str, Any]) -> AgentResult | None:
+async def handle_commerce_message(
+    message: IncomingMessage,
+    facts: dict[str, Any],
+    customer_context: dict[str, Any],
+    *,
+    action: str | None = None,
+    query: str | None = None,
+) -> AgentResult | None:
     del customer_context
-    action = resolve_commerce_action(message.text)
+    action = action or resolve_commerce_action(message.text)
     if not action:
         return None
 
-    query = extract_product_query(message.text)
+    query = query if query is not None else extract_product_query(message.text)
     if action == "coupon_search":
         _log_route(action, "list_coupons", bool(query))
         result = await execute_tool("list_coupons", {"limit": 3})

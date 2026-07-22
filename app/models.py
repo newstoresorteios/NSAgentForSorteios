@@ -39,12 +39,16 @@ class SalesInterpretation(BaseModel):
     ] | None = None
     subject: ProductSubject = Field(default_factory=ProductSubject)
     preferences: ProductPreferences = Field(default_factory=ProductPreferences)
+    information_needed: list[
+        Literal["catalog", "price", "inventory", "coupons", "payment"]
+    ] = Field(default_factory=list)
     references_previous_context: bool
     needs_clarification: bool
     clarification_question: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
 
     _source: str = PrivateAttr(default="openai")
+    _fallback_reason: str | None = PrivateAttr(default=None)
 
 
 class IncomingMessage(BaseModel):
@@ -75,8 +79,13 @@ class AgentResult(BaseModel):
     reply_audio_mime_type: str | None = None
     reply_audio_url: str | None = None
     commercial_data: dict[str, Any] | None = None
+    response_metadata: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def with_response_metadata(self, **metadata: Any) -> "AgentResult":
+        self.response_metadata.update({key: value for key, value in metadata.items() if value is not None})
+        return self
 
 
 class BrevoSendResult(BaseModel):
