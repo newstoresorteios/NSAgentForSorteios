@@ -37,11 +37,26 @@ class TrayAdapterClient:
             if response.status_code >= 400:
                 raise TrayAdapterError(f"tray_adapter_http_{response.status_code}", response.status_code)
             return response.json()
-        except TrayAdapterError:
+        except TrayAdapterError as exc:
+            print("[tray.client] request_failed", {
+                "error_type": type(exc).__name__,
+                "status_code": exc.status_code,
+                "timeout": isinstance(exc.__cause__, httpx.TimeoutException),
+            })
             raise
         except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
+            print("[tray.client] request_failed", {
+                "error_type": type(exc).__name__,
+                "status_code": None,
+                "timeout": isinstance(exc, httpx.TimeoutException),
+            })
             raise TrayAdapterError("tray_adapter_unavailable") from exc
         except ValueError as exc:
+            print("[tray.client] request_failed", {
+                "error_type": type(exc).__name__,
+                "status_code": None,
+                "timeout": False,
+            })
             raise TrayAdapterError("tray_adapter_invalid_response") from exc
         finally:
             if own_client:

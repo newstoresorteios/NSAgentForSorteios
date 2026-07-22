@@ -26,6 +26,7 @@ from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS
 from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
 from .user_preferences import detect_preferred_name_update
 from .tray_tools import TOOL_SCHEMAS, execute_tool
+from .commerce_router import handle_commerce_message, resolve_commerce_action
 
 
 SYSTEM_INSTRUCTIONS = f"""
@@ -270,5 +271,9 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         return preferred_reply
     if detect_available_numbers_inquiry(message.text):
         return build_available_numbers_reply(message)
+    if facts.get("primary_intent") == "commerce" or resolve_commerce_action(message.text):
+        commerce_result = await handle_commerce_message(message, facts, customer_context)
+        if commerce_result is not None:
+            return commerce_result
     print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})
     return await generate_openai_reply_async(message, customer_context, facts)
