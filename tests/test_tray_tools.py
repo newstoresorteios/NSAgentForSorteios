@@ -19,6 +19,18 @@ class FakeTray:
         self.calls.append(("get_product_stock", product_id))
         return {"product_id": product_id, "stock": 0, "available": "0", "upon_request": True, "availability": "sob consulta"}
 
+    async def list_categories(self, **kwargs):
+        self.calls.append(("list_categories", kwargs))
+        return {"categories": [{"id": 10, "name": "Relógios", "secret": "omit"}]}
+
+    async def get_category_tree(self, category_id):
+        self.calls.append(("get_category_tree", category_id))
+        return {"id": category_id, "name": "Relógios", "children": [{"id": 11, "name": "Masculinos"}]}
+
+    async def list_product_variants(self, product_id):
+        self.calls.append(("list_product_variants", product_id))
+        return {"variants": [{"id": "V1", "product_id": product_id, "color": "Preto", "stock": 2, "secret": "omit"}]}
+
 
 @pytest.mark.asyncio
 async def test_search_products_reduces_payload_and_uses_name():
@@ -55,3 +67,22 @@ def test_tray_text_and_payment_options_are_normalized():
         "installments": [{"count": 12, "value": 533.33, "interest": False}],
     }
     assert "display_name" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_category_and_variant_tools_reduce_payloads():
+    client = FakeTray()
+
+    categories = await execute_tool("list_categories", {"limit": 100, "page": 1}, client)
+    tree = await execute_tool("get_category_tree", {"category_id": "10"}, client)
+    variants = await execute_tool("list_product_variants", {"product_id": "641"}, client)
+
+    assert categories == {"categories": [{"id": 10, "name": "Relógios"}]}
+    assert tree["tree"]["children"] == [{"id": 11, "name": "Masculinos"}]
+    assert variants == {"variants": [{
+        "id": "V1",
+        "product_id": "641",
+        "color": "Preto",
+        "stock": 2,
+        "variant_id": "V1",
+    }]}

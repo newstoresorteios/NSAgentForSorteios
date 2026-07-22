@@ -95,6 +95,11 @@ async def test_candidate_pool_is_twenty_and_customer_result_is_three(monkeypatch
 
     async def fake_execute(name, arguments):
         calls.append((name, arguments))
+        if name == "list_categories":
+            return {"categories": []}
+        if name == "get_product":
+            product_id = arguments["product_id"]
+            return {"id": product_id, "name": f"Relógio {product_id}", "current_price": 1000 + int(product_id)}
         return {
             "products": [
                 {"id": str(index), "name": f"Relógio {index}", "current_price": 1000 + index}
@@ -109,7 +114,8 @@ async def test_candidate_pool_is_twenty_and_customer_result_is_three(monkeypatch
     )
     result = await sales_agent._execute_compiled_product_retrieval(_interpretation())
 
-    assert calls == [("search_products", {"name": "relógio", "available": True, "limit": 20, "page": 1})]
+    search_calls = [call for call in calls if call[0] == "search_products"]
+    assert search_calls == [("search_products", {"name": "relógio", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
     assert len(result.commercial_data["products"]) == 3
 
 
@@ -160,6 +166,10 @@ async def test_ready_broad_request_retrieves_without_new_clarification(
 
     async def fake_execute(name, arguments):
         calls.append((name, arguments))
+        if name == "list_categories":
+            return {"categories": []}
+        if name == "get_product":
+            return {"id": arguments["product_id"], "name": "Modelo atualizado", "current_price": 3000}
         return {
             "products": [
                 {"id": "1", "name": "Modelo Classic", "current_price": 3000},
@@ -179,8 +189,9 @@ async def test_ready_broad_request_retrieves_without_new_clarification(
         recent_turns=[],
     )
 
-    assert calls[0][1]["name"] == "relógio"
-    assert "brand" not in calls[0][1]
+    search_call = next(call for call in calls if call[0] == "search_products")
+    assert search_call[1]["name"] == "relógio"
+    assert "brand" not in search_call[1]
     assert result.safety_reason != "commerce_clarification"
     assert result.safety_reason != "product_not_found"
     assert len(result.commercial_data["products"]) == 2

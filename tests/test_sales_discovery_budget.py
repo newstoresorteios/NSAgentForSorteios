@@ -52,8 +52,16 @@ async def _run_sales(monkeypatch, interpretation, recent_turns):
 
     async def fake_execute(name, arguments):
         calls.append((name, arguments))
+        if name == "list_categories":
+            return {"categories": []}
+        if name == "get_product":
+            return {
+                "id": arguments["product_id"],
+                "name": f"{interpretation.subject.product_type} recomendado",
+                "current_price": 1000,
+            }
         return {
-            "products": [{"id": "1", "name": f"{interpretation.subject.product_type} recomendado"}]
+            "products": [{"id": "1", "name": f"{interpretation.subject.product_type} recomendado", "current_price": 1000}]
         }
 
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings())
@@ -91,7 +99,7 @@ async def test_two_consecutive_clarifications_exhaust_budget_and_start_retrieval
         {"role": "user", "content": "tanto faz"},
     ]
     third, third_calls = await _run_sales(monkeypatch, interpretation, two_turns)
-    assert third_calls == [("search_products", {"name": "acessório", "available": True, "limit": 20, "page": 1})]
+    assert [call for call in third_calls if call[0] == "search_products"] == [("search_products", {"name": "acessório", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
     assert third.safety_reason != "commerce_clarification"
 
 
@@ -101,7 +109,7 @@ async def test_identifiable_subject_with_budget_is_enough_to_search(monkeypatch)
 
     result, calls = await _run_sales(monkeypatch, interpretation, [])
 
-    assert calls == [("search_products", {"name": "acessório", "available": True, "limit": 20, "page": 1})]
+    assert [call for call in calls if call[0] == "search_products"] == [("search_products", {"name": "acessório", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
     assert result.response_metadata["used_tray"] is True
 
 
@@ -112,7 +120,7 @@ async def test_action_or_friction_stops_clarification_when_subject_is_known(monk
 
     result, calls = await _run_sales(monkeypatch, interpretation, [])
 
-    assert calls == [("search_products", {"name": "acessório", "available": True, "limit": 20, "page": 1})]
+    assert [call for call in calls if call[0] == "search_products"] == [("search_products", {"name": "acessório", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
     assert result.safety_reason != "commerce_clarification"
 
 
@@ -238,5 +246,5 @@ async def test_catalog_request_interpretation_reaches_retrieval_without_clarific
 
     result, calls = await _run_sales(monkeypatch, interpretation, [])
 
-    assert calls == [("search_products", {"name": "acessório", "available": True, "limit": 20, "page": 1})]
+    assert [call for call in calls if call[0] == "search_products"] == [("search_products", {"name": "acessório", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
     assert result.safety_reason != "commerce_clarification"

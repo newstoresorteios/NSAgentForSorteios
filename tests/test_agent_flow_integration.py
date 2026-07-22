@@ -230,7 +230,7 @@ async def test_valid_commerce_interpretation_reaches_openai_sales_responder(monk
     assert tool_calls == [(
         "search_products",
         {"name": "Tissot Seastar", "brand": "Tissot", "limit": 20, "page": 1},
-    )]
+    ), ("get_product", {"product_id": "1"})]
     assert result.response_metadata["used_openai_interpreter"] is True
     assert result.response_metadata["used_openai_responder"] is True
     assert result.response_metadata["used_tray"] is True

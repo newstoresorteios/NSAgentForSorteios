@@ -10,7 +10,7 @@ from .tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 
 TOOL_SCHEMAS = [
-    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "available": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product", "description": "Consultar detalhes atuais de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_inventory", "description": "Confirmar estoque e regras de disponibilidade de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "search_customer", "description": "Pesquisar um cliente com filtro específico, quando necessário.", "parameters": {"type": "object", "properties": {"email": {"type": "string"}, "cpf": {"type": "string"}, "cnpj": {"type": "string"}, "name": {"type": "string"}, "limit": {"type": "integer", "maximum": 5}}, "additionalProperties": False}}},
@@ -20,11 +20,13 @@ TOOL_SCHEMAS = [
 ]
 
 TOOL_REGISTRY = {
-    "commerce": ("search_products", "get_product", "check_inventory", "search_customer", "get_customer", "list_coupons", "get_coupon"),
+    "commerce": ("search_products", "get_product", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon"),
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
-_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_id", "attributes", "properties", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "payment_option", "payment_option_details", "url")
+_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_id", "attributes", "properties", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "has_variation", "ProductSettings", "payment_option", "payment_option_details", "url")
+_CATEGORY_FIELDS = ("id", "name", "parent_id", "parent", "slug", "path")
+_VARIANT_FIELDS = ("id", "variant_id", "product_id", "name", "value", "color", "size", "version", "reference", "sku", "Sku", "price", "promotional_price", "stock", "available", "available_in_store", "availability", "VariationSettings")
 _CUSTOMER_FIELDS = ("id", "name", "email", "city", "state", "last_purchase", "total_orders")
 _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", "type", "value_start", "value_end", "usage_counter_limit", "usage_counter_limit_customer", "coupon_type", "local_application", "freight_application")
 
@@ -85,7 +87,7 @@ def _items(payload: Any) -> list[Any]:
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
-        for key in ("items", "products", "customers", "coupons", "data", "results"):
+        for key in ("items", "products", "categories", "variants", "variations", "customers", "coupons", "data", "results"):
             value = payload.get(key)
             if isinstance(value, list):
                 return value
@@ -122,7 +124,7 @@ def _query_filters(query: str) -> list[dict[str, str]]:
 
 async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, Any]:
     query = (args.pop("query", None) or "").strip()
-    supported = ("name", "reference", "ean", "brand", "category_id", "available", "stock", "promotion", "page")
+    supported = ("name", "reference", "ean", "brand", "category_id", "available", "available_in_store", "stock", "promotion", "page")
     explicit = {key: args.get(key) for key in supported if args.get(key) is not None}
     attempts = [explicit or filters for filters in _query_filters(query)] if query else [explicit]
     limit = min(max(int(args.get("limit", 5)), 1), 20)
@@ -136,6 +138,25 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
     return {"products": []}
 
 
+def _reduce_variant(item: Any) -> dict[str, Any]:
+    reduced = _reduce(item, _VARIANT_FIELDS)
+    if reduced.get("variant_id") is None and reduced.get("id") is not None:
+        reduced["variant_id"] = reduced["id"]
+    return reduced
+
+
+def _reduce_category_tree(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_reduce_category_tree(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    reduced = _reduce(value, _CATEGORY_FIELDS)
+    for key in ("children", "subcategories", "categories", "items", "data", "tree", "category"):
+        if key in value:
+            reduced[key] = _reduce_category_tree(value[key])
+    return reduced
+
+
 async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
     client = client or TrayAdapterClient()
     try:
@@ -145,6 +166,18 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             return _reduce((await client.get_product(arguments["product_id"])), _PRODUCT_FIELDS)
         if name == "check_inventory":
             return _reduce(await client.get_product_stock(arguments["product_id"]), ("product_id", "stock", "available", "available_in_store", "available_for_purchase", "upon_request", "availability", "when_stock_runs_out"))
+        if name == "list_categories":
+            payload = await client.list_categories(**arguments)
+            return {"categories": [_reduce(item, _CATEGORY_FIELDS) for item in _items(payload)]}
+        if name == "get_category":
+            return _reduce(await client.get_category(arguments["category_id"]), _CATEGORY_FIELDS)
+        if name == "get_category_tree":
+            return {"tree": _reduce_category_tree(await client.get_category_tree(arguments["category_id"]))}
+        if name == "list_product_variants":
+            payload = await client.list_product_variants(arguments["product_id"])
+            return {"variants": [_reduce_variant(item) for item in _items(payload)][:20]}
+        if name == "get_product_variant":
+            return _reduce_variant(await client.get_product_variant(arguments["variant_id"]))
         if name == "search_customer":
             return {"customers": [_reduce(item, _CUSTOMER_FIELDS) for item in _items(await client.list_customers(**arguments))[:5]]}
         if name == "get_customer":

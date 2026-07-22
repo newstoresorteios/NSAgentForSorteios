@@ -14,6 +14,7 @@ from .commerce_router import (
     resolve_commerce_action,
     _product_lines,
 )
+from .category_resolver import CategoryResolver
 from .config import get_settings
 from .guardrails import (
     detect_commerce_inquiry,
@@ -27,7 +28,9 @@ from .models import AgentResult, IncomingMessage, SalesInterpretation
 from .product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
     ProductRetrievalCompiler,
+    enrich_product_variants,
     hard_filter_products,
+    revalidate_products,
     rerank_products,
     semantic_preferences,
 )
@@ -522,8 +525,12 @@ def deterministic_sales_plan(text: str | None) -> dict[str, Any] | None:
     ):
         reference = re.sub(r"^(?:sku|ref(?:er[êe]ncia)?)\s+", "", query, flags=re.IGNORECASE)
     fallback_product_type = None
+    fallback_model = None
     if query and not ean_match and not reference:
-        fallback_product_type = query.split()[0] if action == "purchase_intent" else query
+        if action == "product_search":
+            fallback_model = query
+        else:
+            fallback_product_type = query.split()[0] if action == "purchase_intent" else query
     plan: dict[str, Any] = {
         "intent": "purchase_intent" if action == "purchase_intent" else _ACTION_TO_PLAN.get(action, "product_search"),
         "query": query,
@@ -537,7 +544,7 @@ def deterministic_sales_plan(text: str | None) -> dict[str, Any] | None:
         },
         "constraints": {"budget_max": budget_max, "attributes": query.split()[1:] if budget_max is not None and len(query.split()) > 1 else []},
     }
-    plan["subject"].update({"brand": None, "model": None})
+    plan["subject"].update({"brand": None, "model": fallback_model})
     return plan
 
 
@@ -945,7 +952,16 @@ async def _sales_response_with_openai(
 async def _execute_compiled_product_retrieval(
     interpretation: SalesInterpretation,
 ) -> AgentResult | None:
-    retrieval_plan = ProductRetrievalCompiler.compile(interpretation)
+    initial_plan = ProductRetrievalCompiler.compile(interpretation)
+    category_resolution = None
+    if initial_plan.mode == "recommendation" and interpretation.subject.product_type:
+        category_resolution = await CategoryResolver(execute_tool).resolve(
+            interpretation.subject.product_type
+        )
+    retrieval_plan = ProductRetrievalCompiler.compile(
+        interpretation,
+        category_ids=(category_resolution.product_category_ids if category_resolution else ()),
+    )
     preferences = semantic_preferences(interpretation)
     has_budget = any((
         interpretation.preferences.budget_min is not None,
@@ -966,23 +982,21 @@ async def _execute_compiled_product_retrieval(
     candidates: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     hard_filtered: list[dict[str, Any]] = []
+    product_lookup_failed = False
     for request in retrieval_plan.requests:
         arguments = request.tool_arguments()
         print("[sales.retrieval.request]", {
             "strategy": request.strategy,
-            "has_name_filter": bool(request.name),
+            "category_id_present": bool(request.category_id),
+            "name_filter_present": bool(request.name),
             "has_brand_filter": bool(request.brand),
             "has_budget_filter": has_budget,
-            "limit": request.limit,
+            "candidate_limit": request.limit,
         })
         result = await execute_tool("search_products", arguments)
         if "error" in result:
-            return AgentResult(
-                reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
-                intent="commerce",
-                handoff_required=False,
-                safety_reason="tray_adapter_unavailable",
-            )
+            product_lookup_failed = True
+            continue
         raw_products = result.get("products") if isinstance(result.get("products"), list) else []
         for product in raw_products:
             if not isinstance(product, dict) or product.get("id") is None:
@@ -1010,6 +1024,22 @@ async def _execute_compiled_product_retrieval(
             break
 
     if not candidates:
+        if category_resolution and category_resolution.lookup_failed:
+            print("[sales.retrieval.empty]", {"reason": "category_lookup_failed"})
+            return AgentResult(
+                reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="category_lookup_failed",
+            )
+        if product_lookup_failed:
+            print("[sales.retrieval.empty]", {"reason": "catalog_lookup_failed"})
+            return AgentResult(
+                reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="tray_adapter_unavailable",
+            )
         reason = "exact_product_not_found" if retrieval_plan.mode == "exact" else "catalog_empty"
         print("[sales.retrieval.empty]", {"reason": reason})
         if retrieval_plan.mode == "exact":
@@ -1043,13 +1073,30 @@ async def _execute_compiled_product_retrieval(
         )
 
     if retrieval_plan.mode == "recommendation":
-        ranked = await rerank_products(hard_filtered, interpretation)
+        enriched = await enrich_product_variants(
+            hard_filtered,
+            interpretation,
+            execute_tool,
+        )
+        ranked = await rerank_products(enriched, interpretation)
     else:
         ranked = hard_filtered
     selected = ranked[:CUSTOMER_RESULT_LIMIT]
+    refreshed, revalidation_failed = await revalidate_products(
+        selected,
+        interpretation,
+        execute_tool,
+    )
+    if not refreshed and revalidation_failed:
+        return AgentResult(
+            reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="tray_adapter_unavailable",
+        )
     from .commerce_router import _product_result
 
-    return _product_result("product_search", selected)
+    return _product_result("product_search", refreshed or selected)
 
 
 async def handle_sales_message(

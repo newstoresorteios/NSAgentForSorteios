@@ -244,7 +244,8 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
             confidence=0.94,
         ),
     )
-    assert calls == [("search_products", {"name": "relógio", "available": True, "limit": 20, "page": 1})]
+    search_calls = [call for call in calls if call[0] == "search_products"]
+    assert search_calls == [("search_products", {"name": "relógio", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
     assert result.reply_text == "Encontrei uma opção dentro da faixa informada."
     assert result.safety_reason != "recommendation_not_found"
     assert result.response_metadata["used_tray"] is True
@@ -280,7 +281,8 @@ async def test_product_search_uses_progressive_strategies(monkeypatch):
             confidence=0.98,
         ),
     )
-    assert calls == [
+    search_calls = [arguments for arguments in calls if "name" in arguments]
+    assert search_calls == [
         {"name": "Tissot Seastar", "brand": "Tissot", "limit": 20, "page": 1},
         {"name": "Seastar", "brand": "Tissot", "limit": 20, "page": 1},
     ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unicodedata
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -15,6 +16,9 @@ from .models import SalesInterpretation
 CANDIDATE_POOL_LIMIT = 20
 CUSTOMER_RESULT_LIMIT = 3
 RERANK_SELECTION_LIMIT = 5
+MAX_VARIANT_PRODUCT_QUERIES = 5
+
+ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 class ProductRerankSelection(BaseModel):
@@ -28,7 +32,9 @@ class ProductRetrievalRequest:
     brand: str | None = None
     reference: str | None = None
     ean: str | None = None
+    category_id: str | None = None
     available: bool | None = None
+    available_in_store: bool | None = None
     limit: int = CANDIDATE_POOL_LIMIT
     page: int = 1
 
@@ -40,7 +46,9 @@ class ProductRetrievalRequest:
                 "brand": self.brand,
                 "reference": self.reference,
                 "ean": self.ean,
+                "category_id": self.category_id,
                 "available": self.available,
+                "available_in_store": self.available_in_store,
                 "limit": self.limit,
                 "page": self.page,
             }.items()
@@ -69,13 +77,18 @@ def _product_text(product: dict[str, Any]) -> str:
     fields = (
         "name", "brand", "model", "reference", "ean", "description",
         "category", "attributes", "color", "style", "material", "properties",
+        "ProductSettings", "variants",
     )
     return _fold(" ".join(str(product.get(field) or "") for field in fields))
 
 
 class ProductRetrievalCompiler:
     @staticmethod
-    def compile(interpretation: SalesInterpretation) -> ProductRetrievalPlan:
+    def compile(
+        interpretation: SalesInterpretation,
+        *,
+        category_ids: tuple[str, ...] | list[str] = (),
+    ) -> ProductRetrievalPlan:
         subject = interpretation.subject
         exact = bool(subject.reference or subject.ean or subject.model)
         requests: list[ProductRetrievalRequest] = []
@@ -103,24 +116,29 @@ class ProductRetrievalCompiler:
                 ))
         else:
             available = True
+            available_in_store = True
+            for index, category_id in enumerate(category_ids[:5]):
+                requests.append(ProductRetrievalRequest(
+                    strategy="category" if index == 0 else "category_child",
+                    category_id=str(category_id),
+                    brand=subject.brand,
+                    available=available,
+                    available_in_store=available_in_store,
+                ))
             if subject.product_type:
                 requests.append(ProductRetrievalRequest(
-                    strategy="product_type_with_brand" if subject.brand else "product_type",
+                    strategy="name_fallback",
                     name=subject.product_type,
                     brand=subject.brand,
                     available=available,
+                    available_in_store=available_in_store,
                 ))
-                if subject.brand:
-                    requests.append(ProductRetrievalRequest(
-                        strategy="product_type_broad",
-                        name=subject.product_type,
-                        available=available,
-                    ))
             elif subject.brand:
                 requests.append(ProductRetrievalRequest(
                     strategy="explicit_brand",
                     brand=subject.brand,
                     available=available,
+                    available_in_store=available_in_store,
                 ))
 
         return ProductRetrievalPlan(
@@ -240,10 +258,135 @@ def compact_candidates(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "promotional_price": product.get("promotional_price"),
                 "current_price": product.get("current_price"),
                 "availability": product.get("availability"),
+                "available": product.get("available"),
+                "available_in_store": product.get("available_in_store"),
+                "has_variation": product.get("has_variation"),
+                "ProductSettings": product.get("ProductSettings"),
+                "variants": _compact_variants(product.get("variants")),
             }.items()
             if value is not None
         })
     return compact
+
+
+def _compact_variants(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list):
+        return None
+    compact: list[dict[str, Any]] = []
+    for variant in value[:20]:
+        if not isinstance(variant, dict):
+            continue
+        compact.append({
+            key: item
+            for key, item in {
+                "variant_id": variant.get("variant_id") or variant.get("id"),
+                "product_id": variant.get("product_id"),
+                "name": variant.get("name"),
+                "value": variant.get("value"),
+                "color": variant.get("color"),
+                "size": variant.get("size"),
+                "version": variant.get("version"),
+                "reference": variant.get("reference"),
+                "sku": variant.get("sku") or variant.get("Sku"),
+                "price": variant.get("price"),
+                "promotional_price": variant.get("promotional_price"),
+                "stock": variant.get("stock"),
+                "available": variant.get("available"),
+                "available_in_store": variant.get("available_in_store"),
+                "availability": variant.get("availability"),
+                "VariationSettings": variant.get("VariationSettings"),
+            }.items()
+            if item is not None
+        })
+    return compact or None
+
+
+def _needs_variant_evidence(interpretation: SalesInterpretation) -> bool:
+    preferences = interpretation.preferences
+    return bool(
+        preferences.color
+        or preferences.material
+        or preferences.attributes
+        or "inventory" in interpretation.information_needed
+    )
+
+
+async def enrich_product_variants(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    execute_tool: ToolExecutor,
+) -> list[dict[str, Any]]:
+    needs_evidence = _needs_variant_evidence(interpretation)
+    candidates = _deterministic_semantic_order(products, interpretation)
+    candidate_ids = {
+        str(product["id"])
+        for product in candidates[:MAX_VARIANT_PRODUCT_QUERIES]
+        if product.get("id") is not None
+    }
+    enriched: list[dict[str, Any]] = []
+    products_checked = 0
+    variants_loaded = 0
+    matched_preferences = 0
+    preference_terms = [
+        _fold(value)
+        for value in (
+            interpretation.preferences.color,
+            interpretation.preferences.material,
+            *interpretation.preferences.attributes,
+        )
+        if value
+    ]
+    for product in products:
+        product_id = str(product.get("id")) if product.get("id") is not None else ""
+        should_check = product_id in candidate_ids and (
+            needs_evidence or bool(product.get("has_variation"))
+        )
+        if not should_check:
+            enriched.append(product)
+            continue
+        products_checked += 1
+        result = await execute_tool(
+            "list_product_variants",
+            {"product_id": product_id},
+        )
+        if "error" in result:
+            enriched.append(product)
+            continue
+        variants = result.get("variants") if isinstance(result.get("variants"), list) else []
+        variants_loaded += len(variants)
+        matched_preferences += sum(
+            1
+            for variant in variants
+            if any(term in _fold(variant) for term in preference_terms)
+        )
+        enriched.append({**product, "variants": variants})
+    print("[sales.variants]", {
+        "products_checked": products_checked,
+        "variants_loaded": variants_loaded,
+        "matched_preferences": matched_preferences,
+    })
+    return enriched
+
+
+async def revalidate_products(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    execute_tool: ToolExecutor,
+) -> tuple[list[dict[str, Any]], bool]:
+    refreshed: list[dict[str, Any]] = []
+    failed = False
+    for product in products[:CUSTOMER_RESULT_LIMIT]:
+        product_id = product.get("id")
+        if product_id is None:
+            continue
+        result = await execute_tool("get_product", {"product_id": str(product_id)})
+        if "error" in result:
+            failed = True
+            continue
+        refreshed.append({**product, **result})
+    if refreshed:
+        refreshed = await enrich_product_variants(refreshed, interpretation, execute_tool)
+    return refreshed, failed
 
 
 def _deterministic_semantic_order(

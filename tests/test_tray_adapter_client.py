@@ -35,6 +35,28 @@ async def test_product_search_sends_bearer_params_and_limit():
 
 
 @pytest.mark.asyncio
+async def test_categories_and_variants_use_new_read_only_routes():
+    fake = FakeClient()
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+
+    await client.list_categories(limit=500, page=2)
+    await client.get_category("10")
+    await client.get_category_tree("10")
+    await client.list_product_variants("641")
+    await client.get_product_variant("V1")
+
+    assert [call[0][1] for call in fake.calls] == [
+        "https://tray.example/internal/categories",
+        "https://tray.example/internal/categories/10",
+        "https://tray.example/internal/categories/tree/10",
+        "https://tray.example/internal/products/variants",
+        "https://tray.example/internal/products/variants/V1",
+    ]
+    assert fake.calls[0][1]["params"] == {"limit": 100, "page": 2}
+    assert fake.calls[3][1]["params"] == {"product_id": "641"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [401, 403, 404, 429, 500, 502, 503])
 async def test_http_errors_are_typed(status):
     fake = FakeClient(FakeResponse(status_code=status))

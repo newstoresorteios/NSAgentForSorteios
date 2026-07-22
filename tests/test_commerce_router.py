@@ -52,8 +52,9 @@ async def test_agent_commerce_calls_tray_before_openai(monkeypatch):
     result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="Tem Tissot Seastar?"), {})
     assert calls[0] == (
         "search_products",
-        {"name": "Tissot Seastar", "available": True, "limit": 20, "page": 1},
+        {"name": "Tissot Seastar", "limit": 20, "page": 1},
     )
+    assert calls[1] == ("get_product", {"product_id": "1"})
     assert result.intent == "commerce"
 
 

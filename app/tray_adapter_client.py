@@ -65,11 +65,13 @@ class TrayAdapterClient:
     async def search_products(self, *, name: str | None = None, reference: str | None = None,
                               ean: str | None = None, brand: str | None = None,
                               category_id: str | int | None = None, available: Any = None,
-                              stock: Any = None, promotion: Any = None, limit: int = 5,
+                              available_in_store: Any = None, stock: Any = None,
+                              promotion: Any = None, limit: int = 5,
                               page: int | None = None) -> Any:
         return await self._request("GET", "/internal/products", params={
             "name": name, "reference": reference, "ean": ean, "brand": brand,
-            "category_id": category_id, "available": available, "stock": stock,
+            "category_id": category_id, "available": available,
+            "available_in_store": available_in_store, "stock": stock,
             "promotion": promotion, "limit": min(max(limit, 1), 20), "page": page,
         })
 
@@ -78,6 +80,29 @@ class TrayAdapterClient:
 
     async def get_product_stock(self, product_id: str | int) -> Any:
         return await self._request("GET", f"/internal/products/{product_id}/stock")
+
+    async def list_product_variants(self, product_id: str | int) -> Any:
+        return await self._request(
+            "GET",
+            "/internal/products/variants",
+            params={"product_id": product_id},
+        )
+
+    async def get_product_variant(self, variant_id: str | int) -> Any:
+        return await self._request("GET", f"/internal/products/variants/{variant_id}")
+
+    async def list_categories(self, *, limit: int = 100, page: int = 1) -> Any:
+        return await self._request(
+            "GET",
+            "/internal/categories",
+            params={"limit": min(max(limit, 1), 100), "page": max(page, 1)},
+        )
+
+    async def get_category(self, category_id: str | int) -> Any:
+        return await self._request("GET", f"/internal/categories/{category_id}")
+
+    async def get_category_tree(self, category_id: str | int) -> Any:
+        return await self._request("GET", f"/internal/categories/tree/{category_id}")
 
     async def list_brands(self, **params: Any) -> Any:
         return await self._request("GET", "/internal/brands", params=params)
