@@ -61,6 +61,7 @@ async def inspect_payment_options(
     *,
     state: CommerceConversationState,
     installment_count: int | None,
+    payment_method_preference: str | None = None,
     execute: ToolExecutor,
 ) -> AgentResult:
     if not state.cart_session_id:
@@ -70,6 +71,12 @@ async def inspect_payment_options(
         {"cart_session_id": state.cart_session_id},
     )
     if "error" in result:
+        print("[sales.purchase.payment]", {
+            "has_cart_session": True,
+            "requested_method": payment_method_preference,
+            "options_loaded": False,
+            "method_available": None,
+        })
         return AgentResult(
             reply_text="Não consegui consultar as formas de pagamento neste momento.",
             intent="commerce",
@@ -92,17 +99,37 @@ async def inspect_payment_options(
             ),
             None,
         )
+    method_available: bool | None = None
+    if payment_method_preference == "pix":
+        method_available = isinstance(options.get("pix"), dict)
+    elif payment_method_preference == "card":
+        method_available = bool(installments)
+    elif payment_method_preference == "boleto":
+        method_available = isinstance(options.get("boleto"), dict)
     print("[sales.payment.options]", {
         "has_session_id": True,
         "option_count": len(installments) + int("pix" in options),
     })
+    print("[sales.purchase.payment]", {
+        "has_cart_session": True,
+        "requested_method": payment_method_preference,
+        "options_loaded": True,
+        "method_available": method_available,
+    })
     facts: dict[str, Any] = {
         "payment_options": options,
+        "requested_method": payment_method_preference,
+        "requested_method_available": method_available,
         "requested_installment_count": installment_count,
         "requested_installment": selected,
         "cart_url": state.cart_url,
     }
-    if installment_count is not None and selected is None:
+    if payment_method_preference is not None and method_available is False:
+        reply = (
+            "A forma de pagamento escolhida nÃ£o aparece entre as opÃ§Ãµes "
+            "reais deste carrinho."
+        )
+    elif installment_count is not None and selected is None:
         reply = (
             f"A Tray não informou uma opção de {installment_count} parcelas "
             "para este carrinho."
@@ -113,6 +140,11 @@ async def inspect_payment_options(
         reply_text=reply,
         intent="commerce",
         handoff_required=False,
+        safety_reason=(
+            "payment_method_unavailable"
+            if payment_method_preference is not None and method_available is False
+            else None
+        ),
         commercial_data=facts,
         response_metadata={
             "domain": "commerce",

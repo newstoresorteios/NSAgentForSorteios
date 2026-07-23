@@ -24,6 +24,7 @@ from .cart_service import (
 from .commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
+    evolve_commerce_state,
     product_reference_from_product,
     resolve_commerce_reference,
     resolve_purchase_item_reference,
@@ -196,6 +197,12 @@ Para comprar vários produtos, preencha purchase_items com uma entrada para cada
 preservando referência semântica e quantidade. Não invente IDs. Use list_position para
 itens numerados, current_product para o produto ativo e explicit_product com o nome citado.
 Defina image_request=true quando pedir imagem/foto do produto referenciado.
+Uma mensagem pode combinar payment_action e purchase_action. Quando o cliente confirmar
+que quer comprar um produto identificado e escolher como pagar, preserve payment_action
+e defina purchase_action=create_cart no mesmo resultado. Nao deixe a intencao de
+pagamento apagar o compromisso de compra.
+Use payment_method_preference somente quando o cliente escolher ou declarar preferencia
+por pix, card, boleto ou other; uma pergunta geral sobre aceitacao nao e uma escolha.
 Defina payment_action=payment_options para formas de pagamento e payment_action=installment
 quando pedir uma quantidade de parcelas; nesse caso extraia installment_count.
 Extraia quantity como inteiro positivo quando o cliente informar quantidade. Caso não
@@ -494,6 +501,7 @@ def interpretation_to_plan(
         ],
         "image_request": interpretation.image_request,
         "payment_action": interpretation.payment_action,
+        "payment_method_preference": interpretation.payment_method_preference,
         "installment_count": interpretation.installment_count,
         "_source": interpretation._source,
     }
@@ -1028,6 +1036,7 @@ async def _sales_response_with_openai(
             reply_text=html.unescape(content.strip()),
             intent="commerce",
             handoff_required=False,
+            safety_reason=tray_result.safety_reason,
             commercial_data=tray_result.commercial_data,
             response_metadata=dict(tray_result.response_metadata),
         )
@@ -1498,6 +1507,106 @@ async def _execute_compiled_product_retrieval(
     return result
 
 
+async def _ensure_cart_for_purchase(
+    *,
+    interpretation: SalesInterpretation,
+    state: CommerceConversationState,
+    purchase_requests: list[CartItemRequest],
+    resolved_product: CommerceProductReference | None,
+) -> tuple[CommerceConversationState, AgentResult | None]:
+    if state.cart_session_id:
+        print("[sales.purchase.ensure_cart]", {
+            "cart_existed": True,
+            "cart_created": False,
+            "item_count": len(state.cart_items),
+        })
+        return state, None
+
+    if purchase_requests:
+        cart_result = await create_cart_items_checkout(
+            item_requests=purchase_requests,
+            state=state,
+            execute=execute_tool,
+        )
+    elif resolved_product is not None:
+        cart_result = await create_cart_checkout(
+            interpretation=interpretation,
+            product_reference=resolved_product,
+            state=state,
+            execute=execute_tool,
+        )
+    else:
+        print("[sales.purchase.ensure_cart]", {
+            "cart_existed": False,
+            "cart_created": False,
+            "item_count": 0,
+        })
+        return state, None
+
+    updated_state = evolve_commerce_state(state, cart_result)
+    print("[sales.purchase.ensure_cart]", {
+        "cart_existed": False,
+        "cart_created": bool(updated_state.cart_session_id),
+        "item_count": len(updated_state.cart_items),
+    })
+    return updated_state, cart_result
+
+
+def _combine_cart_and_payment_results(
+    cart_result: AgentResult,
+    payment_result: AgentResult,
+) -> AgentResult:
+    commercial_data = dict(cart_result.commercial_data or {})
+    for key, value in (payment_result.commercial_data or {}).items():
+        if key == "cart" and key in commercial_data:
+            continue
+        commercial_data[key] = value
+    metadata = dict(cart_result.response_metadata or {})
+    metadata.update(payment_result.response_metadata or {})
+    if "cart_state" in cart_result.response_metadata:
+        metadata["cart_state"] = cart_result.response_metadata["cart_state"]
+    metadata["purchase_stage"] = "payment_discussion"
+
+    reply = payment_result.reply_text
+    cart_url = (payment_result.commercial_data or {}).get("cart_url")
+    if not isinstance(cart_url, str):
+        cart = (cart_result.commercial_data or {}).get("cart")
+        cart_url = cart.get("cart_url") if isinstance(cart, dict) else None
+    if payment_result.safety_reason and isinstance(cart_url, str):
+        reply = f"{reply}\nSeu carrinho continua disponÃ­vel no checkout oficial:\n{cart_url}"
+    return AgentResult(
+        reply_text=reply,
+        intent="commerce",
+        handoff_required=False,
+        safety_reason=payment_result.safety_reason or cart_result.safety_reason,
+        commercial_data=commercial_data,
+        response_metadata=metadata,
+    )
+
+
+def _purchase_product_required_result(
+    state: CommerceConversationState,
+) -> AgentResult:
+    ambiguous = bool(state.last_presented_products)
+    return AgentResult(
+        reply_text=(
+            "Confirme qual produto vocÃª quer comprar antes de eu preparar o carrinho."
+            if ambiguous
+            else "Preciso saber qual produto vocÃª quer comprar antes de preparar o carrinho."
+        ),
+        intent="commerce",
+        handoff_required=False,
+        safety_reason="product_ambiguous" if ambiguous else "no_cart_no_product",
+        commercial_data={
+            "products": [
+                item.model_dump(mode="json")
+                for item in state.last_presented_products[:3]
+            ],
+            "cart": {"status": "product_required"},
+        },
+    )
+
+
 async def handle_sales_message(
     message: IncomingMessage,
     facts: dict[str, Any],
@@ -1585,6 +1694,51 @@ async def handle_sales_message(
             "resolved_count": len(purchase_requests),
         })
         purchase_action = purchase_action or "create_cart"
+    if (
+        interpretation is not None
+        and purchase_action == "create_cart"
+        and not purchase_requests
+        and resolved_product is None
+        and any((
+            interpretation.subject.reference,
+            interpretation.subject.ean,
+            interpretation.subject.model,
+        ))
+    ):
+        lookup = await _execute_compiled_product_retrieval(interpretation)
+        lookup_products = (
+            (lookup.commercial_data or {}).get("products")
+            if lookup is not None
+            else None
+        )
+        lookup_products = lookup_products if isinstance(lookup_products, list) else []
+        if len(lookup_products) == 1 and isinstance(lookup_products[0], dict):
+            resolved_product = product_reference_from_product(lookup_products[0])
+            resolved_by = "product_id"
+        elif lookup_products:
+            unresolved_purchase_items = 1
+            unresolved_candidates = [
+                candidate
+                for candidate in lookup_products[:3]
+                if isinstance(candidate, dict)
+            ]
+        elif lookup is not None:
+            return _mark_sales_result(
+                lookup,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source=(
+                    "technical_fallback"
+                    if lookup.safety_reason in {
+                        "tray_adapter_unavailable",
+                        "product_match_failed",
+                    }
+                    else "deterministic_fallback"
+                ),
+                used_openai_responder=False,
+                used_tray=bool(lookup.response_metadata.get("used_tray", True)),
+                fallback_reason=lookup.safety_reason,
+            )
     if interpretation is not None and interpretation.image_request:
         if resolved_product is None:
             return _mark_sales_result(
@@ -1625,22 +1779,165 @@ async def handle_sales_message(
             used_tray=True,
             fallback_reason=media_result.safety_reason,
         )
-    if interpretation is not None and interpretation.payment_action:
-        payment_result = await inspect_payment_options(
+    if (
+        purchase_action is None
+        and interpretation is not None
+        and interpretation.goal == "buy"
+        and resolved_product is not None
+    ):
+        purchase_action = "create_cart"
+    payment_requested = bool(interpretation and interpretation.payment_action)
+    payment_preference = (
+        interpretation.payment_method_preference
+        if interpretation is not None
+        else None
+    )
+    if (
+        payment_requested
+        and payment_preference is not None
+        and resolved_product is None
+        and state.active_product is not None
+    ):
+        resolved_product = state.active_product
+        resolved_by = "product_id"
+    if (
+        payment_requested
+        and payment_preference is not None
+        and resolved_product is not None
+    ):
+        purchase_action = purchase_action or "create_cart"
+    needs_cart = bool(
+        payment_requested
+        and not state.cart_session_id
+        and (
+            purchase_action in {"create_cart", "checkout_question", "show_cart_link"}
+            or purchase_requests
+        )
+    )
+    print("[sales.purchase.orchestrator]", {
+        "intent": plan.get("intent"),
+        "purchase_action": purchase_action,
+        "has_active_product": state.active_product is not None,
+        "purchase_item_count": len(purchase_requests),
+        "has_cart_session": bool(state.cart_session_id),
+        "needs_cart": needs_cart,
+        "payment_requested": payment_requested,
+    })
+    if (
+        not payment_requested
+        and purchase_action in {"checkout_question", "show_cart_link"}
+        and not state.cart_session_id
+    ):
+        if unresolved_purchase_items or (
+            not purchase_requests and resolved_product is None
+        ):
+            missing = _purchase_product_required_result(state)
+            return _mark_sales_result(
+                missing,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=missing.safety_reason,
+            )
+        _ensured_state, ensured_result = await _ensure_cart_for_purchase(
+            interpretation=interpretation,
             state=state,
+            purchase_requests=purchase_requests,
+            resolved_product=resolved_product,
+        )
+        if ensured_result is not None:
+            final = await _sales_response_with_openai(
+                message,
+                plan,
+                ensured_result,
+                interpretation,
+            )
+            if final:
+                return final
+            return _mark_sales_result(
+                ensured_result,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source=(
+                    "technical_fallback"
+                    if ensured_result.safety_reason == "cart_technical_failure"
+                    else "deterministic_fallback"
+                ),
+                used_openai_responder=False,
+                used_tray=bool(ensured_result.response_metadata.get("used_tray", True)),
+                fallback_reason=ensured_result.safety_reason,
+            )
+    if payment_requested:
+        if unresolved_purchase_items:
+            missing = _purchase_product_required_result(state)
+            return _mark_sales_result(
+                missing,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=missing.safety_reason,
+            )
+
+        payment_state = state
+        cart_result: AgentResult | None = None
+        if not state.cart_session_id and needs_cart:
+            payment_state, cart_result = await _ensure_cart_for_purchase(
+                interpretation=interpretation,
+                state=state,
+                purchase_requests=purchase_requests,
+                resolved_product=resolved_product,
+            )
+            if cart_result is not None and not payment_state.cart_session_id:
+                return _mark_sales_result(
+                    cart_result,
+                    interpretation=interpretation,
+                    goal=plan.get("goal"),
+                    response_source=(
+                        "technical_fallback"
+                        if cart_result.safety_reason == "cart_technical_failure"
+                        else "deterministic_fallback"
+                    ),
+                    used_openai_responder=False,
+                    used_tray=bool(cart_result.response_metadata.get("used_tray", True)),
+                    fallback_reason=cart_result.safety_reason,
+                )
+        if not payment_state.cart_session_id:
+            missing = _purchase_product_required_result(state)
+            return _mark_sales_result(
+                missing,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=missing.safety_reason,
+            )
+
+        payment_result = await inspect_payment_options(
+            state=payment_state,
             installment_count=interpretation.installment_count,
+            payment_method_preference=payment_preference,
             execute=execute_tool,
+        )
+        combined_result = (
+            _combine_cart_and_payment_results(cart_result, payment_result)
+            if cart_result is not None
+            else payment_result
         )
         final = await _sales_response_with_openai(
             message,
             plan,
-            payment_result,
+            combined_result,
             interpretation,
         )
         if final:
             return final
         return _mark_sales_result(
-            payment_result,
+            combined_result,
             interpretation=interpretation,
             goal=plan.get("goal"),
             response_source=(
@@ -1649,7 +1946,7 @@ async def handle_sales_message(
                 else "deterministic_fallback"
             ),
             used_openai_responder=False,
-            used_tray=bool(payment_result.response_metadata.get("used_tray")),
+            used_tray=bool(combined_result.response_metadata.get("used_tray")),
             fallback_reason=payment_result.safety_reason,
         )
     if purchase_action == "inspect_cart":
@@ -1675,13 +1972,6 @@ async def handle_sales_message(
             used_tray=bool(cart_result.response_metadata.get("used_tray")),
             fallback_reason=cart_result.safety_reason,
         )
-    if (
-        purchase_action is None
-        and interpretation is not None
-        and interpretation.goal == "buy"
-        and resolved_product is not None
-    ):
-        purchase_action = "create_cart"
     if purchase_action in {"show_cart_link", "checkout_question"}:
         cart_result = current_cart_reply(
             state,

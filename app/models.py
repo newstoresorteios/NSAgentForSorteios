@@ -86,6 +86,12 @@ class SalesInterpretation(BaseModel):
         "payment_options",
         "installment",
     ] | None = Field(default_factory=lambda: None)
+    payment_method_preference: Literal[
+        "pix",
+        "card",
+        "boleto",
+        "other",
+    ] | None = Field(default_factory=lambda: None)
     installment_count: int | None = Field(default_factory=lambda: None, ge=1)
     active_topic: str | None = None
     purchase_stage: Literal[
