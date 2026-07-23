@@ -159,12 +159,21 @@ def _product_lines(products: list[dict[str, Any]], inventory: dict[str, Any] | N
 def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
     if not products:
         return AgentResult(reply_text="N\u00e3o encontrei esse produto no cat\u00e1logo agora.", intent="commerce", handoff_required=False, safety_reason="product_not_found")
-    prefix = "Sim, encontrei:" if action != "product_price" else "Encontrei:"
+    if action == "product_disambiguation":
+        prefix = "Encontrei algumas possibilidades:"
+    else:
+        prefix = "Sim, encontrei:" if action != "product_price" else "Encontrei:"
     numbered_lines = [
         f"{position}. {line}"
         for position, line in enumerate(_product_lines(products), start=1)
     ]
-    return AgentResult(reply_text=prefix + "\n" + "\n".join(numbered_lines), intent="commerce", handoff_required=False, commercial_data={"products": products})
+    suffix = "\n\nÉ algum desses?" if action == "product_disambiguation" else ""
+    return AgentResult(
+        reply_text=prefix + "\n" + "\n".join(numbered_lines) + suffix,
+        intent="commerce",
+        handoff_required=False,
+        commercial_data={"products": products},
+    )
 
 
 async def handle_commerce_message(

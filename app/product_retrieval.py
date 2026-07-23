@@ -26,11 +26,22 @@ class ProductRerankSelection(BaseModel):
 
 
 class ProductMatchSelection(BaseModel):
-    selected_product_ids: list[str]
+    match_status: Literal["exact", "ambiguous", "none"]
+    candidate_ids: list[str]
+    best_candidate_id: str | None
+    confidence: float
 
 
 class ProductMatchError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class SpecificProductResolution:
+    status: Literal["exact", "ambiguous", "none"]
+    products: tuple[dict[str, Any], ...]
+    match_source: Literal["exact", "openai"]
+    invalid_ids_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -396,27 +407,58 @@ def exact_specific_product_matches(
 async def match_specific_products(
     products: list[dict[str, Any]],
     interpretation: SalesInterpretation,
-) -> list[dict[str, Any]]:
+) -> SpecificProductResolution:
     compatible = _brand_compatible_candidates(products, interpretation)
     exact_matches = exact_specific_product_matches(compatible, interpretation)
     if exact_matches:
+        selected = exact_matches[:RERANK_SELECTION_LIMIT]
+        status: Literal["exact", "ambiguous", "none"] = (
+            "exact" if len(selected) == 1 else "ambiguous"
+        )
         print("[sales.product.match]", {
             "candidate_count": len(compatible),
-            "selected_count": len(exact_matches[:RERANK_SELECTION_LIMIT]),
+            "selected_count": len(selected),
             "invalid_ids_count": 0,
             "match_source": "exact",
         })
-        return exact_matches[:RERANK_SELECTION_LIMIT]
+        print("[sales.product.candidate_selection]", {
+            "input_candidate_count": len(compatible),
+            "returned_candidate_count": len(selected),
+            "invalid_ids_count": 0,
+        })
+        return SpecificProductResolution(
+            status=status,
+            products=tuple(selected),
+            match_source="exact",
+        )
 
     settings = get_settings()
-    if not compatible or not settings.openai_api_key:
+    if not compatible:
         print("[sales.product.match]", {
             "candidate_count": len(compatible),
             "selected_count": 0,
             "invalid_ids_count": 0,
             "match_source": "exact",
         })
-        return []
+        print("[sales.product.candidate_selection]", {
+            "input_candidate_count": len(compatible),
+            "returned_candidate_count": 0,
+            "invalid_ids_count": 0,
+        })
+        return SpecificProductResolution(
+            status="none",
+            products=(),
+            match_source="exact",
+        )
+    if not settings.openai_api_key:
+        print("[sales.product.match]", {
+            "candidate_count": len(compatible),
+            "selected_count": 0,
+            "invalid_ids_count": 0,
+            "match_source": "exact",
+            "error_type": "OpenAIUnavailable",
+        })
+        raise ProductMatchError("specific_product_match_unavailable")
 
     candidate_by_id = {
         str(product["id"]): product
@@ -431,11 +473,15 @@ async def match_specific_products(
                 {
                     "role": "system",
                     "content": (
-                        "Identifique somente produtos reais que correspondam ao produto ou modelo "
-                        "específico pedido. Use apenas os IDs de CANDIDATES. Uma marca igual, sem "
-                        "relação suficiente com o modelo pedido, não é correspondência. Retorne lista "
-                        "vazia quando nenhum candidato for semanticamente compatível. Não sugira "
-                        "alternativas nesta seleção."
+                        "Resolva o produto ou modelo pedido usando somente produtos reais de "
+                        "CANDIDATES. O nome informado pode ser parcial, aproximado, uma coleção ou "
+                        "uma descrição informal. Use match_status=exact somente quando um único "
+                        "produto estiver identificado com segurança; use ambiguous quando dois ou "
+                        "mais candidatos tiverem relação semântica relevante e não for seguro "
+                        "escolher apenas um; use none quando não houver relação suficiente. Marca "
+                        "igual, sozinha, não é correspondência. candidate_ids e best_candidate_id "
+                        "devem conter exclusivamente IDs presentes em CANDIDATES. Não sugira "
+                        "alternativas sem relação com o pedido."
                     ),
                 },
                 {
@@ -460,7 +506,7 @@ async def match_specific_products(
         selected: list[dict[str, Any]] = []
         seen: set[str] = set()
         invalid_ids = 0
-        for product_id in parsed.selected_product_ids[:RERANK_SELECTION_LIMIT]:
+        for product_id in parsed.candidate_ids[:RERANK_SELECTION_LIMIT]:
             normalized_id = str(product_id)
             if normalized_id in seen:
                 continue
@@ -470,13 +516,47 @@ async def match_specific_products(
                 invalid_ids += 1
                 continue
             selected.append(product)
+        best_candidate_id = (
+            str(parsed.best_candidate_id)
+            if parsed.best_candidate_id is not None
+            else None
+        )
+        if best_candidate_id is not None and best_candidate_id not in candidate_by_id:
+            invalid_ids += 1
+            best_candidate_id = None
+
+        status: Literal["exact", "ambiguous", "none"] = "none"
+        if parsed.match_status == "exact":
+            exact_id = best_candidate_id
+            if exact_id is None and len(selected) == 1:
+                exact_id = str(selected[0].get("id"))
+            exact_product = candidate_by_id.get(exact_id or "")
+            if exact_product is not None:
+                selected = [exact_product]
+                status = "exact"
+            else:
+                selected = []
+        elif parsed.match_status == "ambiguous" and len(selected) >= 2:
+            status = "ambiguous"
+        else:
+            selected = []
         print("[sales.product.match]", {
             "candidate_count": len(compatible),
             "selected_count": len(selected),
             "invalid_ids_count": invalid_ids,
             "match_source": "openai",
         })
-        return selected
+        print("[sales.product.candidate_selection]", {
+            "input_candidate_count": len(compatible),
+            "returned_candidate_count": len(selected),
+            "invalid_ids_count": invalid_ids,
+        })
+        return SpecificProductResolution(
+            status=status,
+            products=tuple(selected),
+            match_source="openai",
+            invalid_ids_count=invalid_ids,
+        )
     except (APIError, ValueError, TypeError) as exc:
         print("[sales.product.match]", {
             "candidate_count": len(compatible),

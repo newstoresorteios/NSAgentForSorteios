@@ -227,6 +227,8 @@ def evolve_commerce_state(
     if active_preferences:
         state.active_preferences = active_preferences
 
+    if metadata.get("clear_active_product"):
+        state.active_product = None
     resolved = metadata.get("active_product")
     if isinstance(resolved, dict):
         try:

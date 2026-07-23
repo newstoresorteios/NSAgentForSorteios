@@ -68,6 +68,8 @@ Apresente normalmente no máximo três opções relevantes. Não termine toda re
 automaticamente com outra pergunta; deixe o cliente reagir quando os produtos já foram apresentados.
 Quando FACTS contiver uma lista de produtos, preserve a ordem recebida e numere as opções
 como 1, 2 e 3. Não altere essa ordem, pois ela será usada nas referências posteriores.
+Quando FACTS.match_status for ambiguous, apresente as correspondências plausíveis e peça
+ao cliente para identificar qual delas pretendia, sem escolher uma arbitrariamente.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -1130,6 +1132,9 @@ async def _execute_compiled_product_retrieval(
     seen_ids: set[str] = set()
     hard_filtered: list[dict[str, Any]] = []
     product_lookup_failed = False
+    specific_resolution = None
+    used_brand_candidates = False
+    used_category_candidates = False
     for request in retrieval_plan.requests:
         arguments = request.tool_arguments()
         print("[sales.retrieval.request]", {
@@ -1141,6 +1146,12 @@ async def _execute_compiled_product_retrieval(
             "candidate_limit": request.limit,
         })
         result = await execute_tool("search_products", arguments)
+        used_brand_candidates = (
+            used_brand_candidates or request.strategy == "brand_candidates"
+        )
+        used_category_candidates = (
+            used_category_candidates or request.strategy == "category_candidates"
+        )
         if "error" in result:
             product_lookup_failed = True
             continue
@@ -1190,7 +1201,11 @@ async def _execute_compiled_product_retrieval(
 
     if retrieval_plan.mode == "exact" and candidates:
         try:
-            hard_filtered = await match_specific_products(candidates, interpretation)
+            specific_resolution = await match_specific_products(
+                candidates,
+                interpretation,
+            )
+            hard_filtered = list(specific_resolution.products)
         except ProductMatchError:
             return AgentResult(
                 reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
@@ -1198,6 +1213,13 @@ async def _execute_compiled_product_retrieval(
                 handoff_required=False,
                 safety_reason="product_match_failed",
             )
+        print("[sales.product.disambiguation]", {
+            "candidate_pool_count": len(candidates),
+            "plausible_count": len(hard_filtered),
+            "match_status": specific_resolution.status,
+            "used_brand_candidates": used_brand_candidates,
+            "used_category_candidates": used_category_candidates,
+        })
 
     if not candidates:
         if category_resolution and category_resolution.lookup_failed:
@@ -1277,8 +1299,15 @@ async def _execute_compiled_product_retrieval(
 
     final_products = refreshed or selected
     if retrieval_plan.mode == "exact":
+        final_products = [
+            {
+                **product,
+                "availability_state": product_availability_state(product),
+            }
+            for product in final_products
+        ]
         availability_states = [
-            product_availability_state(product)
+            str(product["availability_state"])
             for product in final_products
         ]
         if any(state == "available" for state in availability_states):
@@ -1291,6 +1320,18 @@ async def _execute_compiled_product_retrieval(
             "resolved": bool(final_products),
             "available_state": availability_state,
         })
+        if specific_resolution and specific_resolution.status == "ambiguous":
+            result = _product_result("product_disambiguation", final_products)
+            result.commercial_data = {
+                "products": final_products,
+                "match_status": "ambiguous",
+            }
+            result.response_metadata.update({
+                "presented_products": True,
+                "product_resolution_state": "plausible_matches",
+                "clear_active_product": True,
+            })
+            return result
         if availability_state == "unavailable":
             return AgentResult(
                 reply_text=(
