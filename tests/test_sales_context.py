@@ -108,7 +108,8 @@ async def test_interpreter_uses_recent_turns_for_short_followups(
     assert result.preferences.style == expected_style
     assert result.preferences.budget_max == expected_budget
     assert result.references_previous_context is True
-    assert captured["messages"][1:-1] == history
+    assert captured["messages"][2:-1] == history
+    assert captured["messages"][1]["content"].startswith("COMMERCE_STATE:")
     assert captured["messages"][-1] == {"role": "user", "content": current_text}
     assert captured["response_format"] is SalesInterpretation
 
@@ -278,13 +279,15 @@ async def test_async_agent_passes_loaded_history_to_interpreter(monkeypatch):
 
     monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **kwargs: history)
 
-    async def fake_interpret(message, *, recent_turns=None):
+    async def fake_interpret(message, *, recent_turns=None, commerce_state=None):
         captured["history"] = recent_turns
+        captured["commerce_state"] = commerce_state
         return interpretation
 
-    async def fake_handle(message, facts, customer_context, semantic_plan, recent_turns=None):
+    async def fake_handle(message, facts, customer_context, semantic_plan, recent_turns=None, commerce_state=None):
         captured["plan"] = semantic_plan
         captured["sales_history"] = recent_turns
+        captured["sales_state"] = commerce_state
         return AgentResult(reply_text="Qual faixa de preço você prefere?", intent="commerce")
 
     monkeypatch.setattr(openai_agent, "interpret_message", fake_interpret)

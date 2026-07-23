@@ -157,13 +157,16 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
     assert second.status_code == 200
     assert len(state["inbound"]) == 2
     assert state["responses"][0]["provider_send_ok"] is True
+    assert state["responses"][0]["provider_response"]["_agent_context"]["commerce_state"]["active_domain"] == "commerce"
     assert state["responses"][1]["reply_text"] != sales_agent.OUT_OF_SCOPE_REPLY
     second_messages = interpreter_requests[1]
-    assert second_messages[1:] == [
+    assert second_messages[2:] == [
         {"role": "user", "content": "quero comprar um relógio"},
         {"role": "assistant", "content": "Você prefere um estilo mais esportivo, social ou casual?"},
         {"role": "user", "content": "esportivo"},
     ]
+    assert second_messages[1]["role"] == "system"
+    assert second_messages[1]["content"].startswith("COMMERCE_STATE:")
     logs = capsys.readouterr().out
     assert "[sales.context]" in logs
     assert "'history_user_turns': 1" in logs
@@ -189,7 +192,7 @@ async def test_valid_commerce_interpretation_reaches_openai_sales_responder(monk
     )
     tool_calls = []
 
-    async def fake_interpret(message, *, recent_turns=None):
+    async def fake_interpret(message, *, recent_turns=None, commerce_state=None):
         return interpretation
 
     async def fake_execute(name, arguments):
@@ -229,7 +232,7 @@ async def test_valid_commerce_interpretation_reaches_openai_sales_responder(monk
     assert result.reply_text == "Encontrei um Tissot Seastar que combina com o que você procura."
     assert tool_calls == [(
         "search_products",
-        {"name": "Tissot Seastar", "brand": "Tissot", "limit": 20, "page": 1},
+        {"name": "Seastar", "brand": "Tissot", "limit": 20, "page": 1},
     ), ("get_product", {"product_id": "1"})]
     assert result.response_metadata["used_openai_interpreter"] is True
     assert result.response_metadata["used_openai_responder"] is True
@@ -252,10 +255,10 @@ async def test_valid_commerce_domain_is_not_overridden_by_local_raffle_classifie
         confidence=0.96,
     )
 
-    async def fake_interpret(message, *, recent_turns=None):
+    async def fake_interpret(message, *, recent_turns=None, commerce_state=None):
         return interpretation
 
-    async def fake_sales_handler(message, facts, customer_context, semantic_plan, recent_turns=None):
+    async def fake_sales_handler(message, facts, customer_context, semantic_plan, recent_turns=None, commerce_state=None):
         assert semantic_plan is interpretation
         return AgentResult(reply_text="Resposta comercial contextual.", intent="commerce")
 

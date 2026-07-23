@@ -330,6 +330,62 @@ def load_recent_conversation_turns(
     return turns[-safe_limit:]
 
 
+def load_commerce_conversation_state(
+    *,
+    conversation_id: str | None,
+    sender_phone: str | None,
+    before_inbound_id: int | None,
+) -> dict[str, Any]:
+    """Load the latest delivered compact commerce state from existing JSONB."""
+    settings = get_settings()
+    if not settings.database_url or (not conversation_id and not sender_phone):
+        return {}
+
+    params: dict[str, Any] = {"before_inbound_id": before_inbound_id}
+    if conversation_id:
+        conversation_filter = "inbound.conversation_id = %(conversation_id)s"
+        params["conversation_id"] = conversation_id
+    else:
+        conversation_filter = "inbound.sender_phone = %(sender_phone)s"
+        params["sender_phone"] = sender_phone
+    before_filter = (
+        "AND inbound.id < %(before_inbound_id)s"
+        if before_inbound_id is not None
+        else ""
+    )
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT response.provider_response
+                    FROM public.ai_agent_responses AS response
+                    JOIN public.ai_inbound_messages AS inbound
+                      ON inbound.id = response.inbound_id
+                    WHERE {conversation_filter}
+                      {before_filter}
+                      AND response.provider_send_ok = true
+                      AND response.provider_response ? '_agent_context'
+                    ORDER BY response.id DESC
+                    LIMIT 1
+                    """,
+                    params,
+                )
+                row = cur.fetchone()
+    except (psycopg.Error, RuntimeError) as exc:
+        print("[sales.context.state] load_failed", {"error_type": type(exc).__name__})
+        return {}
+
+    provider_response = row.get("provider_response") if isinstance(row, dict) else None
+    agent_context = (
+        provider_response.get("_agent_context")
+        if isinstance(provider_response, dict)
+        else None
+    )
+    state = agent_context.get("commerce_state") if isinstance(agent_context, dict) else None
+    return state if isinstance(state, dict) else {}
+
+
 def insert_agent_response(data: dict[str, Any]) -> int | None:
     settings = get_settings()
 

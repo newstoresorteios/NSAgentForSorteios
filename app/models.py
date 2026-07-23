@@ -52,6 +52,23 @@ class SalesInterpretation(BaseModel):
     stop_clarification: bool = Field(default_factory=bool)
     needs_clarification: bool
     clarification_question: str | None = None
+    reference_type: Literal[
+        "list_position",
+        "current_product",
+        "previous_recommendation",
+        "last_presented_product",
+        "explicit_product",
+    ] | None = None
+    reference_position: int | None = None
+    active_topic: str | None = None
+    purchase_stage: Literal[
+        "discovery",
+        "selection",
+        "details",
+        "payment_discussion",
+        "after_sales",
+    ] | None = None
+    domain_change_explicit: bool = Field(default_factory=bool)
     confidence: float = Field(ge=0.0, le=1.0)
 
     _source: str = PrivateAttr(default="openai")

@@ -16,6 +16,7 @@ from .agent_replies import (
     _third_party_reply,
 )
 from .config import get_settings
+from .commerce_context import CommerceConversationState, apply_commerce_domain_context
 from .db import load_recent_conversation_turns
 from .context_builder import (
     build_template_fallback,
@@ -350,8 +351,30 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         "before_inbound_id_present": inbound_id is not None,
         "context_source": context_source,
     })
-    interpretation = await interpret_message(message, recent_turns=recent_turns)
+    commerce_state = CommerceConversationState.from_payload(
+        customer_context.get("_commerce_state")
+    )
+    interpretation = await interpret_message(
+        message,
+        recent_turns=recent_turns,
+        commerce_state=commerce_state,
+    )
     used_openai_interpreter = interpretation._source == "openai"
+    interpreted_domain = interpretation.domain
+    interpretation, domain_context_applied = apply_commerce_domain_context(
+        interpretation,
+        commerce_state,
+    )
+    print("[sales.domain.context]", {
+        "previous_domain": commerce_state.active_domain,
+        "interpreted_domain": interpreted_domain,
+        "domain_changed": bool(
+            commerce_state.active_domain
+            and commerce_state.active_domain != interpretation.domain
+        ),
+        "change_explicit": interpretation.domain_change_explicit,
+        "context_override": domain_context_applied,
+    })
     primary_intent = detect_primary_intent(message.text)
     raffle_intents = {"balance", "coupon_code", "simulation", "raffle_history", "current_raffle", "rules"}
     scope_domain = (
@@ -448,6 +471,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             customer_context,
             interpretation,
             recent_turns=recent_turns,
+            commerce_state=commerce_state,
         )
         if commerce_result is not None:
             return _annotate_agent_result(

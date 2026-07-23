@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.config import get_settings
+from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.db import load_commerce_conversation_state
 from app.models import AgentResult, IncomingMessage
 from app.openai_agent import generate_agent_reply_async
 from app.user_preferences import enrich_customer_context, learn_from_incoming_message, record_interaction_memory
@@ -72,6 +74,29 @@ async def enrich_agent_result(incoming: IncomingMessage, result: AgentResult) ->
 async def process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
     customer_context = enrich_customer_context(customer_context)
     incoming = await prepare_incoming_message(incoming)
+    raw_inbound_id = (incoming.raw or {}).get("inbound_id")
+    try:
+        inbound_id = int(raw_inbound_id) if raw_inbound_id is not None else None
+    except (TypeError, ValueError):
+        inbound_id = None
+    commerce_state = CommerceConversationState.from_payload(
+        load_commerce_conversation_state(
+            conversation_id=incoming.conversation_id,
+            sender_phone=incoming.sender_phone,
+            before_inbound_id=inbound_id,
+        )
+    )
+    customer_context = {
+        **customer_context,
+        "_commerce_state": commerce_state.model_dump(mode="json"),
+    }
+    print("[sales.context.state]", {
+        "active_domain": commerce_state.active_domain,
+        "has_active_product": commerce_state.active_product is not None,
+        "presented_product_count": len(commerce_state.last_presented_products),
+        "active_topic_present": bool(commerce_state.active_topic),
+        "purchase_stage": commerce_state.purchase_stage,
+    })
 
     user_id = customer_context.get("user_id")
     if customer_context.get("found") and user_id:
@@ -83,6 +108,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         customer_context = enrich_customer_context(customer_context)
 
     result = await generate_agent_reply_async(incoming, customer_context)
+    commerce_state = evolve_commerce_state(commerce_state, result)
+    result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
 
     response_metadata = result.response_metadata or {}
     print("[agent.response]", {

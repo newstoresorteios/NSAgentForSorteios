@@ -260,6 +260,11 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         send_result = await send_brevo_reply(incoming, agent_result)
         provider_send_ok = send_result.ok
         provider_response = send_result.model_dump()
+    commerce_state = (agent_result.response_metadata or {}).get("commerce_state")
+    if isinstance(provider_response, dict) and isinstance(commerce_state, dict):
+        provider_response["_agent_context"] = {
+            "commerce_state": commerce_state,
+        }
 
     try:
         insert_agent_response(

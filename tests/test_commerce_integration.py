@@ -283,7 +283,6 @@ async def test_product_search_uses_progressive_strategies(monkeypatch):
     )
     search_calls = [arguments for arguments in calls if "name" in arguments]
     assert search_calls == [
-        {"name": "Tissot Seastar", "brand": "Tissot", "limit": 20, "page": 1},
         {"name": "Seastar", "brand": "Tissot", "limit": 20, "page": 1},
     ]
     assert "Tissot Seastar" in result.reply_text

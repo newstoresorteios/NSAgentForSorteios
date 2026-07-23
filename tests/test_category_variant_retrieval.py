@@ -297,7 +297,9 @@ def test_specific_product_keeps_exact_strategy_without_category():
         _interpretation(goal="find", product_type=None, brand="Tissot", model="Seastar")
     )
     assert plan.mode == "exact"
-    assert plan.requests[0].strategy == "exact_brand_model"
+    assert plan.requests[0].strategy == "exact_model_with_brand"
+    assert plan.requests[0].name == "Seastar"
+    assert plan.requests[0].brand == "Tissot"
     assert all(request.category_id is None for request in plan.requests)
 
 

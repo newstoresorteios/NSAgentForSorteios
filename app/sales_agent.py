@@ -15,6 +15,11 @@ from .commerce_router import (
     _product_lines,
 )
 from .category_resolver import CategoryResolver
+from .commerce_context import (
+    CommerceConversationState,
+    CommerceProductReference,
+    resolve_commerce_reference,
+)
 from .config import get_settings
 from .guardrails import (
     detect_commerce_inquiry,
@@ -27,9 +32,13 @@ from .guardrails import (
 from .models import AgentResult, IncomingMessage, SalesInterpretation
 from .product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
+    ProductMatchError,
     ProductRetrievalCompiler,
     enrich_product_variants,
+    exact_specific_product_matches,
     hard_filter_products,
+    match_specific_products,
+    product_availability_state,
     revalidate_products,
     rerank_products,
     semantic_preferences,
@@ -57,6 +66,8 @@ Se um fato não estiver em FACTS, diga que não foi informado.
 Responda em português do Brasil, de forma curta para WhatsApp.
 Apresente normalmente no máximo três opções relevantes. Não termine toda resposta
 automaticamente com outra pergunta; deixe o cliente reagir quando os produtos já foram apresentados.
+Quando FACTS contiver uma lista de produtos, preserve a ordem recebida e numere as opções
+como 1, 2 e 3. Não altere essa ordem, pois ela será usada nas referências posteriores.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -140,6 +151,21 @@ Se ready_for_retrieval ou stop_clarification for true e houver subject identific
 needs_clarification deve ser false.
 Quando needs_clarification=true, clarification_question deve conter uma frase curta com
 no máximo duas perguntas relacionadas e não pode repetir algo já respondido no histórico.
+
+COMMERCE_STATE contém contexto semântico confiável da conversa, incluindo produto ativo,
+lista mais recente apresentada, tópico e etapa de compra. Use esse estado para interpretar
+expressões como "o terceiro", "esse", "o que você recomendou" e continuações curtas.
+Nunca copie nem invente product_id ou variant_id.
+- reference_type=list_position e reference_position=N para posição numerada;
+- reference_type=current_product para "esse produto" quando há produto ativo;
+- reference_type=previous_recommendation para a recomendação principal;
+- reference_type=last_presented_product para o último item apresentado;
+- reference_type=explicit_product quando o nome/modelo citado corresponde à lista.
+Defina active_topic para o conceito em discussão, sem confundir palavras ambíguas com
+outro domínio. Se active_domain=commerce, interprete mensagens ambíguas primeiro nesse
+contexto. domain_change_explicit=true somente quando o cliente mudar claramente de
+assunto. Perguntas sobre pagamento de um produto continuam em commerce e usam
+purchase_stage=payment_discussion.
 """.strip()
 
 _ACTION_TO_PLAN = {
@@ -434,6 +460,7 @@ async def interpret_message(
     message: IncomingMessage,
     *,
     recent_turns: list[dict[str, Any]] | None = None,
+    commerce_state: CommerceConversationState | None = None,
 ) -> SalesInterpretation:
     settings = get_settings()
     if _is_greeting(message.text):
@@ -454,8 +481,16 @@ async def interpret_message(
         return fallback
 
     normalized_history = _normalize_interpreter_history(recent_turns)
+    state_message = {
+        "role": "system",
+        "content": "COMMERCE_STATE:\n" + json.dumps(
+            (commerce_state or CommerceConversationState()).interpreter_payload(),
+            ensure_ascii=False,
+        ),
+    }
     messages = [
         {"role": "system", "content": SALES_INTERPRETER_INSTRUCTIONS},
+        state_message,
         *normalized_history,
         {"role": "user", "content": current_text},
     ]
@@ -690,7 +725,7 @@ def _mark_sales_result(
     fallback_reason: str | None = None,
 ) -> AgentResult:
     interpreter_source = interpretation._source if interpretation else None
-    return result.with_response_metadata(
+    marked = result.with_response_metadata(
         domain="commerce",
         goal=goal,
         response_source=response_source,
@@ -699,6 +734,16 @@ def _mark_sales_result(
         used_tray=used_tray,
         fallback_reason=fallback_reason or (interpretation._fallback_reason if interpretation else None),
     )
+    if interpretation is not None:
+        marked.response_metadata.update({
+            "active_topic": interpretation.active_topic,
+            "purchase_stage": interpretation.purchase_stage,
+            "active_preferences": interpretation.preferences.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+        })
+    return marked
 
 
 CLARIFICATION_BUDGET = 2
@@ -910,7 +955,8 @@ async def _sales_response_with_openai(
 ) -> AgentResult | None:
     settings = get_settings()
     if not settings.openai_api_key or tray_result.safety_reason in {
-        "tray_adapter_unavailable", "product_not_found", "ambiguous_product", "product_context_missing", "coupon_not_found"
+        "tray_adapter_unavailable", "product_match_failed", "product_not_found",
+        "ambiguous_product", "product_context_missing", "coupon_not_found",
     }:
         return None
     try:
@@ -936,8 +982,15 @@ async def _sales_response_with_openai(
         content = response.choices[0].message.content if response.choices else None
         if not content or not content.strip():
             return None
+        final_result = AgentResult(
+            reply_text=html.unescape(content.strip()),
+            intent="commerce",
+            handoff_required=False,
+            commercial_data=tray_result.commercial_data,
+            response_metadata=dict(tray_result.response_metadata),
+        )
         return _mark_sales_result(
-            AgentResult(reply_text=html.unescape(content.strip()), intent="commerce", handoff_required=False),
+            final_result,
             interpretation=interpretation,
             goal=plan.get("goal"),
             response_source="openai",
@@ -949,12 +1002,106 @@ async def _sales_response_with_openai(
         return None
 
 
+async def _execute_contextual_product_lookup(
+    interpretation: SalesInterpretation,
+    product_reference: CommerceProductReference,
+) -> AgentResult:
+    product_id = product_reference.product_id
+    print("[sales.product.resolve]", {
+        "strategy": "context",
+        "has_brand": bool(product_reference.brand),
+        "has_model": False,
+        "candidate_count": 1,
+        "matched_count": 1,
+    })
+    current = await execute_tool("get_product", {"product_id": product_id})
+    if "error" in current:
+        return AgentResult(
+            reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="tray_adapter_unavailable",
+        )
+    product = {
+        key: value
+        for key, value in {
+            "id": product_id,
+            "name": product_reference.name,
+            "reference": product_reference.reference,
+            "ean": product_reference.ean,
+            "brand": product_reference.brand,
+        }.items()
+        if value is not None
+    }
+    product.update(current)
+    inventory: dict[str, Any] | None = None
+    if "inventory" in interpretation.information_needed:
+        inventory = await execute_tool("check_inventory", {"product_id": product_id})
+        if "error" in inventory:
+            return AgentResult(
+                reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="tray_adapter_unavailable",
+            )
+    enriched = await enrich_product_variants([product], interpretation, execute_tool)
+    availability_state = product_availability_state(enriched[0])
+    print("[sales.product.availability]", {
+        "resolved": True,
+        "available_state": availability_state,
+    })
+    if availability_state == "unavailable":
+        return AgentResult(
+            reply_text=(
+                "Encontrei esse modelo no catálogo, mas ele está indisponível no momento. "
+                "Posso procurar outras versões dele ou modelos semelhantes."
+            ),
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="product_unavailable",
+            commercial_data={
+                "products": enriched,
+                "availability_state": availability_state,
+            },
+            response_metadata={
+                "active_product": product_reference.model_dump(mode="json"),
+                "presented_products": False,
+                "product_resolution_state": "found_unavailable",
+            },
+        )
+    from .commerce_router import _product_result
+
+    result = _product_result("product_search", enriched)
+    if inventory is not None:
+        result.commercial_data = {
+            "products": enriched,
+            "inventory": inventory,
+        }
+    result.response_metadata.update({
+        "active_product": product_reference.model_dump(mode="json"),
+        "presented_products": False,
+        "product_resolution_state": (
+            "found_available" if availability_state == "available" else "found_unknown"
+        ),
+    })
+    return result
+
+
 async def _execute_compiled_product_retrieval(
     interpretation: SalesInterpretation,
 ) -> AgentResult | None:
     initial_plan = ProductRetrievalCompiler.compile(interpretation)
     category_resolution = None
-    if initial_plan.mode == "recommendation" and interpretation.subject.product_type:
+    if (
+        initial_plan.mode == "recommendation"
+        and interpretation.subject.product_type
+    ) or (
+        initial_plan.mode == "exact"
+        and interpretation.subject.product_type
+        and not interpretation.subject.brand
+        and not interpretation.subject.reference
+        and not interpretation.subject.ean
+    ):
         category_resolution = await CategoryResolver(execute_tool).resolve(
             interpretation.subject.product_type
         )
@@ -1008,20 +1155,49 @@ async def _execute_compiled_product_retrieval(
             candidates.append(product)
             if len(candidates) >= retrieval_plan.candidate_limit:
                 break
-        hard_filtered = hard_filter_products(
-            candidates,
-            interpretation,
-            mode=retrieval_plan.mode,
-        )
+        if retrieval_plan.mode == "exact":
+            hard_filtered = exact_specific_product_matches(candidates, interpretation)
+        else:
+            hard_filtered = hard_filter_products(
+                candidates,
+                interpretation,
+                mode=retrieval_plan.mode,
+            )
         print("[sales.retrieval.result]", {
             "strategy": request.strategy,
             "raw_candidate_count": len(raw_products),
             "hard_filtered_count": len(hard_filtered),
         })
+        strategy = (
+            "reference" if request.reference
+            else "ean" if request.ean
+            else "brand_candidates" if request.strategy == "brand_candidates"
+            else "category_candidates" if request.category_id
+            else "model" if interpretation.subject.model
+            else "name"
+        )
+        print("[sales.product.resolve]", {
+            "strategy": strategy,
+            "has_brand": bool(interpretation.subject.brand),
+            "has_model": bool(interpretation.subject.model),
+            "candidate_count": len(candidates),
+            "matched_count": len(hard_filtered),
+        })
         if len(candidates) >= retrieval_plan.candidate_limit:
             break
         if retrieval_plan.mode == "exact" and hard_filtered:
             break
+
+    if retrieval_plan.mode == "exact" and candidates:
+        try:
+            hard_filtered = await match_specific_products(candidates, interpretation)
+        except ProductMatchError:
+            return AgentResult(
+                reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="product_match_failed",
+            )
 
     if not candidates:
         if category_resolution and category_resolution.lookup_failed:
@@ -1099,7 +1275,49 @@ async def _execute_compiled_product_retrieval(
         )
     from .commerce_router import _product_result
 
-    return _product_result("product_search", refreshed or selected)
+    final_products = refreshed or selected
+    if retrieval_plan.mode == "exact":
+        availability_states = [
+            product_availability_state(product)
+            for product in final_products
+        ]
+        if any(state == "available" for state in availability_states):
+            availability_state = "available"
+        elif availability_states and all(state == "unavailable" for state in availability_states):
+            availability_state = "unavailable"
+        else:
+            availability_state = "unknown"
+        print("[sales.product.availability]", {
+            "resolved": bool(final_products),
+            "available_state": availability_state,
+        })
+        if availability_state == "unavailable":
+            return AgentResult(
+                reply_text=(
+                    "Encontrei esse modelo no catálogo, mas ele está indisponível no momento. "
+                    "Posso procurar outras versões dele ou modelos semelhantes."
+                ),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="product_unavailable",
+                commercial_data={
+                    "products": final_products,
+                    "availability_state": availability_state,
+                },
+                response_metadata={
+                    "presented_products": True,
+                    "product_resolution_state": "found_unavailable",
+                },
+            )
+    result = _product_result("product_search", final_products)
+    result.response_metadata["presented_products"] = True
+    if retrieval_plan.mode == "exact":
+        result.response_metadata["product_resolution_state"] = (
+            "found_available" if availability_state == "available" else "found_unknown"
+        )
+        if result.commercial_data is not None:
+            result.commercial_data["availability_state"] = availability_state
+    return result
 
 
 async def handle_sales_message(
@@ -1108,6 +1326,7 @@ async def handle_sales_message(
     customer_context: dict[str, Any],
     semantic_plan: dict[str, Any] | SalesInterpretation | None = None,
     recent_turns: list[dict[str, Any]] | None = None,
+    commerce_state: CommerceConversationState | None = None,
 ) -> AgentResult | None:
     interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
     if isinstance(semantic_plan, SalesInterpretation):
@@ -1118,6 +1337,17 @@ async def handle_sales_message(
         plan = await plan_sales_request(message)
     if not plan:
         return None
+    state = commerce_state or CommerceConversationState()
+    resolved_product = None
+    resolved_by = "none"
+    if interpretation is not None:
+        resolved_product, resolved_by = resolve_commerce_reference(interpretation, state)
+        print("[sales.reference]", {
+            "type": interpretation.reference_type,
+            "position": interpretation.reference_position,
+            "resolved": resolved_product is not None,
+            "resolved_by": resolved_by,
+        })
     discovery_state = _discovery_state(interpretation, recent_turns) if interpretation else None
     if discovery_state and discovery_state["force_retrieval"] and plan.get("intent") == "clarification":
         plan = {**plan, "intent": "recommendation"}
@@ -1180,7 +1410,12 @@ async def handle_sales_message(
     if not action:
         return None
 
-    if interpretation is not None and action == "product_search":
+    if interpretation is not None and resolved_product is not None:
+        tray_result = await _execute_contextual_product_lookup(
+            interpretation,
+            resolved_product,
+        )
+    elif interpretation is not None and action == "product_search":
         tray_result = await _execute_compiled_product_retrieval(interpretation)
     else:
         queries = [str(plan.get("query") or "").strip()]
@@ -1223,6 +1458,19 @@ async def handle_sales_message(
             tray_result = last_raw_result
     if tray_result is None:
         return None
+    if interpretation is not None:
+        tray_result.response_metadata.update({
+            "active_topic": interpretation.active_topic,
+            "purchase_stage": interpretation.purchase_stage,
+            "active_preferences": interpretation.preferences.model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+        })
+        if resolved_product is not None:
+            tray_result.response_metadata["active_product"] = resolved_product.model_dump(mode="json")
+        if interpretation.goal == "buy" and resolved_product is not None:
+            tray_result.response_metadata["activate_first_product"] = True
     if (
         plan.get("intent") in {"purchase_intent", "recommendation", "clarification"}
         and tray_result.safety_reason == "product_not_found"
@@ -1241,7 +1489,11 @@ async def handle_sales_message(
     print("[sales.agent] responder", {"source": "openai" if final else "deterministic_fallback"})
     if final:
         return final
-    response_source = "technical_fallback" if tray_result.safety_reason == "tray_adapter_unavailable" else "deterministic_fallback"
+    technical_failure = tray_result.safety_reason in {
+        "tray_adapter_unavailable",
+        "product_match_failed",
+    }
+    response_source = "technical_fallback" if technical_failure else "deterministic_fallback"
     return _mark_sales_result(
         tray_result,
         interpretation=interpretation,
@@ -1249,5 +1501,9 @@ async def handle_sales_message(
         response_source=response_source,
         used_openai_responder=False,
         used_tray=True,
-        fallback_reason=("tray_adapter_unavailable" if response_source == "technical_fallback" else "sales_responder_unavailable"),
+        fallback_reason=(
+            tray_result.safety_reason
+            if response_source == "technical_fallback"
+            else "sales_responder_unavailable"
+        ),
     )

@@ -110,6 +110,10 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
     assert "parallel_tool_calls" not in captured
     assert captured["messages"] == [
         {"role": "system", "content": sales_agent.SALES_INTERPRETER_INSTRUCTIONS},
+        {
+            "role": "system",
+            "content": 'COMMERCE_STATE:\n{"active_domain": null, "active_topic": null, "active_product": null, "last_presented_products": [], "active_preferences": {}, "purchase_stage": null}',
+        },
         {"role": "user", "content": "quero comprar um relógio"},
         {"role": "user", "content": "esportivo"},
     ]
