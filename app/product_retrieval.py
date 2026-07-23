@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -13,7 +14,11 @@ from .config import get_settings
 from .models import SalesInterpretation
 
 
-CANDIDATE_POOL_LIMIT = 20
+PRODUCT_PAGE_LIMIT = 20
+CATALOG_DISCOVERY_MAX_PAGES = 5
+CATALOG_DISCOVERY_MAX_PRODUCTS = 100
+SEMANTIC_MATCH_POOL_LIMIT = 20
+CANDIDATE_POOL_LIMIT = SEMANTIC_MATCH_POOL_LIMIT
 CUSTOMER_RESULT_LIMIT = 3
 RERANK_SELECTION_LIMIT = 5
 MAX_VARIANT_PRODUCT_QUERIES = 5
@@ -81,6 +86,9 @@ class ProductRetrievalPlan:
     requests: tuple[ProductRetrievalRequest, ...]
     candidate_limit: int = CANDIDATE_POOL_LIMIT
     customer_result_limit: int = CUSTOMER_RESULT_LIMIT
+    discovery_page_limit: int = PRODUCT_PAGE_LIMIT
+    discovery_max_pages: int = CATALOG_DISCOVERY_MAX_PAGES
+    discovery_max_products: int = CATALOG_DISCOVERY_MAX_PRODUCTS
 
 
 def _fold(value: Any) -> str:
@@ -95,10 +103,100 @@ def _fold(value: Any) -> str:
 def _product_text(product: dict[str, Any]) -> str:
     fields = (
         "name", "brand", "model", "reference", "ean", "description",
-        "category", "attributes", "color", "style", "material", "properties",
-        "ProductSettings", "variants",
+        "category", "category_name", "category_id", "attributes", "color",
+        "style", "material", "properties", "ProductSettings", "variants",
     )
     return _fold(" ".join(str(product.get(field) or "") for field in fields))
+
+
+def specific_product_search_terms(
+    interpretation: SalesInterpretation,
+) -> tuple[str, ...]:
+    subject = interpretation.subject
+    preferences = interpretation.preferences
+    values = (
+        subject.model,
+        subject.product_type,
+        preferences.style,
+        preferences.color,
+        preferences.material,
+        *preferences.attributes,
+    )
+    terms: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _fold(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        terms.append(normalized)
+    return tuple(terms)
+
+
+def _term_tokens(terms: tuple[str, ...]) -> tuple[str, ...]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        for token in re.findall(r"[a-z0-9]+", term):
+            if token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+    return tuple(tokens)
+
+
+def _evenly_spaced_candidates(
+    products: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    if len(products) <= limit:
+        return products
+    if limit <= 1:
+        return products[:limit]
+    indexes = {
+        round(index * (len(products) - 1) / (limit - 1))
+        for index in range(limit)
+    }
+    return [products[index] for index in sorted(indexes)]
+
+
+def prefilter_specific_candidates(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    *,
+    limit: int = SEMANTIC_MATCH_POOL_LIMIT,
+) -> list[dict[str, Any]]:
+    """Reduce real catalog candidates without deciding semantic correctness."""
+    terms = specific_product_search_terms(interpretation)
+    tokens = _term_tokens(terms)
+    scored: list[tuple[int, int, int, dict[str, Any]]] = []
+    unscored: list[dict[str, Any]] = []
+    for index, product in enumerate(products):
+        text = _product_text(product)
+        phrase_matches = sum(1 for term in terms if term in text)
+        token_matches = sum(1 for token in tokens if token in text)
+        if phrase_matches or token_matches:
+            scored.append((phrase_matches, token_matches, index, product))
+        else:
+            unscored.append(product)
+    scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    selected = [product for _, _, _, product in scored[:limit]]
+    if len(selected) < limit:
+        selected_ids = {
+            str(product.get("id"))
+            for product in selected
+            if product.get("id") is not None
+        }
+        remaining = [
+            product
+            for product in unscored
+            if product.get("id") is None
+            or str(product.get("id")) not in selected_ids
+        ]
+        selected.extend(
+            _evenly_spaced_candidates(remaining, limit - len(selected))
+        )
+    return selected[:limit]
 
 
 class ProductRetrievalCompiler:
@@ -117,24 +215,19 @@ class ProductRetrievalCompiler:
         elif subject.reference:
             requests.append(ProductRetrievalRequest(strategy="exact_reference", reference=subject.reference))
         elif subject.model:
-            combined_name = " ".join(value for value in (subject.brand, subject.model) if value)
             requests.append(ProductRetrievalRequest(
                 strategy="exact_model_with_brand" if subject.brand else "exact_model",
                 name=subject.model,
                 brand=subject.brand,
             ))
-            if subject.brand and combined_name != subject.model:
-                requests.append(ProductRetrievalRequest(
-                    strategy="brand_candidates",
-                    brand=subject.brand,
-                ))
-                requests.append(ProductRetrievalRequest(
-                    strategy="exact_name_broad",
-                    name=combined_name,
-                ))
+            if subject.brand:
                 requests.append(ProductRetrievalRequest(
                     strategy="exact_model_broad",
                     name=subject.model,
+                ))
+                requests.append(ProductRetrievalRequest(
+                    strategy="brand_candidates",
+                    brand=subject.brand,
                 ))
             for category_id in category_ids[:5]:
                 requests.append(ProductRetrievalRequest(
@@ -319,6 +412,26 @@ def semantic_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
     }
 
 
+def _compact_property_evidence(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 2:
+        return str(value)[:160]
+    if isinstance(value, str):
+        return value[:240]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [
+            _compact_property_evidence(item, depth=depth + 1)
+            for item in value[:12]
+        ]
+    if isinstance(value, dict):
+        return {
+            str(key)[:80]: _compact_property_evidence(item, depth=depth + 1)
+            for key, item in list(value.items())[:20]
+        }
+    return str(value)[:160]
+
+
 def compact_candidates(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for product in products[:CANDIDATE_POOL_LIMIT]:
@@ -329,8 +442,13 @@ def compact_candidates(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "name": product.get("name"),
                 "brand": product.get("brand"),
                 "model": product.get("model"),
+                "category": product.get("category"),
+                "category_name": product.get("category_name"),
+                "category_id": product.get("category_id"),
                 "description": str(product.get("description") or "")[:240] or None,
-                "properties": product.get("properties") or product.get("attributes"),
+                "properties": _compact_property_evidence(
+                    product.get("properties") or product.get("attributes")
+                ),
                 "color": product.get("color"),
                 "style": product.get("style"),
                 "material": product.get("material"),

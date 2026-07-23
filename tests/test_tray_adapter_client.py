@@ -74,3 +74,79 @@ async def test_connection_failure_is_safe():
     with pytest.raises(TrayAdapterError) as error:
         await TrayAdapterClient("https://tray.example", "secret", BrokenClient()).get_product(1)
     assert error.value.status_code is None
+
+
+@pytest.mark.asyncio
+async def test_transient_503_is_retried_once_and_can_recover(monkeypatch):
+    import app.tray_adapter_client as tray_client
+
+    class SequenceClient:
+        def __init__(self):
+            self.responses = [
+                FakeResponse(status_code=503),
+                FakeResponse(status_code=200, payload={"products": [{"id": "ok"}]}),
+            ]
+            self.calls = []
+
+        async def request(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return self.responses.pop(0)
+
+    async def no_wait(_seconds):
+        return None
+
+    fake = SequenceClient()
+    monkeypatch.setattr(tray_client.asyncio, "sleep", no_wait)
+
+    result = await TrayAdapterClient(
+        "https://tray.example",
+        "secret",
+        fake,
+    ).search_products(brand="Doxa", limit=20, page=1)
+
+    assert result["products"] == [{"id": "ok"}]
+    assert len(fake.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_persistent_503_fails_after_single_retry(monkeypatch):
+    import app.tray_adapter_client as tray_client
+
+    class AlwaysUnavailableClient:
+        def __init__(self):
+            self.calls = []
+
+        async def request(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return FakeResponse(status_code=503)
+
+    async def no_wait(_seconds):
+        return None
+
+    fake = AlwaysUnavailableClient()
+    monkeypatch.setattr(tray_client.asyncio, "sleep", no_wait)
+
+    with pytest.raises(TrayAdapterError) as error:
+        await TrayAdapterClient(
+            "https://tray.example",
+            "secret",
+            fake,
+        ).search_products(brand="Doxa", limit=20, page=1)
+
+    assert error.value.status_code == 503
+    assert len(fake.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_non_transient_422_is_not_retried():
+    fake = FakeClient(FakeResponse(status_code=422))
+
+    with pytest.raises(TrayAdapterError) as error:
+        await TrayAdapterClient(
+            "https://tray.example",
+            "secret",
+            fake,
+        ).search_products(brand="Doxa", limit=20, page=1)
+
+    assert error.value.status_code == 422
+    assert len(fake.calls) == 1

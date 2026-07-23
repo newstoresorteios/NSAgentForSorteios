@@ -71,6 +71,27 @@ def test_semantic_style_never_becomes_name_or_brand():
     assert "esportivo" not in arguments.values()
 
 
+def test_specific_query_keeps_brand_and_model_separate_without_combined_name():
+    plan = ProductRetrievalCompiler.compile(
+        _interpretation(
+            goal="find",
+            product_type="relógio",
+            brand="Hamilton",
+            model="Murph",
+        )
+    )
+
+    assert plan.mode == "exact"
+    assert [request.strategy for request in plan.requests[:3]] == [
+        "exact_model_with_brand",
+        "exact_model_broad",
+        "brand_candidates",
+    ]
+    assert plan.requests[0].name == "Murph"
+    assert plan.requests[0].brand == "Hamilton"
+    assert all(request.name != "Hamilton Murph" for request in plan.requests)
+
+
 def test_budget_is_applied_after_retrieval_using_effective_price():
     products = [
         {"id": "A", "name": "A", "current_price": 3000},

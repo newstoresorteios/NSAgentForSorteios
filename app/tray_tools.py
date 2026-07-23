@@ -24,7 +24,7 @@ TOOL_REGISTRY = {
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
-_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_id", "attributes", "properties", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "has_variation", "ProductSettings", "payment_option", "payment_option_details", "url")
+_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_name", "category_id", "attributes", "properties", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "has_variation", "ProductSettings", "payment_option", "payment_option_details", "url")
 _CATEGORY_FIELDS = ("id", "name", "parent_id", "parent", "slug", "path")
 _VARIANT_FIELDS = ("id", "variant_id", "product_id", "name", "value", "color", "size", "version", "reference", "sku", "Sku", "price", "promotional_price", "stock", "available", "available_in_store", "availability", "VariationSettings")
 _CUSTOMER_FIELDS = ("id", "name", "email", "city", "state", "last_purchase", "total_orders")
@@ -107,7 +107,16 @@ def _reduce(item: Any, fields: tuple[str, ...]) -> dict[str, Any]:
 
 def _reduce_products(payload: Any, limit: int = 5) -> dict[str, Any]:
     safe_limit = min(max(int(limit), 1), 20)
-    return {"products": [_reduce(item, _PRODUCT_FIELDS) for item in _items(payload)[:safe_limit]]}
+    result = {
+        "products": [
+            _reduce(item, _PRODUCT_FIELDS)
+            for item in _items(payload)[:safe_limit]
+        ]
+    }
+    paging = _reduce_paging(payload)
+    if paging:
+        result["paging"] = paging
+    return result
 
 
 def _query_filters(query: str) -> list[dict[str, str]]:

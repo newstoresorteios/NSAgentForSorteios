@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -15,6 +16,9 @@ class TrayAdapterError(RuntimeError):
 
 class TrayAdapterClient:
     timeout_seconds = 75.0
+    max_get_attempts = 2
+    retry_backoff_seconds = 0.15
+    transient_status_codes = frozenset({502, 503, 504})
 
     def __init__(self, base_url: str | None = None, token: str | None = None,
                  http_client: httpx.AsyncClient | None = None):
@@ -26,17 +30,69 @@ class TrayAdapterClient:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}
 
+    @staticmethod
+    def _operation_name(path: str) -> str:
+        if path.startswith("/internal/products"):
+            return "products"
+        if path.startswith("/internal/categories"):
+            return "categories"
+        if path.startswith("/internal/brands"):
+            return "brands"
+        if path.startswith("/internal/customers"):
+            return "customers"
+        if path.startswith("/internal/coupons"):
+            return "coupons"
+        return "internal_get"
+
     async def _request(self, method: str, path: str, *, params: dict[str, Any] | None = None) -> Any:
         if not self.base_url or not self.token:
             raise TrayAdapterError("tray_adapter_not_configured")
         clean_params = {key: value for key, value in (params or {}).items() if value is not None}
         own_client = self._http_client is None
         client = self._http_client or httpx.AsyncClient(timeout=self.timeout_seconds)
+        max_attempts = self.max_get_attempts if method.upper() == "GET" else 1
+        operation = self._operation_name(path)
         try:
-            response = await client.request(method, f"{self.base_url}{path}", headers=self._headers(), params=clean_params)
-            if response.status_code >= 400:
-                raise TrayAdapterError(f"tray_adapter_http_{response.status_code}", response.status_code)
-            return response.json()
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = await client.request(
+                        method,
+                        f"{self.base_url}{path}",
+                        headers=self._headers(),
+                        params=clean_params,
+                    )
+                    if response.status_code >= 400:
+                        if (
+                            response.status_code in self.transient_status_codes
+                            and attempt < max_attempts
+                        ):
+                            print("[sales.tray.retry]", {
+                                "operation": operation,
+                                "status_code": response.status_code,
+                                "attempt": attempt + 1,
+                            })
+                            await asyncio.sleep(self.retry_backoff_seconds)
+                            continue
+                        raise TrayAdapterError(
+                            f"tray_adapter_http_{response.status_code}",
+                            response.status_code,
+                        )
+                    return response.json()
+                except (
+                    httpx.TimeoutException,
+                    httpx.ConnectError,
+                    httpx.NetworkError,
+                ) as exc:
+                    if attempt < max_attempts:
+                        print("[sales.tray.retry]", {
+                            "operation": operation,
+                            "status_code": None,
+                            "attempt": attempt + 1,
+                        })
+                        await asyncio.sleep(self.retry_backoff_seconds)
+                        continue
+                    raise TrayAdapterError("tray_adapter_unavailable") from exc
+            raise TrayAdapterError("tray_adapter_unavailable")
         except TrayAdapterError as exc:
             print("[tray.client] request_failed", {
                 "error_type": type(exc).__name__,
@@ -44,13 +100,6 @@ class TrayAdapterClient:
                 "timeout": isinstance(exc.__cause__, httpx.TimeoutException),
             })
             raise
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
-            print("[tray.client] request_failed", {
-                "error_type": type(exc).__name__,
-                "status_code": None,
-                "timeout": isinstance(exc, httpx.TimeoutException),
-            })
-            raise TrayAdapterError("tray_adapter_unavailable") from exc
         except ValueError as exc:
             print("[tray.client] request_failed", {
                 "error_type": type(exc).__name__,

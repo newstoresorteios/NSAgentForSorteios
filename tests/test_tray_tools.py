@@ -45,6 +45,25 @@ async def test_search_products_reduces_payload_and_uses_name():
 
 
 @pytest.mark.asyncio
+async def test_search_products_preserves_compact_paging_metadata():
+    class PagedTray(FakeTray):
+        async def search_products(self, **kwargs):
+            self.calls.append(("search_products", kwargs))
+            return {
+                "products": [{"id": "1", "name": "Produto"}],
+                "paging": {"total": 41, "page": 2, "limit": 20},
+            }
+
+    result = await execute_tool(
+        "search_products",
+        {"brand": "Marca", "limit": 20, "page": 2},
+        PagedTray(),
+    )
+
+    assert result["paging"] == {"total": 41, "page": 2, "limit": 20}
+
+
+@pytest.mark.asyncio
 async def test_product_and_inventory_tools_call_expected_methods():
     client = FakeTray()
     assert (await execute_tool("get_product", {"product_id": "641"}, client))["current_price"] == 10

@@ -12,6 +12,7 @@ from app.product_retrieval import (
     ProductMatchError,
     ProductMatchSelection,
     match_specific_products,
+    prefilter_specific_candidates,
     product_availability_state,
 )
 
@@ -132,6 +133,11 @@ async def test_brand_candidates_resolve_partial_specific_model(monkeypatch):
         "page": 1,
     }
     assert search_calls[1] == {
+        "name": "Zulu",
+        "limit": 20,
+        "page": 1,
+    }
+    assert search_calls[2] == {
         "brand": "Longines",
         "limit": 20,
         "page": 1,
@@ -523,3 +529,464 @@ def test_disambiguation_list_replaces_previous_list_and_resolves_choice():
     assert updated.active_product is None
     assert resolved.product_id == "202"
     assert resolved_by == "product_id"
+
+
+@pytest.mark.asyncio
+async def test_brand_discovery_finds_exact_product_on_second_page(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+    page_one = [
+        {"id": str(index), "name": f"Hamilton catálogo {index}", "brand": "Hamilton"}
+        for index in range(1, 21)
+    ]
+    murph = {
+        "id": "murph",
+        "name": "Hamilton Khaki Field Murph",
+        "brand": "Hamilton",
+        "model": "Murph",
+        "available": True,
+    }
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "search_products":
+            if arguments.get("name"):
+                return {"products": []}
+            if arguments.get("brand") == "Hamilton":
+                if arguments["page"] == 1:
+                    return {
+                        "products": page_one,
+                        "paging": {"total": 21, "page": 1, "limit": 20},
+                    }
+                return {
+                    "products": [murph],
+                    "paging": {"total": 21, "page": 2, "limit": 20},
+                }
+        if tool == "get_product":
+            return murph
+        raise AssertionError((tool, arguments))
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Hamilton", model="Murph")
+    )
+
+    brand_pages = [
+        arguments["page"]
+        for tool, arguments in calls
+        if tool == "search_products"
+        and arguments.get("brand") == "Hamilton"
+        and "name" not in arguments
+    ]
+    assert brand_pages == [1, 2]
+    assert result.safety_reason != "product_not_found"
+    assert result.commercial_data["products"][0]["id"] == "murph"
+
+
+@pytest.mark.asyncio
+async def test_brand_discovery_reaches_third_page_and_disambiguates(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+    pages = {
+        1: [
+            {"id": f"l1-{index}", "name": f"Longines catálogo A {index}", "brand": "Longines"}
+            for index in range(20)
+        ],
+        2: [
+            {"id": f"l2-{index}", "name": f"Longines catálogo B {index}", "brand": "Longines"}
+            for index in range(20)
+        ],
+        3: [
+            {"id": "z39", "name": "Longines Spirit Zulu Time 39", "brand": "Longines"},
+            {"id": "z42", "name": "Longines Spirit Zulu Time 42", "brand": "Longines"},
+            {"id": "zg", "name": "Longines Spirit Zulu Time GMT", "brand": "Longines"},
+        ],
+    }
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "search_products":
+            if arguments.get("name"):
+                return {"products": []}
+            if arguments.get("brand") == "Longines":
+                page = arguments["page"]
+                return {
+                    "products": pages[page],
+                    "paging": {"total": 43, "page": page, "limit": 20},
+                }
+        if tool == "get_product":
+            product_id = arguments["product_id"]
+            product = next(item for item in pages[3] if item["id"] == product_id)
+            return {**product, "available": True}
+        raise AssertionError((tool, arguments))
+
+    _mock_matcher(
+        monkeypatch,
+        ["z39", "z42", "zg"],
+        match_status="ambiguous",
+    )
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Longines", model="Zulu")
+    )
+
+    brand_pages = [
+        arguments["page"]
+        for tool, arguments in calls
+        if tool == "search_products"
+        and arguments.get("brand") == "Longines"
+        and "name" not in arguments
+    ]
+    assert brand_pages == [1, 2, 3]
+    assert result.commercial_data["match_status"] == "ambiguous"
+    assert [item["id"] for item in result.commercial_data["products"]] == [
+        "z39",
+        "z42",
+        "zg",
+    ]
+
+
+def test_generic_prefilter_uses_real_properties_and_limits_matcher_payload():
+    interpretation = _interpretation(brand="Citizen", model="Pilot")
+    unrelated = [
+        {
+            "id": str(index),
+            "name": f"Citizen catálogo {index}",
+            "brand": "Citizen",
+            "properties": {"collection": "Classic"},
+        }
+        for index in range(30)
+    ]
+    related = {
+        "id": "pilot",
+        "name": "Citizen Promaster",
+        "brand": "Citizen",
+        "properties": {"collection": "Pilot", "use": "aviação"},
+    }
+
+    shortlisted = prefilter_specific_candidates(
+        [*unrelated, related],
+        interpretation,
+    )
+
+    assert len(shortlisted) == 20
+    assert "pilot" in {item["id"] for item in shortlisted}
+
+
+@pytest.mark.asyncio
+async def test_property_evidence_from_later_brand_page_reaches_matcher(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    page_one = [
+        {
+            "id": f"c1-{index}",
+            "name": f"Citizen catálogo {index}",
+            "brand": "Citizen",
+            "properties": {"collection": "Classic"},
+        }
+        for index in range(20)
+    ]
+    related = {
+        "id": "pilot",
+        "name": "Citizen Promaster",
+        "brand": "Citizen",
+        "properties": {"collection": "Pilot", "use": "aviação"},
+    }
+
+    async def execute(tool, arguments):
+        if tool == "search_products":
+            if arguments.get("name"):
+                return {"products": []}
+            if arguments["page"] == 1:
+                return {
+                    "products": page_one,
+                    "paging": {"total": 21, "page": 1, "limit": 20},
+                }
+            return {
+                "products": [related],
+                "paging": {"total": 21, "page": 2, "limit": 20},
+            }
+        if tool == "get_product":
+            return {**related, "available": True}
+        raise AssertionError((tool, arguments))
+
+    _mock_matcher(
+        monkeypatch,
+        ["pilot"],
+        match_status="exact",
+        best_candidate_id="pilot",
+    )
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Citizen", model="Pilot")
+    )
+
+    assert result.safety_reason != "product_not_found"
+    assert result.commercial_data["products"][0]["id"] == "pilot"
+
+
+@pytest.mark.asyncio
+async def test_first_brand_page_exact_match_stops_pagination(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+    product = {
+        "id": "khaki",
+        "name": "Hamilton Khaki Field",
+        "brand": "Hamilton",
+        "model": "Khaki Field",
+        "available": True,
+    }
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "search_products":
+            if arguments.get("name"):
+                return {"products": []}
+            return {
+                "products": [product, *[
+                    {
+                        "id": f"other-{index}",
+                        "name": f"Hamilton catálogo {index}",
+                        "brand": "Hamilton",
+                    }
+                    for index in range(19)
+                ]],
+                "paging": {"total": 60, "page": 1, "limit": 20},
+            }
+        if tool == "get_product":
+            return product
+        raise AssertionError((tool, arguments))
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Hamilton", model="Khaki Field")
+    )
+
+    brand_pages = [
+        arguments["page"]
+        for tool, arguments in calls
+        if tool == "search_products" and "name" not in arguments
+    ]
+    assert brand_pages == [1]
+    assert result.safety_reason != "product_not_found"
+
+
+@pytest.mark.asyncio
+async def test_hamilton_khaki_field_multiple_real_matches_stay_ambiguous(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    products = [
+        {
+            "id": "k1",
+            "name": "Hamilton Khaki Field Auto",
+            "brand": "Hamilton",
+            "model": "Khaki Field",
+        },
+        {
+            "id": "k2",
+            "name": "Hamilton Khaki Field Mechanical",
+            "brand": "Hamilton",
+            "model": "Khaki Field",
+        },
+    ]
+
+    async def execute(tool, arguments):
+        if tool == "search_products":
+            return {"products": products}
+        if tool == "get_product":
+            product = next(item for item in products if item["id"] == arguments["product_id"])
+            return {**product, "available": True}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Hamilton", model="Khaki Field")
+    )
+
+    assert result.commercial_data["match_status"] == "ambiguous"
+    assert [item["id"] for item in result.commercial_data["products"]] == ["k1", "k2"]
+
+
+@pytest.mark.asyncio
+async def test_persistent_catalog_failure_is_technical_not_product_not_found(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    async def execute(tool, arguments):
+        assert tool == "search_products"
+        return {"error": "temporary failure"}
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Doxa", model="SUB 300")
+    )
+
+    assert result.safety_reason == "tray_adapter_unavailable"
+    assert result.safety_reason != "product_not_found"
+
+
+@pytest.mark.asyncio
+async def test_neutral_brand_product_on_second_page_reaches_matcher(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    page_one = [
+        {
+            "id": f"alpha-{index}",
+            "name": f"Marca Alfa catálogo {index}",
+            "brand": "Marca Alfa",
+        }
+        for index in range(20)
+    ]
+    expected = {
+        "id": "aero",
+        "name": "Relógio Marca Alfa Aero Commander",
+        "brand": "Marca Alfa",
+        "model": "Aero",
+        "available": True,
+    }
+
+    async def execute(tool, arguments):
+        if tool == "search_products":
+            if arguments.get("name"):
+                return {"products": []}
+            if arguments["page"] == 1:
+                return {
+                    "products": page_one,
+                    "paging": {"total": 21, "page": 1, "limit": 20},
+                }
+            return {
+                "products": [expected],
+                "paging": {"total": 21, "page": 2, "limit": 20},
+            }
+        if tool == "get_product":
+            return expected
+        raise AssertionError((tool, arguments))
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Marca Alfa", model="Aero")
+    )
+
+    assert result.safety_reason != "product_not_found"
+    assert result.commercial_data["products"][0]["id"] == "aero"
+
+
+def test_neutral_properties_evidence_prioritizes_candidate_generically():
+    interpretation = _interpretation(brand="Marca Beta", model="Aero")
+    products = [
+        {
+            "id": f"filler-{index}",
+            "name": f"Marca Beta catálogo {index}",
+            "brand": "Marca Beta",
+            "properties": {"family": "Classic"},
+        }
+        for index in range(25)
+    ]
+    products.extend([
+        {
+            "id": "ocean",
+            "name": "Beta Ocean Master",
+            "brand": "Marca Beta",
+            "properties": {"family": "Ocean"},
+        },
+        {
+            "id": "explorer",
+            "name": "Beta Explorer Chronograph",
+            "brand": "Marca Beta",
+            "properties": {"family": "Aero", "movement": "automatic"},
+        },
+        {
+            "id": "classic",
+            "name": "Beta Classic",
+            "brand": "Marca Beta",
+            "properties": {"family": "Classic"},
+        },
+    ])
+
+    shortlisted = prefilter_specific_candidates(products, interpretation)
+
+    assert len(shortlisted) == 20
+    assert "explorer" in {product["id"] for product in shortlisted}
+
+
+@pytest.mark.asyncio
+async def test_neutral_same_brand_without_semantic_relation_returns_none(monkeypatch):
+    products = [
+        {"id": "g1", "name": "Marca Gamma Ocean", "brand": "Marca Gamma"},
+        {"id": "g2", "name": "Marca Gamma Classic", "brand": "Marca Gamma"},
+        {"id": "g3", "name": "Marca Gamma Field", "brand": "Marca Gamma"},
+    ]
+    _mock_matcher(monkeypatch, [], match_status="none")
+
+    resolution = await match_specific_products(
+        products,
+        _interpretation(brand="Marca Gamma", model="Nebula"),
+    )
+
+    assert resolution.status == "none"
+    assert resolution.products == ()
+
+
+@pytest.mark.asyncio
+async def test_partial_literal_name_does_not_stop_before_objective_match(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+    weak = {
+        "id": "strap",
+        "name": "Explorer Strap",
+        "brand": "Marca Delta",
+    }
+    strong = {
+        "id": "automatic",
+        "name": "Marca Delta Explorer Automatic",
+        "brand": "Marca Delta",
+        "model": "Explorer",
+        "available": True,
+    }
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "search_products":
+            if arguments.get("name"):
+                return {"products": []}
+            if arguments["page"] == 1:
+                return {
+                    "products": [
+                        weak,
+                        *[
+                            {
+                                "id": f"delta-{index}",
+                                "name": f"Marca Delta catálogo {index}",
+                                "brand": "Marca Delta",
+                            }
+                            for index in range(19)
+                        ],
+                    ],
+                    "paging": {"total": 21, "page": 1, "limit": 20},
+                }
+            return {
+                "products": [strong],
+                "paging": {"total": 21, "page": 2, "limit": 20},
+            }
+        if tool == "get_product":
+            return strong
+        raise AssertionError((tool, arguments))
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Marca Delta", model="Explorer")
+    )
+
+    brand_pages = [
+        arguments["page"]
+        for tool, arguments in calls
+        if tool == "search_products" and "name" not in arguments
+    ]
+    assert brand_pages == [1, 2]
+    assert result.commercial_data["products"][0]["id"] == "automatic"
