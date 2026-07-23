@@ -455,7 +455,7 @@ async def test_failed_cart_for_new_selection_keeps_new_active_product(monkeypatc
     assert updated.purchase_stage == "selection"
 
 
-def test_checkout_question_stays_in_commerce_with_active_cart():
+def test_checkout_question_uses_structured_commerce_domain():
     state = _state(
         active_product={"product_id": "B"},
         cart_session_id="S1",
@@ -463,7 +463,7 @@ def test_checkout_question_stays_in_commerce_with_active_cart():
         purchase_stage="cart_created",
     )
     interpretation = _interpretation(
-        domain="raffle",
+        domain="commerce",
         purchase_action="checkout_question",
         purchase_stage="cart_created",
         domain_change_explicit=False,
@@ -471,7 +471,7 @@ def test_checkout_question_stays_in_commerce_with_active_cart():
 
     contextual, changed = apply_commerce_domain_context(interpretation, state)
 
-    assert changed is True
+    assert changed is False
     assert contextual.domain == "commerce"
     assert contextual.purchase_action == "checkout_question"
 

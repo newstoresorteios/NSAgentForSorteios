@@ -106,16 +106,16 @@ def test_new_presented_list_replaces_previous_positions():
     assert reference.product_id == "901"
 
 
-def test_ambiguous_watch_case_message_sticks_to_commerce():
+def test_openai_domain_is_not_reclassified_by_state():
     interpreted = _interpretation(domain="raffle", domain_change_explicit=False)
 
     contextual, changed = apply_commerce_domain_context(interpreted, _state())
 
-    assert contextual.domain == "commerce"
-    assert changed is True
+    assert contextual.domain == "raffle"
+    assert changed is False
 
 
-def test_payment_followup_sticks_to_commerce():
+def test_openai_payment_domain_remains_authoritative():
     state = _state().model_copy(update={"purchase_stage": "payment_discussion"})
     interpreted = _interpretation(
         domain="raffle",
@@ -126,7 +126,7 @@ def test_payment_followup_sticks_to_commerce():
 
     contextual, _ = apply_commerce_domain_context(interpreted, state)
 
-    assert contextual.domain == "commerce"
+    assert contextual.domain == "raffle"
     assert contextual.goal == "buy"
 
 

@@ -375,7 +375,7 @@ async def test_new_explicit_product_does_not_execute_old_pending_action(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_product_detail_persists_create_cart_as_next_safe_action(monkeypatch):
+async def test_product_detail_does_not_invent_pending_cart_action(monkeypatch):
     import app.sales_agent as sales_agent
 
     async def execute(tool, arguments):
@@ -402,6 +402,7 @@ async def test_product_detail_persists_create_cart_as_next_safe_action(monkeypat
         _interpretation(
             goal="inspect",
             subject={"product_type": "item", "model": "Modelo"},
+            reference_type="current_product",
             enough_information_to_search=True,
             ready_for_retrieval=True,
         ),
@@ -409,8 +410,8 @@ async def test_product_detail_persists_create_cart_as_next_safe_action(monkeypat
     )
     evolved = evolve_commerce_state(state, result)
 
-    assert evolved.pending_action == "create_cart"
-    assert evolved.pending_action_product_ids == ["P1"]
+    assert evolved.pending_action is None
+    assert evolved.pending_action_product_ids == []
 
 
 @pytest.mark.asyncio
@@ -458,6 +459,8 @@ async def test_pix_commitment_with_zero_variants_reaches_cart_then_payment(monke
         {},
         {},
         _interpretation(
+            purchase_action="create_cart",
+            reference_type="current_product",
             payment_action="payment_options",
             payment_method_preference="pix",
         ),

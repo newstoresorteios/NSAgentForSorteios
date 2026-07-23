@@ -181,6 +181,10 @@ no máximo duas perguntas relacionadas e não pode repetir algo já respondido n
 COMMERCE_STATE contém contexto semântico confiável da conversa, incluindo produto ativo,
 lista mais recente apresentada, tópico e etapa de compra. Use esse estado para interpretar
 expressões como "o terceiro", "esse", "o que você recomendou" e continuações curtas.
+Esse estado é contexto factual, não uma ordem para repetir ou executar a ação anterior.
+A mensagem atual é a autoridade semântica: uma nova busca ou novo assunto substitui a
+continuidade anterior. Produto ativo só é alvo operacional quando a mensagem atual
+realmente se refere a ele e reference_type representa essa referência.
 Nunca copie nem invente product_id ou variant_id.
 - reference_type=list_position e reference_position=N para posição numerada;
 - reference_type=current_product para "esse produto" quando há produto ativo;
@@ -195,6 +199,8 @@ purchase_stage=payment_discussion.
 Interprete semanticamente a etapa de carrinho:
 - purchase_action=create_cart quando o cliente confirma que quer levar um produto
   identificado; use reference_type/reference_position para indicar qual produto;
+- interesse geral em comprar uma categoria ainda é discovery/retrieval e deve manter
+  purchase_action=null até existir produto ou referência de compra identificável;
 - purchase_action=show_cart_link quando pede novamente o link do carrinho atual;
 - purchase_action=checkout_question quando pergunta como ou onde concluir o pagamento.
 - purchase_action=inspect_cart quando pergunta o total ou os itens do carrinho atual.
@@ -202,6 +208,7 @@ Para comprar vários produtos, preencha purchase_items com uma entrada para cada
 preservando referência semântica e quantidade. Não invente IDs. Use list_position para
 itens numerados, current_product para o produto ativo e explicit_product com o nome citado.
 Defina image_request=true quando pedir imagem/foto do produto referenciado.
+Pedir para ver produtos, opções ou catálogo é retrieval, não image_request.
 Uma mensagem pode combinar payment_action e purchase_action. Quando o cliente confirmar
 que quer comprar um produto identificado e escolher como pagar, preserve payment_action
 e defina purchase_action=create_cart no mesmo resultado. Nao deixe a intencao de
@@ -209,6 +216,7 @@ pagamento apagar o compromisso de compra.
 Use payment_method_preference somente quando o cliente escolher ou declarar preferencia
 por pix, card, boleto ou other; uma pergunta geral sobre aceitacao nao e uma escolha.
 COMMERCE_STATE.pending_action representa uma acao concreta oferecida imediatamente antes.
+Ela é uma proposta anterior, não uma obrigação do turno atual.
 Defina confirmation=confirm quando a mensagem atual aceitar semanticamente essa acao,
 confirmation=reject quando recusar e confirmation=none quando nao responder a ela.
 Nao dependa de uma palavra exata. Se confirmar create_cart/confirm_purchase, preserve
@@ -216,7 +224,8 @@ goal=buy e purchase_action=create_cart. Se mudar de produto ou assunto, nao conf
 acao anterior.
 Se o assistente pediu uma escolha factual de variante para concluir pending_action=create_cart
 e o cliente fornecer essa preferencia, use confirmation=none, preserve a preferencia
-estruturada e mantenha purchase_action=create_cart para continuar a mesma compra.
+estruturada, reference_type para o produto em questão e purchase_action=create_cart para
+continuar a mesma compra.
 Defina payment_action=payment_options para formas de pagamento e payment_action=installment
 quando pedir uma quantidade de parcelas; nesse caso extraia installment_count.
 Extraia quantity como inteiro positivo quando o cliente informar quantidade. Caso não
@@ -1645,13 +1654,11 @@ def _pending_product_references(
         by_id[product.product_id] = CommerceProductReference.model_validate(
             product.model_dump(exclude={"position"})
         )
-    if state.pending_action_product_ids:
-        return [
-            by_id[product_id]
-            for product_id in state.pending_action_product_ids
-            if product_id in by_id
-        ]
-    return [state.active_product] if state.active_product is not None else []
+    return [
+        by_id[product_id]
+        for product_id in state.pending_action_product_ids
+        if product_id in by_id
+    ]
 
 
 def _pending_action_rejected_result(
@@ -1663,6 +1670,13 @@ def _pending_action_rejected_result(
         "has_product": bool(_pending_product_references(state)),
         "confirmation": interpretation.confirmation,
         "executed": False,
+    })
+    print("[sales.state.application]", {
+        "had_pending_action": True,
+        "pending_action_used": False,
+        "pending_action_cleared": True,
+        "had_active_product": state.active_product is not None,
+        "active_product_referenced": False,
     })
     interpretation._clear_pending_action = True
     return _mark_sales_result(
@@ -1706,6 +1720,29 @@ async def handle_sales_message(
         )
         return None
     log_purchase_progress("interpretation", "success")
+    if interpretation is not None:
+        print("[sales.semantic.result]", {
+            "scope_domain": interpretation.domain,
+            "intent": plan.get("intent"),
+            "goal": interpretation.goal,
+            "reference_type": interpretation.reference_type,
+            "has_subject": bool(
+                interpretation.subject.product_type
+                or interpretation.subject.brand
+                or interpretation.subject.model
+                or interpretation.subject.reference
+                or interpretation.subject.ean
+            ),
+            "purchase_action": interpretation.purchase_action,
+            "payment_action": interpretation.payment_action,
+            "image_request": interpretation.image_request,
+            "confirmation": interpretation.confirmation,
+            "pending_action_disposition": (
+                interpretation.confirmation
+                if state.pending_action
+                else "none"
+            ),
+        })
     print("[sales.purchase.orchestrator]", {
         "has_purchase_action": bool(
             interpretation and interpretation.purchase_action
@@ -1769,6 +1806,7 @@ async def handle_sales_message(
     unresolved_purchase_items = 0
     unresolved_candidates: list[dict[str, Any]] = []
     pending_link_requested = False
+    pending_action_used = False
     if (
         interpretation is not None
         and state.pending_action
@@ -1824,6 +1862,13 @@ async def handle_sales_message(
             if len(pending_references) == 1:
                 resolved_product = pending_references[0]
                 resolved_by = "product_id"
+        pending_action_used = bool(
+            pending_references
+            or (
+                pending_action == "show_payment_options"
+                and state.cart_session_id
+            )
+        )
         print("[sales.pending_action]", {
             "action": pending_action,
             "has_product": bool(pending_references),
@@ -1832,6 +1877,17 @@ async def handle_sales_message(
                 resolved_product
                 or purchase_requests
                 or pending_action == "show_payment_options"
+            ),
+        })
+    if interpretation is not None:
+        print("[sales.state.application]", {
+            "had_pending_action": bool(state.pending_action),
+            "pending_action_used": pending_action_used,
+            "pending_action_cleared": interpretation._clear_pending_action,
+            "had_active_product": state.active_product is not None,
+            "active_product_referenced": bool(
+                interpretation.reference_type == "current_product"
+                and resolved_product is not None
             ),
         })
     if interpretation is not None and interpretation.purchase_items:
@@ -1919,7 +1975,6 @@ async def handle_sales_message(
             "requested_count": len(interpretation.purchase_items),
             "resolved_count": len(purchase_requests),
         })
-        purchase_action = purchase_action or "create_cart"
     if (
         interpretation is not None
         and purchase_action == "create_cart"
@@ -1978,6 +2033,14 @@ async def handle_sales_message(
                 fallback_reason=lookup.safety_reason,
             )
     if interpretation is not None and interpretation.image_request:
+        print("[sales.action.guard]", {
+            "action": "show_images",
+            "target_count": 1 if resolved_product is not None else 0,
+            "allowed": resolved_product is not None,
+            "blocking_reason": (
+                None if resolved_product is not None else "product_target_missing"
+            ),
+        })
         if resolved_product is None:
             return _mark_sales_result(
                 AgentResult(
@@ -2068,33 +2131,24 @@ async def handle_sales_message(
             used_tray=True,
             fallback_reason=link_result.safety_reason,
         )
-    if (
-        purchase_action is None
-        and interpretation is not None
-        and interpretation.goal == "buy"
-        and resolved_product is not None
-    ):
-        purchase_action = "create_cart"
     payment_requested = bool(interpretation and interpretation.payment_action)
     payment_preference = (
         interpretation.payment_method_preference
         if interpretation is not None
         else None
     )
-    if (
-        payment_requested
-        and payment_preference is not None
-        and resolved_product is None
-        and state.active_product is not None
-    ):
-        resolved_product = state.active_product
-        resolved_by = "product_id"
-    if (
-        payment_requested
-        and payment_preference is not None
-        and resolved_product is not None
-    ):
-        purchase_action = purchase_action or "create_cart"
+    if purchase_action == "create_cart":
+        target_count = len(purchase_requests) + (
+            1 if resolved_product is not None else 0
+        )
+        print("[sales.action.guard]", {
+            "action": "create_cart",
+            "target_count": target_count,
+            "allowed": target_count > 0,
+            "blocking_reason": (
+                None if target_count > 0 else "product_target_missing"
+            ),
+        })
     needs_cart = bool(
         payment_requested
         and not state.cart_session_id
@@ -2473,20 +2527,6 @@ async def handle_sales_message(
         })
         if resolved_product is not None:
             tray_result.response_metadata["active_product"] = resolved_product.model_dump(mode="json")
-            if not state.cart_session_id:
-                tray_result.response_metadata.setdefault("pending_action", "create_cart")
-                tray_result.response_metadata.setdefault(
-                    "pending_action_product_ids",
-                    [resolved_product.product_id],
-                )
-                print("[sales.pending_action]", {
-                    "action": "create_cart",
-                    "has_product": True,
-                    "confirmation": interpretation.confirmation,
-                    "executed": False,
-                })
-        if interpretation.goal == "buy" and resolved_product is not None:
-            tray_result.response_metadata["activate_first_product"] = True
     if (
         plan.get("intent") in {"purchase_intent", "recommendation", "clarification"}
         and tray_result.safety_reason == "product_not_found"

@@ -187,19 +187,6 @@ def resolve_commerce_reference(
         return (match, "product_id" if match else "none")
     if reference_type == "current_product" and state.active_product:
         return state.active_product, "product_id"
-    if (
-        state.active_product
-        and interpretation.references_previous_context
-        and (
-            interpretation.goal in {"inspect", "buy", "after_sales"}
-            or bool(set(interpretation.information_needed).intersection({"price", "inventory", "payment"}))
-        )
-    ):
-        return state.active_product, "product_id"
-    if interpretation.references_previous_context and state.last_presented_products:
-        match = _explicit_product_match(interpretation, state.last_presented_products)
-        if match:
-            return match, "product_id"
     return None, "none"
 
 
@@ -273,6 +260,8 @@ def apply_commerce_domain_context(
     interpretation: SalesInterpretation,
     state: CommerceConversationState,
 ) -> tuple[SalesInterpretation, bool]:
+    if interpretation._source == "openai":
+        return interpretation, False
     previous_domain = state.active_domain
     if (
         previous_domain == "commerce"

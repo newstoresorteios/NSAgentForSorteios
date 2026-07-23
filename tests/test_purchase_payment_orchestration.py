@@ -106,7 +106,7 @@ def test_structured_plan_preserves_payment_preference_with_purchase_action():
 
 
 @pytest.mark.asyncio
-async def test_payment_preference_with_active_product_creates_cart_before_options(monkeypatch):
+async def test_explicit_payment_commitment_with_active_product_creates_cart_before_options(monkeypatch):
     import app.sales_agent as sales_agent
 
     execute, calls = _cart_executor()
@@ -117,7 +117,11 @@ async def test_payment_preference_with_active_product_creates_cart_before_option
         IncomingMessage(text="preferência de pagamento"),
         {},
         {},
-        _interpretation(payment_method_preference="pix"),
+        _interpretation(
+            purchase_action="create_cart",
+            reference_type="current_product",
+            payment_method_preference="pix",
+        ),
         commerce_state=_state(),
     )
 
@@ -407,7 +411,11 @@ async def test_cart_failure_stops_before_payment_options(monkeypatch):
         IncomingMessage(text="compra com pagamento"),
         {},
         {},
-        _interpretation(payment_method_preference="pix"),
+        _interpretation(
+            purchase_action="create_cart",
+            reference_type="current_product",
+            payment_method_preference="pix",
+        ),
         commerce_state=_state(),
     )
 
@@ -427,7 +435,11 @@ async def test_payment_failure_after_cart_keeps_created_cart_state(monkeypatch):
         IncomingMessage(text="compra com consulta de pagamento"),
         {},
         {},
-        _interpretation(payment_method_preference="pix"),
+        _interpretation(
+            purchase_action="create_cart",
+            reference_type="current_product",
+            payment_method_preference="pix",
+        ),
         commerce_state=_state(),
     )
 
