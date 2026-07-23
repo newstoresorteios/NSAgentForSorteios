@@ -1025,12 +1025,15 @@ async def _execute_compiled_product_retrieval(
 
     if not candidates:
         if category_resolution and category_resolution.lookup_failed:
-            print("[sales.retrieval.empty]", {"reason": "category_lookup_failed"})
+            category_failure = (
+                category_resolution.failure_reason or "category_adapter_error"
+            )
+            print("[sales.retrieval.empty]", {"reason": category_failure})
             return AgentResult(
                 reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
                 intent="commerce",
                 handoff_required=False,
-                safety_reason="category_lookup_failed",
+                safety_reason=category_failure,
             )
         if product_lookup_failed:
             print("[sales.retrieval.empty]", {"reason": "catalog_lookup_failed"})

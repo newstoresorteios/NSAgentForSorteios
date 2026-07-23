@@ -1,6 +1,7 @@
 import pytest
 
 from app.tray_tools import _reduce, execute_tool, search_products
+from app.tray_adapter_client import TrayAdapterError
 
 
 class FakeTray:
@@ -21,7 +22,10 @@ class FakeTray:
 
     async def list_categories(self, **kwargs):
         self.calls.append(("list_categories", kwargs))
-        return {"categories": [{"id": 10, "name": "Relógios", "secret": "omit"}]}
+        return {
+            "categories": [{"id": 10, "name": "Relógios", "secret": "omit"}],
+            "paging": {"total": 1, "page": 1, "limit": 50},
+        }
 
     async def get_category_tree(self, category_id):
         self.calls.append(("get_category_tree", category_id))
@@ -73,11 +77,14 @@ def test_tray_text_and_payment_options_are_normalized():
 async def test_category_and_variant_tools_reduce_payloads():
     client = FakeTray()
 
-    categories = await execute_tool("list_categories", {"limit": 100, "page": 1}, client)
+    categories = await execute_tool("list_categories", {"limit": 50, "page": 1}, client)
     tree = await execute_tool("get_category_tree", {"category_id": "10"}, client)
     variants = await execute_tool("list_product_variants", {"product_id": "641"}, client)
 
-    assert categories == {"categories": [{"id": 10, "name": "Relógios"}]}
+    assert categories == {
+        "categories": [{"id": 10, "name": "Relógios"}],
+        "paging": {"total": 1, "page": 1, "limit": 50},
+    }
     assert tree["tree"]["children"] == [{"id": 11, "name": "Masculinos"}]
     assert variants == {"variants": [{
         "id": "V1",
@@ -86,3 +93,18 @@ async def test_category_and_variant_tools_reduce_payloads():
         "stock": 2,
         "variant_id": "V1",
     }]}
+
+
+@pytest.mark.asyncio
+async def test_category_http_422_is_preserved_as_invalid_request():
+    class InvalidCategoryTray:
+        async def list_categories(self, **kwargs):
+            raise TrayAdapterError("tray_adapter_http_422", status_code=422)
+
+    result = await execute_tool(
+        "list_categories",
+        {"limit": 50, "page": 1},
+        InvalidCategoryTray(),
+    )
+
+    assert result["error_reason"] == "category_invalid_request"

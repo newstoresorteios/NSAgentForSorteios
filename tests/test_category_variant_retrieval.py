@@ -59,7 +59,12 @@ async def test_category_resolver_matches_real_plural_category(monkeypatch):
     assert normalize_category_name("Relógios") == normalize_category_name("relógio")
     assert resolution.selected_category_ids == ("10",)
     assert resolution.source == "normalized"
-    assert calls[0] == ("list_categories", {"limit": 100, "page": 1})
+    assert calls[0] == ("list_categories", {"limit": 50, "page": 1})
+    assert all(
+        arguments["limit"] <= 50
+        for name, arguments in calls
+        if name == "list_categories"
+    )
 
 
 @pytest.mark.asyncio
@@ -71,18 +76,70 @@ async def test_category_resolver_paginates_until_a_match(monkeypatch):
         if name == "list_categories" and arguments["page"] == 1:
             return {"categories": [
                 {"id": index, "name": f"Categoria {index}"}
-                for index in range(100)
-            ]}
+                for index in range(50)
+            ], "paging": {"total": 70, "page": 1, "limit": 50}}
         if name == "list_categories":
-            return {"categories": [{"id": 200, "name": "Relógios"}]}
+            return {
+                "categories": [
+                    *[
+                        {"id": index, "name": f"Categoria {index}"}
+                        for index in range(50, 69)
+                    ],
+                    {"id": 200, "name": "Relógios"},
+                ],
+                "paging": {"total": 70, "page": 2, "limit": 50},
+            }
         return {"tree": {"id": 200, "name": "Relógios"}}
 
     monkeypatch.setattr("app.category_resolver.get_settings", lambda: _settings())
     resolution = await CategoryResolver(execute).resolve("relógio")
 
     assert resolution.selected_category_ids == ("200",)
-    assert resolution.categories_loaded == 101
+    assert resolution.categories_loaded == 70
     assert [args["page"] for name, args in calls if name == "list_categories"] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_category_paging_total_stops_after_single_partial_page(monkeypatch):
+    calls = []
+
+    async def execute(name, arguments):
+        calls.append((name, arguments))
+        if name == "list_categories":
+            return {
+                "categories": [
+                    {"id": index, "name": f"Categoria {index}"}
+                    for index in range(39)
+                ],
+                "paging": {"total": 39, "page": 1, "limit": 50},
+            }
+        raise AssertionError(name)
+
+    monkeypatch.setattr("app.category_resolver.get_settings", lambda: _settings())
+    resolution = await CategoryResolver(execute).resolve("produto ausente")
+
+    assert resolution.failure_reason == "category_not_found"
+    assert len([call for call in calls if call[0] == "list_categories"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_unambiguous_first_page_match_stops_before_second_page(monkeypatch):
+    calls = []
+
+    async def execute(name, arguments):
+        calls.append((name, arguments))
+        if name == "list_categories":
+            return {
+                "categories": [{"id": 123, "name": "Relógios"}],
+                "paging": {"total": 70, "page": 1, "limit": 50},
+            }
+        return {"tree": {"id": 123, "name": "Relógios"}}
+
+    monkeypatch.setattr("app.category_resolver.get_settings", lambda: _settings())
+    resolution = await CategoryResolver(execute).resolve("relógio")
+
+    assert resolution.selected_category_ids == ("123",)
+    assert [args["page"] for name, args in calls if name == "list_categories"] == [1]
 
 
 @pytest.mark.asyncio
@@ -350,8 +407,27 @@ async def test_category_failure_and_empty_name_fallback_is_technical(monkeypatch
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
     result = await sales_agent._execute_compiled_product_retrieval(_interpretation())
-    assert result.safety_reason == "category_lookup_failed"
+    assert result.safety_reason == "category_adapter_error"
     assert "não temos" not in result.reply_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_category_422_is_invalid_request_not_catalog_empty(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    async def execute(name, arguments):
+        if name == "list_categories":
+            return {
+                "error": "invalid",
+                "error_reason": "category_invalid_request",
+            }
+        return {"products": []}
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    result = await sales_agent._execute_compiled_product_retrieval(_interpretation())
+
+    assert result.safety_reason == "category_invalid_request"
+    assert result.safety_reason not in {"catalog_empty", "product_not_found"}
 
 
 @pytest.mark.asyncio

@@ -157,6 +157,23 @@ def _reduce_category_tree(value: Any) -> Any:
     return reduced
 
 
+def _reduce_paging(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    paging = payload.get("paging")
+    if not isinstance(paging, dict):
+        data = payload.get("data")
+        paging = data.get("paging") if isinstance(data, dict) else None
+    if not isinstance(paging, dict):
+        return None
+    reduced = {
+        key: paging.get(key)
+        for key in ("total", "page", "limit")
+        if paging.get(key) is not None
+    }
+    return reduced or None
+
+
 async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
     client = client or TrayAdapterClient()
     try:
@@ -168,7 +185,11 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             return _reduce(await client.get_product_stock(arguments["product_id"]), ("product_id", "stock", "available", "available_in_store", "available_for_purchase", "upon_request", "availability", "when_stock_runs_out"))
         if name == "list_categories":
             payload = await client.list_categories(**arguments)
-            return {"categories": [_reduce(item, _CATEGORY_FIELDS) for item in _items(payload)]}
+            result = {"categories": [_reduce(item, _CATEGORY_FIELDS) for item in _items(payload)]}
+            paging = _reduce_paging(payload)
+            if paging:
+                result["paging"] = paging
+            return result
         if name == "get_category":
             return _reduce(await client.get_category(arguments["category_id"]), _CATEGORY_FIELDS)
         if name == "get_category_tree":
@@ -189,7 +210,14 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
         raise ValueError(f"unknown_tool:{name}")
     except TrayAdapterError as exc:
         print("[tray.tool] request_failed", {"tool": name, "status_code": exc.status_code})
-        return {"error": "Não consegui consultar o sistema da loja neste momento."}
+        result = {"error": "Não consegui consultar o sistema da loja neste momento."}
+        if name == "list_categories":
+            result["error_reason"] = (
+                "category_invalid_request"
+                if exc.status_code == 422
+                else "category_adapter_error"
+            )
+        return result
 async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
     started = time.perf_counter()
     try:
@@ -198,7 +226,10 @@ async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapter
         print("[tray.tool] executed", {"tool": name, "ok": ok, "elapsed_ms": round((time.perf_counter() - started) * 1000)})
         print("[sales.tool]", {"tool": name, "success": ok})
         if not ok:
-            return {"error": "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."}
+            return {
+                **result,
+                "error": "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes.",
+            }
         return result
     except Exception as exc:
         print("[tray.tool] executed", {"tool": name, "ok": False, "elapsed_ms": round((time.perf_counter() - started) * 1000), "error_type": type(exc).__name__})

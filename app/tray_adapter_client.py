@@ -91,11 +91,11 @@ class TrayAdapterClient:
     async def get_product_variant(self, variant_id: str | int) -> Any:
         return await self._request("GET", f"/internal/products/variants/{variant_id}")
 
-    async def list_categories(self, *, limit: int = 100, page: int = 1) -> Any:
+    async def list_categories(self, *, limit: int = 50, page: int = 1) -> Any:
         return await self._request(
             "GET",
             "/internal/categories",
-            params={"limit": min(max(limit, 1), 100), "page": max(page, 1)},
+            params={"limit": min(max(limit, 1), 50), "page": max(page, 1)},
         )
 
     async def get_category(self, category_id: str | int) -> Any:

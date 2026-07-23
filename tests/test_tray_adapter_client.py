@@ -52,7 +52,7 @@ async def test_categories_and_variants_use_new_read_only_routes():
         "https://tray.example/internal/products/variants",
         "https://tray.example/internal/products/variants/V1",
     ]
-    assert fake.calls[0][1]["params"] == {"limit": 100, "page": 2}
+    assert fake.calls[0][1]["params"] == {"limit": 50, "page": 2}
     assert fake.calls[3][1]["params"] == {"product_id": "641"}
 
 

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from .config import get_settings
 
 
-CATEGORY_PAGE_LIMIT = 100
+CATEGORY_PAGE_LIMIT = 50
 MAX_CATEGORY_PAGES = 5
 MAX_SELECTED_CATEGORIES = 2
 MAX_CATEGORY_PRODUCT_QUERIES = 5
@@ -32,6 +32,7 @@ class CategoryResolution:
     source: str = "not_found"
     categories_loaded: int = 0
     lookup_failed: bool = False
+    failure_reason: str | None = None
 
     @property
     def product_category_ids(self) -> tuple[str, ...]:
@@ -104,20 +105,52 @@ class CategoryResolver:
     def __init__(self, execute_tool: ToolExecutor):
         self._execute_tool = execute_tool
 
-    async def _load_categories(self, product_type: str) -> tuple[list[dict[str, Any]], bool]:
+    @staticmethod
+    def _unambiguous_match(
+        product_type: str,
+        categories: list[dict[str, Any]],
+    ) -> bool:
+        expected = normalize_category_name(product_type)
+        matches = [
+            category
+            for category in categories
+            if normalize_category_name(category.get("name")) == expected
+        ]
+        return len(matches) == 1
+
+    @staticmethod
+    def _as_non_negative_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    async def _load_categories(
+        self,
+        product_type: str,
+    ) -> tuple[list[dict[str, Any]], str | None]:
         categories: list[dict[str, Any]] = []
         seen: set[str] = set()
-        expected = normalize_category_name(product_type)
+        records_loaded = 0
         for page in range(1, MAX_CATEGORY_PAGES + 1):
+            print("[sales.category.request]", {
+                "page": page,
+                "limit": CATEGORY_PAGE_LIMIT,
+            })
             result = await self._execute_tool(
                 "list_categories",
                 {"limit": CATEGORY_PAGE_LIMIT, "page": page},
             )
             if "error" in result:
-                return categories, True
+                return categories, str(
+                    result.get("error_reason") or "category_adapter_error"
+                )
             page_categories = result.get("categories")
             if not isinstance(page_categories, list):
                 page_categories = []
+            returned_count = len(page_categories)
+            records_loaded += returned_count
             for category in page_categories:
                 if not isinstance(category, dict):
                     continue
@@ -126,11 +159,32 @@ class CategoryResolver:
                     continue
                 seen.add(category_id)
                 categories.append(category)
-            if any(normalize_category_name(item.get("name")) == expected for item in categories):
+
+            paging = result.get("paging")
+            paging = paging if isinstance(paging, dict) else {}
+            total = self._as_non_negative_int(paging.get("total"))
+            response_page = self._as_non_negative_int(paging.get("page"))
+            response_limit = self._as_non_negative_int(paging.get("limit"))
+            if total is not None:
+                has_more = records_loaded < total
+            else:
+                has_more = returned_count >= (
+                    response_limit or CATEGORY_PAGE_LIMIT
+                )
+            print("[sales.category.page]", {
+                "page": response_page or page,
+                "returned_count": returned_count,
+                "total": total,
+                "has_more": has_more,
+            })
+
+            if returned_count == 0:
                 break
-            if len(page_categories) < CATEGORY_PAGE_LIMIT:
+            if self._unambiguous_match(product_type, categories):
                 break
-        return categories, False
+            if not has_more:
+                break
+        return categories, None
 
     async def _select_ambiguous(
         self,
@@ -215,11 +269,12 @@ class CategoryResolver:
             self._log(resolution)
             return resolution
 
-        categories, lookup_failed = await self._load_categories(product_type)
-        if lookup_failed:
+        categories, failure_reason = await self._load_categories(product_type)
+        if failure_reason:
             resolution = CategoryResolution(
                 categories_loaded=len(categories),
                 lookup_failed=True,
+                failure_reason=failure_reason,
             )
             self._log(resolution)
             return resolution
@@ -249,7 +304,12 @@ class CategoryResolver:
             source = "normalized"
 
         if not candidates:
-            resolution = CategoryResolution(categories_loaded=len(categories))
+            resolution = CategoryResolution(
+                categories_loaded=len(categories),
+                failure_reason=(
+                    "category_empty" if not categories else "category_not_found"
+                ),
+            )
             self._log(resolution)
             return resolution
 
@@ -275,4 +335,5 @@ class CategoryResolver:
             "categories_loaded": resolution.categories_loaded,
             "selected_count": len(resolution.selected_category_ids),
             "descendant_count": len(resolution.descendant_category_ids),
+            "reason": resolution.failure_reason,
         })
