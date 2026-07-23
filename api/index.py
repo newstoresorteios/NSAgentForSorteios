@@ -8,7 +8,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token
-from app.webhook_parser import inbound_skip_reason, parse_brevo_whatsapp_payload, select_effective_inbound_message, selected_message_info
+from app.webhook_parser import (
+    inbound_skip_reason,
+    parse_brevo_whatsapp_payload,
+    select_effective_inbound_message,
+    selected_message_info,
+    webhook_event_skip_reason,
+)
 from app.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
@@ -17,6 +23,38 @@ from app.config import get_settings
 from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
+
+
+def _webhook_event_name(payload: dict | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    value = (
+        payload.get("eventName")
+        or payload.get("event")
+        or payload.get("eventType")
+    )
+    return str(value) if value is not None else None
+
+
+def _skip_webhook_event(
+    *,
+    event_name: str | None,
+    reason: str,
+    error_type: str | None = None,
+) -> JSONResponse:
+    print("[brevo.webhook] routing", {
+        "event_name": event_name,
+        "should_process": False,
+        "reason": reason,
+    })
+    skipped = {
+        "event_name": event_name,
+        "reason": reason,
+    }
+    if error_type is not None:
+        skipped["error_type"] = error_type
+    print("[brevo.webhook] skipped", skipped)
+    return JSONResponse({"ok": True, "skipped": True, "reason": reason})
 
 
 async def read_request_payload(request: Request) -> dict:
@@ -153,15 +191,31 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
     try:
         payload = await read_request_payload(request)
     except HTTPException:
-        print("[brevo.webhook] skipped", {"reason": "invalid_payload"})
+        print("[brevo.webhook] routing", {
+            "event_name": None,
+            "should_process": False,
+            "reason": "invalid_payload",
+        })
+        print("[brevo.webhook] skipped", {
+            "event_name": None,
+            "reason": "invalid_payload",
+        })
         raise
 
+    event_name = _webhook_event_name(payload)
     print("[brevo.webhook] received", {
         "content_type": request.headers.get("content-type"),
         "has_body": True,
         "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
         "event": payload.get("eventName") or payload.get("event") if isinstance(payload, dict) else None,
     })
+
+    event_skip_reason = webhook_event_skip_reason(payload)
+    if event_skip_reason:
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason=event_skip_reason,
+        )
 
     try:
         incoming = parse_brevo_whatsapp_payload(payload)
@@ -175,8 +229,11 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
             "text_present": False,
             "direction": None,
         })
-        print("[brevo.webhook] skipped", {"reason": "invalid_payload", "error_type": type(exc).__name__})
-        return JSONResponse({"ok": True, "skipped": True, "reason": "invalid_payload"})
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="invalid_payload",
+            error_type=type(exc).__name__,
+        )
 
     print("[brevo.webhook] parsed", {
         "parsed": True,
@@ -201,22 +258,30 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
 
     skip_reason = inbound_skip_reason(payload)
     if skip_reason:
-        print("[brevo.webhook] skipped", {"reason": skip_reason})
-        return JSONResponse({"ok": True, "skipped": True, "reason": skip_reason})
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason=skip_reason,
+        )
 
     if not incoming.sender_phone:
-        print("[brevo.webhook] skipped", {"reason": "missing_sender"})
-        return JSONResponse({"ok": True, "skipped": True, "reason": "missing_sender"})
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="missing_sender",
+        )
 
     if not incoming.text.strip() and not incoming.audio_url:
-        print("[brevo.webhook] skipped", {"reason": "no_text"})
-        return JSONResponse({"ok": True, "skipped": True, "reason": "no_text"})
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="no_text",
+        )
 
     # Fast path for already-seen IDs; claim_inbound_message remains the
     # authoritative atomic check for concurrent requests.
     if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
-        print("[brevo.webhook] skipped", {"reason": "duplicate_message"})
-        return JSONResponse({"ok": True, "skipped": True, "reason": "duplicate_message"})
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="duplicate_message",
+        )
 
     try:
         claimed, inbound_id = claim_inbound_message(incoming.model_dump())
@@ -230,12 +295,19 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         })
         raise HTTPException(status_code=500, detail={"error": "inbound_insert_failed"}) from exc
     if not claimed:
-        print("[brevo.webhook] skipped", {"reason": "duplicate_message"})
-        return JSONResponse({"ok": True, "skipped": True, "reason": "duplicate_message"})
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="duplicate_message",
+        )
 
     if isinstance(incoming.raw, dict):
         incoming.raw["inbound_id"] = inbound_id
     customer_context = find_customer_profile_by_phone(incoming.sender_phone)
+    print("[brevo.webhook] routing", {
+        "event_name": event_name,
+        "should_process": True,
+        "reason": "inbound_message",
+    })
     print("[brevo.webhook] processing", {
         "message_id_present": bool(incoming.message_id),
         "event_name": incoming.event_type,

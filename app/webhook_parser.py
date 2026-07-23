@@ -162,6 +162,18 @@ def inbound_skip_reason(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def webhook_event_skip_reason(payload: dict[str, Any]) -> str | None:
+    """Reject webhook events that are not new inbound messages."""
+    event_name = _first_non_empty(
+        payload.get("eventName"),
+        payload.get("event"),
+        payload.get("eventType"),
+    )
+    if event_name == "conversationTranscript":
+        return "non_inbound_event"
+    return None
+
+
 def _extract_primary_message(payload: dict[str, Any]) -> dict[str, Any]:
     return select_effective_inbound_message(payload)
 
