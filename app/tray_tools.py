@@ -20,16 +20,18 @@ TOOL_SCHEMAS = [
 ]
 
 TOOL_REGISTRY = {
-    "commerce": ("search_products", "get_product", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart"),
+    "commerce": ("search_products", "get_product", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart", "get_cart_complete", "get_payment_options"),
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
-_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_name", "category_id", "attributes", "properties", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "has_variation", "ProductSettings", "payment_option", "payment_option_details", "url")
+_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_name", "category_id", "attributes", "properties", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "has_variation", "ProductSettings", "payment_option", "payment_option_details", "url", "primary_image_url", "primary_image", "image_url", "image", "images")
 _CATEGORY_FIELDS = ("id", "name", "parent_id", "parent", "slug", "path")
-_VARIANT_FIELDS = ("id", "variant_id", "product_id", "name", "value", "color", "size", "version", "reference", "sku", "Sku", "price", "promotional_price", "stock", "available", "available_in_store", "availability", "VariationSettings")
+_VARIANT_FIELDS = ("id", "variant_id", "product_id", "name", "value", "color", "size", "version", "reference", "sku", "Sku", "price", "promotional_price", "current_price", "stock", "available", "available_in_store", "availability", "VariationSettings", "primary_image_url", "primary_image", "image_url", "image", "images")
 _CUSTOMER_FIELDS = ("id", "name", "email", "city", "state", "last_purchase", "total_orders")
 _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", "type", "value_start", "value_end", "usage_counter_limit", "usage_counter_limit_customer", "coupon_type", "local_application", "freight_application")
 _CART_FIELDS = ("cart_id", "session_id", "cart_url", "message", "code")
+_CART_COMPLETE_FIELDS = ("cart_id", "session_id", "cart_url", "subtotal", "total", "current_total", "currency", "message", "code")
+_CART_ITEM_FIELDS = ("product_id", "variant_id", "quantity", "price", "unit_price", "total", "name", "reference")
 
 
 def _clean_text(value: str) -> str:
@@ -93,6 +95,25 @@ def _items(payload: Any) -> list[Any]:
             if isinstance(value, list):
                 return value
     return [payload] if isinstance(payload, dict) else []
+
+
+def _unwrap_entity(payload: Any, keys: tuple[str, ...]) -> Any:
+    current = payload
+    for _ in range(3):
+        if not isinstance(current, dict):
+            return current
+        nested = next(
+            (
+                current.get(key)
+                for key in keys
+                if isinstance(current.get(key), dict)
+            ),
+            None,
+        )
+        if nested is None:
+            return current
+        current = nested
+    return current
 
 
 def _reduce(item: Any, fields: tuple[str, ...]) -> dict[str, Any]:
@@ -184,13 +205,82 @@ def _reduce_paging(payload: Any) -> dict[str, Any] | None:
     return reduced or None
 
 
+def _reduce_cart_complete(payload: Any) -> dict[str, Any]:
+    cart = _unwrap_entity(payload, ("cart", "data", "result"))
+    reduced = _reduce(cart, _CART_COMPLETE_FIELDS)
+    item_values: Any = None
+    if isinstance(cart, dict):
+        for key in ("items", "products", "cart_items"):
+            if isinstance(cart.get(key), list):
+                item_values = cart[key]
+                break
+    if item_values is None and isinstance(payload, dict):
+        for key in ("items", "products", "cart_items"):
+            if isinstance(payload.get(key), list):
+                item_values = payload[key]
+                break
+    reduced_items = []
+    for item in item_values or []:
+        if not isinstance(item, dict):
+            continue
+        normalized = _reduce(item, _CART_ITEM_FIELDS)
+        product = item.get("product") or item.get("Product")
+        if isinstance(product, dict):
+            if normalized.get("product_id") is None and product.get("id") is not None:
+                normalized["product_id"] = product["id"]
+            for key in ("name", "reference"):
+                if normalized.get(key) is None and product.get(key) is not None:
+                    normalized[key] = _clean_value(product[key])
+        reduced_items.append(normalized)
+    reduced["items"] = reduced_items
+    return reduced
+
+
+def _payment_items(payload: Any) -> list[Any]:
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("payment_options", "options", "methods", "items"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        data = payload.get("data")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return _payment_items(data)
+    return []
+
+
+def _semantic_payment_options(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    for container_key in ("payment_options", "data", "result"):
+        nested = payload.get(container_key)
+        if isinstance(nested, dict):
+            semantic = _semantic_payment_options(nested)
+            if semantic is not None:
+                return semantic
+    if "pix" in payload or "installments" in payload:
+        return _clean_value({
+            key: payload[key]
+            for key in ("pix", "installments")
+            if key in payload
+        })
+    return None
+
+
 async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
     client = client or TrayAdapterClient()
     try:
         if name == "search_products":
             return await search_products(client, **arguments)
         if name == "get_product":
-            return _reduce((await client.get_product(arguments["product_id"])), _PRODUCT_FIELDS)
+            payload = await client.get_product(arguments["product_id"])
+            return _reduce(
+                _unwrap_entity(payload, ("product", "data", "result")),
+                _PRODUCT_FIELDS,
+            )
         if name == "check_inventory":
             return _reduce(await client.get_product_stock(arguments["product_id"]), ("product_id", "stock", "available", "available_in_store", "available_for_purchase", "upon_request", "availability", "when_stock_runs_out"))
         if name == "list_categories":
@@ -208,7 +298,10 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             payload = await client.list_product_variants(arguments["product_id"])
             return {"variants": [_reduce_variant(item) for item in _items(payload)][:20]}
         if name == "get_product_variant":
-            return _reduce_variant(await client.get_product_variant(arguments["variant_id"]))
+            payload = await client.get_product_variant(arguments["variant_id"])
+            return _reduce_variant(
+                _unwrap_entity(payload, ("variant", "variation", "data", "result"))
+            )
         if name == "search_customer":
             return {"customers": [_reduce(item, _CUSTOMER_FIELDS) for item in _items(await client.list_customers(**arguments))[:5]]}
         if name == "get_customer":
@@ -218,9 +311,31 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
         if name == "get_coupon":
             return _reduce(await client.get_coupon(arguments["coupon_id"]), _COUPON_FIELDS)
         if name == "create_cart":
-            return _reduce(await client.create_cart(**arguments), _CART_FIELDS)
+            payload = await client.create_cart(**arguments)
+            return _reduce(
+                _unwrap_entity(payload, ("cart", "data", "result")),
+                _CART_FIELDS,
+            )
         if name == "get_cart":
-            return _reduce(await client.get_cart(arguments["session_id"]), _CART_FIELDS)
+            payload = await client.get_cart(arguments["session_id"])
+            return _reduce(
+                _unwrap_entity(payload, ("cart", "data", "result")),
+                _CART_FIELDS,
+            )
+        if name == "get_cart_complete":
+            return _reduce_cart_complete(
+                await client.get_cart_complete(arguments["session_id"])
+            )
+        if name == "get_payment_options":
+            payload = await client.get_payment_options(arguments["cart_session_id"])
+            semantic = _semantic_payment_options(payload)
+            return {
+                "payment_options": (
+                    semantic
+                    if semantic is not None
+                    else _normalize_payment_options(_payment_items(payload))
+                )
+            }
         raise ValueError(f"unknown_tool:{name}")
     except TrayAdapterError as exc:
         print("[tray.tool] request_failed", {"tool": name, "status_code": exc.status_code})

@@ -119,6 +119,25 @@ async def test_get_cart_uses_adapter_session_route():
 
 
 @pytest.mark.asyncio
+async def test_complete_cart_and_payment_options_use_adapter_routes():
+    fake = FakeClient(FakeResponse(payload={}))
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+
+    await client.get_cart_complete("S1")
+    await client.get_payment_options("S1")
+
+    assert fake.calls[0][0] == (
+        "GET",
+        "https://tray.example/internal/carts/S1/complete",
+    )
+    assert fake.calls[1][0] == (
+        "GET",
+        "https://tray.example/internal/payments/options",
+    )
+    assert fake.calls[1][1]["params"] == {"cart_session_id": "S1"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [401, 403, 404, 429, 500, 502, 503])
 async def test_http_errors_are_typed(status):
     fake = FakeClient(FakeResponse(status_code=status))

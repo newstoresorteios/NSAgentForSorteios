@@ -155,6 +155,10 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
     """Send a reply back to the user through Brevo."""
     settings = get_settings()
     text = result.reply_text if isinstance(result, AgentResult) else str(result)
+    has_outbound_image = bool(
+        isinstance(result, AgentResult)
+        and result.response_metadata.get("outbound_image_url")
+    )
     audio_file: dict[str, Any] | None = None
     mode = (settings.brevo_reply_mode or "dry_run").lower()
 
@@ -182,7 +186,7 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
         })
 
     if settings.dry_run or mode == "dry_run":
-        return BrevoSendResult(
+        sent = BrevoSendResult(
             ok=True,
             dry_run=True,
             provider_response={
@@ -194,15 +198,28 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
                 "audio_file": audio_file,
             },
         )
-
-    if mode == "whatsapp":
-        return await _send_whatsapp_transactional_reply(incoming, text)
-
-    # Default live mode for Brevo Conversations inbound webhooks.
-    if incoming.visitor_id:
-        return await _send_conversations_reply(incoming, text, audio_file=audio_file)
-
-    if incoming.sender_phone:
-        return await _send_whatsapp_transactional_reply(incoming, text)
-
-    return BrevoSendResult(ok=False, dry_run=False, error="brevo_recipient_missing")
+        channel = "dry_run"
+    elif mode == "whatsapp":
+        sent = await _send_whatsapp_transactional_reply(incoming, text)
+        channel = "whatsapp"
+    elif incoming.visitor_id:
+        # Conversations documents text outbound, but not dynamic image attachments.
+        sent = await _send_conversations_reply(incoming, text, audio_file=audio_file)
+        channel = "brevo_conversations"
+    elif incoming.sender_phone:
+        sent = await _send_whatsapp_transactional_reply(incoming, text)
+        channel = "whatsapp"
+    else:
+        sent = BrevoSendResult(
+            ok=False,
+            dry_run=False,
+            error="brevo_recipient_missing",
+        )
+        channel = "none"
+    if has_outbound_image:
+        print("[sales.media.send]", {
+            "channel": channel,
+            "media_supported": False,
+            "success": sent.ok,
+        })
+    return sent

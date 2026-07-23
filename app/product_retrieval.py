@@ -5,6 +5,7 @@ import re
 import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from openai import APIError, AsyncOpenAI
@@ -47,6 +48,12 @@ class SpecificProductResolution:
     products: tuple[dict[str, Any], ...]
     match_source: Literal["exact", "openai"]
     invalid_ids_count: int = 0
+
+
+@dataclass(frozen=True)
+class CommercialPriceResolution:
+    amount: Decimal | None
+    source: str | None
 
 
 @dataclass(frozen=True)
@@ -267,20 +274,46 @@ class ProductRetrievalCompiler:
         )
 
 
-def effective_price(product: dict[str, Any]) -> float | None:
+def _decimal_money_value(value: Any) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, dict):
+        for key in ("value", "amount"):
+            if key in value:
+                return _decimal_money_value(value.get(key))
+        return None
+    try:
+        if isinstance(value, str):
+            normalized = value.replace("R$", "").replace("\xa0", " ").strip()
+            normalized = normalized.replace(" ", "")
+            if "," in normalized:
+                normalized = normalized.replace(".", "").replace(",", ".")
+            return Decimal(normalized)
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def resolve_commercial_price(
+    product: dict[str, Any],
+    *,
+    require_positive: bool = False,
+) -> CommercialPriceResolution:
+    first_present_source: str | None = None
     for key in ("current_price", "promotional_price", "price"):
-        value = product.get(key)
-        if value is None:
+        if key not in product or product.get(key) is None:
             continue
-        try:
-            if isinstance(value, str):
-                normalized = value.replace("R$", "").strip()
-                normalized = normalized.replace(".", "").replace(",", ".") if "," in normalized else normalized
-                return float(normalized)
-            return float(value)
-        except (TypeError, ValueError):
+        first_present_source = first_present_source or key
+        amount = _decimal_money_value(product.get(key))
+        if require_positive and (amount is None or amount <= Decimal("0")):
             continue
-    return None
+        return CommercialPriceResolution(amount=amount, source=key)
+    return CommercialPriceResolution(amount=None, source=first_present_source)
+
+
+def effective_price(product: dict[str, Any]) -> float | None:
+    resolved = resolve_commercial_price(product)
+    return float(resolved.amount) if resolved.amount is not None else None
 
 
 def _known_unavailable(product: dict[str, Any]) -> bool:

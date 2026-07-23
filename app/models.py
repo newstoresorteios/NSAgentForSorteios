@@ -24,6 +24,19 @@ class ProductPreferences(BaseModel):
     ] = Field(default_factory=list)
 
 
+class PurchaseItem(BaseModel):
+    reference_type: Literal[
+        "list_position",
+        "current_product",
+        "previous_recommendation",
+        "last_presented_product",
+        "explicit_product",
+    ] | None = Field(default_factory=lambda: None)
+    reference_position: int | None = Field(default_factory=lambda: None, ge=1)
+    explicit_product_name: str | None = Field(default_factory=lambda: None)
+    quantity: int = Field(default_factory=lambda: 1, ge=1)
+
+
 class SalesInterpretation(BaseModel):
     domain: Literal[
         "commerce",
@@ -64,8 +77,16 @@ class SalesInterpretation(BaseModel):
         "create_cart",
         "show_cart_link",
         "checkout_question",
+        "inspect_cart",
     ] | None = Field(default_factory=lambda: None)
     quantity: int | None = Field(default_factory=lambda: None, ge=1)
+    purchase_items: list[PurchaseItem] = Field(default_factory=list)
+    image_request: bool = Field(default_factory=bool)
+    payment_action: Literal[
+        "payment_options",
+        "installment",
+    ] | None = Field(default_factory=lambda: None)
+    installment_count: int | None = Field(default_factory=lambda: None, ge=1)
     active_topic: str | None = None
     purchase_stage: Literal[
         "discovery",

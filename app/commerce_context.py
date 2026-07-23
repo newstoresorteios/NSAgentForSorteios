@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .models import AgentResult, SalesInterpretation
+from .models import AgentResult, PurchaseItem, SalesInterpretation
 
 
 class CommerceProductReference(BaseModel):
@@ -21,6 +21,12 @@ class PresentedCommerceProduct(CommerceProductReference):
     position: int
 
 
+class CommerceCartItem(BaseModel):
+    product_id: str
+    variant_id: str | None = None
+    quantity: int = Field(ge=1)
+
+
 class CommerceConversationState(BaseModel):
     active_domain: Literal["commerce", "raffle"] | None = None
     active_topic: str | None = None
@@ -34,6 +40,7 @@ class CommerceConversationState(BaseModel):
     cart_product_id: str | None = None
     cart_variant_id: str | None = None
     cart_quantity: int | None = None
+    cart_items: list[CommerceCartItem] = Field(default_factory=list)
 
     @classmethod
     def from_payload(cls, value: Any) -> "CommerceConversationState":
@@ -74,6 +81,7 @@ class CommerceConversationState(BaseModel):
             "active_preferences": self.active_preferences,
             "purchase_stage": self.purchase_stage,
             "has_cart": bool(self.cart_session_id and self.cart_url),
+            "cart_item_count": len(self.cart_items),
         }
 
 
@@ -185,6 +193,72 @@ def resolve_commerce_reference(
     return None, "none"
 
 
+def resolve_purchase_item_reference(
+    item: PurchaseItem,
+    state: CommerceConversationState,
+) -> tuple[CommerceProductReference | None, str]:
+    reference_type = item.reference_type
+    if reference_type == "list_position" and item.reference_position is not None:
+        match = next(
+            (
+                product
+                for product in state.last_presented_products
+                if product.position == item.reference_position
+            ),
+            None,
+        )
+        if match:
+            return (
+                CommerceProductReference.model_validate(
+                    match.model_dump(exclude={"position"})
+                ),
+                "list_position",
+            )
+        return None, "none"
+    if reference_type == "current_product" and state.active_product:
+        return state.active_product, "active_product"
+    if reference_type == "previous_recommendation" and state.last_presented_products:
+        match = state.last_presented_products[0]
+        return (
+            CommerceProductReference.model_validate(
+                match.model_dump(exclude={"position"})
+            ),
+            "previous_recommendation",
+        )
+    if reference_type == "last_presented_product" and state.last_presented_products:
+        match = state.last_presented_products[-1]
+        return (
+            CommerceProductReference.model_validate(
+                match.model_dump(exclude={"position"})
+            ),
+            "last_presented_product",
+        )
+    if reference_type == "explicit_product" and item.explicit_product_name:
+        expected_tokens = [
+            token
+            for token in _fold(item.explicit_product_name).split()
+            if token
+        ]
+        matches = []
+        for product in state.last_presented_products:
+            text = _fold(
+                " ".join(
+                    filter(None, (product.name, product.reference, product.brand))
+                )
+            )
+            if expected_tokens and all(token in text for token in expected_tokens):
+                matches.append(product)
+        if len(matches) == 1:
+            return (
+                CommerceProductReference.model_validate(
+                    matches[0].model_dump(exclude={"position"})
+                ),
+                "explicit_product",
+            )
+        return None, "ambiguous" if len(matches) > 1 else "none"
+    return None, "none"
+
+
 def apply_commerce_domain_context(
     interpretation: SalesInterpretation,
     state: CommerceConversationState,
@@ -239,9 +313,19 @@ def evolve_commerce_state(
             "cart_product_id",
             "cart_variant_id",
             "cart_quantity",
+            "cart_items",
         ):
             if field in cart_state:
-                setattr(state, field, cart_state[field])
+                if field == "cart_items" and isinstance(cart_state[field], list):
+                    parsed_items: list[CommerceCartItem] = []
+                    for item in cart_state[field]:
+                        try:
+                            parsed_items.append(CommerceCartItem.model_validate(item))
+                        except (TypeError, ValueError):
+                            continue
+                    state.cart_items = parsed_items
+                else:
+                    setattr(state, field, cart_state[field])
     active_preferences = _compact_preferences(metadata.get("active_preferences"))
     if active_preferences:
         state.active_preferences = active_preferences

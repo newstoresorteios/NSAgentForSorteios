@@ -15,11 +15,18 @@ from .commerce_router import (
     _product_lines,
 )
 from .category_resolver import CategoryResolver
-from .cart_service import create_cart_checkout, current_cart_reply
+from .cart_service import (
+    CartItemRequest,
+    create_cart_checkout,
+    create_cart_items_checkout,
+    current_cart_reply,
+)
 from .commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
+    product_reference_from_product,
     resolve_commerce_reference,
+    resolve_purchase_item_reference,
 )
 from .config import get_settings
 from .guardrails import (
@@ -31,6 +38,8 @@ from .guardrails import (
     detect_coupon_code_inquiry,
 )
 from .models import AgentResult, IncomingMessage, SalesInterpretation
+from .payment_service import inspect_current_cart, inspect_payment_options
+from .product_media import resolve_product_image
 from .product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
     ProductMatchError,
@@ -75,6 +84,10 @@ Quando FACTS.match_status for ambiguous, apresente as correspondências plausív
 ao cliente para identificar qual delas pretendia, sem escolher uma arbitrariamente.
 Quando FACTS contiver cart_url, use somente esse link oficial. Nunca peça número completo
 do cartão, CVV, senha, código ou validade pelo WhatsApp; o pagamento termina no checkout.
+Preferências do cliente no plano não são fatos confirmados do produto. Só afirme material,
+cor, dimensões ou adequação física quando esses dados estiverem presentes em FACTS.
+Nunca transforme uma preferência desejada em característica do item. Para recomendar por
+medida corporal, use dimensões reais presentes no nome, propriedades ou descrição factual.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -178,6 +191,13 @@ Interprete semanticamente a etapa de carrinho:
   identificado; use reference_type/reference_position para indicar qual produto;
 - purchase_action=show_cart_link quando pede novamente o link do carrinho atual;
 - purchase_action=checkout_question quando pergunta como ou onde concluir o pagamento.
+- purchase_action=inspect_cart quando pergunta o total ou os itens do carrinho atual.
+Para comprar vários produtos, preencha purchase_items com uma entrada para cada item,
+preservando referência semântica e quantidade. Não invente IDs. Use list_position para
+itens numerados, current_product para o produto ativo e explicit_product com o nome citado.
+Defina image_request=true quando pedir imagem/foto do produto referenciado.
+Defina payment_action=payment_options para formas de pagamento e payment_action=installment
+quando pedir uma quantidade de parcelas; nesse caso extraia installment_count.
 Extraia quantity como inteiro positivo quando o cliente informar quantidade. Caso não
 informe, deixe quantity=null. Nunca invente product_id, variant_id, session_id ou cart_url.
 """.strip()
@@ -468,6 +488,13 @@ def interpretation_to_plan(
         "stop_clarification": interpretation.stop_clarification,
         "purchase_action": interpretation.purchase_action,
         "quantity": interpretation.quantity,
+        "purchase_items": [
+            item.model_dump(mode="json")
+            for item in interpretation.purchase_items
+        ],
+        "image_request": interpretation.image_request,
+        "payment_action": interpretation.payment_action,
+        "installment_count": interpretation.installment_count,
         "_source": interpretation._source,
     }
 
@@ -1500,6 +1527,154 @@ async def handle_sales_message(
             "resolved_by": resolved_by,
         })
     purchase_action = interpretation.purchase_action if interpretation is not None else None
+    purchase_requests: list[CartItemRequest] = []
+    unresolved_purchase_items = 0
+    unresolved_candidates: list[dict[str, Any]] = []
+    if interpretation is not None and interpretation.purchase_items:
+        for item in interpretation.purchase_items:
+            reference, item_resolved_by = resolve_purchase_item_reference(item, state)
+            if (
+                reference is None
+                and item.reference_type == "explicit_product"
+                and item.explicit_product_name
+            ):
+                item_subject = interpretation.subject.model_copy(update={
+                    "model": item.explicit_product_name,
+                    "reference": None,
+                    "ean": None,
+                })
+                item_interpretation = interpretation.model_copy(
+                    deep=True,
+                    update={
+                        "goal": "find",
+                        "subject": item_subject,
+                        "purchase_action": None,
+                        "purchase_items": [],
+                        "quantity": None,
+                        "needs_clarification": False,
+                        "ready_for_retrieval": True,
+                    },
+                )
+                lookup = await _execute_compiled_product_retrieval(item_interpretation)
+                candidates = (
+                    (lookup.commercial_data or {}).get("products")
+                    if lookup is not None
+                    else None
+                )
+                candidates = candidates if isinstance(candidates, list) else []
+                if len(candidates) == 1 and isinstance(candidates[0], dict):
+                    reference = product_reference_from_product(candidates[0])
+                    item_resolved_by = "explicit_product"
+                elif candidates:
+                    unresolved_candidates = [
+                        candidate
+                        for candidate in candidates[:3]
+                        if isinstance(candidate, dict)
+                    ]
+            if reference is None:
+                unresolved_purchase_items += 1
+                continue
+            purchase_requests.append(CartItemRequest(
+                product_reference=reference,
+                quantity=item.quantity,
+                position=item.reference_position,
+                resolved_from=item_resolved_by,
+            ))
+        print("[sales.cart.items]", {
+            "requested_count": len(interpretation.purchase_items),
+            "resolved_count": len(purchase_requests),
+        })
+        purchase_action = purchase_action or "create_cart"
+    if interpretation is not None and interpretation.image_request:
+        if resolved_product is None:
+            return _mark_sales_result(
+                AgentResult(
+                    reply_text="Preciso saber qual produto você quer ver antes de consultar a imagem.",
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="product_context_missing",
+                ),
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+            )
+        media_result = await resolve_product_image(
+            product_reference=resolved_product,
+            execute=execute_tool,
+        )
+        final = await _sales_response_with_openai(
+            message,
+            plan,
+            media_result,
+            interpretation,
+        )
+        if final:
+            return final
+        return _mark_sales_result(
+            media_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source=(
+                "technical_fallback"
+                if media_result.safety_reason == "product_media_technical_failure"
+                else "deterministic_fallback"
+            ),
+            used_openai_responder=False,
+            used_tray=True,
+            fallback_reason=media_result.safety_reason,
+        )
+    if interpretation is not None and interpretation.payment_action:
+        payment_result = await inspect_payment_options(
+            state=state,
+            installment_count=interpretation.installment_count,
+            execute=execute_tool,
+        )
+        final = await _sales_response_with_openai(
+            message,
+            plan,
+            payment_result,
+            interpretation,
+        )
+        if final:
+            return final
+        return _mark_sales_result(
+            payment_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source=(
+                "technical_fallback"
+                if payment_result.safety_reason == "payment_options_technical_failure"
+                else "deterministic_fallback"
+            ),
+            used_openai_responder=False,
+            used_tray=bool(payment_result.response_metadata.get("used_tray")),
+            fallback_reason=payment_result.safety_reason,
+        )
+    if purchase_action == "inspect_cart":
+        cart_result = await inspect_current_cart(state=state, execute=execute_tool)
+        final = await _sales_response_with_openai(
+            message,
+            plan,
+            cart_result,
+            interpretation,
+        )
+        if final:
+            return final
+        return _mark_sales_result(
+            cart_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source=(
+                "technical_fallback"
+                if cart_result.safety_reason == "cart_technical_failure"
+                else "deterministic_fallback"
+            ),
+            used_openai_responder=False,
+            used_tray=bool(cart_result.response_metadata.get("used_tray")),
+            fallback_reason=cart_result.safety_reason,
+        )
     if (
         purchase_action is None
         and interpretation is not None
@@ -1532,13 +1707,43 @@ async def handle_sales_message(
             used_tray=False,
             fallback_reason="sales_responder_unavailable",
         )
-    if purchase_action == "create_cart" and resolved_product is not None:
-        cart_result = await create_cart_checkout(
+    if purchase_action == "create_cart" and unresolved_purchase_items:
+        return _mark_sales_result(
+            AgentResult(
+                reply_text="Encontrei mais de uma possibilidade. Confirme quais itens da lista devem entrar no carrinho.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="ambiguous_purchase_item",
+                commercial_data={
+                    "products": unresolved_candidates or [
+                        item.model_dump(mode="json")
+                        for item in state.last_presented_products
+                    ],
+                    "cart": {"status": "item_clarification_required"},
+                },
+                response_metadata={"presented_products": bool(unresolved_candidates)},
+            ),
             interpretation=interpretation,
-            product_reference=resolved_product,
-            state=state,
-            execute=execute_tool,
+            goal=plan.get("goal"),
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason="purchase_item_unresolved",
         )
+    if purchase_action == "create_cart" and (purchase_requests or resolved_product is not None):
+        if purchase_requests:
+            cart_result = await create_cart_items_checkout(
+                item_requests=purchase_requests,
+                state=state,
+                execute=execute_tool,
+            )
+        else:
+            cart_result = await create_cart_checkout(
+                interpretation=interpretation,
+                product_reference=resolved_product,
+                state=state,
+                execute=execute_tool,
+            )
         final = await _sales_response_with_openai(
             message,
             plan,

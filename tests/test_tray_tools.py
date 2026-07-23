@@ -53,6 +53,33 @@ class FakeTray:
             "secret": "omit",
         }
 
+    async def get_cart_complete(self, session_id):
+        self.calls.append(("get_cart_complete", session_id))
+        return {
+            "data": {
+                "cart": {
+                    "cart_id": "C1",
+                    "session_id": session_id,
+                    "total": "199.80",
+                    "items": [{
+                        "product_id": "641",
+                        "variant_id": "V1",
+                        "quantity": 2,
+                        "unit_price": "99.90",
+                    }],
+                }
+            }
+        }
+
+    async def get_payment_options(self, cart_session_id):
+        self.calls.append(("get_payment_options", cart_session_id))
+        return {
+            "payment_options": [
+                {"type": "pix", "plots": "1", "value": "189.81", "tax": "0.00"},
+                {"type": "credit", "plots": "10", "value": "19.98", "tax": "0.00"},
+            ]
+        }
+
 
 @pytest.mark.asyncio
 async def test_search_products_reduces_payload_and_uses_name():
@@ -178,6 +205,61 @@ async def test_cart_tools_use_normalized_adapter_contract():
             "price": "99.90",
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_wrapped_product_detail_preserves_commercial_price():
+    class WrappedTray(FakeTray):
+        async def get_product(self, product_id):
+            return {
+                "data": {
+                    "product": {
+                        "id": product_id,
+                        "name": "Produto",
+                        "current_price": "6199.99",
+                        "available": True,
+                    }
+                }
+            }
+
+    product = await execute_tool(
+        "get_product",
+        {"product_id": "1025"},
+        WrappedTray(),
+    )
+
+    assert product["id"] == "1025"
+    assert product["current_price"] == "6199.99"
+
+
+@pytest.mark.asyncio
+async def test_complete_cart_and_payment_options_are_normalized():
+    client = FakeTray()
+
+    cart = await execute_tool(
+        "get_cart_complete",
+        {"session_id": "S1"},
+        client,
+    )
+    payments = await execute_tool(
+        "get_payment_options",
+        {"cart_session_id": "S1"},
+        client,
+    )
+
+    assert cart["total"] == "199.80"
+    assert cart["items"] == [{
+        "product_id": "641",
+        "variant_id": "V1",
+        "quantity": 2,
+        "unit_price": "99.90",
+    }]
+    assert payments["payment_options"]["pix"]["value"] == 189.81
+    assert payments["payment_options"]["installments"][0] == {
+        "count": 10,
+        "value": 19.98,
+        "interest": False,
+    }
 
 
 def test_cart_side_effect_is_not_exposed_as_an_openai_tool():

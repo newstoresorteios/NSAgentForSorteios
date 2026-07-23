@@ -182,6 +182,16 @@ class TrayAdapterClient:
     async def get_cart(self, session_id: str) -> Any:
         return await self._request("GET", f"/internal/carts/{session_id}")
 
+    async def get_cart_complete(self, session_id: str) -> Any:
+        return await self._request("GET", f"/internal/carts/{session_id}/complete")
+
+    async def get_payment_options(self, cart_session_id: str) -> Any:
+        return await self._request(
+            "GET",
+            "/internal/payments/options",
+            params={"cart_session_id": cart_session_id},
+        )
+
     async def list_categories(self, *, limit: int = 50, page: int = 1) -> Any:
         return await self._request(
             "GET",

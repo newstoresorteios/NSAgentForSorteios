@@ -60,6 +60,42 @@ def test_structured_plan_preserves_cart_action_and_quantity():
     assert plan["quantity"] == 3
 
 
+def test_structured_plan_preserves_multiple_purchase_items():
+    from app.sales_agent import interpretation_to_plan
+
+    plan = interpretation_to_plan(
+        _interpretation(
+            purchase_items=[
+                {
+                    "reference_type": "list_position",
+                    "reference_position": 1,
+                    "quantity": 2,
+                },
+                {
+                    "reference_type": "list_position",
+                    "reference_position": 2,
+                    "quantity": 1,
+                },
+            ],
+        )
+    )
+
+    assert plan["purchase_items"] == [
+        {
+            "reference_type": "list_position",
+            "reference_position": 1,
+            "explicit_product_name": None,
+            "quantity": 2,
+        },
+        {
+            "reference_type": "list_position",
+            "reference_position": 2,
+            "explicit_product_name": None,
+            "quantity": 1,
+        },
+    ]
+
+
 @pytest.mark.asyncio
 async def test_list_selection_revalidates_price_quantity_and_creates_cart(monkeypatch):
     import app.sales_agent as sales_agent
@@ -81,6 +117,13 @@ async def test_list_selection_revalidates_price_quantity_and_creates_cart(monkey
                 "cart_id": "CART-1",
                 "session_id": "SESSION-1",
                 "cart_url": "https://loja.example/checkout/SESSION-1",
+            }
+        if tool == "get_cart_complete":
+            return {
+                "cart_id": "CART-1",
+                "session_id": "SESSION-1",
+                "total": "251.00",
+                "items": [{"product_id": "B", "quantity": 2}],
             }
         raise AssertionError(f"unexpected tool {tool}")
 
@@ -112,6 +155,7 @@ async def test_list_selection_revalidates_price_quantity_and_creates_cart(monkey
                 "price": "125.50",
             },
         ),
+        ("get_cart_complete", {"session_id": "SESSION-1"}),
     ]
     assert result.response_metadata["purchase_stage"] == "cart_created"
     assert result.response_metadata["cart_state"]["cart_product_id"] == "B"
@@ -180,6 +224,11 @@ async def test_single_variant_is_validated_and_used(monkeypatch):
                 "session_id": "S1",
                 "cart_url": "https://loja.example/checkout/S1",
             }
+        if tool == "get_cart_complete":
+            return {
+                "items": [{"product_id": "B", "variant_id": "V1", "quantity": 1}],
+                "total": "95.00",
+            }
         raise AssertionError(tool)
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
@@ -193,8 +242,9 @@ async def test_single_variant_is_validated_and_used(monkeypatch):
     )
 
     assert result is not None
-    assert calls[-1][1]["variant_id"] == "V1"
-    assert calls[-1][1]["price"] == "95.00"
+    create_call = next(arguments for tool, arguments in calls if tool == "create_cart")
+    assert create_call["variant_id"] == "V1"
+    assert create_call["price"] == "95.00"
     assert result.response_metadata["active_product"]["variant_id"] == "V1"
 
 
@@ -320,6 +370,11 @@ async def test_persistent_cart_state_is_loaded_by_evolution():
                 "session_id": "S1",
                 "cart_url": "https://loja.example/checkout/S1",
             }
+        if tool == "get_cart_complete":
+            return {
+                "items": [{"product_id": "B", "quantity": 1}],
+                "total": "10.00",
+            }
         raise AssertionError(tool)
 
     previous = _state(active_product={"product_id": "B", "name": "Produto B"})
@@ -436,6 +491,11 @@ async def test_active_product_purchase_does_not_search_by_name(monkeypatch):
                 "session_id": "S1",
                 "cart_url": "https://loja.example/checkout/S1",
             }
+        if tool == "get_cart_complete":
+            return {
+                "items": [{"product_id": "B", "quantity": 1}],
+                "total": "10.00",
+            }
         raise AssertionError(tool)
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
@@ -450,7 +510,11 @@ async def test_active_product_purchase_does_not_search_by_name(monkeypatch):
     )
 
     assert result is not None
-    assert [tool for tool, _ in calls] == ["get_product", "create_cart"]
+    assert [tool for tool, _ in calls] == [
+        "get_product",
+        "create_cart",
+        "get_cart_complete",
+    ]
     assert all(tool != "search_products" for tool, _ in calls)
 
 
