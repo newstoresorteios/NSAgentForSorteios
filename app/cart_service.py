@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import unicodedata
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
@@ -12,6 +13,7 @@ from .commerce_context import (
 )
 from .models import AgentResult, SalesInterpretation
 from .product_retrieval import (
+    commercial_availability_facts,
     product_availability_state,
     resolve_commercial_price,
 )
@@ -26,6 +28,7 @@ class CartItemRequest:
     quantity: int = 1
     position: int | None = None
     resolved_from: str = "context"
+    variant_preferences: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -86,6 +89,16 @@ def _variant_id(variant: dict[str, Any]) -> str | None:
     return str(value) if value is not None else None
 
 
+def _flag_is_true(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return _fold_choice(value) in {"1", "true", "yes", "sim"}
+    return False
+
+
 def _with_selected_product(
     result: AgentResult,
     product_reference: CommerceProductReference,
@@ -96,17 +109,139 @@ def _with_selected_product(
         product_reference.model_dump(mode="json"),
     )
     result.response_metadata.setdefault("purchase_stage", "selection")
+    if result.safety_reason == "variant_required":
+        result.response_metadata.setdefault("pending_action", "create_cart")
+        result.response_metadata.setdefault(
+            "pending_action_product_ids",
+            [product_reference.product_id],
+        )
+        print("[sales.pending_action]", {
+            "action": "create_cart",
+            "has_product": True,
+            "confirmation": "none",
+            "executed": False,
+        })
     return result
+
+
+_VARIANT_NON_CHOICE_FIELDS = {
+    "id",
+    "variant_id",
+    "product_id",
+    "reference",
+    "sku",
+    "price",
+    "promotional_price",
+    "current_price",
+    "stock",
+    "available",
+    "available_in_store",
+    "available_for_purchase",
+    "availability",
+    "variationsettings",
+    "primary_image_url",
+    "primary_image",
+    "image_url",
+    "image",
+    "images",
+}
+
+
+def _choice_scalars(value: Any, *, prefix: str = "") -> dict[str, str]:
+    choices: dict[str, str] = {}
+    if isinstance(value, dict):
+        label = value.get("name") or value.get("label") or value.get("key")
+        selected = value.get("value")
+        if label is not None and selected not in (None, "", [], {}):
+            choices[str(label)] = str(selected)
+        for key, item in value.items():
+            if key in {"name", "label", "key", "value"}:
+                continue
+            if str(key).lower() in _VARIANT_NON_CHOICE_FIELDS:
+                continue
+            nested_prefix = f"{prefix}.{key}" if prefix else str(key)
+            choices.update(_choice_scalars(item, prefix=nested_prefix))
+        return choices
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            choices.update(_choice_scalars(item, prefix=f"{prefix}.{index}"))
+        return choices
+    if value not in (None, "") and prefix:
+        choices[prefix] = str(value)
+    return choices
+
+
+def variant_choices(variant: dict[str, Any]) -> dict[str, str]:
+    choices: dict[str, str] = {}
+    name = variant.get("name")
+    value = variant.get("value")
+    if name not in (None, "") and value not in (None, ""):
+        choices[str(name)] = str(value)
+    for key, item in variant.items():
+        normalized_key = str(key).lower()
+        if normalized_key in _VARIANT_NON_CHOICE_FIELDS:
+            if normalized_key == "sku" and isinstance(item, (dict, list)):
+                choices.update(_choice_scalars(item, prefix=str(key)))
+            continue
+        if key in {"name", "value"} and name not in (None, "") and value not in (None, ""):
+            continue
+        if isinstance(item, (dict, list)):
+            choices.update(_choice_scalars(item, prefix=str(key)))
+        elif item not in (None, "", True, False):
+            choices[str(key)] = str(item)
+    return choices
+
+
+def _fold_choice(value: Any) -> str:
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKD", str(value or "").casefold())
+        if not unicodedata.combining(char)
+    ).strip()
+
+
+def _choice_signature(variant: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted(
+        (
+            _fold_choice(key),
+            _fold_choice(value),
+        )
+        for key, value in variant_choices(variant).items()
+        if str(value).strip()
+    ))
+
+
+def _preference_values(preferences: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for value in preferences.values():
+        if isinstance(value, list):
+            values.extend(
+                _fold_choice(item)
+                for item in value
+                if str(item).strip()
+            )
+        elif value not in (None, "", {}, False):
+            values.append(_fold_choice(value))
+    return values
 
 
 async def _resolve_variant(
     product: dict[str, Any],
     product_reference: CommerceProductReference,
+    preferences: dict[str, Any],
     execute: ToolExecutor,
 ) -> tuple[dict[str, Any] | None, AgentResult | None]:
     selected_id = product_reference.variant_id
-    requires_variation = bool(product.get("has_variation")) or selected_id is not None
+    requires_variation = _flag_is_true(product.get("has_variation")) or selected_id is not None
     if not requires_variation:
+        print("[sales.variant.resolve]", {
+            "variant_count": 0,
+            "eligible_count": 0,
+            "distinct_choice_count": 0,
+            "choice_required": False,
+            "auto_selected": False,
+            "has_variant_id": False,
+        })
         return None, None
 
     result = await execute(
@@ -135,6 +270,14 @@ async def _resolve_variant(
                 "Não consegui validar a variação escolhida. Escolha uma das opções disponíveis.",
                 "variant_required",
             )
+        print("[sales.variant.resolve]", {
+            "variant_count": len(variants),
+            "eligible_count": len(variants),
+            "distinct_choice_count": len({_choice_signature(variant) for variant in variants}),
+            "choice_required": False,
+            "auto_selected": False,
+            "has_variant_id": True,
+        })
         return selected, None
 
     eligible = [
@@ -142,16 +285,82 @@ async def _resolve_variant(
         for variant in variants
         if product_availability_state(variant) != "unavailable"
     ]
-    if len(eligible) == 1:
-        return eligible[0], None
+    signatures = {_choice_signature(variant) for variant in eligible}
+    selected: dict[str, Any] | None = None
+    choice_required = False
+    if not variants:
+        selected = None
+    elif not eligible:
+        print("[sales.variant.resolve]", {
+            "variant_count": len(variants),
+            "eligible_count": 0,
+            "distinct_choice_count": 0,
+            "choice_required": False,
+            "auto_selected": False,
+            "has_variant_id": False,
+        })
+        return None, _validation_failure(
+            "As variações deste produto estão indisponíveis no momento.",
+            "product_unavailable",
+        )
+    elif len(eligible) == 1 or len(signatures) <= 1:
+        selected = eligible[0]
+    else:
+        preference_values = _preference_values(preferences)
+        matched = [
+            variant
+            for variant in eligible
+            if any(
+                preference in " ".join(
+                    f"{key} {value}"
+                    for key, value in _choice_signature(variant)
+                )
+                for preference in preference_values
+            )
+        ]
+        matched_signatures = {_choice_signature(variant) for variant in matched}
+        if matched and len(matched_signatures) == 1:
+            selected = matched[0]
+        else:
+            choice_required = True
+    print("[sales.variant.resolve]", {
+        "variant_count": len(variants),
+        "eligible_count": len(eligible),
+        "distinct_choice_count": len(signatures),
+        "choice_required": choice_required,
+        "auto_selected": selected is not None,
+        "has_variant_id": bool(selected and _variant_id(selected)),
+    })
+    if not choice_required:
+        return selected, None
+    choice_labels = [
+        " / ".join(
+            f"{key}: {value}"
+            for key, value in variant_choices(variant).items()
+        )
+        for variant in eligible[:10]
+    ]
+    variant_reply = "Preciso confirmar uma das opções reais deste produto."
+    if any(choice_labels):
+        variant_reply += "\n" + "\n".join(
+            f"{index}. {label}"
+            for index, label in enumerate(choice_labels, start=1)
+            if label
+        )
     return None, AgentResult(
-        reply_text="Preciso confirmar qual variação você prefere antes de preparar o carrinho.",
+        reply_text=variant_reply,
         intent="commerce",
         handoff_required=False,
         safety_reason="variant_required",
         commercial_data={
             "cart": {"status": "variant_required"},
-            "variants": eligible[:10],
+            "variants": [
+                {
+                    **variant,
+                    "choices": variant_choices(variant),
+                }
+                for variant in eligible[:10]
+            ],
             "products": [product],
         },
         response_metadata={"used_tray": True},
@@ -251,6 +460,12 @@ async def _prepare_item(
         if value is not None
     }
     product.update(current)
+    product["commercial_availability"] = commercial_availability_facts(product)
+    print("[sales.availability.fact]", {
+        "has_stock": product["commercial_availability"]["has_stock"],
+        "has_lead_time": product["commercial_availability"]["has_lead_time"],
+        "immediate_delivery_supported": product["commercial_availability"]["immediate_delivery_supported"],
+    })
 
     if product_availability_state(product) == "unavailable":
         return None, _with_selected_product(
@@ -261,8 +476,17 @@ async def _prepare_item(
             reference,
         )
 
-    variant, variant_error = await _resolve_variant(product, reference, execute)
+    variant, variant_error = await _resolve_variant(
+        product,
+        reference,
+        request.variant_preferences,
+        execute,
+    )
     if variant_error is not None:
+        print("[sales.purchase.progress]", {
+            "purchase_stage": "selection",
+            "blocking_reason": variant_error.safety_reason,
+        })
         return None, _with_selected_product(variant_error, reference)
     if variant is not None and product_availability_state(variant) == "unavailable":
         return None, _with_selected_product(
@@ -290,6 +514,10 @@ async def _prepare_item(
         ean=str(product["ean"]) if product.get("ean") is not None else reference.ean,
         brand=str(product["brand"]) if product.get("brand") is not None else reference.brand,
     )
+    print("[sales.purchase.progress]", {
+        "purchase_stage": "cart_creating",
+        "blocking_reason": None,
+    })
     return _PreparedCartItem(
         product_reference=active_reference,
         product=product,
@@ -575,6 +803,10 @@ async def create_cart_checkout(
                 quantity=quantity,
                 position=interpretation.reference_position,
                 resolved_from=interpretation.reference_type or "context",
+                variant_preferences=interpretation.preferences.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                ),
             )
         ],
         state=state,

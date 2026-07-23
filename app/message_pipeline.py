@@ -97,6 +97,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "active_topic_present": bool(commerce_state.active_topic),
         "purchase_stage": commerce_state.purchase_stage,
         "has_cart_session": bool(commerce_state.cart_session_id),
+        "pending_action": commerce_state.pending_action,
+        "pending_action_has_product": bool(commerce_state.pending_action_product_ids),
     })
 
     user_id = customer_context.get("user_id")

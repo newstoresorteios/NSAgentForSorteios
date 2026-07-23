@@ -266,8 +266,8 @@ async def test_multiple_variants_require_choice_before_cart(monkeypatch):
         if tool == "list_product_variants":
             return {
                 "variants": [
-                    {"id": "V1", "available": True},
-                    {"id": "V2", "available": True},
+                    {"id": "V1", "available": True, "color": "Preto"},
+                    {"id": "V2", "available": True, "color": "Azul"},
                 ]
             }
         raise AssertionError("cart must not be created")

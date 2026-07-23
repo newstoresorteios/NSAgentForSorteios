@@ -92,6 +92,11 @@ class SalesInterpretation(BaseModel):
         "boleto",
         "other",
     ] | None = Field(default_factory=lambda: None)
+    confirmation: Literal[
+        "confirm",
+        "reject",
+        "none",
+    ] = Field(default_factory=lambda: "none")
     installment_count: int | None = Field(default_factory=lambda: None, ge=1)
     active_topic: str | None = None
     purchase_stage: Literal[
@@ -107,6 +112,7 @@ class SalesInterpretation(BaseModel):
 
     _source: str = PrivateAttr(default="openai")
     _fallback_reason: str | None = PrivateAttr(default=None)
+    _clear_pending_action: bool = PrivateAttr(default=False)
 
 
 class IncomingMessage(BaseModel):

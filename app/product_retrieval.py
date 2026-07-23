@@ -385,6 +385,56 @@ def product_availability_state(
     return "unknown"
 
 
+def commercial_availability_facts(product: dict[str, Any]) -> dict[str, Any]:
+    settings = product.get("ProductSettings")
+    settings = settings if isinstance(settings, dict) else {}
+    lead_time_value = next(
+        (
+            source.get(key)
+            for source in (product, settings)
+            for key in (
+                "order_days_availability",
+                "lead_time_days",
+                "availability_days",
+                "delivery_days",
+                "lead_time",
+            )
+            if source.get(key) not in (None, "")
+        ),
+        None,
+    )
+    lead_time_days: int | None = None
+    if isinstance(lead_time_value, (int, float)) and not isinstance(lead_time_value, bool):
+        lead_time_days = max(int(lead_time_value), 0)
+    elif isinstance(lead_time_value, str):
+        match = re.search(r"\d+", lead_time_value)
+        if match:
+            lead_time_days = int(match.group(0))
+
+    immediate_flag = next(
+        (
+            state
+            for source in (product, settings)
+            for key in ("immediate_delivery", "ready_to_ship")
+            if (state := _truth_state(source.get(key))) is not None
+        ),
+        None,
+    )
+    if lead_time_days is not None:
+        immediate_delivery_supported: bool | None = lead_time_days == 0
+    else:
+        immediate_delivery_supported = immediate_flag
+    stock = product.get("stock")
+    return {
+        "availability_state": product_availability_state(product),
+        "has_stock": stock is not None,
+        "stock": stock,
+        "has_lead_time": lead_time_days is not None,
+        "lead_time_days": lead_time_days,
+        "immediate_delivery_supported": immediate_delivery_supported,
+    }
+
+
 def hard_filter_products(
     products: list[dict[str, Any]],
     interpretation: SalesInterpretation,
@@ -789,7 +839,7 @@ async def enrich_product_variants(
     for product in products:
         product_id = str(product.get("id")) if product.get("id") is not None else ""
         should_check = product_id in candidate_ids and (
-            needs_evidence or bool(product.get("has_variation"))
+            needs_evidence or _truth_state(product.get("has_variation")) is True
         )
         if not should_check:
             enriched.append(product)
@@ -833,7 +883,14 @@ async def revalidate_products(
         if "error" in result:
             failed = True
             continue
-        refreshed.append({**product, **result})
+        current = {**product, **result}
+        current["commercial_availability"] = commercial_availability_facts(current)
+        print("[sales.availability.fact]", {
+            "has_stock": current["commercial_availability"]["has_stock"],
+            "has_lead_time": current["commercial_availability"]["has_lead_time"],
+            "immediate_delivery_supported": current["commercial_availability"]["immediate_delivery_supported"],
+        })
+        refreshed.append(current)
     if refreshed:
         refreshed = await enrich_product_variants(refreshed, interpretation, execute_tool)
     return refreshed, failed

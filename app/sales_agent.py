@@ -43,6 +43,7 @@ from .payment_service import inspect_current_cart, inspect_payment_options
 from .product_media import resolve_product_image
 from .product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
+    commercial_availability_facts,
     ProductMatchError,
     ProductRetrievalCompiler,
     enrich_product_variants,
@@ -89,6 +90,9 @@ Preferências do cliente no plano não são fatos confirmados do produto. Só af
 cor, dimensões ou adequação física quando esses dados estiverem presentes em FACTS.
 Nunca transforme uma preferência desejada em característica do item. Para recomendar por
 medida corporal, use dimensões reais presentes no nome, propriedades ou descrição factual.
+Estoque positivo, sozinho, não significa pronta entrega. Só afirme entrega imediata quando
+commercial_availability.immediate_delivery_supported nos FACTS for igual a true. Se houver prazo,
+informe o prazo comercial e não o contradiga com uma promessa de pronta entrega.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -203,6 +207,15 @@ e defina purchase_action=create_cart no mesmo resultado. Nao deixe a intencao de
 pagamento apagar o compromisso de compra.
 Use payment_method_preference somente quando o cliente escolher ou declarar preferencia
 por pix, card, boleto ou other; uma pergunta geral sobre aceitacao nao e uma escolha.
+COMMERCE_STATE.pending_action representa uma acao concreta oferecida imediatamente antes.
+Defina confirmation=confirm quando a mensagem atual aceitar semanticamente essa acao,
+confirmation=reject quando recusar e confirmation=none quando nao responder a ela.
+Nao dependa de uma palavra exata. Se confirmar create_cart/confirm_purchase, preserve
+goal=buy e purchase_action=create_cart. Se mudar de produto ou assunto, nao confirme a
+acao anterior.
+Se o assistente pediu uma escolha factual de variante para concluir pending_action=create_cart
+e o cliente fornecer essa preferencia, use confirmation=none, preserve a preferencia
+estruturada e mantenha purchase_action=create_cart para continuar a mesma compra.
 Defina payment_action=payment_options para formas de pagamento e payment_action=installment
 quando pedir uma quantidade de parcelas; nesse caso extraia installment_count.
 Extraia quantity como inteiro positivo quando o cliente informar quantidade. Caso não
@@ -502,6 +515,7 @@ def interpretation_to_plan(
         "image_request": interpretation.image_request,
         "payment_action": interpretation.payment_action,
         "payment_method_preference": interpretation.payment_method_preference,
+        "confirmation": interpretation.confirmation,
         "installment_count": interpretation.installment_count,
         "_source": interpretation._source,
     }
@@ -786,6 +800,8 @@ def _mark_sales_result(
         fallback_reason=fallback_reason or (interpretation._fallback_reason if interpretation else None),
     )
     if interpretation is not None:
+        if interpretation._clear_pending_action:
+            marked.response_metadata["clear_pending_action"] = True
         marked.response_metadata.setdefault("active_topic", interpretation.active_topic)
         marked.response_metadata.setdefault("purchase_stage", interpretation.purchase_stage)
         marked.response_metadata.setdefault(
@@ -1096,6 +1112,17 @@ async def _execute_contextual_product_lookup(
                 safety_reason="tray_adapter_unavailable",
             )
     enriched = await enrich_product_variants([product], interpretation, execute_tool)
+    availability_input = {
+        **enriched[0],
+        **(inventory or {}),
+    }
+    availability_facts = commercial_availability_facts(availability_input)
+    enriched[0]["commercial_availability"] = availability_facts
+    print("[sales.availability.fact]", {
+        "has_stock": availability_facts["has_stock"],
+        "has_lead_time": availability_facts["has_lead_time"],
+        "immediate_delivery_supported": availability_facts["immediate_delivery_supported"],
+    })
     availability_state = product_availability_state(enriched[0])
     print("[sales.product.availability]", {
         "resolved": True,
@@ -1607,6 +1634,52 @@ def _purchase_product_required_result(
     )
 
 
+def _pending_product_references(
+    state: CommerceConversationState,
+) -> list[CommerceProductReference]:
+    by_id: dict[str, CommerceProductReference] = {}
+    if state.active_product is not None:
+        by_id[state.active_product.product_id] = state.active_product
+    for product in state.last_presented_products:
+        by_id[product.product_id] = CommerceProductReference.model_validate(
+            product.model_dump(exclude={"position"})
+        )
+    if state.pending_action_product_ids:
+        return [
+            by_id[product_id]
+            for product_id in state.pending_action_product_ids
+            if product_id in by_id
+        ]
+    return [state.active_product] if state.active_product is not None else []
+
+
+def _pending_action_rejected_result(
+    interpretation: SalesInterpretation,
+    state: CommerceConversationState,
+) -> AgentResult:
+    print("[sales.pending_action]", {
+        "action": state.pending_action,
+        "has_product": bool(_pending_product_references(state)),
+        "confirmation": interpretation.confirmation,
+        "executed": False,
+    })
+    interpretation._clear_pending_action = True
+    return _mark_sales_result(
+        AgentResult(
+            reply_text="Tudo bem. Não vou executar essa ação.",
+            intent="commerce",
+            handoff_required=False,
+            response_metadata={"clear_pending_action": True},
+        ),
+        interpretation=interpretation,
+        goal=interpretation.goal,
+        response_source="deterministic_fallback",
+        used_openai_responder=False,
+        used_tray=False,
+        fallback_reason="pending_action_rejected",
+    )
+
+
 async def handle_sales_message(
     message: IncomingMessage,
     facts: dict[str, Any],
@@ -1625,6 +1698,18 @@ async def handle_sales_message(
     if not plan:
         return None
     state = commerce_state or CommerceConversationState()
+    if (
+        interpretation is not None
+        and state.pending_action
+        and interpretation.confirmation == "reject"
+    ):
+        return _pending_action_rejected_result(interpretation, state)
+    if (
+        interpretation is not None
+        and state.pending_action
+        and interpretation.confirmation == "none"
+    ):
+        interpretation._clear_pending_action = True
     resolved_product = None
     resolved_by = "none"
     if interpretation is not None:
@@ -1639,6 +1724,72 @@ async def handle_sales_message(
     purchase_requests: list[CartItemRequest] = []
     unresolved_purchase_items = 0
     unresolved_candidates: list[dict[str, Any]] = []
+    pending_link_requested = False
+    if (
+        interpretation is not None
+        and state.pending_action
+        and interpretation.confirmation == "confirm"
+    ):
+        pending_references = _pending_product_references(state)
+        pending_action = state.pending_action
+        interpretation._clear_pending_action = True
+        if pending_action in {"create_cart", "confirm_purchase"}:
+            purchase_action = "create_cart"
+            if len(pending_references) == 1:
+                resolved_product = pending_references[0]
+                resolved_by = "product_id"
+            elif pending_references:
+                purchase_requests.extend(
+                    CartItemRequest(
+                        product_reference=reference,
+                        quantity=interpretation.quantity or 1,
+                        resolved_from="pending_action",
+                        variant_preferences=interpretation.preferences.model_dump(
+                            mode="json",
+                            exclude_none=True,
+                        ),
+                    )
+                    for reference in pending_references
+                )
+        elif pending_action == "show_images":
+            interpretation = interpretation.model_copy(update={"image_request": True})
+            interpretation._clear_pending_action = True
+            plan = interpretation_to_plan(interpretation, message.text)
+            if len(pending_references) == 1:
+                resolved_product = pending_references[0]
+                resolved_by = "product_id"
+        elif pending_action == "show_payment_options":
+            interpretation = interpretation.model_copy(
+                update={
+                    "payment_action": "payment_options",
+                    "purchase_action": (
+                        "create_cart"
+                        if not state.cart_session_id and len(pending_references) == 1
+                        else interpretation.purchase_action
+                    ),
+                }
+            )
+            interpretation._clear_pending_action = True
+            plan = interpretation_to_plan(interpretation, message.text)
+            purchase_action = interpretation.purchase_action
+            if len(pending_references) == 1:
+                resolved_product = pending_references[0]
+                resolved_by = "product_id"
+        elif pending_action == "send_product_link":
+            pending_link_requested = True
+            if len(pending_references) == 1:
+                resolved_product = pending_references[0]
+                resolved_by = "product_id"
+        print("[sales.pending_action]", {
+            "action": pending_action,
+            "has_product": bool(pending_references),
+            "confirmation": interpretation.confirmation,
+            "executed": bool(
+                resolved_product
+                or purchase_requests
+                or pending_action == "show_payment_options"
+            ),
+        })
     if interpretation is not None and interpretation.purchase_items:
         for item in interpretation.purchase_items:
             reference, item_resolved_by = resolve_purchase_item_reference(item, state)
@@ -1688,6 +1839,10 @@ async def handle_sales_message(
                 quantity=item.quantity,
                 position=item.reference_position,
                 resolved_from=item_resolved_by,
+                variant_preferences=interpretation.preferences.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                ),
             ))
         print("[sales.cart.items]", {
             "requested_count": len(interpretation.purchase_items),
@@ -1778,6 +1933,57 @@ async def handle_sales_message(
             used_openai_responder=False,
             used_tray=True,
             fallback_reason=media_result.safety_reason,
+        )
+    if interpretation is not None and pending_link_requested:
+        if resolved_product is None:
+            missing = _purchase_product_required_result(state)
+            return _mark_sales_result(
+                missing,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=missing.safety_reason,
+            )
+        link_result = await _execute_contextual_product_lookup(
+            interpretation,
+            resolved_product,
+        )
+        link_products = (link_result.commercial_data or {}).get("products")
+        link_product = (
+            link_products[0]
+            if isinstance(link_products, list)
+            and link_products
+            and isinstance(link_products[0], dict)
+            else {}
+        )
+        product_url = link_product.get("url")
+        if isinstance(product_url, str) and product_url.startswith(("https://", "http://")):
+            link_result.reply_text = f"Este é o link oficial do produto:\n{product_url}"
+        elif link_result.safety_reason is None:
+            link_result.reply_text = "A Tray não informou um link oficial para este produto."
+        link_result.response_metadata["clear_pending_action"] = True
+        final = await _sales_response_with_openai(
+            message,
+            plan,
+            link_result,
+            interpretation,
+        )
+        if final:
+            return final
+        return _mark_sales_result(
+            link_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source=(
+                "technical_fallback"
+                if link_result.safety_reason == "tray_adapter_unavailable"
+                else "deterministic_fallback"
+            ),
+            used_openai_responder=False,
+            used_tray=True,
+            fallback_reason=link_result.safety_reason,
         )
     if (
         purchase_action is None
@@ -2179,6 +2385,18 @@ async def handle_sales_message(
         })
         if resolved_product is not None:
             tray_result.response_metadata["active_product"] = resolved_product.model_dump(mode="json")
+            if not state.cart_session_id:
+                tray_result.response_metadata.setdefault("pending_action", "create_cart")
+                tray_result.response_metadata.setdefault(
+                    "pending_action_product_ids",
+                    [resolved_product.product_id],
+                )
+                print("[sales.pending_action]", {
+                    "action": "create_cart",
+                    "has_product": True,
+                    "confirmation": interpretation.confirmation,
+                    "executed": False,
+                })
         if interpretation.goal == "buy" and resolved_product is not None:
             tray_result.response_metadata["activate_first_product"] = True
     if (

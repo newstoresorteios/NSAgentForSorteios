@@ -41,6 +41,14 @@ class CommerceConversationState(BaseModel):
     cart_variant_id: str | None = None
     cart_quantity: int | None = None
     cart_items: list[CommerceCartItem] = Field(default_factory=list)
+    pending_action: Literal[
+        "send_product_link",
+        "create_cart",
+        "show_images",
+        "show_payment_options",
+        "confirm_purchase",
+    ] | None = None
+    pending_action_product_ids: list[str] = Field(default_factory=list)
 
     @classmethod
     def from_payload(cls, value: Any) -> "CommerceConversationState":
@@ -82,6 +90,8 @@ class CommerceConversationState(BaseModel):
             "purchase_stage": self.purchase_stage,
             "has_cart": bool(self.cart_session_id and self.cart_url),
             "cart_item_count": len(self.cart_items),
+            "pending_action": self.pending_action,
+            "pending_action_product_count": len(self.pending_action_product_ids),
         }
 
 
@@ -304,6 +314,24 @@ def evolve_commerce_state(
         state.active_topic = str(metadata["active_topic"])
     if metadata.get("purchase_stage"):
         state.purchase_stage = str(metadata["purchase_stage"])
+    if metadata.get("clear_pending_action"):
+        state.pending_action = None
+        state.pending_action_product_ids = []
+    pending_action = metadata.get("pending_action")
+    if pending_action in {
+        "send_product_link",
+        "create_cart",
+        "show_images",
+        "show_payment_options",
+        "confirm_purchase",
+    }:
+        state.pending_action = pending_action
+        pending_ids = metadata.get("pending_action_product_ids")
+        state.pending_action_product_ids = [
+            str(item)
+            for item in pending_ids
+            if item is not None
+        ] if isinstance(pending_ids, list) else []
     cart_state = metadata.get("cart_state")
     if isinstance(cart_state, dict):
         for field in (
