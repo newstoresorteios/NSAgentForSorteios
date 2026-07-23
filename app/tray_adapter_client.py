@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -29,6 +30,27 @@ class TrayAdapterClient:
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}
+
+    @staticmethod
+    def _response_has_key(
+        payload: Any,
+        key: str,
+        *,
+        depth: int = 0,
+    ) -> bool:
+        if depth > 3 or not isinstance(payload, dict):
+            return False
+        if payload.get(key):
+            return True
+        return any(
+            TrayAdapterClient._response_has_key(
+                value,
+                key,
+                depth=depth + 1,
+            )
+            for value in payload.values()
+            if isinstance(value, dict)
+        )
 
     @staticmethod
     def _operation_name(path: str) -> str:
@@ -61,6 +83,7 @@ class TrayAdapterClient:
         client = self._http_client or httpx.AsyncClient(timeout=self.timeout_seconds)
         max_attempts = self.max_get_attempts if method.upper() == "GET" else 1
         operation = self._operation_name(path)
+        is_cart_create = method.upper() == "POST" and path == "/internal/carts"
         try:
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -74,11 +97,59 @@ class TrayAdapterClient:
                             for key, value in json_body.items()
                             if value is not None
                         }
+                    if is_cart_create:
+                        price_valid = False
+                        try:
+                            price_valid = (
+                                Decimal(str((json_body or {}).get("price"))) > 0
+                            )
+                        except (InvalidOperation, TypeError, ValueError):
+                            price_valid = False
+                        print("[sales.cart.http.request]", {
+                            "has_product_id": bool(
+                                (json_body or {}).get("product_id")
+                            ),
+                            "has_variant_id": bool(
+                                (json_body or {}).get("variant_id")
+                            ),
+                            "quantity": (json_body or {}).get("quantity"),
+                            "price_valid": price_valid,
+                            "has_session_id": bool(
+                                (json_body or {}).get("session_id")
+                            ),
+                        })
                     response = await client.request(
                         method,
                         f"{self.base_url}{path}",
                         **request_kwargs,
                     )
+                    parsed_response: Any = None
+                    response_is_json = False
+                    response_keys: list[str] = []
+                    try:
+                        parsed_response = response.json()
+                        response_is_json = True
+                        if isinstance(parsed_response, dict):
+                            response_keys = sorted(
+                                str(key) for key in parsed_response.keys()
+                            )[:20]
+                    except ValueError:
+                        parsed_response = None
+                    if is_cart_create:
+                        print("[sales.cart.http.response]", {
+                            "status_code": response.status_code,
+                            "has_response": True,
+                            "response_is_json": response_is_json,
+                            "response_keys": response_keys,
+                            "has_session_id": self._response_has_key(
+                                parsed_response,
+                                "session_id",
+                            ),
+                            "has_cart_url": self._response_has_key(
+                                parsed_response,
+                                "cart_url",
+                            ),
+                        })
                     if response.status_code >= 400:
                         if (
                             response.status_code in self.transient_status_codes
@@ -95,12 +166,23 @@ class TrayAdapterClient:
                             f"tray_adapter_http_{response.status_code}",
                             response.status_code,
                         )
-                    return response.json()
+                    if not response_is_json:
+                        raise ValueError("tray_adapter_response_not_json")
+                    return parsed_response
                 except (
                     httpx.TimeoutException,
                     httpx.ConnectError,
                     httpx.NetworkError,
                 ) as exc:
+                    if is_cart_create:
+                        print("[sales.cart.http.response]", {
+                            "status_code": None,
+                            "has_response": False,
+                            "response_is_json": False,
+                            "response_keys": [],
+                            "has_session_id": False,
+                            "has_cart_url": False,
+                        })
                     if attempt < max_attempts:
                         print("[sales.tray.retry]", {
                             "operation": operation,

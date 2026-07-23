@@ -42,7 +42,36 @@ class _PreparedCartItem:
     resolved_from: str
 
 
-def _technical_failure(status_code: int | None = None) -> AgentResult:
+def log_purchase_progress(
+    stage: str,
+    status: str,
+    blocking_reason: str | None = None,
+) -> None:
+    payload = {
+        "stage": stage,
+        "status": status,
+    }
+    if blocking_reason is not None:
+        payload["blocking_reason"] = blocking_reason
+    print("[sales.purchase.progress]", payload)
+
+
+def _technical_failure(
+    *,
+    stage: str,
+    status_code: int | None = None,
+    exception_type: str | None = None,
+) -> AgentResult:
+    log_purchase_progress(
+        stage,
+        "failed",
+        exception_type or "cart_technical_failure",
+    )
+    print("[sales.cart.failure]", {
+        "stage": stage,
+        "exception_type": exception_type or "upstream_error",
+        "upstream_status": status_code,
+    })
     print("[sales.cart.error]", {
         "error_type": "cart_technical_failure",
         "status_code": status_code,
@@ -55,7 +84,10 @@ def _technical_failure(status_code: int | None = None) -> AgentResult:
         intent="commerce",
         handoff_required=False,
         safety_reason="cart_technical_failure",
-        response_metadata={"used_tray": True},
+        response_metadata={
+            "used_tray": True,
+            "cart_failure_stage": stage,
+        },
     )
 
 
@@ -231,6 +263,7 @@ async def _resolve_variant(
     preferences: dict[str, Any],
     execute: ToolExecutor,
 ) -> tuple[dict[str, Any] | None, AgentResult | None]:
+    log_purchase_progress("variant_resolution", "start")
     selected_id = product_reference.variant_id
     requires_variation = _flag_is_true(product.get("has_variation")) or selected_id is not None
     if not requires_variation:
@@ -242,14 +275,25 @@ async def _resolve_variant(
             "auto_selected": False,
             "has_variant_id": False,
         })
+        log_purchase_progress("variant_resolution", "success")
         return None, None
 
-    result = await execute(
-        "list_product_variants",
-        {"product_id": product_reference.product_id},
-    )
+    try:
+        result = await execute(
+            "list_product_variants",
+            {"product_id": product_reference.product_id},
+        )
+    except Exception as exc:
+        return None, _technical_failure(
+            stage="variant_resolution",
+            exception_type=type(exc).__name__,
+        )
     if "error" in result:
-        return None, _technical_failure(result.get("status_code"))
+        return None, _technical_failure(
+            stage="variant_resolution",
+            status_code=result.get("status_code"),
+            exception_type=result.get("error_type"),
+        )
     variants = [
         variant
         for variant in result.get("variants", [])
@@ -266,6 +310,11 @@ async def _resolve_variant(
             None,
         )
         if selected is None:
+            log_purchase_progress(
+                "variant_resolution",
+                "blocked",
+                "variant_required",
+            )
             return None, _validation_failure(
                 "Não consegui validar a variação escolhida. Escolha uma das opções disponíveis.",
                 "variant_required",
@@ -278,6 +327,7 @@ async def _resolve_variant(
             "auto_selected": False,
             "has_variant_id": True,
         })
+        log_purchase_progress("variant_resolution", "success")
         return selected, None
 
     eligible = [
@@ -299,6 +349,11 @@ async def _resolve_variant(
             "auto_selected": False,
             "has_variant_id": False,
         })
+        log_purchase_progress(
+            "variant_resolution",
+            "blocked",
+            "product_unavailable",
+        )
         return None, _validation_failure(
             "As variações deste produto estão indisponíveis no momento.",
             "product_unavailable",
@@ -332,6 +387,7 @@ async def _resolve_variant(
         "has_variant_id": bool(selected and _variant_id(selected)),
     })
     if not choice_required:
+        log_purchase_progress("variant_resolution", "success")
         return selected, None
     choice_labels = [
         " / ".join(
@@ -347,6 +403,11 @@ async def _resolve_variant(
             for index, label in enumerate(choice_labels, start=1)
             if label
         )
+    log_purchase_progress(
+        "variant_resolution",
+        "blocked",
+        "variant_required",
+    )
     return None, AgentResult(
         reply_text=variant_reply,
         intent="commerce",
@@ -437,17 +498,37 @@ async def _prepare_item(
 ) -> tuple[_PreparedCartItem | None, AgentResult | None]:
     reference = request.product_reference
     if isinstance(request.quantity, bool) or request.quantity < 1:
+        log_purchase_progress(
+            "cart_preparation",
+            "blocked",
+            "cart_validation_error",
+        )
         return None, _with_selected_product(
             _validation_failure("Informe uma quantidade válida para eu preparar o carrinho."),
             reference,
         )
 
-    current = await execute("get_product", {"product_id": reference.product_id})
-    if "error" in current:
+    log_purchase_progress("product_resolution", "start")
+    try:
+        current = await execute("get_product", {"product_id": reference.product_id})
+    except Exception as exc:
         return None, _with_selected_product(
-            _technical_failure(current.get("status_code")),
+            _technical_failure(
+                stage="product_resolution",
+                exception_type=type(exc).__name__,
+            ),
             reference,
         )
+    if "error" in current:
+        return None, _with_selected_product(
+            _technical_failure(
+                stage="product_resolution",
+                status_code=current.get("status_code"),
+                exception_type=current.get("error_type"),
+            ),
+            reference,
+        )
+    log_purchase_progress("product_resolution", "success")
     product = {
         key: value
         for key, value in {
@@ -460,14 +541,30 @@ async def _prepare_item(
         if value is not None
     }
     product.update(current)
-    product["commercial_availability"] = commercial_availability_facts(product)
+    log_purchase_progress("availability", "start")
+    try:
+        product["commercial_availability"] = commercial_availability_facts(product)
+        availability_state = product_availability_state(product)
+    except Exception as exc:
+        return None, _with_selected_product(
+            _technical_failure(
+                stage="availability",
+                exception_type=type(exc).__name__,
+            ),
+            reference,
+        )
     print("[sales.availability.fact]", {
         "has_stock": product["commercial_availability"]["has_stock"],
         "has_lead_time": product["commercial_availability"]["has_lead_time"],
         "immediate_delivery_supported": product["commercial_availability"]["immediate_delivery_supported"],
     })
 
-    if product_availability_state(product) == "unavailable":
+    if availability_state == "unavailable":
+        log_purchase_progress(
+            "availability",
+            "blocked",
+            "product_unavailable",
+        )
         return None, _with_selected_product(
             _validation_failure(
                 "Esse produto está indisponível no momento, então não foi adicionado ao carrinho.",
@@ -475,6 +572,7 @@ async def _prepare_item(
             ),
             reference,
         )
+    log_purchase_progress("availability", "success")
 
     variant, variant_error = await _resolve_variant(
         product,
@@ -489,6 +587,11 @@ async def _prepare_item(
         })
         return None, _with_selected_product(variant_error, reference)
     if variant is not None and product_availability_state(variant) == "unavailable":
+        log_purchase_progress(
+            "variant_resolution",
+            "blocked",
+            "product_unavailable",
+        )
         return None, _with_selected_product(
             _validation_failure(
                 "A variação escolhida está indisponível no momento.",
@@ -497,14 +600,30 @@ async def _prepare_item(
             reference,
         )
 
-    price, _price_source = _price_for_cart(product, variant)
+    log_purchase_progress("price_resolution", "start")
+    try:
+        price, _price_source = _price_for_cart(product, variant)
+    except Exception as exc:
+        return None, _with_selected_product(
+            _technical_failure(
+                stage="price_resolution",
+                exception_type=type(exc).__name__,
+            ),
+            reference,
+        )
     if price is None:
+        log_purchase_progress(
+            "price_resolution",
+            "blocked",
+            "cart_validation_error",
+        )
         return None, _with_selected_product(
             _validation_failure(
                 "Não consegui validar o preço atual desse produto para criar o carrinho.",
             ),
             reference,
         )
+    log_purchase_progress("price_resolution", "success")
 
     active_reference = CommerceProductReference(
         product_id=str(product.get("id") or reference.product_id),
@@ -514,10 +633,6 @@ async def _prepare_item(
         ean=str(product["ean"]) if product.get("ean") is not None else reference.ean,
         brand=str(product["brand"]) if product.get("brand") is not None else reference.brand,
     )
-    print("[sales.purchase.progress]", {
-        "purchase_stage": "cart_creating",
-        "blocking_reason": None,
-    })
     return _PreparedCartItem(
         product_reference=active_reference,
         product=product,
@@ -573,17 +688,33 @@ def _cart_state(
     }
 
 
-async def create_cart_items_checkout(
+async def _create_cart_items_checkout_impl(
     *,
     item_requests: list[CartItemRequest],
     state: CommerceConversationState,
     execute: ToolExecutor,
 ) -> AgentResult:
+    log_purchase_progress("cart_preparation", "start")
+    print("[sales.cart.prepare]", {
+        "status": "start",
+        "requested_count": len(item_requests),
+        "prepared_count": 0,
+    })
     print("[sales.cart.items]", {
         "requested_count": len(item_requests),
         "resolved_count": len(item_requests),
     })
     if not item_requests:
+        log_purchase_progress(
+            "cart_preparation",
+            "blocked",
+            "cart_validation_error",
+        )
+        print("[sales.cart.prepare]", {
+            "status": "blocked",
+            "requested_count": 0,
+            "prepared_count": 0,
+        })
         return _validation_failure(
             "Não consegui identificar quais produtos devem entrar no carrinho.",
             "cart_validation_error",
@@ -616,6 +747,13 @@ async def create_cart_items_checkout(
             )
         )
     ):
+        log_purchase_progress("cart_preparation", "success")
+        print("[sales.cart.prepare]", {
+            "status": "success",
+            "requested_count": len(item_requests),
+            "prepared_count": 0,
+        })
+        log_purchase_progress("completed", "success")
         return current_cart_reply(state, checkout_question=False)
 
     prepared: list[_PreparedCartItem] = []
@@ -628,13 +766,25 @@ async def create_cart_items_checkout(
             "status": error.safety_reason if error else "validated",
         })
         if error is not None:
+            print("[sales.cart.prepare]", {
+                "status": "failed",
+                "requested_count": len(item_requests),
+                "prepared_count": len(prepared),
+            })
             return error
         if item is not None:
             prepared.append(item)
+    log_purchase_progress("cart_preparation", "success")
+    print("[sales.cart.prepare]", {
+        "status": "success",
+        "requested_count": len(item_requests),
+        "prepared_count": len(prepared),
+    })
 
     session_id = state.cart_session_id
     cart_url = _valid_cart_url(state.cart_url)
     cart: dict[str, Any] = {}
+    created: dict[str, Any] = {}
     successful = [
         CommerceCartItem.model_validate(item)
         for item in state.cart_items
@@ -650,8 +800,25 @@ async def create_cart_items_checkout(
         }
         if session_id:
             payload["session_id"] = session_id
-        created = await execute("create_cart", payload)
+        log_purchase_progress("cart_http", "start")
+        try:
+            created = await execute("create_cart", payload)
+        except Exception as exc:
+            return _technical_failure(
+                stage="cart_http",
+                exception_type=type(exc).__name__,
+            )
         if "error" in created:
+            log_purchase_progress(
+                "cart_http",
+                "failed",
+                created.get("error_type") or "upstream_error",
+            )
+            print("[sales.cart.failure]", {
+                "stage": "cart_http",
+                "exception_type": created.get("error_type") or "upstream_error",
+                "upstream_status": created.get("status_code"),
+            })
             failed_item = item
             print("[sales.cart.item]", {
                 "position": item.position,
@@ -659,7 +826,14 @@ async def create_cart_items_checkout(
                 "quantity": item.quantity,
                 "status": "cart_technical_failure",
             })
+            if not session_id or not cart_url:
+                return _technical_failure(
+                    stage="cart_http",
+                    status_code=created.get("status_code"),
+                    exception_type=created.get("error_type"),
+                )
             break
+        log_purchase_progress("cart_http", "success")
         cart = created
         session_id = str(created["session_id"]) if created.get("session_id") is not None else session_id
         cart_url = _valid_cart_url(created.get("cart_url")) or cart_url
@@ -680,10 +854,29 @@ async def create_cart_items_checkout(
         "has_session_id": bool(session_id),
         "has_cart_url": bool(cart_url),
     })
+    log_purchase_progress("cart_validation", "start")
     if not session_id or not cart_url:
-        return _technical_failure()
+        return _technical_failure(
+            stage="cart_validation",
+            status_code=(
+                created.get("status_code")
+                if isinstance(created, dict)
+                else None
+            ),
+            exception_type=(
+                created.get("error_type")
+                if isinstance(created, dict)
+                else "invalid_cart_response"
+            ),
+        )
 
-    complete = await execute("get_cart_complete", {"session_id": session_id})
+    try:
+        complete = await execute("get_cart_complete", {"session_id": session_id})
+    except Exception as exc:
+        return _technical_failure(
+            stage="cart_validation",
+            exception_type=type(exc).__name__,
+        )
     verify_ok = "error" not in complete
     verified_items = (
         _verified_items(complete)
@@ -722,6 +915,11 @@ async def create_cart_items_checkout(
     )
     active = prepared[-1].product_reference
     partial = failed_item is not None or not verification_matches
+    log_purchase_progress(
+        "cart_validation",
+        "success" if verify_ok else "failed",
+        None if verify_ok else complete.get("error_type") or "cart_verification_failed",
+    )
     status = "cart_partial_failure" if partial else "cart_created"
     reply = (
         "Parte dos itens foi adicionada ao carrinho. Confira o estado atual no checkout oficial."
@@ -732,6 +930,11 @@ async def create_cart_items_checkout(
         "purchase_stage": "cart_created",
         "has_cart_session": True,
     })
+    log_purchase_progress(
+        "completed",
+        "success" if not partial else "failed",
+        None if not partial else "cart_partial_failure",
+    )
     return AgentResult(
         reply_text=f"{reply}\n{cart_url}",
         intent="commerce",
@@ -775,6 +978,30 @@ async def create_cart_items_checkout(
             "used_tray": True,
         },
     )
+
+
+async def create_cart_items_checkout(
+    *,
+    item_requests: list[CartItemRequest],
+    state: CommerceConversationState,
+    execute: ToolExecutor,
+) -> AgentResult:
+    try:
+        return await _create_cart_items_checkout_impl(
+            item_requests=item_requests,
+            state=state,
+            execute=execute,
+        )
+    except Exception as exc:
+        print("[sales.cart.prepare]", {
+            "status": "failed",
+            "requested_count": len(item_requests),
+            "prepared_count": 0,
+        })
+        return _technical_failure(
+            stage="cart_preparation",
+            exception_type=type(exc).__name__,
+        )
 
 
 async def create_cart_checkout(

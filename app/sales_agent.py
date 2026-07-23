@@ -20,6 +20,7 @@ from .cart_service import (
     create_cart_checkout,
     create_cart_items_checkout,
     current_cart_reply,
+    log_purchase_progress,
 )
 from .commerce_context import (
     CommerceConversationState,
@@ -1689,6 +1690,8 @@ async def handle_sales_message(
     commerce_state: CommerceConversationState | None = None,
 ) -> AgentResult | None:
     interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
+    state = commerce_state or CommerceConversationState()
+    log_purchase_progress("interpretation", "start")
     if isinstance(semantic_plan, SalesInterpretation):
         plan = interpretation_to_plan(semantic_plan, message.text)
     elif semantic_plan and semantic_plan.get("domain") == "commerce":
@@ -1696,8 +1699,43 @@ async def handle_sales_message(
     else:
         plan = await plan_sales_request(message)
     if not plan:
+        log_purchase_progress(
+            "interpretation",
+            "blocked",
+            "sales_plan_missing",
+        )
         return None
-    state = commerce_state or CommerceConversationState()
+    log_purchase_progress("interpretation", "success")
+    print("[sales.purchase.orchestrator]", {
+        "has_purchase_action": bool(
+            interpretation and interpretation.purchase_action
+        ),
+        "has_payment_action": bool(
+            interpretation and interpretation.payment_action
+        ),
+        "has_active_product": state.active_product is not None,
+        "purchase_item_count": len(
+            interpretation.purchase_items
+            if interpretation is not None
+            else []
+        ),
+        "reference_type": (
+            interpretation.reference_type
+            if interpretation is not None
+            else None
+        ),
+        "reference_position_present": bool(
+            interpretation
+            and interpretation.reference_position is not None
+        ),
+        "confirmation": (
+            interpretation.confirmation
+            if interpretation is not None
+            else None
+        ),
+        "has_pending_action": bool(state.pending_action),
+        "current_purchase_stage": state.purchase_stage,
+    })
     if (
         interpretation is not None
         and state.pending_action
@@ -1713,7 +1751,13 @@ async def handle_sales_message(
     resolved_product = None
     resolved_by = "none"
     if interpretation is not None:
+        log_purchase_progress("reference_resolution", "start")
         resolved_product, resolved_by = resolve_commerce_reference(interpretation, state)
+        log_purchase_progress(
+            "reference_resolution",
+            "success" if resolved_product is not None else "blocked",
+            None if resolved_product is not None else "reference_not_resolved",
+        )
         print("[sales.reference]", {
             "type": interpretation.reference_type,
             "position": interpretation.reference_position,
@@ -1792,12 +1836,19 @@ async def handle_sales_message(
         })
     if interpretation is not None and interpretation.purchase_items:
         for item in interpretation.purchase_items:
+            log_purchase_progress("reference_resolution", "start")
             reference, item_resolved_by = resolve_purchase_item_reference(item, state)
+            log_purchase_progress(
+                "reference_resolution",
+                "success" if reference is not None else "blocked",
+                None if reference is not None else "purchase_item_not_resolved",
+            )
             if (
                 reference is None
                 and item.reference_type == "explicit_product"
                 and item.explicit_product_name
             ):
+                log_purchase_progress("product_resolution", "start")
                 item_subject = interpretation.subject.model_copy(update={
                     "model": item.explicit_product_name,
                     "reference": None,
@@ -1825,12 +1876,32 @@ async def handle_sales_message(
                 if len(candidates) == 1 and isinstance(candidates[0], dict):
                     reference = product_reference_from_product(candidates[0])
                     item_resolved_by = "explicit_product"
+                    log_purchase_progress("product_resolution", "success")
                 elif candidates:
                     unresolved_candidates = [
                         candidate
                         for candidate in candidates[:3]
                         if isinstance(candidate, dict)
                     ]
+                    log_purchase_progress(
+                        "product_resolution",
+                        "blocked",
+                        "ambiguous_purchase_item",
+                    )
+                else:
+                    log_purchase_progress(
+                        "product_resolution",
+                        (
+                            "failed"
+                            if lookup is not None and lookup.safety_reason
+                            else "blocked"
+                        ),
+                        (
+                            lookup.safety_reason
+                            if lookup is not None and lookup.safety_reason
+                            else "product_not_found"
+                        ),
+                    )
             if reference is None:
                 unresolved_purchase_items += 1
                 continue
@@ -1860,6 +1931,7 @@ async def handle_sales_message(
             interpretation.subject.model,
         ))
     ):
+        log_purchase_progress("product_resolution", "start")
         lookup = await _execute_compiled_product_retrieval(interpretation)
         lookup_products = (
             (lookup.commercial_data or {}).get("products")
@@ -1870,6 +1942,7 @@ async def handle_sales_message(
         if len(lookup_products) == 1 and isinstance(lookup_products[0], dict):
             resolved_product = product_reference_from_product(lookup_products[0])
             resolved_by = "product_id"
+            log_purchase_progress("product_resolution", "success")
         elif lookup_products:
             unresolved_purchase_items = 1
             unresolved_candidates = [
@@ -1877,7 +1950,17 @@ async def handle_sales_message(
                 for candidate in lookup_products[:3]
                 if isinstance(candidate, dict)
             ]
+            log_purchase_progress(
+                "product_resolution",
+                "blocked",
+                "ambiguous_purchase_item",
+            )
         elif lookup is not None:
+            log_purchase_progress(
+                "product_resolution",
+                "failed" if lookup.safety_reason else "blocked",
+                lookup.safety_reason or "product_not_found",
+            )
             return _mark_sales_result(
                 lookup,
                 interpretation=interpretation,
@@ -2020,7 +2103,7 @@ async def handle_sales_message(
             or purchase_requests
         )
     )
-    print("[sales.purchase.orchestrator]", {
+    print("[sales.purchase.orchestrator.decision]", {
         "intent": plan.get("intent"),
         "purchase_action": purchase_action,
         "has_active_product": state.active_product is not None,
@@ -2204,6 +2287,11 @@ async def handle_sales_message(
             fallback_reason="sales_responder_unavailable",
         )
     if purchase_action == "create_cart" and unresolved_purchase_items:
+        log_purchase_progress(
+            "product_resolution",
+            "blocked",
+            "purchase_item_unresolved",
+        )
         return _mark_sales_result(
             AgentResult(
                 reply_text="Encontrei mais de uma possibilidade. Confirme quais itens da lista devem entrar no carrinho.",
