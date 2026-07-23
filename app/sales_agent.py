@@ -94,6 +94,8 @@ medida corporal, use dimensões reais presentes no nome, propriedades ou descri�
 Estoque positivo, sozinho, não significa pronta entrega. Só afirme entrega imediata quando
 commercial_availability.immediate_delivery_supported nos FACTS for igual a true. Se houver prazo,
 informe o prazo comercial e não o contradiga com uma promessa de pronta entrega.
+Quando FACTS indicar falha técnica da integração, descreva apenas uma falha interna temporária.
+Não atribua a causa ao navegador, cache, internet ou dispositivo do cliente sem fato explícito.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -1551,7 +1553,7 @@ async def _ensure_cart_for_purchase(
     purchase_requests: list[CartItemRequest],
     resolved_product: CommerceProductReference | None,
 ) -> tuple[CommerceConversationState, AgentResult | None]:
-    if state.cart_session_id:
+    if state.cart_session_id and state.cart_url:
         print("[sales.purchase.ensure_cart]", {
             "cart_existed": True,
             "cart_created": False,
@@ -1583,7 +1585,10 @@ async def _ensure_cart_for_purchase(
     updated_state = evolve_commerce_state(state, cart_result)
     print("[sales.purchase.ensure_cart]", {
         "cart_existed": False,
-        "cart_created": bool(updated_state.cart_session_id),
+        "cart_created": bool(
+            updated_state.cart_session_id
+            and updated_state.cart_url
+        ),
         "item_count": len(updated_state.cart_items),
     })
     return updated_state, cart_result
@@ -2151,7 +2156,7 @@ async def handle_sales_message(
         })
     needs_cart = bool(
         payment_requested
-        and not state.cart_session_id
+        and not (state.cart_session_id and state.cart_url)
         and (
             purchase_action in {"create_cart", "checkout_question", "show_cart_link"}
             or purchase_requests
@@ -2227,14 +2232,17 @@ async def handle_sales_message(
 
         payment_state = state
         cart_result: AgentResult | None = None
-        if not state.cart_session_id and needs_cart:
+        if not (state.cart_session_id and state.cart_url) and needs_cart:
             payment_state, cart_result = await _ensure_cart_for_purchase(
                 interpretation=interpretation,
                 state=state,
                 purchase_requests=purchase_requests,
                 resolved_product=resolved_product,
             )
-            if cart_result is not None and not payment_state.cart_session_id:
+            if cart_result is not None and not (
+                payment_state.cart_session_id
+                and payment_state.cart_url
+            ):
                 return _mark_sales_result(
                     cart_result,
                     interpretation=interpretation,
@@ -2248,7 +2256,10 @@ async def handle_sales_message(
                     used_tray=bool(cart_result.response_metadata.get("used_tray", True)),
                     fallback_reason=cart_result.safety_reason,
                 )
-        if not payment_state.cart_session_id:
+        if not (
+            payment_state.cart_session_id
+            and payment_state.cart_url
+        ):
             missing = _purchase_product_required_result(state)
             return _mark_sales_result(
                 missing,

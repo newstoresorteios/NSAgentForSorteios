@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import unicodedata
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -89,6 +90,41 @@ def _technical_failure(
             "cart_failure_stage": stage,
         },
     )
+
+
+def _cart_session_state(
+    state: CommerceConversationState,
+    session_id: str,
+) -> dict[str, Any]:
+    return {
+        "cart_id": state.cart_id,
+        "cart_session_id": session_id,
+        "cart_url": state.cart_url,
+        "cart_product_id": state.cart_product_id,
+        "cart_variant_id": state.cart_variant_id,
+        "cart_quantity": state.cart_quantity,
+        "cart_items": [
+            item.model_dump(mode="json")
+            for item in state.cart_items
+        ],
+    }
+
+
+def _persist_cart_session(
+    result: AgentResult,
+    state: CommerceConversationState,
+    session_id: str | None,
+) -> AgentResult:
+    if not session_id:
+        return result
+    result.response_metadata.setdefault("domain", "commerce")
+    current = result.response_metadata.get("cart_state")
+    current = current if isinstance(current, dict) else {}
+    result.response_metadata["cart_state"] = {
+        **_cart_session_state(state, session_id),
+        **current,
+    }
+    return result
 
 
 def _validation_failure(
@@ -669,6 +705,65 @@ def _verified_items(
     return parsed
 
 
+_TRANSIENT_CART_STATUSES = {502, 503, 504}
+
+
+def _is_transient_cart_failure(
+    *,
+    status_code: Any = None,
+    error_type: Any = None,
+) -> bool:
+    try:
+        if int(status_code) in _TRANSIENT_CART_STATUSES:
+            return True
+    except (TypeError, ValueError):
+        pass
+    normalized = str(error_type or "").casefold()
+    return "timeout" in normalized or "connect" in normalized
+
+
+async def _reconcile_cart_item(
+    *,
+    execute: ToolExecutor,
+    session_id: str,
+    item: _PreparedCartItem,
+) -> dict[str, Any] | None:
+    try:
+        complete = await execute(
+            "get_cart_complete",
+            {"session_id": session_id},
+        )
+    except Exception as exc:
+        print("[sales.cart.reconcile]", {
+            "attempted": True,
+            "found": False,
+            "exception_type": type(exc).__name__,
+        })
+        return None
+    if "error" in complete:
+        print("[sales.cart.reconcile]", {
+            "attempted": True,
+            "found": False,
+            "status_code": complete.get("status_code"),
+        })
+        return None
+    found = any(
+        verified.product_id == item.product_reference.product_id
+        and (
+            item.product_reference.variant_id is None
+            or verified.variant_id == item.product_reference.variant_id
+        )
+        and verified.quantity >= item.quantity
+        for verified in _verified_items(complete)
+    )
+    print("[sales.cart.reconcile]", {
+        "attempted": True,
+        "found": found,
+        "item_count": len(_verified_items(complete)),
+    })
+    return complete if found else None
+
+
 def _cart_state(
     *,
     cart: dict[str, Any],
@@ -790,6 +885,7 @@ async def _create_cart_items_checkout_impl(
         for item in state.cart_items
     ]
     failed_item: _PreparedCartItem | None = None
+    reconciled_complete: dict[str, Any] | None = None
 
     for item in prepared:
         payload = {
@@ -797,13 +893,32 @@ async def _create_cart_items_checkout_impl(
             "variant_id": item.product_reference.variant_id,
             "quantity": item.quantity,
             "price": item.price,
+            "session_id": session_id,
         }
-        if session_id:
-            payload["session_id"] = session_id
         log_purchase_progress("cart_http", "start")
         try:
             created = await execute("create_cart", payload)
         except Exception as exc:
+            reconciled = (
+                await _reconcile_cart_item(
+                    execute=execute,
+                    session_id=session_id,
+                    item=item,
+                )
+                if _is_transient_cart_failure(error_type=type(exc).__name__)
+                else None
+            )
+            if reconciled is not None:
+                cart = reconciled
+                cart_url = _valid_cart_url(reconciled.get("cart_url")) or cart_url
+                successful.append(CommerceCartItem(
+                    product_id=item.product_reference.product_id,
+                    variant_id=item.product_reference.variant_id,
+                    quantity=item.quantity,
+                ))
+                reconciled_complete = reconciled
+                log_purchase_progress("cart_http", "success")
+                continue
             return _technical_failure(
                 stage="cart_http",
                 exception_type=type(exc).__name__,
@@ -826,6 +941,29 @@ async def _create_cart_items_checkout_impl(
                 "quantity": item.quantity,
                 "status": "cart_technical_failure",
             })
+            reconciled = (
+                await _reconcile_cart_item(
+                    execute=execute,
+                    session_id=session_id,
+                    item=item,
+                )
+                if _is_transient_cart_failure(
+                    status_code=created.get("status_code"),
+                    error_type=created.get("error_type"),
+                )
+                else None
+            )
+            if reconciled is not None:
+                cart = reconciled
+                cart_url = _valid_cart_url(reconciled.get("cart_url")) or cart_url
+                successful.append(CommerceCartItem(
+                    product_id=item.product_reference.product_id,
+                    variant_id=item.product_reference.variant_id,
+                    quantity=item.quantity,
+                ))
+                reconciled_complete = reconciled
+                log_purchase_progress("cart_http", "success")
+                continue
             if not session_id or not cart_url:
                 return _technical_failure(
                     stage="cart_http",
@@ -835,8 +973,20 @@ async def _create_cart_items_checkout_impl(
             break
         log_purchase_progress("cart_http", "success")
         cart = created
-        session_id = str(created["session_id"]) if created.get("session_id") is not None else session_id
+        returned_session_id = (
+            str(created["session_id"])
+            if created.get("session_id") is not None
+            else None
+        )
+        if returned_session_id and returned_session_id != session_id:
+            print("[sales.cart.session]", {
+                "generated": False,
+                "reused": False,
+                "response_mismatch": True,
+            })
+            session_id = returned_session_id
         cart_url = _valid_cart_url(created.get("cart_url")) or cart_url
+        reconciled_complete = None
         successful.append(CommerceCartItem(
             product_id=item.product_reference.product_id,
             variant_id=item.product_reference.variant_id,
@@ -870,13 +1020,16 @@ async def _create_cart_items_checkout_impl(
             ),
         )
 
-    try:
-        complete = await execute("get_cart_complete", {"session_id": session_id})
-    except Exception as exc:
-        return _technical_failure(
-            stage="cart_validation",
-            exception_type=type(exc).__name__,
-        )
+    if reconciled_complete is not None:
+        complete = reconciled_complete
+    else:
+        try:
+            complete = await execute("get_cart_complete", {"session_id": session_id})
+        except Exception as exc:
+            return _technical_failure(
+                stage="cart_validation",
+                exception_type=type(exc).__name__,
+            )
     verify_ok = "error" not in complete
     verified_items = (
         _verified_items(complete)
@@ -986,10 +1139,25 @@ async def create_cart_items_checkout(
     state: CommerceConversationState,
     execute: ToolExecutor,
 ) -> AgentResult:
+    execution_state = state
+    if item_requests and not state.cart_session_id:
+        execution_state = state.model_copy(deep=True)
+        execution_state.cart_session_id = secrets.token_hex(16)
+        print("[sales.cart.session]", {
+            "generated": True,
+            "reused": False,
+            "response_mismatch": False,
+        })
+    elif state.cart_session_id:
+        print("[sales.cart.session]", {
+            "generated": False,
+            "reused": True,
+            "response_mismatch": False,
+        })
     try:
-        return await _create_cart_items_checkout_impl(
+        result = await _create_cart_items_checkout_impl(
             item_requests=item_requests,
-            state=state,
+            state=execution_state,
             execute=execute,
         )
     except Exception as exc:
@@ -998,10 +1166,15 @@ async def create_cart_items_checkout(
             "requested_count": len(item_requests),
             "prepared_count": 0,
         })
-        return _technical_failure(
+        result = _technical_failure(
             stage="cart_preparation",
             exception_type=type(exc).__name__,
         )
+    return _persist_cart_session(
+        result,
+        execution_state,
+        execution_state.cart_session_id,
+    )
 
 
 async def create_cart_checkout(

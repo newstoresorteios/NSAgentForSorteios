@@ -80,12 +80,13 @@ async def test_real_wrapped_detail_price_reaches_cart_post():
         execute=execute,
     )
 
-    assert adapter.calls == [{
-        "product_id": "1025",
-        "variant_id": None,
-        "quantity": 1,
-        "price": "6199.99",
-    }]
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0]["product_id"] == "1025"
+    assert adapter.calls[0]["variant_id"] is None
+    assert adapter.calls[0]["quantity"] == 1
+    assert adapter.calls[0]["price"] == "6199.99"
+    assert len(adapter.calls[0]["session_id"]) == 32
+    int(adapter.calls[0]["session_id"], 16)
     assert result.safety_reason is None
 
 
@@ -108,8 +109,10 @@ def test_cart_price_resolution_uses_positive_structured_commercial_value():
 @pytest.mark.asyncio
 async def test_multi_item_uses_one_session_and_verifies_complete_cart():
     calls = []
+    cart_session = None
 
     async def execute(tool, arguments):
+        nonlocal cart_session
         calls.append((tool, arguments))
         if tool == "get_product":
             return {
@@ -118,15 +121,16 @@ async def test_multi_item_uses_one_session_and_verifies_complete_cart():
                 "available": True,
             }
         if tool == "create_cart":
-            assert arguments.get("session_id") == (
-                "S1" if arguments["product_id"] == "B" else None
-            )
+            if cart_session is None:
+                cart_session = arguments["session_id"]
+            assert arguments["session_id"] == cart_session
             return {
                 "cart_id": "C1",
-                "session_id": "S1",
-                "cart_url": "https://loja.example/checkout/S1",
+                "session_id": cart_session,
+                "cart_url": f"https://loja.example/checkout/{cart_session}",
             }
         if tool == "get_cart_complete":
+            assert arguments["session_id"] == cart_session
             return {
                 "total": "300.00",
                 "items": [
@@ -147,7 +151,9 @@ async def test_multi_item_uses_one_session_and_verifies_complete_cart():
 
     create_calls = [args for tool, args in calls if tool == "create_cart"]
     assert len(create_calls) == 2
-    assert create_calls[1]["session_id"] == "S1"
+    assert len(create_calls[0]["session_id"]) == 32
+    int(create_calls[0]["session_id"], 16)
+    assert create_calls[1]["session_id"] == create_calls[0]["session_id"]
     assert result.response_metadata["cart_state"]["cart_items"] == [
         {"product_id": "A", "variant_id": None, "quantity": 1},
         {"product_id": "B", "variant_id": None, "quantity": 2},

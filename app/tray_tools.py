@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import time
 import html
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -57,32 +58,105 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _integer(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().casefold() in {"1", "true", "yes", "sim"}
+
+
+def _payment_label(item: dict[str, Any]) -> str:
+    value = " ".join(
+        str(item.get(key) or "")
+        for key in ("name", "text")
+    )
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKD", value)
+        if not unicodedata.combining(char)
+    ).casefold()
+
+
+def _normalize_payment_plot(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    count = _integer(value.get("installments"))
+    if count is None:
+        return None
+    normalized: dict[str, Any] = {
+        "count": count,
+        "value": _number(value.get("value")),
+        "interest": _truthy(value.get("interest")),
+        "interest_value": _number(value.get("interest_value")),
+        "discount_value": _number(value.get("discount_value")),
+        "base_value": _number(value.get("base_value")),
+        "order_total": _number(value.get("order_total")),
+    }
+    return {
+        key: item
+        for key, item in normalized.items()
+        if item is not None
+    }
+
+
 def _normalize_payment_options(value: Any) -> Any:
     if not isinstance(value, list):
         return _clean_value(value)
-    normalized: dict[str, Any] = {"pix": None, "installments": []}
+    normalized: dict[str, Any] = {
+        "options": [],
+        "installments": [],
+    }
     for item in value:
         if not isinstance(item, dict):
             continue
-        kind = str(item.get("type") or item.get("display_name") or "").lower()
-        amount = _number(item.get("value"))
-        if "pix" in kind:
-            normalized["pix"] = {"value": amount} if amount is not None else {}
-            continue
-        count = item.get("plots") or item.get("installments") or item.get("count")
-        try:
-            count = int(count) if count is not None else None
-        except (TypeError, ValueError):
-            count = None
-        normalized["installments"].append({
-            "count": count,
-            "value": amount,
-            "interest": bool(_number(item.get("tax")) or 0),
+        plots = [
+            plot
+            for plot in (
+                _normalize_payment_plot(candidate)
+                for candidate in (item.get("plots") or [])
+            )
+            if plot is not None
+        ]
+        option = {
+            key: _clean_value(item[key])
+            for key in ("id", "name", "text")
+            if item.get(key) is not None
+        }
+        option.update({
+            key: number
+            for key, number in {
+                "discount_value": _number(item.get("discount_value")),
+                "increase_value": _number(item.get("increase_value")),
+                "total_base": _number(item.get("total_base")),
+                "tax_value": _number(item.get("tax_value")),
+            }.items()
+            if number is not None
         })
-    if normalized["pix"] is None:
-        normalized.pop("pix")
+        option["card"] = _integer(item.get("card"))
+        option["plots"] = plots
+        normalized["options"].append(option)
+
+        label = _payment_label(item)
+        if _integer(item.get("card")) == 1:
+            normalized["card"] = option
+            normalized["installments"].extend(plots)
+        if "pix" in label.split():
+            normalized["pix"] = option
+        if "boleto" in label.split():
+            normalized["boleto"] = option
+
     if not normalized["installments"]:
         normalized.pop("installments")
+    if not normalized["options"]:
+        normalized.pop("options")
     return normalized
 
 

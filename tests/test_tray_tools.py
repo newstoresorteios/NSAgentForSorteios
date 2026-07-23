@@ -75,8 +75,32 @@ class FakeTray:
         self.calls.append(("get_payment_options", cart_session_id))
         return {
             "payment_options": [
-                {"type": "pix", "plots": "1", "value": "189.81", "tax": "0.00"},
-                {"type": "credit", "plots": "10", "value": "19.98", "tax": "0.00"},
+                {
+                    "id": "PIX",
+                    "name": "Pix",
+                    "text": "Pagamento via Pix",
+                    "card": 0,
+                    "discount_value": "9.99",
+                    "total_base": "189.81",
+                    "plots": [{
+                        "installments": 1,
+                        "value": "189.81",
+                        "interest": 0,
+                        "order_total": "189.81",
+                    }],
+                },
+                {
+                    "id": "CARD",
+                    "name": "Cartão",
+                    "text": "Cartão de crédito",
+                    "card": 1,
+                    "plots": [{
+                        "installments": 10,
+                        "value": "19.98",
+                        "interest": 0,
+                        "order_total": "199.80",
+                    }],
+                },
             ]
         }
 
@@ -123,17 +147,42 @@ def test_tray_text_and_payment_options_are_normalized():
         {
             "name": "Relógio &agrave; vista",
             "payment_option_details": [
-                {"display_name": "Pix - Vindi", "type": "pix", "plots": "1", "value": "5439.99", "tax": "0.00"},
-                {"display_name": "Cartão", "type": "credit", "plots": "12", "value": "533.33", "tax": "0.00"},
+                {
+                    "id": "PIX",
+                    "name": "Pix - Vindi",
+                    "text": "Pagamento instantâneo",
+                    "card": 0,
+                    "total_base": "5439.99",
+                    "plots": [{
+                        "installments": 1,
+                        "value": "5439.99",
+                        "interest": 0,
+                    }],
+                },
+                {
+                    "id": "CARD",
+                    "name": "Cartão",
+                    "text": "Crédito",
+                    "card": 1,
+                    "plots": [{
+                        "installments": 12,
+                        "value": "533.33",
+                        "interest": 0,
+                    }],
+                },
             ],
         },
         ("name", "payment_option_details"),
     )
     assert result["name"] == "Relógio à vista"
-    assert result["payment_option_details"] == {
-        "pix": {"value": 5439.99},
-        "installments": [{"count": 12, "value": 533.33, "interest": False}],
-    }
+    options = result["payment_option_details"]
+    assert options["pix"]["name"] == "Pix - Vindi"
+    assert options["card"]["name"] == "Cartão"
+    assert options["installments"] == [{
+        "count": 12,
+        "value": 533.33,
+        "interest": False,
+    }]
     assert "display_name" not in str(result)
 
 
@@ -254,11 +303,12 @@ async def test_complete_cart_and_payment_options_are_normalized():
         "quantity": 2,
         "unit_price": "99.90",
     }]
-    assert payments["payment_options"]["pix"]["value"] == 189.81
+    assert payments["payment_options"]["pix"]["total_base"] == 189.81
     assert payments["payment_options"]["installments"][0] == {
         "count": 10,
         "value": 19.98,
         "interest": False,
+        "order_total": 199.8,
     }
 
 

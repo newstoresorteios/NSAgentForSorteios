@@ -103,12 +103,19 @@ async def inspect_payment_options(
     if payment_method_preference == "pix":
         method_available = isinstance(options.get("pix"), dict)
     elif payment_method_preference == "card":
-        method_available = bool(installments)
+        method_available = (
+            isinstance(options.get("card"), dict)
+            or bool(installments)
+        )
     elif payment_method_preference == "boleto":
         method_available = isinstance(options.get("boleto"), dict)
     print("[sales.payment.options]", {
         "has_session_id": True,
-        "option_count": len(installments) + int("pix" in options),
+        "option_count": (
+            len(options.get("options"))
+            if isinstance(options.get("options"), list)
+            else len(installments) + int("pix" in options) + int("boleto" in options)
+        ),
     })
     print("[sales.purchase.payment]", {
         "has_cart_session": True,
@@ -126,7 +133,7 @@ async def inspect_payment_options(
     }
     if payment_method_preference is not None and method_available is False:
         reply = (
-            "A forma de pagamento escolhida nÃ£o aparece entre as opÃ§Ãµes "
+            "A forma de pagamento escolhida não aparece entre as opções "
             "reais deste carrinho."
         )
     elif installment_count is not None and selected is None:

@@ -144,19 +144,16 @@ async def test_list_selection_revalidates_price_quantity_and_creates_cart(monkey
     )
 
     assert result is not None
-    assert calls == [
-        ("get_product", {"product_id": "B"}),
-        (
-            "create_cart",
-            {
-                "product_id": "B",
-                "variant_id": None,
-                "quantity": 2,
-                "price": "125.50",
-            },
-        ),
-        ("get_cart_complete", {"session_id": "SESSION-1"}),
-    ]
+    assert calls[0] == ("get_product", {"product_id": "B"})
+    assert calls[1][0] == "create_cart"
+    create_payload = calls[1][1]
+    assert create_payload["product_id"] == "B"
+    assert create_payload["variant_id"] is None
+    assert create_payload["quantity"] == 2
+    assert create_payload["price"] == "125.50"
+    assert len(create_payload["session_id"]) == 32
+    int(create_payload["session_id"], 16)
+    assert calls[2] == ("get_cart_complete", {"session_id": "SESSION-1"})
     assert result.response_metadata["purchase_stage"] == "cart_created"
     assert result.response_metadata["cart_state"]["cart_product_id"] == "B"
     assert result.response_metadata["cart_state"]["cart_quantity"] == 2

@@ -344,7 +344,8 @@ async def test_multiple_items_share_session_before_payment(monkeypatch):
 
     posts = [arguments for name, arguments in calls if name == "create_cart"]
     assert len(posts) == 2
-    assert "session_id" not in posts[0]
+    assert len(posts[0]["session_id"]) == 32
+    int(posts[0]["session_id"], 16)
     assert posts[1]["session_id"] == "S1"
     assert calls[-1][0] == "get_payment_options"
     assert len(result.response_metadata["cart_state"]["cart_items"]) == 2
