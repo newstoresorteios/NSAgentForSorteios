@@ -28,6 +28,12 @@ class CommerceConversationState(BaseModel):
     last_presented_products: list[PresentedCommerceProduct] = Field(default_factory=list)
     active_preferences: dict[str, Any] = Field(default_factory=dict)
     purchase_stage: str | None = None
+    cart_id: str | None = None
+    cart_session_id: str | None = None
+    cart_url: str | None = None
+    cart_product_id: str | None = None
+    cart_variant_id: str | None = None
+    cart_quantity: int | None = None
 
     @classmethod
     def from_payload(cls, value: Any) -> "CommerceConversationState":
@@ -67,6 +73,7 @@ class CommerceConversationState(BaseModel):
             ],
             "active_preferences": self.active_preferences,
             "purchase_stage": self.purchase_stage,
+            "has_cart": bool(self.cart_session_id and self.cart_url),
         }
 
 
@@ -223,6 +230,18 @@ def evolve_commerce_state(
         state.active_topic = str(metadata["active_topic"])
     if metadata.get("purchase_stage"):
         state.purchase_stage = str(metadata["purchase_stage"])
+    cart_state = metadata.get("cart_state")
+    if isinstance(cart_state, dict):
+        for field in (
+            "cart_id",
+            "cart_session_id",
+            "cart_url",
+            "cart_product_id",
+            "cart_variant_id",
+            "cart_quantity",
+        ):
+            if field in cart_state:
+                setattr(state, field, cart_state[field])
     active_preferences = _compact_preferences(metadata.get("active_preferences"))
     if active_preferences:
         state.active_preferences = active_preferences

@@ -96,6 +96,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "presented_product_count": len(commerce_state.last_presented_products),
         "active_topic_present": bool(commerce_state.active_topic),
         "purchase_stage": commerce_state.purchase_stage,
+        "has_cart_session": bool(commerce_state.cart_session_id),
     })
 
     user_id = customer_context.get("user_id")

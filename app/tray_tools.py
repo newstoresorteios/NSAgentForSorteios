@@ -20,7 +20,7 @@ TOOL_SCHEMAS = [
 ]
 
 TOOL_REGISTRY = {
-    "commerce": ("search_products", "get_product", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon"),
+    "commerce": ("search_products", "get_product", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart"),
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
@@ -29,6 +29,7 @@ _CATEGORY_FIELDS = ("id", "name", "parent_id", "parent", "slug", "path")
 _VARIANT_FIELDS = ("id", "variant_id", "product_id", "name", "value", "color", "size", "version", "reference", "sku", "Sku", "price", "promotional_price", "stock", "available", "available_in_store", "availability", "VariationSettings")
 _CUSTOMER_FIELDS = ("id", "name", "email", "city", "state", "last_purchase", "total_orders")
 _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", "type", "value_start", "value_end", "usage_counter_limit", "usage_counter_limit_customer", "coupon_type", "local_application", "freight_application")
+_CART_FIELDS = ("cart_id", "session_id", "cart_url", "message", "code")
 
 
 def _clean_text(value: str) -> str:
@@ -216,10 +217,17 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             return {"coupons": [_reduce(item, _COUPON_FIELDS) for item in _items(await client.list_coupons(**arguments))[:5]]}
         if name == "get_coupon":
             return _reduce(await client.get_coupon(arguments["coupon_id"]), _COUPON_FIELDS)
+        if name == "create_cart":
+            return _reduce(await client.create_cart(**arguments), _CART_FIELDS)
+        if name == "get_cart":
+            return _reduce(await client.get_cart(arguments["session_id"]), _CART_FIELDS)
         raise ValueError(f"unknown_tool:{name}")
     except TrayAdapterError as exc:
         print("[tray.tool] request_failed", {"tool": name, "status_code": exc.status_code})
-        result = {"error": "Não consegui consultar o sistema da loja neste momento."}
+        result = {
+            "error": "Não consegui consultar o sistema da loja neste momento.",
+            "status_code": exc.status_code,
+        }
         if name == "list_categories":
             result["error_reason"] = (
                 "category_invalid_request"

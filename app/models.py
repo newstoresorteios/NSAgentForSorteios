@@ -60,12 +60,19 @@ class SalesInterpretation(BaseModel):
         "explicit_product",
     ] | None = None
     reference_position: int | None = None
+    purchase_action: Literal[
+        "create_cart",
+        "show_cart_link",
+        "checkout_question",
+    ] | None = Field(default_factory=lambda: None)
+    quantity: int | None = Field(default_factory=lambda: None, ge=1)
     active_topic: str | None = None
     purchase_stage: Literal[
         "discovery",
         "selection",
         "details",
         "payment_discussion",
+        "cart_created",
         "after_sales",
     ] | None = None
     domain_change_explicit: bool = Field(default_factory=bool)

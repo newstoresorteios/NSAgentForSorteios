@@ -1,6 +1,6 @@
 import pytest
 
-from app.tray_tools import _reduce, execute_tool, search_products
+from app.tray_tools import TOOL_SCHEMAS, _reduce, execute_tool, search_products
 from app.tray_adapter_client import TrayAdapterError
 
 
@@ -34,6 +34,24 @@ class FakeTray:
     async def list_product_variants(self, product_id):
         self.calls.append(("list_product_variants", product_id))
         return {"variants": [{"id": "V1", "product_id": product_id, "color": "Preto", "stock": 2, "secret": "omit"}]}
+
+    async def create_cart(self, **kwargs):
+        self.calls.append(("create_cart", kwargs))
+        return {
+            "cart_id": "C1",
+            "session_id": "S1",
+            "cart_url": "https://loja.example/checkout/S1",
+            "secret": "omit",
+        }
+
+    async def get_cart(self, session_id):
+        self.calls.append(("get_cart", session_id))
+        return {
+            "cart_id": "C1",
+            "session_id": session_id,
+            "cart_url": "https://loja.example/checkout/S1",
+            "secret": "omit",
+        }
 
 
 @pytest.mark.asyncio
@@ -127,3 +145,46 @@ async def test_category_http_422_is_preserved_as_invalid_request():
     )
 
     assert result["error_reason"] == "category_invalid_request"
+
+
+@pytest.mark.asyncio
+async def test_cart_tools_use_normalized_adapter_contract():
+    client = FakeTray()
+
+    created = await execute_tool(
+        "create_cart",
+        {
+            "product_id": "641",
+            "variant_id": "V1",
+            "quantity": 2,
+            "price": "99.90",
+        },
+        client,
+    )
+    loaded = await execute_tool("get_cart", {"session_id": "S1"}, client)
+
+    assert created == {
+        "cart_id": "C1",
+        "session_id": "S1",
+        "cart_url": "https://loja.example/checkout/S1",
+    }
+    assert loaded["session_id"] == "S1"
+    assert client.calls[-2] == (
+        "create_cart",
+        {
+            "product_id": "641",
+            "variant_id": "V1",
+            "quantity": 2,
+            "price": "99.90",
+        },
+    )
+
+
+def test_cart_side_effect_is_not_exposed_as_an_openai_tool():
+    exposed = {
+        schema["function"]["name"]
+        for schema in TOOL_SCHEMAS
+    }
+
+    assert "create_cart" not in exposed
+    assert "get_cart" not in exposed

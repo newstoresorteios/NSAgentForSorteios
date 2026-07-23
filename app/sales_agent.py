@@ -15,6 +15,7 @@ from .commerce_router import (
     _product_lines,
 )
 from .category_resolver import CategoryResolver
+from .cart_service import create_cart_checkout, current_cart_reply
 from .commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
@@ -72,6 +73,8 @@ Quando FACTS contiver uma lista de produtos, preserve a ordem recebida e numere 
 como 1, 2 e 3. Não altere essa ordem, pois ela será usada nas referências posteriores.
 Quando FACTS.match_status for ambiguous, apresente as correspondências plausíveis e peça
 ao cliente para identificar qual delas pretendia, sem escolher uma arbitrariamente.
+Quando FACTS contiver cart_url, use somente esse link oficial. Nunca peça número completo
+do cartão, CVV, senha, código ou validade pelo WhatsApp; o pagamento termina no checkout.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -170,6 +173,13 @@ outro domínio. Se active_domain=commerce, interprete mensagens ambíguas primei
 contexto. domain_change_explicit=true somente quando o cliente mudar claramente de
 assunto. Perguntas sobre pagamento de um produto continuam em commerce e usam
 purchase_stage=payment_discussion.
+Interprete semanticamente a etapa de carrinho:
+- purchase_action=create_cart quando o cliente confirma que quer levar um produto
+  identificado; use reference_type/reference_position para indicar qual produto;
+- purchase_action=show_cart_link quando pede novamente o link do carrinho atual;
+- purchase_action=checkout_question quando pergunta como ou onde concluir o pagamento.
+Extraia quantity como inteiro positivo quando o cliente informar quantidade. Caso não
+informe, deixe quantity=null. Nunca invente product_id, variant_id, session_id ou cart_url.
 """.strip()
 
 _ACTION_TO_PLAN = {
@@ -456,6 +466,8 @@ def interpretation_to_plan(
         "enough_information_to_search": interpretation.enough_information_to_search,
         "ready_for_retrieval": interpretation.ready_for_retrieval,
         "stop_clarification": interpretation.stop_clarification,
+        "purchase_action": interpretation.purchase_action,
+        "quantity": interpretation.quantity,
         "_source": interpretation._source,
     }
 
@@ -739,14 +751,12 @@ def _mark_sales_result(
         fallback_reason=fallback_reason or (interpretation._fallback_reason if interpretation else None),
     )
     if interpretation is not None:
-        marked.response_metadata.update({
-            "active_topic": interpretation.active_topic,
-            "purchase_stage": interpretation.purchase_stage,
-            "active_preferences": interpretation.preferences.model_dump(
-                mode="json",
-                exclude_none=True,
-            ),
-        })
+        marked.response_metadata.setdefault("active_topic", interpretation.active_topic)
+        marked.response_metadata.setdefault("purchase_stage", interpretation.purchase_stage)
+        marked.response_metadata.setdefault(
+            "active_preferences",
+            interpretation.preferences.model_dump(mode="json", exclude_none=True),
+        )
     return marked
 
 
@@ -961,6 +971,7 @@ async def _sales_response_with_openai(
     if not settings.openai_api_key or tray_result.safety_reason in {
         "tray_adapter_unavailable", "product_match_failed", "product_not_found",
         "ambiguous_product", "product_context_missing", "coupon_not_found",
+        "cart_technical_failure", "cart_validation_error",
     }:
         return None
     try:
@@ -999,7 +1010,7 @@ async def _sales_response_with_openai(
             goal=plan.get("goal"),
             response_source="openai",
             used_openai_responder=True,
-            used_tray=True,
+            used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
         )
     except (APIError, ValueError, TypeError) as exc:
         print("[sales.responder] failed", {"error_type": type(exc).__name__})
@@ -1488,6 +1499,70 @@ async def handle_sales_message(
             "resolved": resolved_product is not None,
             "resolved_by": resolved_by,
         })
+    purchase_action = interpretation.purchase_action if interpretation is not None else None
+    if (
+        purchase_action is None
+        and interpretation is not None
+        and interpretation.goal == "buy"
+        and resolved_product is not None
+    ):
+        purchase_action = "create_cart"
+    if purchase_action in {"show_cart_link", "checkout_question"}:
+        cart_result = current_cart_reply(
+            state,
+            checkout_question=purchase_action == "checkout_question",
+        )
+        final = await _sales_response_with_openai(
+            message,
+            plan,
+            cart_result,
+            interpretation,
+        )
+        print("[sales.responder]", {
+            "source": "openai" if final else "deterministic_fallback",
+        })
+        if final:
+            return final
+        return _mark_sales_result(
+            cart_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason="sales_responder_unavailable",
+        )
+    if purchase_action == "create_cart" and resolved_product is not None:
+        cart_result = await create_cart_checkout(
+            interpretation=interpretation,
+            product_reference=resolved_product,
+            state=state,
+            execute=execute_tool,
+        )
+        final = await _sales_response_with_openai(
+            message,
+            plan,
+            cart_result,
+            interpretation,
+        )
+        print("[sales.responder]", {
+            "source": "openai" if final else "deterministic_fallback",
+        })
+        if final:
+            return final
+        return _mark_sales_result(
+            cart_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source=(
+                "technical_fallback"
+                if cart_result.safety_reason == "cart_technical_failure"
+                else "deterministic_fallback"
+            ),
+            used_openai_responder=False,
+            used_tray=bool(cart_result.response_metadata.get("used_tray", True)),
+            fallback_reason=cart_result.safety_reason or "sales_responder_unavailable",
+        )
     discovery_state = _discovery_state(interpretation, recent_turns) if interpretation else None
     if discovery_state and discovery_state["force_retrieval"] and plan.get("intent") == "clarification":
         plan = {**plan, "intent": "recommendation"}

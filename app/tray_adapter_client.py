@@ -32,6 +32,8 @@ class TrayAdapterClient:
 
     @staticmethod
     def _operation_name(path: str) -> str:
+        if path.startswith("/internal/carts"):
+            return "carts"
         if path.startswith("/internal/products"):
             return "products"
         if path.startswith("/internal/categories"):
@@ -44,7 +46,14 @@ class TrayAdapterClient:
             return "coupons"
         return "internal_get"
 
-    async def _request(self, method: str, path: str, *, params: dict[str, Any] | None = None) -> Any:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> Any:
         if not self.base_url or not self.token:
             raise TrayAdapterError("tray_adapter_not_configured")
         clean_params = {key: value for key, value in (params or {}).items() if value is not None}
@@ -55,11 +64,20 @@ class TrayAdapterClient:
         try:
             for attempt in range(1, max_attempts + 1):
                 try:
+                    request_kwargs: dict[str, Any] = {
+                        "headers": self._headers(),
+                        "params": clean_params,
+                    }
+                    if json_body is not None:
+                        request_kwargs["json"] = {
+                            key: value
+                            for key, value in json_body.items()
+                            if value is not None
+                        }
                     response = await client.request(
                         method,
                         f"{self.base_url}{path}",
-                        headers=self._headers(),
-                        params=clean_params,
+                        **request_kwargs,
                     )
                     if response.status_code >= 400:
                         if (
@@ -139,6 +157,30 @@ class TrayAdapterClient:
 
     async def get_product_variant(self, variant_id: str | int) -> Any:
         return await self._request("GET", f"/internal/products/variants/{variant_id}")
+
+    async def create_cart(
+        self,
+        *,
+        product_id: str | int,
+        quantity: int,
+        price: str,
+        variant_id: str | int | None = None,
+        session_id: str | None = None,
+    ) -> Any:
+        return await self._request(
+            "POST",
+            "/internal/carts",
+            json_body={
+                "product_id": str(product_id),
+                "variant_id": str(variant_id) if variant_id is not None else None,
+                "quantity": quantity,
+                "price": price,
+                "session_id": session_id,
+            },
+        )
+
+    async def get_cart(self, session_id: str) -> Any:
+        return await self._request("GET", f"/internal/carts/{session_id}")
 
     async def list_categories(self, *, limit: int = 50, page: int = 1) -> Any:
         return await self._request(
