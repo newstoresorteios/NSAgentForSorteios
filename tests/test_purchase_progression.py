@@ -270,13 +270,11 @@ async def test_pending_product_link_confirmation_uses_real_product_url(monkeypat
 
     async def execute(tool, arguments):
         calls.append((tool, arguments))
-        assert tool == "get_product"
+        assert tool == "get_product_link"
         return {
-            "id": "P1",
-            "name": "Produto",
-            "url": "https://loja.example/produto/P1",
-            "available": True,
-            "has_variation": False,
+            "product_id": "P1",
+            "product_name": "Produto",
+            "product_url": "https://loja.example/produto/P1",
         }
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
@@ -296,7 +294,7 @@ async def test_pending_product_link_confirmation_uses_real_product_url(monkeypat
         commerce_state=state,
     )
 
-    assert calls == [("get_product", {"product_id": "P1"})]
+    assert calls == [("get_product_link", {"product_id": "P1"})]
     assert "https://loja.example/produto/P1" in result.reply_text
 
 

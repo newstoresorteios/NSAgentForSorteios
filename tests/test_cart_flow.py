@@ -60,6 +60,21 @@ def test_structured_plan_preserves_cart_action_and_quantity():
     assert plan["quantity"] == 3
 
 
+def test_structured_plan_exposes_product_and_checkout_actions():
+    from app.sales_agent import interpretation_to_plan
+
+    plan = interpretation_to_plan(
+        _interpretation(
+            purchase_action=None,
+            product_action="get_product_link",
+            checkout_channel_preference="site",
+        )
+    )
+
+    assert plan["product_action"] == "get_product_link"
+    assert plan["checkout_channel_preference"] == "site"
+
+
 def test_structured_plan_preserves_multiple_purchase_items():
     from app.sales_agent import interpretation_to_plan
 
@@ -158,6 +173,122 @@ async def test_list_selection_revalidates_price_quantity_and_creates_cart(monkey
     assert result.response_metadata["cart_state"]["cart_product_id"] == "B"
     assert result.response_metadata["cart_state"]["cart_quantity"] == 2
     assert result.commercial_data["current_price"] == "125.50"
+
+
+@pytest.mark.asyncio
+async def test_successful_cart_post_is_not_downgraded_when_complete_lags(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_product":
+            return {
+                "id": "B",
+                "name": "Produto B",
+                "current_price": "125.50",
+                "available": True,
+                "has_variation": False,
+            }
+        if tool == "create_cart":
+            return {
+                "cart_id": "CART-1",
+                "session_id": arguments["session_id"],
+                "cart_url": "https://loja.example/checkout/CART-1",
+            }
+        if tool == "get_cart_complete":
+            return {
+                "cart_id": "CART-1",
+                "session_id": arguments["session_id"],
+                "items": [],
+            }
+        raise AssertionError(f"unexpected tool {tool}")
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(sales_agent, "get_settings", _settings)
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="compra estruturada"),
+        {},
+        {},
+        _interpretation(
+            reference_type="list_position",
+            reference_position=2,
+        ),
+        commerce_state=_state(),
+    )
+
+    assert [name for name, _ in calls] == [
+        "get_product",
+        "create_cart",
+        "get_cart_complete",
+    ]
+    assert result.safety_reason is None
+    assert result.commercial_data["cart"]["status"] == "cart_created"
+    assert result.commercial_data["cart"]["verification_status"] == "pending"
+    assert result.commercial_data["cart"]["items"] == [
+        {"product_id": "B", "variant_id": None, "quantity": 1}
+    ]
+    assert result.response_metadata["pending_action"] == "choose_checkout_channel"
+
+
+@pytest.mark.asyncio
+async def test_purchase_and_site_choice_execute_cart_before_channel_selection(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_product":
+            return {
+                "id": "B",
+                "name": "Produto B",
+                "current_price": "125.50",
+                "available": True,
+                "has_variation": False,
+            }
+        if tool == "create_cart":
+            return {
+                "cart_id": "CART-1",
+                "session_id": arguments["session_id"],
+                "cart_url": "https://loja.example/checkout/CART-1",
+            }
+        if tool == "get_cart_complete":
+            return {
+                "cart_id": "CART-1",
+                "session_id": arguments["session_id"],
+                "items": [{"product_id": "B", "quantity": 1}],
+            }
+        raise AssertionError(f"unexpected tool {tool}")
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(sales_agent, "get_settings", _settings)
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="compra e canal estruturados"),
+        {},
+        {},
+        _interpretation(
+            reference_type="list_position",
+            reference_position=2,
+            checkout_channel_preference="site",
+        ),
+        commerce_state=_state(),
+    )
+
+    assert [name for name, _ in calls] == [
+        "get_product",
+        "create_cart",
+        "get_cart_complete",
+    ]
+    assert result.safety_reason is None
+    assert result.response_metadata["checkout_channel_preference"] == "site"
+    assert result.response_metadata["purchase_stage"] == "checkout_ready"
+    assert result.response_metadata["cart_state"]["cart_session_id"]
+    assert result.commercial_data["checkout"]["selected_channel"] == "site"
+    assert result.commercial_data["checkout"]["selected_channel_supported"] is True
 
 
 @pytest.mark.asyncio
@@ -574,3 +705,67 @@ async def test_cart_success_uses_openai_sales_responder(monkeypatch):
     assert result.response_metadata["response_source"] == "openai"
     assert result.response_metadata["purchase_stage"] == "cart_created"
     assert "cartão, CVV" in captured["messages"][0]["content"]
+    assert "requires_channel_choice" in captured["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_cart_failure_gives_openai_only_safe_semantic_facts(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    captured = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="Houve uma falha interna temporária no carrinho.",
+                        )
+                    )
+                ]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openai_api_key="test-key",
+            openai_model="gpt-4.1-mini",
+        ),
+    )
+    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeOpenAI)
+    technical = AgentResult(
+        reply_text="Não consegui preparar o carrinho neste momento.",
+        intent="commerce",
+        safety_reason="cart_technical_failure",
+        commercial_data={
+            "cart": {
+                "status": "technical_failure",
+                "failure_stage": "cart_http",
+            },
+            "technical_failure": {
+                "operation": "cart",
+                "category": "integration_failure",
+                "retryable": False,
+            },
+        },
+        response_metadata={"used_tray": True},
+    )
+
+    result = await sales_agent._sales_response_with_openai(
+        IncomingMessage(text="compra estruturada"),
+        {"goal": "buy"},
+        technical,
+        _interpretation(),
+    )
+
+    assert result is not None
+    facts_message = captured["messages"][1]["content"]
+    assert '"category": "integration_failure"' in facts_message
+    assert "tray_error_message" not in facts_message

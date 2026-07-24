@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
+from .checkout_service import checkout_capabilities
 from .commerce_context import CommerceConversationState
 from .models import AgentResult
 
@@ -48,7 +49,10 @@ async def inspect_current_cart(
         reply_text="Consultei o estado atual do seu carrinho.",
         intent="commerce",
         handoff_required=False,
-        commercial_data={"cart": cart},
+        commercial_data={
+            "cart": cart,
+            "checkout": checkout_capabilities(state),
+        },
         response_metadata={
             "domain": "commerce",
             "purchase_stage": "cart_created",
@@ -100,15 +104,31 @@ async def inspect_payment_options(
             None,
         )
     method_available: bool | None = None
+    selected_option: dict[str, Any] | None = None
     if payment_method_preference == "pix":
-        method_available = isinstance(options.get("pix"), dict)
+        selected_option = (
+            options.get("pix")
+            if isinstance(options.get("pix"), dict)
+            else None
+        )
+        method_available = selected_option is not None
     elif payment_method_preference == "card":
+        selected_option = (
+            options.get("card")
+            if isinstance(options.get("card"), dict)
+            else None
+        )
         method_available = (
-            isinstance(options.get("card"), dict)
+            selected_option is not None
             or bool(installments)
         )
     elif payment_method_preference == "boleto":
-        method_available = isinstance(options.get("boleto"), dict)
+        selected_option = (
+            options.get("boleto")
+            if isinstance(options.get("boleto"), dict)
+            else None
+        )
+        method_available = selected_option is not None
     print("[sales.payment.options]", {
         "has_session_id": True,
         "option_count": (
@@ -130,6 +150,7 @@ async def inspect_payment_options(
         "requested_installment_count": installment_count,
         "requested_installment": selected,
         "cart_url": state.cart_url,
+        "checkout": checkout_capabilities(state),
     }
     if payment_method_preference is not None and method_available is False:
         reply = (
@@ -156,6 +177,24 @@ async def inspect_payment_options(
         response_metadata={
             "domain": "commerce",
             "purchase_stage": "payment_discussion",
+            **(
+                {
+                    "selected_payment_method": payment_method_preference,
+                    "selected_payment_option_id": str(selected_option["id"]),
+                }
+                if method_available is True
+                and payment_method_preference is not None
+                and selected_option is not None
+                and selected_option.get("id") is not None
+                else {
+                    "selected_payment_method": payment_method_preference,
+                }
+                if method_available is True
+                and payment_method_preference is not None
+                else {}
+            ),
+            "pending_action": "choose_checkout_channel",
+            "pending_action_product_ids": [],
             "used_tray": True,
         },
     )

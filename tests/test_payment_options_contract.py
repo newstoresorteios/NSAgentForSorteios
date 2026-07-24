@@ -107,3 +107,6 @@ async def test_payment_service_uses_exact_ten_installment_plot():
     assert result.commercial_data["requested_installment"]["count"] == 10
     assert result.commercial_data["requested_installment"]["value"] == 125.0
     assert result.commercial_data["requested_installment"]["order_total"] == 1250.0
+    assert result.response_metadata["selected_payment_method"] == "card"
+    assert result.response_metadata["selected_payment_option_id"] == "C1"
+    assert result.response_metadata["pending_action"] == "choose_checkout_channel"

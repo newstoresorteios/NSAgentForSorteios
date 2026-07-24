@@ -20,6 +20,37 @@ def _https_url(value: Any) -> str | None:
     return None
 
 
+def _http_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    parsed = urlparse(candidate)
+    if parsed.scheme == "http" and parsed.netloc:
+        return candidate
+    return None
+
+
+def official_product_url(product: dict[str, Any]) -> str | None:
+    """Normalize the current string contract and the legacy protocol map."""
+    value = product.get("url")
+    direct_https = _https_url(value)
+    if direct_https:
+        return direct_https
+    if isinstance(value, dict):
+        for key in ("https", "url", "link"):
+            found = _https_url(value.get(key))
+            if found:
+                return found
+        direct_http = _http_url(value.get("http"))
+        if direct_http:
+            return direct_http
+        for key in ("url", "link"):
+            found = _http_url(value.get(key))
+            if found:
+                return found
+    return _http_url(value)
+
+
 def _image_url(value: Any) -> str | None:
     direct = _https_url(value)
     if direct:
@@ -66,7 +97,13 @@ async def resolve_product_image(
             intent="commerce",
             handoff_required=False,
             safety_reason="product_media_technical_failure",
-            response_metadata={"domain": "commerce", "used_tray": True},
+            response_metadata={
+                "domain": "commerce",
+                "image_url_found": False,
+                "media_send_supported": False,
+                "media_send_failed": False,
+                "used_tray": True,
+            },
         )
 
     image_source = "product"
@@ -99,6 +136,9 @@ async def resolve_product_image(
             response_metadata={
                 "domain": "commerce",
                 "active_product": active.model_dump(mode="json"),
+                "image_url_found": False,
+                "media_send_supported": False,
+                "media_send_failed": False,
                 "used_tray": True,
             },
         )
@@ -115,6 +155,9 @@ async def resolve_product_image(
             "domain": "commerce",
             "active_product": active.model_dump(mode="json"),
             "outbound_image_url": image_url,
+            "image_url_found": True,
+            "media_send_supported": False,
+            "media_send_failed": False,
             "media_supported": False,
             "used_tray": True,
         },

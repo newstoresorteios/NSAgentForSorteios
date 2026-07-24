@@ -352,6 +352,9 @@ async def test_missing_image_is_honest():
 
     assert result.safety_reason == "product_image_not_available"
     assert result.response_metadata.get("outbound_image_url") is None
+    assert result.response_metadata["image_url_found"] is False
+    assert result.response_metadata["media_send_supported"] is False
+    assert result.response_metadata["media_send_failed"] is False
 
 
 @pytest.mark.asyncio
@@ -379,6 +382,55 @@ async def test_brevo_conversations_image_fallback_remains_text(monkeypatch):
 
     assert sent.provider_response["text"].endswith("/A.jpg")
     assert "image" not in sent.provider_response
+    assert result.response_metadata["image_url_found"] is True
+    assert result.response_metadata["media_send_supported"] is False
+    assert result.response_metadata["media_send_failed"] is False
+    assert result.response_metadata["fallback_link_sent"] is False
+    assert result.response_metadata["fallback_link_failed"] is False
+
+
+@pytest.mark.asyncio
+async def test_image_fallback_delivery_failure_is_not_reported_as_native_media(monkeypatch):
+    import app.brevo_client as brevo
+    from app.models import AgentResult
+
+    monkeypatch.setattr(
+        brevo,
+        "get_settings",
+        lambda: SimpleNamespace(
+            dry_run=False,
+            brevo_reply_mode="conversations",
+            brevo_send_audio_as_attachment=False,
+        ),
+    )
+
+    async def fail_send(_incoming, _text, *, audio_file=None):
+        assert audio_file is None
+        return brevo.BrevoSendResult(
+            ok=False,
+            dry_run=False,
+            error="provider_failure",
+        )
+
+    monkeypatch.setattr(brevo, "_send_conversations_reply", fail_send)
+    result = AgentResult(
+        reply_text="Imagem oficial:\nhttps://cdn.tray.example/A.jpg",
+        response_metadata={
+            "outbound_image_url": "https://cdn.tray.example/A.jpg",
+        },
+    )
+
+    sent = await brevo.send_brevo_reply(
+        IncomingMessage(visitor_id="V1"),
+        result,
+    )
+
+    assert sent.ok is False
+    assert result.response_metadata["image_url_found"] is True
+    assert result.response_metadata["media_send_supported"] is False
+    assert result.response_metadata["media_send_failed"] is False
+    assert result.response_metadata["fallback_link_sent"] is False
+    assert result.response_metadata["fallback_link_failed"] is True
 
 
 @pytest.mark.asyncio

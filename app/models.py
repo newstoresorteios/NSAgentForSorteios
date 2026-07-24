@@ -82,6 +82,9 @@ class SalesInterpretation(BaseModel):
     quantity: int | None = Field(default_factory=lambda: None, ge=1)
     purchase_items: list[PurchaseItem] = Field(default_factory=list)
     image_request: bool = Field(default_factory=bool)
+    product_action: Literal[
+        "get_product_link",
+    ] | None = Field(default_factory=lambda: None)
     payment_action: Literal[
         "payment_options",
         "installment",
@@ -91,6 +94,10 @@ class SalesInterpretation(BaseModel):
         "card",
         "boleto",
         "other",
+    ] | None = Field(default_factory=lambda: None)
+    checkout_channel_preference: Literal[
+        "whatsapp",
+        "site",
     ] | None = Field(default_factory=lambda: None)
     confirmation: Literal[
         "confirm",
@@ -105,6 +112,8 @@ class SalesInterpretation(BaseModel):
         "details",
         "payment_discussion",
         "cart_created",
+        "checkout_channel_selection",
+        "checkout_ready",
         "after_sales",
     ] | None = None
     domain_change_explicit: bool = Field(default_factory=bool)

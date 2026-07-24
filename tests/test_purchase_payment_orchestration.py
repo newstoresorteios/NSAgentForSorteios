@@ -447,7 +447,8 @@ async def test_payment_failure_after_cart_keeps_created_cart_state(monkeypatch):
     assert calls[-1][0] == "get_payment_options"
     assert result.safety_reason == "payment_options_technical_failure"
     assert result.response_metadata["cart_state"]["cart_session_id"] == "S1"
-    assert "checkout/S1" in result.reply_text
+    assert result.commercial_data["checkout"]["cart_ready"] is True
+    assert result.commercial_data["checkout"]["cart_url"].endswith("/checkout/S1")
 
 
 @pytest.mark.asyncio

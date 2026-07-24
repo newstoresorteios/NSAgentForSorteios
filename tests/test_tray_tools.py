@@ -282,6 +282,50 @@ async def test_wrapped_product_detail_preserves_commercial_price():
 
 
 @pytest.mark.asyncio
+async def test_product_link_accepts_direct_and_legacy_urls_preferring_https():
+    class ProductLinkTray(FakeTray):
+        def __init__(self):
+            super().__init__()
+            self.products = {
+                "direct": {
+                    "id": "direct",
+                    "name": "Direto",
+                    "url": "https://loja.example/direto",
+                },
+                "legacy": {
+                    "id": "legacy",
+                    "name": "Legado",
+                    "url": {
+                        "http": "http://loja.example/legado",
+                        "https": "https://loja.example/legado",
+                    },
+                },
+            }
+
+        async def get_product(self, product_id):
+            return self.products[product_id]
+
+    client = ProductLinkTray()
+    direct = await execute_tool(
+        "get_product_link",
+        {"product_id": "direct"},
+        client,
+    )
+    legacy = await execute_tool(
+        "get_product_link",
+        {"product_id": "legacy"},
+        client,
+    )
+
+    assert direct == {
+        "product_id": "direct",
+        "product_name": "Direto",
+        "product_url": "https://loja.example/direto",
+    }
+    assert legacy["product_url"] == "https://loja.example/legado"
+
+
+@pytest.mark.asyncio
 async def test_complete_cart_and_payment_options_are_normalized():
     client = FakeTray()
 
@@ -319,4 +363,4 @@ def test_cart_side_effect_is_not_exposed_as_an_openai_tool():
     }
 
     assert "create_cart" not in exposed
-    assert "get_cart" not in exposed
+    assert {"get_cart", "get_cart_complete", "get_payment_options"} <= exposed

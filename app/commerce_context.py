@@ -41,12 +41,21 @@ class CommerceConversationState(BaseModel):
     cart_variant_id: str | None = None
     cart_quantity: int | None = None
     cart_items: list[CommerceCartItem] = Field(default_factory=list)
+    selected_payment_method: Literal[
+        "pix",
+        "card",
+        "boleto",
+        "other",
+    ] | None = None
+    selected_payment_option_id: str | None = None
+    checkout_channel_preference: Literal["whatsapp", "site"] | None = None
     pending_action: Literal[
         "send_product_link",
         "create_cart",
         "show_images",
         "show_payment_options",
         "confirm_purchase",
+        "choose_checkout_channel",
     ] | None = None
     pending_action_product_ids: list[str] = Field(default_factory=list)
 
@@ -90,6 +99,8 @@ class CommerceConversationState(BaseModel):
             "purchase_stage": self.purchase_stage,
             "has_cart": bool(self.cart_session_id and self.cart_url),
             "cart_item_count": len(self.cart_items),
+            "selected_payment_method": self.selected_payment_method,
+            "checkout_channel_preference": self.checkout_channel_preference,
             "pending_action": self.pending_action,
             "pending_action_product_count": len(self.pending_action_product_ids),
         }
@@ -313,6 +324,7 @@ def evolve_commerce_state(
         "show_images",
         "show_payment_options",
         "confirm_purchase",
+        "choose_checkout_channel",
     }:
         state.pending_action = pending_action
         pending_ids = metadata.get("pending_action_product_ids")
@@ -343,6 +355,16 @@ def evolve_commerce_state(
                     state.cart_items = parsed_items
                 else:
                     setattr(state, field, cart_state[field])
+    selected_payment_method = metadata.get("selected_payment_method")
+    if selected_payment_method in {"pix", "card", "boleto", "other"}:
+        state.selected_payment_method = selected_payment_method
+    if metadata.get("selected_payment_option_id") is not None:
+        state.selected_payment_option_id = str(
+            metadata["selected_payment_option_id"]
+        )
+    checkout_channel = metadata.get("checkout_channel_preference")
+    if checkout_channel in {"whatsapp", "site"}:
+        state.checkout_channel_preference = checkout_channel
     active_preferences = _compact_preferences(metadata.get("active_preferences"))
     if active_preferences:
         state.active_preferences = active_preferences

@@ -12,6 +12,7 @@ from .commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
 )
+from .checkout_service import checkout_capabilities
 from .models import AgentResult, SalesInterpretation
 from .product_retrieval import (
     commercial_availability_facts,
@@ -62,7 +63,20 @@ def _technical_failure(
     stage: str,
     status_code: int | None = None,
     exception_type: str | None = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> AgentResult:
+    diagnostics = diagnostics or {}
+    diagnostic_log = {
+        key: diagnostics.get(key)
+        for key in (
+            "tray_error_code",
+            "tray_error_type",
+            "tray_error_field",
+            "tray_error_fields",
+            "tray_error_message",
+        )
+        if diagnostics.get(key) not in (None, "", [])
+    }
     log_purchase_progress(
         stage,
         "failed",
@@ -72,6 +86,7 @@ def _technical_failure(
         "stage": stage,
         "exception_type": exception_type or "upstream_error",
         "upstream_status": status_code,
+        **diagnostic_log,
     })
     print("[sales.cart.error]", {
         "error_type": "cart_technical_failure",
@@ -85,6 +100,20 @@ def _technical_failure(
         intent="commerce",
         handoff_required=False,
         safety_reason="cart_technical_failure",
+        commercial_data={
+            "cart": {
+                "status": "technical_failure",
+                "failure_stage": stage,
+            },
+            "technical_failure": {
+                "operation": "cart",
+                "category": "integration_failure",
+                "retryable": _is_transient_cart_failure(
+                    status_code=status_code,
+                    error_type=exception_type,
+                ),
+            },
+        },
         response_metadata={
             "used_tray": True,
             "cart_failure_stage": stage,
@@ -329,6 +358,7 @@ async def _resolve_variant(
             stage="variant_resolution",
             status_code=result.get("status_code"),
             exception_type=result.get("error_type"),
+            diagnostics=result,
         )
     variants = [
         variant
@@ -502,13 +532,9 @@ def current_cart_reply(
         return _validation_failure(
             "Ainda não há um carrinho ativo nesta conversa.",
         )
-    message = (
-        "O pagamento é concluído com segurança no checkout oficial da loja."
-        if checkout_question
-        else "Este é o link do seu carrinho atual."
-    )
+    checkout = checkout_capabilities(state)
     return AgentResult(
-        reply_text=f"{message}\n{cart_url}",
+        reply_text=f"Carrinho atual consultado.\n{cart_url}",
         intent="commerce",
         handoff_required=False,
         commercial_data={
@@ -519,10 +545,20 @@ def current_cart_reply(
                     item.model_dump(mode="json")
                     for item in state.cart_items
                 ],
-            }
+            },
+            "checkout": checkout,
         },
         response_metadata={
+            "domain": "commerce",
             "purchase_stage": "cart_created",
+            **(
+                {
+                    "pending_action": "choose_checkout_channel",
+                    "pending_action_product_ids": [],
+                }
+                if checkout_question
+                else {}
+            ),
             "used_tray": False,
         },
     )
@@ -561,6 +597,7 @@ async def _prepare_item(
                 stage="product_resolution",
                 status_code=current.get("status_code"),
                 exception_type=current.get("error_type"),
+                diagnostics=current,
             ),
             reference,
         )
@@ -969,6 +1006,7 @@ async def _create_cart_items_checkout_impl(
                     stage="cart_http",
                     status_code=created.get("status_code"),
                     exception_type=created.get("error_type"),
+                    diagnostics=created,
                 )
             break
         log_purchase_progress("cart_http", "success")
@@ -1018,27 +1056,27 @@ async def _create_cart_items_checkout_impl(
                 if isinstance(created, dict)
                 else "invalid_cart_response"
             ),
+            diagnostics=created if isinstance(created, dict) else None,
         )
 
     if reconciled_complete is not None:
         complete = reconciled_complete
+        complete_error: str | None = None
     else:
         try:
             complete = await execute("get_cart_complete", {"session_id": session_id})
         except Exception as exc:
-            return _technical_failure(
-                stage="cart_validation",
-                exception_type=type(exc).__name__,
+            complete = {}
+            complete_error = type(exc).__name__
+        else:
+            complete_error = (
+                str(complete.get("error_type") or "cart_verification_failed")
+                if "error" in complete
+                else None
             )
     verify_ok = "error" not in complete
-    verified_items = (
-        _verified_items(complete)
-        if verify_ok
-        else [
-            CommerceCartItem.model_validate(item)
-            for item in state.cart_items
-        ]
-    )
+    complete_items = _verified_items(complete) if verify_ok else []
+    verified_items = complete_items or list(successful)
     print("[sales.cart.verify]", {
         "item_count": len(verified_items),
         "has_total": bool(
@@ -1054,11 +1092,16 @@ async def _create_cart_items_checkout_impl(
                 or verified.variant_id == item.product_reference.variant_id
             )
             and verified.quantity >= item.quantity
-            for verified in verified_items
+            for verified in complete_items
         )
         for item in prepared
         if item is not failed_item
     )
+
+    if not verification_matches and failed_item is None:
+        # A successful POST with a valid session/link is authoritative. The
+        # read model may lag briefly, so retain the successfully posted items.
+        verified_items = list(successful)
 
     cart_state = _cart_state(
         cart=cart,
@@ -1067,17 +1110,18 @@ async def _create_cart_items_checkout_impl(
         items=verified_items,
     )
     active = prepared[-1].product_reference
-    partial = failed_item is not None or not verification_matches
+    partial = failed_item is not None
+    verification_pending = not partial and not verification_matches
     log_purchase_progress(
         "cart_validation",
-        "success" if verify_ok else "failed",
-        None if verify_ok else complete.get("error_type") or "cart_verification_failed",
+        "success",
+        "eventual_consistency" if verification_pending else complete_error,
     )
     status = "cart_partial_failure" if partial else "cart_created"
     reply = (
-        "Parte dos itens foi adicionada ao carrinho. Confira o estado atual no checkout oficial."
+        "Carrinho atualizado parcialmente."
         if partial
-        else "Carrinho atualizado com sucesso. Finalize pelo checkout oficial."
+        else "Carrinho atualizado."
     )
     print("[sales.cart.state]", {
         "purchase_stage": "cart_created",
@@ -1088,6 +1132,11 @@ async def _create_cart_items_checkout_impl(
         "success" if not partial else "failed",
         None if not partial else "cart_partial_failure",
     )
+    checkout_state = state.model_copy(deep=True)
+    checkout_state.cart_session_id = session_id
+    checkout_state.cart_url = cart_url
+    checkout_state.cart_items = verified_items
+    checkout = checkout_capabilities(checkout_state)
     return AgentResult(
         reply_text=f"{reply}\n{cart_url}",
         intent="commerce",
@@ -1111,8 +1160,16 @@ async def _create_cart_items_checkout_impl(
                 "cart_url": cart_url,
                 "items": [item.model_dump(mode="json") for item in verified_items],
                 "total": complete.get("total") or complete.get("current_total"),
-                "verification_ok": verify_ok,
+                "verification_ok": verification_matches,
+                "verification_status": (
+                    "partial"
+                    if partial
+                    else "pending"
+                    if verification_pending
+                    else "confirmed"
+                ),
             },
+            "checkout": checkout,
             **(
                 {
                     "variant": prepared[0].variant,
@@ -1128,6 +1185,14 @@ async def _create_cart_items_checkout_impl(
             "active_product": active.model_dump(mode="json"),
             "purchase_stage": "cart_created",
             "cart_state": cart_state,
+            **(
+                {
+                    "pending_action": "choose_checkout_channel",
+                    "pending_action_product_ids": [],
+                }
+                if not partial
+                else {}
+            ),
             "used_tray": True,
         },
     )

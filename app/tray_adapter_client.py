@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -10,9 +11,137 @@ from .config import get_settings
 
 
 class TrayAdapterError(RuntimeError):
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        diagnostics: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
+        self.diagnostics = diagnostics or {}
+
+
+def _safe_diagnostic_text(value: Any, *, limit: int = 300) -> str | None:
+    if not isinstance(value, (str, int, float, bool)):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = re.sub(r"(?i)bearer\s+\S+", "Bearer ***", text)
+    text = re.sub(r"(?i)\bsk-(?:proj-)?\S+", "sk-***", text)
+    text = re.sub(
+        r"(?i)(authorization|api[-_ ]?key|token|secret)\s*[:=]\s*\S+",
+        r"\1=***",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+        "***",
+        text,
+    )
+    text = re.sub(r"https?://\S+", "<url>", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<!\d)(?:\d[\s.-]?){8,}(?!\d)", "***", text)
+    return text[:limit]
+
+
+def _safe_error_field(value: Any) -> str | None:
+    text = _safe_diagnostic_text(value, limit=100)
+    if not text:
+        return None
+    cleaned = re.sub(r"[^A-Za-z0-9_.\[\]-]", "", text)
+    return cleaned or None
+
+
+def _tray_error_diagnostics(payload: Any) -> dict[str, Any]:
+    """Extract only bounded contract diagnostics; never retain the raw body."""
+    if not isinstance(payload, (dict, list)):
+        return {}
+
+    containers: list[dict[str, Any]] = []
+    detail_items: list[dict[str, Any]] = []
+
+    def visit(value: Any, *, depth: int = 0) -> None:
+        if depth > 4:
+            return
+        if isinstance(value, dict):
+            containers.append(value)
+            for key in ("error", "detail", "errors"):
+                nested = value.get(key)
+                if isinstance(nested, dict):
+                    visit(nested, depth=depth + 1)
+                elif isinstance(nested, list):
+                    for item in nested[:20]:
+                        if isinstance(item, dict):
+                            detail_items.append(item)
+                            visit(item, depth=depth + 1)
+        elif isinstance(value, list):
+            for item in value[:20]:
+                if isinstance(item, dict):
+                    detail_items.append(item)
+                    visit(item, depth=depth + 1)
+
+    visit(payload)
+
+    def first_scalar(*keys: str) -> str | None:
+        for container in containers:
+            for key in keys:
+                value = _safe_diagnostic_text(container.get(key))
+                if value:
+                    return value
+        return None
+
+    fields: list[str] = []
+    for container in [*containers, *detail_items]:
+        direct = _safe_error_field(container.get("field"))
+        if direct:
+            fields.append(direct)
+        loc = container.get("loc")
+        if isinstance(loc, (list, tuple)) and loc:
+            location = ".".join(
+                part
+                for part in (
+                    _safe_error_field(item)
+                    for item in loc
+                )
+                if part
+            )
+            if location:
+                fields.append(location)
+        raw_fields = container.get("fields")
+        if isinstance(raw_fields, (list, tuple, set)):
+            fields.extend(
+                field
+                for field in (
+                    _safe_error_field(item)
+                    for item in raw_fields
+                )
+                if field
+            )
+        elif isinstance(raw_fields, dict):
+            fields.extend(
+                field
+                for field in (
+                    _safe_error_field(item)
+                    for item in raw_fields.keys()
+                )
+                if field
+            )
+
+    unique_fields = list(dict.fromkeys(fields))[:20]
+    diagnostics = {
+        "tray_error_code": first_scalar("code", "error_code"),
+        "tray_error_type": first_scalar("type", "error_type"),
+        "tray_error_field": unique_fields[0] if unique_fields else None,
+        "tray_error_fields": unique_fields,
+        "tray_error_message": first_scalar("message", "msg", "detail"),
+    }
+    return {
+        key: value
+        for key, value in diagnostics.items()
+        if value not in (None, "", [])
+    }
 
 
 class TrayAdapterClient:
@@ -165,6 +294,7 @@ class TrayAdapterClient:
                         raise TrayAdapterError(
                             f"tray_adapter_http_{response.status_code}",
                             response.status_code,
+                            diagnostics=_tray_error_diagnostics(parsed_response),
                         )
                     if not response_is_json:
                         raise ValueError("tray_adapter_response_not_json")
@@ -198,6 +328,7 @@ class TrayAdapterClient:
                 "error_type": type(exc).__name__,
                 "status_code": exc.status_code,
                 "timeout": isinstance(exc.__cause__, httpx.TimeoutException),
+                **exc.diagnostics,
             })
             raise
         except ValueError as exc:

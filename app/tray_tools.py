@@ -7,13 +7,18 @@ import unicodedata
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from .product_media import official_product_url
 from .tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 
 TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product", "description": "Consultar detalhes atuais de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "get_product_link", "description": "Obter o link oficial de um produto real já identificado.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_inventory", "description": "Confirmar estoque e regras de disponibilidade de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "get_cart", "description": "Consultar um carrinho já identificado por sua sessão.", "parameters": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "get_cart_complete", "description": "Consultar itens e totais atuais de um carrinho já identificado.", "parameters": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "get_payment_options", "description": "Consultar opções reais de pagamento de um carrinho existente.", "parameters": {"type": "object", "properties": {"cart_session_id": {"type": "string"}}, "required": ["cart_session_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "search_customer", "description": "Pesquisar um cliente com filtro específico, quando necessário.", "parameters": {"type": "object", "properties": {"email": {"type": "string"}, "cpf": {"type": "string"}, "cnpj": {"type": "string"}, "name": {"type": "string"}, "limit": {"type": "integer", "maximum": 5}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_customer", "description": "Consultar um cliente identificado.", "parameters": {"type": "object", "properties": {"customer_id": {"type": "string"}}, "required": ["customer_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "list_coupons", "description": "Consultar cupons quando a conversa precisar disso.", "parameters": {"type": "object", "properties": {"code": {"type": "string"}, "limit": {"type": "integer", "maximum": 5}}, "additionalProperties": False}}},
@@ -21,7 +26,7 @@ TOOL_SCHEMAS = [
 ]
 
 TOOL_REGISTRY = {
-    "commerce": ("search_products", "get_product", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart", "get_cart_complete", "get_payment_options"),
+    "commerce": ("search_products", "get_product", "get_product_link", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart", "get_cart_complete", "get_payment_options"),
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
@@ -355,6 +360,20 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
                 _unwrap_entity(payload, ("product", "data", "result")),
                 _PRODUCT_FIELDS,
             )
+        if name == "get_product_link":
+            payload = await client.get_product(arguments["product_id"])
+            product = _reduce(
+                _unwrap_entity(payload, ("product", "data", "result")),
+                _PRODUCT_FIELDS,
+            )
+            return {
+                "product_id": str(
+                    product.get("id")
+                    or arguments["product_id"]
+                ),
+                "product_name": product.get("name"),
+                "product_url": official_product_url(product),
+            }
         if name == "check_inventory":
             return _reduce(await client.get_product_stock(arguments["product_id"]), ("product_id", "stock", "available", "available_in_store", "available_for_purchase", "upon_request", "availability", "when_stock_runs_out"))
         if name == "list_categories":
@@ -412,11 +431,16 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             }
         raise ValueError(f"unknown_tool:{name}")
     except TrayAdapterError as exc:
-        print("[tray.tool] request_failed", {"tool": name, "status_code": exc.status_code})
+        print("[tray.tool] request_failed", {
+            "tool": name,
+            "status": exc.status_code,
+            **exc.diagnostics,
+        })
         result = {
             "error": "Não consegui consultar o sistema da loja neste momento.",
             "status_code": exc.status_code,
             "error_type": type(exc).__name__,
+            **exc.diagnostics,
         }
         if name == "list_categories":
             result["error_reason"] = (

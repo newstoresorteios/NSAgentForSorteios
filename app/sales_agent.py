@@ -15,6 +15,7 @@ from .commerce_router import (
     _product_lines,
 )
 from .category_resolver import CategoryResolver
+from .checkout_service import select_checkout_channel
 from .cart_service import (
     CartItemRequest,
     create_cart_checkout,
@@ -86,7 +87,7 @@ como 1, 2 e 3. Não altere essa ordem, pois ela será usada nas referências pos
 Quando FACTS.match_status for ambiguous, apresente as correspondências plausíveis e peça
 ao cliente para identificar qual delas pretendia, sem escolher uma arbitrariamente.
 Quando FACTS contiver cart_url, use somente esse link oficial. Nunca peça número completo
-do cartão, CVV, senha, código ou validade pelo WhatsApp; o pagamento termina no checkout.
+do cartão, CVV, senha, código ou validade pelo WhatsApp.
 Preferências do cliente no plano não são fatos confirmados do produto. Só afirme material,
 cor, dimensões ou adequação física quando esses dados estiverem presentes em FACTS.
 Nunca transforme uma preferência desejada em característica do item. Para recomendar por
@@ -233,6 +234,33 @@ quando pedir uma quantidade de parcelas; nesse caso extraia installment_count.
 Extraia quantity como inteiro positivo quando o cliente informar quantidade. Caso não
 informe, deixe quantity=null. Nunca invente product_id, variant_id, session_id ou cart_url.
 """.strip()
+
+CHECKOUT_FLOW_INSTRUCTIONS = """
+REGRAS ADICIONAIS DE CHECKOUT E PAGAMENTO:
+- O estado e as capacidades são contexto factual; a mensagem atual continua sendo a
+  autoridade semântica.
+- Use product_action=get_product_link somente quando o cliente pedir o link oficial do
+  produto referenciado. Link de produto é diferente de link do carrinho.
+- Use checkout_channel_preference=whatsapp ou site quando o cliente escolher
+  semanticamente onde deseja continuar.
+- Quando FACTS.checkout.requires_channel_choice=true, conduza uma escolha curta entre
+  os canais marcados como suportados. Não ofereça um canal com suporte false.
+- Se o site for escolhido e site_checkout_supported=true, use somente cart_url.
+- Se WhatsApp for escolhido, avance apenas até as capacidades explicitamente marcadas
+  como suportadas. Não prometa conclusão de pagamento no chat sem suporte backend.
+- Nunca solicite número completo de cartão, CVV, senha, validade ou código de
+  autenticação. Use apenas mecanismo seguro/tokenizado quando os FACTS o fornecerem.
+- purchase_action=create_cart representa a capacidade protegida de adicionar item;
+  inspect_cart consulta o carrinho; show_cart_link obtém seu link; payment_action
+  consulta opções/parcelas. IDs e sessões são sempre resolvidos e validados pelo servidor.
+""".strip()
+
+SALES_INTERPRETER_INSTRUCTIONS = (
+    f"{SALES_INTERPRETER_INSTRUCTIONS}\n\n{CHECKOUT_FLOW_INSTRUCTIONS}"
+)
+SALES_RESPONDER_INSTRUCTIONS = (
+    f"{SALES_RESPONDER_INSTRUCTIONS}\n\n{CHECKOUT_FLOW_INSTRUCTIONS}"
+)
 
 _ACTION_TO_PLAN = {
     "product_search": "product_search",
@@ -525,8 +553,10 @@ def interpretation_to_plan(
             for item in interpretation.purchase_items
         ],
         "image_request": interpretation.image_request,
+        "product_action": interpretation.product_action,
         "payment_action": interpretation.payment_action,
         "payment_method_preference": interpretation.payment_method_preference,
+        "checkout_channel_preference": interpretation.checkout_channel_preference,
         "confirmation": interpretation.confirmation,
         "installment_count": interpretation.installment_count,
         "_source": interpretation._source,
@@ -1034,7 +1064,6 @@ async def _sales_response_with_openai(
     if not settings.openai_api_key or tray_result.safety_reason in {
         "tray_adapter_unavailable", "product_match_failed", "product_not_found",
         "ambiguous_product", "product_context_missing", "coupon_not_found",
-        "cart_technical_failure", "cart_validation_error",
     }:
         return None
     try:
@@ -1609,18 +1638,31 @@ def _combine_cart_and_payment_results(
         metadata["cart_state"] = cart_result.response_metadata["cart_state"]
     metadata["purchase_stage"] = "payment_discussion"
 
-    reply = payment_result.reply_text
-    cart_url = (payment_result.commercial_data or {}).get("cart_url")
-    if not isinstance(cart_url, str):
-        cart = (cart_result.commercial_data or {}).get("cart")
-        cart_url = cart.get("cart_url") if isinstance(cart, dict) else None
-    if payment_result.safety_reason and isinstance(cart_url, str):
-        reply = f"{reply}\nSeu carrinho continua disponÃ­vel no checkout oficial:\n{cart_url}"
     return AgentResult(
-        reply_text=reply,
+        reply_text=payment_result.reply_text,
         intent="commerce",
         handoff_required=False,
         safety_reason=payment_result.safety_reason or cart_result.safety_reason,
+        commercial_data=commercial_data,
+        response_metadata=metadata,
+    )
+
+
+def _combine_checkout_channel_result(
+    base_result: AgentResult,
+    channel_result: AgentResult,
+) -> AgentResult:
+    commercial_data = dict(base_result.commercial_data or {})
+    commercial_data.update(channel_result.commercial_data or {})
+    metadata = dict(base_result.response_metadata or {})
+    metadata.update(channel_result.response_metadata or {})
+    if "cart_state" in base_result.response_metadata:
+        metadata["cart_state"] = base_result.response_metadata["cart_state"]
+    return AgentResult(
+        reply_text=channel_result.reply_text,
+        intent="commerce",
+        handoff_required=False,
+        safety_reason=channel_result.safety_reason or base_result.safety_reason,
         commercial_data=commercial_data,
         response_metadata=metadata,
     )
@@ -1632,9 +1674,9 @@ def _purchase_product_required_result(
     ambiguous = bool(state.last_presented_products)
     return AgentResult(
         reply_text=(
-            "Confirme qual produto vocÃª quer comprar antes de eu preparar o carrinho."
+            "Confirme qual produto você quer comprar antes de eu preparar o carrinho."
             if ambiguous
-            else "Preciso saber qual produto vocÃª quer comprar antes de preparar o carrinho."
+            else "Preciso saber qual produto você quer comprar antes de preparar o carrinho."
         ),
         intent="commerce",
         handoff_required=False,
@@ -1645,7 +1687,17 @@ def _purchase_product_required_result(
                 for item in state.last_presented_products[:3]
             ],
             "cart": {"status": "product_required"},
+            "action_guard": {
+                "action": "create_cart",
+                "allowed": False,
+                "blocking_reason": (
+                    "product_selection_required"
+                    if ambiguous
+                    else "product_target_missing"
+                ),
+            },
         },
+        response_metadata={"domain": "commerce"},
     )
 
 
@@ -1739,7 +1791,9 @@ async def handle_sales_message(
                 or interpretation.subject.ean
             ),
             "purchase_action": interpretation.purchase_action,
+            "product_action": interpretation.product_action,
             "payment_action": interpretation.payment_action,
+            "checkout_channel_preference": interpretation.checkout_channel_preference,
             "image_request": interpretation.image_request,
             "confirmation": interpretation.confirmation,
             "pending_action_disposition": (
@@ -1810,7 +1864,10 @@ async def handle_sales_message(
     purchase_requests: list[CartItemRequest] = []
     unresolved_purchase_items = 0
     unresolved_candidates: list[dict[str, Any]] = []
-    pending_link_requested = False
+    pending_link_requested = bool(
+        interpretation
+        and interpretation.product_action == "get_product_link"
+    )
     pending_action_used = False
     if (
         interpretation is not None
@@ -1867,8 +1924,16 @@ async def handle_sales_message(
             if len(pending_references) == 1:
                 resolved_product = pending_references[0]
                 resolved_by = "product_id"
+        elif pending_action == "choose_checkout_channel":
+            interpretation._clear_pending_action = bool(
+                interpretation.checkout_channel_preference
+            )
+            pending_action_used = bool(
+                interpretation.checkout_channel_preference
+            )
         pending_action_used = bool(
-            pending_references
+            pending_action_used
+            or pending_references
             or (
                 pending_action == "show_payment_options"
                 and state.cart_session_id
@@ -1882,6 +1947,10 @@ async def handle_sales_message(
                 resolved_product
                 or purchase_requests
                 or pending_action == "show_payment_options"
+                or (
+                    pending_action == "choose_checkout_channel"
+                    and interpretation.checkout_channel_preference
+                )
             ),
         })
     if interpretation is not None:
@@ -1982,7 +2051,10 @@ async def handle_sales_message(
         })
     if (
         interpretation is not None
-        and purchase_action == "create_cart"
+        and (
+            purchase_action == "create_cart"
+            or interpretation.product_action == "get_product_link"
+        )
         and not purchase_requests
         and resolved_product is None
         and any((
@@ -2037,6 +2109,33 @@ async def handle_sales_message(
                 used_tray=bool(lookup.response_metadata.get("used_tray", True)),
                 fallback_reason=lookup.safety_reason,
             )
+    if (
+        interpretation is not None
+        and interpretation.checkout_channel_preference is not None
+        and interpretation.purchase_action != "create_cart"
+        and interpretation.payment_action is None
+    ):
+        channel_result = select_checkout_channel(
+            state,
+            interpretation.checkout_channel_preference,
+        )
+        final = await _sales_response_with_openai(
+            message,
+            plan,
+            channel_result,
+            interpretation,
+        )
+        if final:
+            return final
+        return _mark_sales_result(
+            channel_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason=channel_result.safety_reason,
+        )
     if interpretation is not None and interpretation.image_request:
         print("[sales.action.guard]", {
             "action": "show_images",
@@ -2097,24 +2196,43 @@ async def handle_sales_message(
                 used_tray=False,
                 fallback_reason=missing.safety_reason,
             )
-        link_result = await _execute_contextual_product_lookup(
-            interpretation,
-            resolved_product,
+        link_facts = await execute_tool(
+            "get_product_link",
+            {"product_id": resolved_product.product_id},
         )
-        link_products = (link_result.commercial_data or {}).get("products")
-        link_product = (
-            link_products[0]
-            if isinstance(link_products, list)
-            and link_products
-            and isinstance(link_products[0], dict)
-            else {}
+        link_failed = "error" in link_facts
+        product_url = link_facts.get("product_url")
+        link_result = AgentResult(
+            reply_text=(
+                f"Link oficial consultado.\n{product_url}"
+                if isinstance(product_url, str)
+                else "A Tray não informou um link oficial para este produto."
+            ),
+            intent="commerce",
+            handoff_required=False,
+            safety_reason=(
+                "tray_adapter_unavailable"
+                if link_failed
+                else "product_link_not_available"
+                if not isinstance(product_url, str)
+                else None
+            ),
+            commercial_data={
+                "product_link": {
+                    "product_id": link_facts.get("product_id")
+                    or resolved_product.product_id,
+                    "product_name": link_facts.get("product_name")
+                    or resolved_product.name,
+                    "product_url": product_url,
+                }
+            },
+            response_metadata={
+                "domain": "commerce",
+                "active_product": resolved_product.model_dump(mode="json"),
+                "clear_pending_action": True,
+                "used_tray": True,
+            },
         )
-        product_url = link_product.get("url")
-        if isinstance(product_url, str) and product_url.startswith(("https://", "http://")):
-            link_result.reply_text = f"Este é o link oficial do produto:\n{product_url}"
-        elif link_result.safety_reason is None:
-            link_result.reply_text = "A Tray não informou um link oficial para este produto."
-        link_result.response_metadata["clear_pending_action"] = True
         final = await _sales_response_with_openai(
             message,
             plan,
@@ -2282,6 +2400,15 @@ async def handle_sales_message(
             if cart_result is not None
             else payment_result
         )
+        if interpretation.checkout_channel_preference is not None:
+            channel_result = select_checkout_channel(
+                payment_state,
+                interpretation.checkout_channel_preference,
+            )
+            combined_result = _combine_checkout_channel_result(
+                combined_result,
+                channel_result,
+            )
         final = await _sales_response_with_openai(
             message,
             plan,
@@ -2392,6 +2519,19 @@ async def handle_sales_message(
                 product_reference=resolved_product,
                 state=state,
                 execute=execute_tool,
+            )
+        if (
+            cart_result.safety_reason is None
+            and interpretation.checkout_channel_preference is not None
+        ):
+            checkout_state = evolve_commerce_state(state, cart_result)
+            channel_result = select_checkout_channel(
+                checkout_state,
+                interpretation.checkout_channel_preference,
+            )
+            cart_result = _combine_checkout_channel_result(
+                cart_result,
+                channel_result,
             )
         final = await _sales_response_with_openai(
             message,

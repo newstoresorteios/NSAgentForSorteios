@@ -231,3 +231,48 @@ async def test_non_transient_422_is_not_retried():
 
     assert error.value.status_code == 422
     assert len(fake.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_adapter_error_preserves_only_sanitized_contract_diagnostics():
+    fake = FakeClient(FakeResponse(
+        status_code=400,
+        payload={
+            "error": {
+                "code": "invalid_cart",
+                "type": "validation_error",
+                "message": (
+                    "Campo inválido Authorization: Bearer super-secret "
+                    "para pessoa@example.com 5511999999999"
+                ),
+                "errors": [
+                    {
+                        "loc": ["body", "price"],
+                        "msg": "Preço obrigatório",
+                    }
+                ],
+            }
+        },
+    ))
+
+    with pytest.raises(TrayAdapterError) as error:
+        await TrayAdapterClient(
+            "https://tray.example",
+            "secret",
+            fake,
+        ).create_cart(
+            product_id="641",
+            quantity=1,
+            price="0.00",
+            session_id="S1",
+        )
+
+    diagnostics = error.value.diagnostics
+    assert diagnostics["tray_error_code"] == "invalid_cart"
+    assert diagnostics["tray_error_type"] == "validation_error"
+    assert diagnostics["tray_error_field"] == "body.price"
+    assert diagnostics["tray_error_fields"] == ["body.price"]
+    assert "super-secret" not in diagnostics["tray_error_message"]
+    assert "pessoa@example.com" not in diagnostics["tray_error_message"]
+    assert "5511999999999" not in diagnostics["tray_error_message"]
+    assert "***" in diagnostics["tray_error_message"]

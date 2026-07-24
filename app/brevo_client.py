@@ -217,9 +217,24 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
         )
         channel = "none"
     if has_outbound_image:
+        media_send_supported = False
+        media_send_failed = False
+        fallback_link_sent = bool(sent.ok and not sent.dry_run)
+        fallback_link_failed = bool(not sent.ok and not sent.dry_run)
+        if isinstance(result, AgentResult):
+            result.response_metadata.update({
+                "image_url_found": True,
+                "media_send_supported": media_send_supported,
+                "media_send_failed": media_send_failed,
+                "fallback_link_sent": fallback_link_sent,
+                "fallback_link_failed": fallback_link_failed,
+            })
         print("[sales.media.send]", {
             "channel": channel,
-            "media_supported": False,
-            "success": sent.ok,
+            "image_url_found": True,
+            "media_send_supported": media_send_supported,
+            "media_send_failed": media_send_failed,
+            "fallback_link_sent": fallback_link_sent,
+            "fallback_link_failed": fallback_link_failed,
         })
     return sent
