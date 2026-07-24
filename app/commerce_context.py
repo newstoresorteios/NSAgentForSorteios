@@ -15,6 +15,7 @@ class CommerceProductReference(BaseModel):
     name: str | None = None
     ean: str | None = None
     brand: str | None = None
+    product_url: str | None = None
 
 
 class PresentedCommerceProduct(CommerceProductReference):
@@ -125,6 +126,11 @@ def product_reference_from_product(product: dict[str, Any]) -> CommerceProductRe
         name=str(product["name"]) if product.get("name") is not None else None,
         ean=str(product["ean"]) if product.get("ean") is not None else None,
         brand=str(product["brand"]) if product.get("brand") is not None else None,
+        product_url=(
+            str(product.get("product_url") or product.get("url"))
+            if product.get("product_url") or product.get("url")
+            else None
+        ),
     )
 
 

@@ -20,7 +20,27 @@ class TrayAdapterError(RuntimeError):
     ):
         super().__init__(message)
         self.status_code = status_code
-        self.diagnostics = diagnostics or {}
+        safe = diagnostics or {}
+        self.error = _safe_diagnostic_text(safe.get("error"), limit=100)
+        self.tray_error_code = _safe_diagnostic_text(safe.get("tray_error_code"), limit=100)
+        self.tray_error_type = _safe_diagnostic_text(safe.get("tray_error_type"), limit=100)
+        self.tray_error_field = _safe_error_field(safe.get("tray_error_field"))
+        raw_fields = safe.get("tray_error_fields")
+        self.tray_error_fields = (
+            list(dict.fromkeys(
+                field for field in (_safe_error_field(value) for value in raw_fields) if field
+            ))[:20]
+            if isinstance(raw_fields, (list, tuple, set)) else []
+        )
+        self.tray_error_message = _safe_diagnostic_text(safe.get("tray_error_message"), limit=300)
+        self.diagnostics = {
+            "error": self.error,
+            "tray_error_code": self.tray_error_code,
+            "tray_error_type": self.tray_error_type,
+            "tray_error_field": self.tray_error_field,
+            "tray_error_fields": self.tray_error_fields,
+            "tray_error_message": self.tray_error_message,
+        }
 
 
 def _safe_diagnostic_text(value: Any, *, limit: int = 300) -> str | None:
@@ -94,7 +114,9 @@ def _tray_error_diagnostics(payload: Any) -> dict[str, Any]:
 
     fields: list[str] = []
     for container in [*containers, *detail_items]:
-        direct = _safe_error_field(container.get("field"))
+        direct = _safe_error_field(
+            container.get("tray_error_field") or container.get("field")
+        )
         if direct:
             fields.append(direct)
         loc = container.get("loc")
@@ -109,7 +131,7 @@ def _tray_error_diagnostics(payload: Any) -> dict[str, Any]:
             )
             if location:
                 fields.append(location)
-        raw_fields = container.get("fields")
+        raw_fields = container.get("tray_error_fields") or container.get("fields")
         if isinstance(raw_fields, (list, tuple, set)):
             fields.extend(
                 field
@@ -131,11 +153,14 @@ def _tray_error_diagnostics(payload: Any) -> dict[str, Any]:
 
     unique_fields = list(dict.fromkeys(fields))[:20]
     diagnostics = {
-        "tray_error_code": first_scalar("code", "error_code"),
-        "tray_error_type": first_scalar("type", "error_type"),
+        "error": first_scalar("error"),
+        "tray_error_code": first_scalar("tray_error_code", "code", "error_code"),
+        "tray_error_type": first_scalar("tray_error_type", "type", "error_type"),
         "tray_error_field": unique_fields[0] if unique_fields else None,
         "tray_error_fields": unique_fields,
-        "tray_error_message": first_scalar("message", "msg", "detail"),
+        "tray_error_message": first_scalar(
+            "tray_error_message", "message", "msg", "detail"
+        ),
     }
     return {
         key: value
@@ -265,7 +290,7 @@ class TrayAdapterClient:
                     except ValueError:
                         parsed_response = None
                     if is_cart_create:
-                        print("[sales.cart.http.response]", {
+                        response_log = {
                             "status_code": response.status_code,
                             "has_response": True,
                             "response_is_json": response_is_json,
@@ -278,7 +303,10 @@ class TrayAdapterClient:
                                 parsed_response,
                                 "cart_url",
                             ),
-                        })
+                        }
+                        if response.status_code >= 400:
+                            response_log.update(_tray_error_diagnostics(parsed_response))
+                        print("[sales.cart.http.response]", response_log)
                     if response.status_code >= 400:
                         if (
                             response.status_code in self.transient_status_codes

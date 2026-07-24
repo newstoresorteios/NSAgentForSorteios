@@ -548,6 +548,99 @@ async def test_cart_adapter_failure_is_technical_not_product_not_found(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_product_803_cart_http_400_keeps_diagnostics_and_selected_product(capsys):
+    from app.cart_service import create_cart_checkout
+    from app.commerce_context import CommerceProductReference
+
+    async def execute(tool, arguments):
+        if tool == "get_product":
+            return {
+                "id": "803",
+                "name": "Produto 803",
+                "price": "10.00",
+                "available": True,
+                "has_variation": False,
+            }
+        if tool == "create_cart":
+            assert arguments["product_id"] == "803"
+            assert arguments["variant_id"] is None
+            assert arguments["quantity"] == 1
+            return {
+                "error": "commerce_upstream_error",
+                "status_code": 400,
+                "error_type": "TrayAdapterError",
+                "tray_error_code": "invalid_cart",
+                "tray_error_type": "validation_error",
+                "tray_error_field": "Cart.variant_id",
+                "tray_error_fields": ["Cart.variant_id"],
+                "tray_error_message": "Campo invÃ¡lido",
+            }
+        raise AssertionError(tool)
+
+    selected = CommerceProductReference(
+        product_id="803", name="Produto 803", product_url="https://loja.example/produto/803"
+    )
+    result = await create_cart_checkout(
+        interpretation=_interpretation(reference_type="current_product"),
+        product_reference=selected,
+        state=_state(active_product=selected.model_dump(mode="json")),
+        execute=execute,
+    )
+    persisted = evolve_commerce_state(_state(), result)
+
+    assert result.reply_text == ""
+    assert result.safety_reason == "cart_technical_failure"
+    assert result.commercial_data["cart"] == {
+        "cart_created": False,
+        "failure_stage": "cart_http",
+        "recoverable": False,
+        "status_code": 400,
+    }
+    assert result.response_metadata["cart_failure_status"] == 400
+    assert result.response_metadata["cart_failure_code"] == "invalid_cart"
+    assert result.response_metadata["cart_failure_type"] == "validation_error"
+    assert result.response_metadata["cart_failure_field"] == "Cart.variant_id"
+    assert result.response_metadata["cart_failure_fields"] == ["Cart.variant_id"]
+    assert persisted.active_product.product_id == "803"
+    assert persisted.active_product.product_url == "https://loja.example/produto/803"
+    output = capsys.readouterr().out
+    assert "tray_error_code" in output
+    assert "Campo invÃ¡lido" in output
+    assert "Bearer" not in output
+
+
+@pytest.mark.asyncio
+async def test_product_803_cart_success_advances_purchase_stage():
+    from app.cart_service import create_cart_checkout
+    from app.commerce_context import CommerceProductReference
+
+    async def execute(tool, arguments):
+        if tool == "get_product":
+            return {"id": "803", "name": "Produto 803", "price": "10.00", "available": True}
+        if tool == "create_cart":
+            return {"session_id": arguments["session_id"], "cart_url": "https://loja.example/checkout/S803"}
+        if tool == "get_cart_complete":
+            return {"items": [{"product_id": "803", "quantity": 1}], "total": "10.00"}
+        raise AssertionError(tool)
+
+    selected = CommerceProductReference(product_id="803", name="Produto 803")
+    result = await create_cart_checkout(
+        interpretation=_interpretation(reference_type="current_product"),
+        product_reference=selected,
+        state=_state(active_product=selected.model_dump(mode="json")),
+        execute=execute,
+    )
+    persisted = evolve_commerce_state(_state(), result)
+
+    assert result.safety_reason is None
+    assert result.commercial_data["cart"]["status"] == "cart_created"
+    assert result.response_metadata["purchase_stage"] == "cart_created"
+    assert persisted.cart_session_id
+    assert persisted.cart_url == "https://loja.example/checkout/S803"
+    assert persisted.purchase_stage == "cart_created"
+
+
+@pytest.mark.asyncio
 async def test_failed_cart_for_new_selection_keeps_new_active_product(monkeypatch):
     import app.sales_agent as sales_agent
 

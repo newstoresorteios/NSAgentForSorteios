@@ -92,18 +92,34 @@ def _technical_failure(
         "error_type": "cart_technical_failure",
         "status_code": status_code,
     })
+    response_metadata = {
+        "used_tray": True,
+        "cart_failure_stage": stage,
+    }
+    if status_code is not None:
+        response_metadata["cart_failure_status"] = status_code
+    for metadata_key, diagnostic_key in (
+        ("cart_failure_code", "tray_error_code"),
+        ("cart_failure_type", "tray_error_type"),
+        ("cart_failure_field", "tray_error_field"),
+        ("cart_failure_fields", "tray_error_fields"),
+    ):
+        if diagnostics.get(diagnostic_key) not in (None, "", []):
+            response_metadata[metadata_key] = diagnostics[diagnostic_key]
     return AgentResult(
-        reply_text=(
-            "Não consegui preparar o carrinho neste momento. "
-            "Tente novamente em instantes."
-        ),
+        reply_text="",
         intent="commerce",
         handoff_required=False,
         safety_reason="cart_technical_failure",
         commercial_data={
             "cart": {
-                "status": "technical_failure",
+                "cart_created": False,
                 "failure_stage": stage,
+                "recoverable": _is_transient_cart_failure(
+                    status_code=status_code,
+                    error_type=exception_type,
+                ),
+                "status_code": status_code,
             },
             "technical_failure": {
                 "operation": "cart",
@@ -114,10 +130,7 @@ def _technical_failure(
                 ),
             },
         },
-        response_metadata={
-            "used_tray": True,
-            "cart_failure_stage": stage,
-        },
+        response_metadata=response_metadata,
     )
 
 
@@ -1261,7 +1274,7 @@ async def create_cart_checkout(
         "quantity": quantity,
         "purchase_stage": state.purchase_stage,
     })
-    return await create_cart_items_checkout(
+    result = await create_cart_items_checkout(
         item_requests=[
             CartItemRequest(
                 product_reference=product_reference,
@@ -1277,3 +1290,6 @@ async def create_cart_checkout(
         state=state,
         execute=execute,
     )
+    if result.safety_reason == "cart_technical_failure":
+        _with_selected_product(result, product_reference)
+    return result

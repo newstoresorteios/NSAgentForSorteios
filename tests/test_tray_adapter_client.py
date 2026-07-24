@@ -276,3 +276,37 @@ async def test_adapter_error_preserves_only_sanitized_contract_diagnostics():
     assert "pessoa@example.com" not in diagnostics["tray_error_message"]
     assert "5511999999999" not in diagnostics["tray_error_message"]
     assert "***" in diagnostics["tray_error_message"]
+
+
+@pytest.mark.asyncio
+async def test_cart_http_400_preserves_adapter_contract_and_logs_only_safe_fields(capsys):
+    fake = FakeClient(FakeResponse(
+        status_code=400,
+        payload={
+            "success": False,
+            "error": "tray_api_error",
+            "tray_error_code": "invalid_cart",
+            "tray_error_type": "validation_error",
+            "tray_error_field": "Cart.variant_id",
+            "tray_error_fields": ["Cart.variant_id"],
+            "tray_error_message": "Campo invÃ¡lido Authorization: Bearer super-secret",
+        },
+    ))
+
+    with pytest.raises(TrayAdapterError) as error:
+        await TrayAdapterClient("https://tray.example", "secret", fake).create_cart(
+            product_id="803", quantity=1, price="10.00", session_id="S1"
+        )
+
+    exc = error.value
+    assert exc.status_code == 400
+    assert exc.error == "tray_api_error"
+    assert exc.tray_error_code == "invalid_cart"
+    assert exc.tray_error_type == "validation_error"
+    assert exc.tray_error_field == "Cart.variant_id"
+    assert exc.tray_error_fields == ["Cart.variant_id"]
+    assert "super-secret" not in (exc.tray_error_message or "")
+    output = capsys.readouterr().out
+    assert "[sales.cart.http.response]" in output
+    assert "tray_api_error" in output
+    assert "super-secret" not in output

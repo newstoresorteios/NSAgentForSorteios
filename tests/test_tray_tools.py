@@ -224,6 +224,41 @@ async def test_category_http_422_is_preserved_as_invalid_request():
 
 
 @pytest.mark.asyncio
+async def test_cart_adapter_diagnostics_are_preserved_as_structured_tool_facts():
+    class FailingCartTray:
+        async def create_cart(self, **_kwargs):
+            raise TrayAdapterError(
+                "tray_adapter_http_400",
+                status_code=400,
+                diagnostics={
+                    "error": "tray_api_error",
+                    "tray_error_code": "invalid_cart",
+                    "tray_error_type": "validation_error",
+                    "tray_error_field": "Cart.variant_id",
+                    "tray_error_fields": ["Cart.variant_id"],
+                    "tray_error_message": "campo invÃ¡lido",
+                },
+            )
+
+    result = await execute_tool(
+        "create_cart",
+        {"product_id": "803", "variant_id": None, "quantity": 1, "price": "10.00"},
+        FailingCartTray(),
+    )
+
+    assert result == {
+        "error": "commerce_upstream_error",
+        "status_code": 400,
+        "error_type": "TrayAdapterError",
+        "tray_error_code": "invalid_cart",
+        "tray_error_type": "validation_error",
+        "tray_error_field": "Cart.variant_id",
+        "tray_error_fields": ["Cart.variant_id"],
+        "tray_error_message": "campo invÃ¡lido",
+    }
+
+
+@pytest.mark.asyncio
 async def test_cart_tools_use_normalized_adapter_contract():
     client = FakeTray()
 

@@ -437,10 +437,14 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             **exc.diagnostics,
         })
         result = {
-            "error": "Não consegui consultar o sistema da loja neste momento.",
+            "error": "commerce_upstream_error",
             "status_code": exc.status_code,
             "error_type": type(exc).__name__,
-            **exc.diagnostics,
+            "tray_error_code": exc.tray_error_code,
+            "tray_error_type": exc.tray_error_type,
+            "tray_error_field": exc.tray_error_field,
+            "tray_error_fields": exc.tray_error_fields,
+            "tray_error_message": exc.tray_error_message,
         }
         if name == "list_categories":
             result["error_reason"] = (
@@ -457,10 +461,7 @@ async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapter
         print("[tray.tool] executed", {"tool": name, "ok": ok, "elapsed_ms": round((time.perf_counter() - started) * 1000)})
         print("[sales.tool]", {"tool": name, "success": ok})
         if not ok:
-            return {
-                **result,
-                "error": "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes.",
-            }
+            return result
         return result
     except Exception as exc:
         print("[tray.tool] executed", {"tool": name, "ok": False, "elapsed_ms": round((time.perf_counter() - started) * 1000), "error_type": type(exc).__name__})
