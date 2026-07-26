@@ -38,15 +38,15 @@ def checkout_capabilities(
         if selected_channel is not None
         else state.checkout_channel_preference
     )
-    cart_url = _site_url(state.cart_url)
-    cart_ready = bool(state.cart_session_id and cart_url)
+    official_cart_url = _site_url(state.cart_url)
+    cart_ready = bool(state.cart_session_id and official_cart_url)
     supported = {
         "whatsapp": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
-        "site": bool(cart_ready and cart_url),
+        "site": bool(cart_ready and official_cart_url),
     }
     return {
         "cart_ready": cart_ready,
-        "cart_url": cart_url,
+        "cart_url": official_cart_url if effective_channel == "site" else None,
         "whatsapp_checkout_supported": bool(cart_ready and WHATSAPP_CHECKOUT_SUPPORTED),
         "whatsapp_order_supported": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
         "whatsapp_hosted_payment_supported": bool(

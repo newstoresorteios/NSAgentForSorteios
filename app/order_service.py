@@ -86,7 +86,7 @@ async def _current_order_facts(
         cart = {"error": "commerce_upstream_error"}
     if "error" in cart:
         return None, [*missing, "cart_unavailable"]
-    products = cart_shipping_products(cart)
+    products = cart_shipping_products(cart, state.cart_items)
     cart_items = cart.get("items") or []
     if not products or len(products) != len(cart_items):
         return None, [*missing, "cart_products"]

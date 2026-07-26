@@ -69,6 +69,71 @@ def test_structured_generic_purchase_is_discovery_without_cart_action():
     assert interpretation.image_request is False
 
 
+@pytest.mark.asyncio
+async def test_broad_purchase_interest_continues_without_catalog_or_cart(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        raise AssertionError(f"unexpected factual action: {tool}")
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(sales_agent, "_sales_response_with_openai", _no_responder)
+    monkeypatch.setattr(sales_agent, "get_settings", _settings)
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="quero comprar um relógio"),
+        {},
+        {},
+        _interpretation(
+            goal="buy",
+            subject={"product_type": "relógio"},
+            needs_clarification=True,
+        ),
+        commerce_state=CommerceConversationState(active_domain="commerce"),
+    )
+
+    assert result is not None
+    assert result.safety_reason == "commerce_clarification"
+    assert calls == []
+    assert result.commercial_data is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_product_request_allows_catalog_search(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def retrieve(interpretation):
+        calls.append(("search_products", interpretation.subject.model_dump()))
+        return _catalog_result("TISSOT-1")
+
+    monkeypatch.setattr(sales_agent, "_execute_compiled_product_retrieval", retrieve)
+    monkeypatch.setattr(sales_agent, "_sales_response_with_openai", _no_responder)
+    monkeypatch.setattr(sales_agent, "get_settings", _settings)
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="me mostre relógios Tissot esportivos"),
+        {},
+        {},
+        _interpretation(
+            goal="find",
+            subject={"product_type": "relógio", "brand": "Tissot"},
+            preferences={"style": "esportivo"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+        commerce_state=CommerceConversationState(active_domain="commerce"),
+    )
+
+    assert result is not None
+    assert [name for name, _ in calls] == ["search_products"]
+    assert result.commercial_data["products"][0]["id"] == "TISSOT-1"
+
+
 def test_active_product_requires_explicit_structured_reference():
     from app.commerce_context import resolve_commerce_reference
 

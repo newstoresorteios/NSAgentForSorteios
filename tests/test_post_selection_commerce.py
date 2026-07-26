@@ -155,8 +155,18 @@ async def test_multi_item_uses_one_session_and_verifies_complete_cart():
     int(create_calls[0]["session_id"], 16)
     assert create_calls[1]["session_id"] == create_calls[0]["session_id"]
     assert result.response_metadata["cart_state"]["cart_items"] == [
-        {"product_id": "A", "variant_id": None, "quantity": 1},
-        {"product_id": "B", "variant_id": None, "quantity": 2},
+        {
+            "product_id": "A",
+            "variant_id": None,
+            "quantity": 1,
+            "unit_price": "100.00",
+        },
+        {
+            "product_id": "B",
+            "variant_id": None,
+            "quantity": 2,
+            "unit_price": "100.00",
+        },
     ]
     assert result.commercial_data["cart"]["total"] == "300.00"
     evolved = evolve_commerce_state(CommerceConversationState(), result)
@@ -202,7 +212,12 @@ async def test_second_item_failure_reports_verified_partial_state():
     assert result.safety_reason == "cart_partial_failure"
     assert result.commercial_data["cart"]["verification_ok"] is True
     assert result.response_metadata["cart_state"]["cart_items"] == [
-        {"product_id": "A", "variant_id": None, "quantity": 1},
+        {
+            "product_id": "A",
+            "variant_id": None,
+            "quantity": 1,
+            "unit_price": "50.00",
+        },
     ]
 
 

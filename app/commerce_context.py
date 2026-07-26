@@ -26,6 +26,7 @@ class CommerceCartItem(BaseModel):
     product_id: str
     variant_id: str | None = None
     quantity: int = Field(ge=1)
+    unit_price: str | None = None
 
 
 class ShippingQuote(BaseModel):

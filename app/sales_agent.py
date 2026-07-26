@@ -211,6 +211,15 @@ outro domínio. Se active_domain=commerce, interprete mensagens ambíguas primei
 contexto. domain_change_explicit=true somente quando o cliente mudar claramente de
 assunto. Perguntas sobre pagamento de um produto continuam em commerce e usam
 purchase_stage=payment_discussion.
+Atue como vendedor consultivo, nao como catalogo. Quando o cliente apenas demonstrar
+interesse amplo por uma categoria, use goal=discover e needs_clarification=true para
+continuar a conversa antes de buscar. Decida semanticamente quais informacoes seriam
+uteis e quantas perguntas fazem sentido, sem transformar a conversa em interrogatorio.
+Se o cliente pedir explicitamente para ver produtos, opcoes ou modelos, use goal=find
+ou recommend e ready_for_retrieval=true para pesquisar imediatamente.
+Quando o contexto ja for suficiente para uma recomendacao util, marque
+enough_information_to_search=true. Nunca exija uma lista fixa de preferencias e nunca
+pergunte novamente algo que o cliente ja informou.
 Interprete semanticamente a etapa de carrinho:
 - purchase_action=create_cart quando o cliente confirma que quer levar um produto
   identificado; use reference_type/reference_position para indicar qual produto;
@@ -545,7 +554,7 @@ def interpretation_to_plan(
         "recommend": "recommendation",
         "compare": "product_comparison",
         "inspect": inspect_intent,
-        "buy": "purchase_intent",
+        "buy": "clarification",
         "after_sales": "clarification",
     }
     retrieval_signal = any((
@@ -911,9 +920,6 @@ def _mark_sales_result(
     return marked
 
 
-CLARIFICATION_BUDGET = 2
-
-
 def _is_clarification_turn(turn: dict[str, Any]) -> bool:
     metadata = turn.get("metadata") if isinstance(turn, dict) else None
     return (
@@ -967,13 +973,9 @@ def _discovery_state(
     explicit_no_preferences = list(dict.fromkeys(interpretation.preferences.explicit_no_preferences))
     known_preferences_count = len(known_preferences) + len(explicit_no_preferences)
     subject_identifiable = _subject_identifiable(interpretation)
-    enough_information = interpretation.enough_information_to_search or (
-        subject_identifiable and known_preferences_count > 0
-    )
-    budget_remaining = max(0, CLARIFICATION_BUDGET - clarification_count)
+    enough_information = interpretation.enough_information_to_search
     force_retrieval = subject_identifiable and any((
         enough_information,
-        budget_remaining == 0,
         interpretation.ready_for_retrieval,
         interpretation.stop_clarification,
     ))
@@ -981,14 +983,13 @@ def _discovery_state(
         str(turn.get("content") or "").strip()
         for turn in recent_turns or []
         if _is_clarification_turn(turn) and str(turn.get("content") or "").strip()
-    ][-CLARIFICATION_BUDGET:]
+    ][-5:]
     preference_fields = {"budget", "brand", "color", "style", "material", "occasion", "recipient", "attributes"}
     unknown_preferences = sorted(
         preference_fields - set(known_preferences) - set(explicit_no_preferences)
     )
     return {
         "clarification_count": clarification_count,
-        "clarification_budget_remaining": budget_remaining,
         "enough_information_to_search": enough_information,
         "ready_for_retrieval": interpretation.ready_for_retrieval,
         "stop_clarification": interpretation.stop_clarification,
@@ -1009,6 +1010,8 @@ def _needs_clarification_before_retrieval(
 ) -> bool:
     if discovery_state["force_retrieval"]:
         return False
+    if plan.get("intent") == "purchase_intent":
+        return True
     if interpretation.needs_clarification or interpretation.goal == "discover":
         return True
     if plan.get("intent") not in {"purchase_intent", "recommendation"}:
@@ -2806,7 +2809,6 @@ async def handle_sales_message(
     if discovery_state:
         print("[sales.discovery]", {
             "clarification_count": discovery_state["clarification_count"],
-            "clarification_budget_remaining": discovery_state["clarification_budget_remaining"],
             "enough_information_to_search": discovery_state["enough_information_to_search"],
             "ready_for_retrieval": discovery_state["ready_for_retrieval"],
             "stop_clarification": discovery_state["stop_clarification"],
@@ -2845,7 +2847,6 @@ async def handle_sales_message(
 
     action = {
         "product_search": "product_search",
-        "purchase_intent": "product_search",
         "recommendation": "product_search",
         "product_comparison": "product_search",
         "price": "product_price",

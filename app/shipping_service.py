@@ -5,7 +5,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable
 
 from .checkout_data_service import normalize_zipcode
-from .commerce_context import CommerceConversationState, ShippingQuote
+from .commerce_context import (
+    CommerceCartItem,
+    CommerceConversationState,
+    ShippingQuote,
+)
 from .models import AgentResult
 
 
@@ -36,7 +40,15 @@ def _session_tag(value: str | None) -> str | None:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
 
 
-def cart_shipping_products(cart: dict[str, Any]) -> list[dict[str, Any]]:
+def cart_shipping_products(
+    cart: dict[str, Any],
+    factual_items: list[CommerceCartItem] | None = None,
+) -> list[dict[str, Any]]:
+    factual_prices = {
+        (item.product_id, item.variant_id): item.unit_price
+        for item in factual_items or []
+        if item.unit_price is not None
+    }
     products: list[dict[str, Any]] = []
     for item in cart.get("items") or []:
         if not isinstance(item, dict):
@@ -46,6 +58,12 @@ def cart_shipping_products(cart: dict[str, Any]) -> list[dict[str, Any]]:
         price = item.get("unit_price")
         if price is None:
             price = item.get("price")
+        variant_id = (
+            str(item["variant_id"])
+            if item.get("variant_id") is not None else None
+        )
+        if price is None and product_id is not None:
+            price = factual_prices.get((str(product_id), variant_id))
         try:
             amount = Decimal(str(price))
             parsed_quantity = int(quantity)
@@ -55,10 +73,7 @@ def cart_shipping_products(cart: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         products.append({
             "product_id": str(product_id),
-            "variant_id": (
-                str(item["variant_id"])
-                if item.get("variant_id") is not None else None
-            ),
+            "variant_id": variant_id,
             "price": format(amount.quantize(Decimal("0.01")), "f"),
             "quantity": parsed_quantity,
         })
@@ -153,7 +168,7 @@ async def quote_shipping(
                 **_failure_metadata(cart),
             },
         )
-    products = cart_shipping_products(cart)
+    products = cart_shipping_products(cart, state.cart_items)
     if not products or len(products) != len(cart.get("items") or []):
         return AgentResult(
             reply_text="Os itens reais do carrinho n\u00e3o puderam ser validados para o frete.",

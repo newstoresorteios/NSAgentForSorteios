@@ -77,7 +77,7 @@ async def _run_sales(monkeypatch, interpretation, recent_turns):
 
 
 @pytest.mark.asyncio
-async def test_two_consecutive_clarifications_exhaust_budget_and_start_retrieval(monkeypatch):
+async def test_python_does_not_force_retrieval_after_a_fixed_question_count(monkeypatch):
     interpretation = _interpretation()
 
     first, first_calls = await _run_sales(monkeypatch, interpretation, [])
@@ -99,13 +99,16 @@ async def test_two_consecutive_clarifications_exhaust_budget_and_start_retrieval
         {"role": "user", "content": "tanto faz"},
     ]
     third, third_calls = await _run_sales(monkeypatch, interpretation, two_turns)
-    assert [call for call in third_calls if call[0] == "search_products"] == [("search_products", {"name": "acessório", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
-    assert third.safety_reason != "commerce_clarification"
+    assert third.safety_reason == "commerce_clarification"
+    assert third_calls == []
 
 
 @pytest.mark.asyncio
-async def test_identifiable_subject_with_budget_is_enough_to_search(monkeypatch):
-    interpretation = _interpretation(preferences={"budget_max": 10000})
+async def test_interpreter_can_mark_context_with_budget_as_enough_to_search(monkeypatch):
+    interpretation = _interpretation(
+        preferences={"budget_max": 10000},
+        enough=True,
+    )
 
     result, calls = await _run_sales(monkeypatch, interpretation, [])
 
@@ -134,7 +137,7 @@ def test_explicit_no_preference_is_not_an_unknown_question_candidate():
 
     assert state["explicit_no_preferences"] == ["color"]
     assert "color" not in state["unknown_preferences"]
-    assert state["enough_information_to_search"] is True
+    assert state["enough_information_to_search"] is False
 
 
 @pytest.mark.asyncio

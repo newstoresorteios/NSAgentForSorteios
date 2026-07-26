@@ -140,6 +140,57 @@ async def test_shipping_quote_uses_only_complete_cart_products(variant, multiple
 
 
 @pytest.mark.asyncio
+async def test_shipping_uses_reconciled_cart_price_when_complete_read_omits_it():
+    calls = []
+    state = _whatsapp_state(cart_items=[{
+        "product_id": "803",
+        "variant_id": "V1",
+        "quantity": 1,
+        "unit_price": "4699.99",
+    }])
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            return {
+                "items": [{
+                    "product_id": "803",
+                    "variant_id": "V1",
+                    "quantity": 1,
+                }]
+            }
+        if tool == "quote_shipping":
+            return {
+                "success": True,
+                "options": [{
+                    "shipping_id": 1,
+                    "quotation_id": "Q1",
+                    "name": "PAC Tray",
+                    "price": "35.10",
+                }],
+            }
+        raise AssertionError(tool)
+
+    result = await quote_shipping(
+        state=state,
+        zipcode="86480000",
+        execute=execute,
+    )
+
+    assert result.safety_reason is None
+    assert [name for name, _ in calls] == [
+        "get_cart_complete",
+        "quote_shipping",
+    ]
+    assert calls[1][1]["products"] == [{
+        "product_id": "803",
+        "variant_id": "V1",
+        "price": "4699.99",
+        "quantity": 1,
+    }]
+
+
+@pytest.mark.asyncio
 async def test_shipping_rejects_invalid_zipcode_adapter_error_and_empty_options():
     async def never(*_args):
         raise AssertionError("invalid zipcode must not call adapter")

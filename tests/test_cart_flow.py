@@ -172,6 +172,12 @@ async def test_list_selection_revalidates_price_quantity_and_creates_cart(monkey
     assert result.response_metadata["purchase_stage"] == "cart_created"
     assert result.response_metadata["cart_state"]["cart_product_id"] == "B"
     assert result.response_metadata["cart_state"]["cart_quantity"] == 2
+    assert result.response_metadata["cart_state"]["cart_url"] == (
+        "https://loja.example/checkout/SESSION-1"
+    )
+    assert "cart_url" not in result.commercial_data["cart"]
+    assert result.commercial_data["checkout"]["cart_url"] is None
+    assert "https://loja.example/checkout/SESSION-1" not in result.reply_text
     assert result.commercial_data["current_price"] == "125.50"
 
 

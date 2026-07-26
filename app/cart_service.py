@@ -749,10 +749,35 @@ def _verified_items(
                         else None
                     ),
                     quantity=int(quantity or 1),
+                    unit_price=(
+                        str(item.get("unit_price") or item.get("price"))
+                        if item.get("unit_price") is not None
+                        or item.get("price") is not None
+                        else None
+                    ),
                 ))
         except (TypeError, ValueError):
             continue
     return parsed
+
+
+def _merge_cart_item_prices(
+    items: list[CommerceCartItem],
+    factual_sources: list[CommerceCartItem],
+) -> list[CommerceCartItem]:
+    prices = {
+        (source.product_id, source.variant_id): source.unit_price
+        for source in factual_sources
+        if source.unit_price is not None
+    }
+    return [
+        item
+        if item.unit_price is not None
+        else item.model_copy(update={
+            "unit_price": prices.get((item.product_id, item.variant_id))
+        })
+        for item in items
+    ]
 
 
 _TRANSIENT_CART_STATUSES = {502, 503, 504}
@@ -965,6 +990,7 @@ async def _create_cart_items_checkout_impl(
                     product_id=item.product_reference.product_id,
                     variant_id=item.product_reference.variant_id,
                     quantity=item.quantity,
+                    unit_price=item.price,
                 ))
                 reconciled_complete = reconciled
                 log_purchase_progress("cart_http", "success")
@@ -1010,6 +1036,7 @@ async def _create_cart_items_checkout_impl(
                     product_id=item.product_reference.product_id,
                     variant_id=item.product_reference.variant_id,
                     quantity=item.quantity,
+                    unit_price=item.price,
                 ))
                 reconciled_complete = reconciled
                 log_purchase_progress("cart_http", "success")
@@ -1042,6 +1069,7 @@ async def _create_cart_items_checkout_impl(
             product_id=item.product_reference.product_id,
             variant_id=item.product_reference.variant_id,
             quantity=item.quantity,
+            unit_price=item.price,
         ))
         print("[sales.cart.item]", {
             "position": item.position,
@@ -1090,6 +1118,10 @@ async def _create_cart_items_checkout_impl(
     verify_ok = "error" not in complete
     complete_items = _verified_items(complete) if verify_ok else []
     verified_items = complete_items or list(successful)
+    verified_items = _merge_cart_item_prices(
+        verified_items,
+        [*state.cart_items, *successful],
+    )
     print("[sales.cart.verify]", {
         "item_count": len(verified_items),
         "has_total": bool(
@@ -1151,7 +1183,7 @@ async def _create_cart_items_checkout_impl(
     checkout_state.cart_items = verified_items
     checkout = checkout_capabilities(checkout_state)
     return AgentResult(
-        reply_text=f"{reply}\n{cart_url}",
+        reply_text=reply,
         intent="commerce",
         handoff_required=False,
         safety_reason="cart_partial_failure" if partial else None,
@@ -1170,8 +1202,10 @@ async def _create_cart_items_checkout_impl(
                 "status": status,
                 "cart_id": cart_state["cart_id"],
                 "session_id": session_id,
-                "cart_url": cart_url,
-                "items": [item.model_dump(mode="json") for item in verified_items],
+                "items": [
+                    item.model_dump(mode="json", exclude={"unit_price"})
+                    for item in verified_items
+                ],
                 "total": complete.get("total") or complete.get("current_total"),
                 "verification_ok": verification_matches,
                 "verification_status": (
