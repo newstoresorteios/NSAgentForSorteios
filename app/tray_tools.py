@@ -26,7 +26,7 @@ TOOL_SCHEMAS = [
 ]
 
 TOOL_REGISTRY = {
-    "commerce": ("search_products", "get_product", "get_product_link", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart", "get_cart_complete", "get_payment_options"),
+    "commerce": ("search_products", "get_product", "get_product_link", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart", "get_cart_complete", "get_payment_options", "quote_shipping", "list_shipping_methods", "create_order", "list_orders", "get_order", "get_order_complete", "get_order_payment"),
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
@@ -38,6 +38,21 @@ _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", 
 _CART_FIELDS = ("cart_id", "session_id", "cart_url", "message", "code")
 _CART_COMPLETE_FIELDS = ("cart_id", "session_id", "cart_url", "subtotal", "total", "current_total", "currency", "message", "code")
 _CART_ITEM_FIELDS = ("product_id", "variant_id", "quantity", "price", "unit_price", "total", "name", "reference")
+_SHIPPING_FIELDS = (
+    "shipping_id", "quotation_id", "name", "identifier", "price",
+    "min_period", "max_period", "estimated_delivery_date", "information",
+    "tax_name", "tax_value",
+)
+_ORDER_FIELDS = (
+    "success", "order_id", "id", "code", "session_id", "status",
+    "status_group", "created_at", "order_created_at", "total", "subtotal",
+    "shipping", "shipment", "sending_code", "tracking_url", "sending_date",
+    "estimated_delivery_date", "products", "items", "payment",
+)
+_ORDER_PAYMENT_FIELDS = (
+    "method_id", "method", "type", "has_payment", "payment_date",
+    "payment_url",
+)
 
 
 def _clean_text(value: str) -> str:
@@ -169,7 +184,7 @@ def _items(payload: Any) -> list[Any]:
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
-        for key in ("items", "products", "categories", "variants", "variations", "customers", "coupons", "data", "results"):
+        for key in ("items", "products", "categories", "variants", "variations", "customers", "coupons", "orders", "data", "results"):
             value = payload.get(key)
             if isinstance(value, list):
                 return value
@@ -340,13 +355,78 @@ def _semantic_payment_options(payload: Any) -> dict[str, Any] | None:
             semantic = _semantic_payment_options(nested)
             if semantic is not None:
                 return semantic
-    if "pix" in payload or "installments" in payload:
+    if any(key in payload for key in ("pix", "card", "boleto", "installments", "options")):
         return _clean_value({
             key: payload[key]
-            for key in ("pix", "installments")
+            for key in ("pix", "card", "boleto", "installments", "options")
             if key in payload
         })
     return None
+
+
+def _shipping_options(payload: Any) -> list[Any]:
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("options", "methods", "shippings", "items"):
+            if isinstance(payload.get(key), list):
+                return payload[key]
+        for key in ("data", "result", "shipping"):
+            nested = payload.get(key)
+            if isinstance(nested, (dict, list)):
+                found = _shipping_options(nested)
+                if found:
+                    return found
+    return []
+
+
+def _reduce_shipping(payload: Any) -> dict[str, Any]:
+    base = _unwrap_entity(payload, ("data", "result", "shipping"))
+    source = base if isinstance(base, dict) else payload
+    return {
+        "success": bool(source.get("success", True)) if isinstance(source, dict) else True,
+        "zipcode": source.get("zipcode") if isinstance(source, dict) else None,
+        "options": [
+            _reduce(option, _SHIPPING_FIELDS)
+            for option in _shipping_options(payload)
+            if isinstance(option, dict)
+        ],
+    }
+
+
+def _reduce_order(payload: Any) -> dict[str, Any]:
+    order = _unwrap_entity(payload, ("order", "data", "result"))
+    return _reduce(order, _ORDER_FIELDS)
+
+
+def _reduce_orders(payload: Any) -> dict[str, Any]:
+    values = _items(payload)
+    return {"orders": [_reduce_order(value) for value in values]}
+
+
+def _reduce_order_payment(payload: Any) -> dict[str, Any]:
+    source = _unwrap_entity(payload, ("data", "result"))
+    source = source if isinstance(source, dict) else {}
+    payment = source.get("payment")
+    if not isinstance(payment, dict):
+        return {
+            "success": bool(source.get("success", True)),
+            "order_id": source.get("order_id"),
+            "payment": None,
+        }
+    reduced_payment = {
+        key: (
+            payment.get(key)
+            if key == "payment_url"
+            else _clean_value(payment.get(key))
+        )
+        for key in _ORDER_PAYMENT_FIELDS
+    }
+    return {
+        "success": bool(source.get("success", True)),
+        "order_id": source.get("order_id"),
+        "payment": reduced_payment,
+    }
 
 
 async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
@@ -429,6 +509,24 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
                     else _normalize_payment_options(_payment_items(payload))
                 )
             }
+        if name == "quote_shipping":
+            return _reduce_shipping(await client.quote_shipping(**arguments))
+        if name == "list_shipping_methods":
+            return _reduce_shipping(await client.list_shipping_methods())
+        if name == "create_order":
+            return _reduce_order(await client.create_order(arguments))
+        if name == "list_orders":
+            return _reduce_orders(await client.list_orders(**arguments))
+        if name == "get_order":
+            return _reduce_order(await client.get_order(arguments["order_id"]))
+        if name == "get_order_complete":
+            return _reduce_order(
+                await client.get_order_complete(arguments["order_id"])
+            )
+        if name == "get_order_payment":
+            return _reduce_order_payment(
+                await client.get_order_payment(arguments["order_id"])
+            )
         raise ValueError(f"unknown_tool:{name}")
     except TrayAdapterError as exc:
         print("[tray.tool] request_failed", {
@@ -446,6 +544,10 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             "tray_error_fields": exc.tray_error_fields,
             "tray_error_message": exc.tray_error_message,
         }
+        if exc.tray_error_name:
+            result["tray_error_name"] = exc.tray_error_name
+        if exc.tray_error_causes:
+            result["tray_error_causes"] = exc.tray_error_causes
         if name == "list_categories":
             result["error_reason"] = (
                 "category_invalid_request"

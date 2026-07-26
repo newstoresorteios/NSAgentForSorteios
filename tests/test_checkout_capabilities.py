@@ -26,6 +26,10 @@ def test_checkout_capabilities_reflect_only_supported_backend_paths():
         "cart_ready": True,
         "cart_url": "https://loja.example/checkout/SESSION-1",
         "whatsapp_checkout_supported": False,
+        "whatsapp_order_supported": True,
+        "whatsapp_hosted_payment_supported": True,
+        "whatsapp_native_payment_supported": False,
+        "whatsapp_payment_supported": False,
         "site_checkout_supported": True,
         "requires_channel_choice": True,
         "selected_channel": None,
@@ -53,15 +57,19 @@ def test_site_choice_updates_checkout_state_and_survives_roundtrip():
     assert checkout_capabilities(restored)["requires_channel_choice"] is False
 
 
-def test_whatsapp_choice_is_not_claimed_without_backend_capability():
+def test_whatsapp_choice_enables_order_but_not_payment_execution():
     state = _cart_state()
     result = select_checkout_channel(state, "whatsapp")
     updated = evolve_commerce_state(state, result)
 
-    assert result.safety_reason == "checkout_channel_unavailable"
+    assert result.safety_reason is None
     assert result.commercial_data["checkout"]["whatsapp_checkout_supported"] is False
-    assert result.commercial_data["checkout"]["selected_channel_supported"] is False
-    assert result.commercial_data["checkout"]["requires_channel_choice"] is True
+    assert result.commercial_data["checkout"]["whatsapp_order_supported"] is True
+    assert result.commercial_data["checkout"]["whatsapp_hosted_payment_supported"] is True
+    assert result.commercial_data["checkout"]["whatsapp_native_payment_supported"] is False
+    assert result.commercial_data["checkout"]["whatsapp_payment_supported"] is False
+    assert result.commercial_data["checkout"]["selected_channel_supported"] is True
+    assert result.commercial_data["checkout"]["requires_channel_choice"] is False
     assert updated.checkout_channel_preference == "whatsapp"
-    assert updated.purchase_stage == "checkout_channel_selection"
-    assert updated.pending_action == "choose_checkout_channel"
+    assert updated.purchase_stage == "checkout_ready"
+    assert updated.pending_action is None

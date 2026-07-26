@@ -9,8 +9,12 @@ from .models import AgentResult
 
 CheckoutChannel = Literal["whatsapp", "site"]
 
-# Current backend can discuss cart/payment facts over WhatsApp, but it has no
-# supported operation for completing or tokenizing a payment in the chat.
+# The agent can now create the Tray order after an explicit review, but payment
+# execution/tokenization remains outside this backend.
+WHATSAPP_ORDER_SUPPORTED = True
+WHATSAPP_HOSTED_PAYMENT_SUPPORTED = True
+WHATSAPP_NATIVE_PAYMENT_SUPPORTED = False
+WHATSAPP_PAYMENT_SUPPORTED = False
 WHATSAPP_CHECKOUT_SUPPORTED = False
 
 
@@ -37,13 +41,21 @@ def checkout_capabilities(
     cart_url = _site_url(state.cart_url)
     cart_ready = bool(state.cart_session_id and cart_url)
     supported = {
-        "whatsapp": bool(cart_ready and WHATSAPP_CHECKOUT_SUPPORTED),
+        "whatsapp": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
         "site": bool(cart_ready and cart_url),
     }
     return {
         "cart_ready": cart_ready,
         "cart_url": cart_url,
-        "whatsapp_checkout_supported": supported["whatsapp"],
+        "whatsapp_checkout_supported": bool(cart_ready and WHATSAPP_CHECKOUT_SUPPORTED),
+        "whatsapp_order_supported": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
+        "whatsapp_hosted_payment_supported": bool(
+            cart_ready and WHATSAPP_HOSTED_PAYMENT_SUPPORTED
+        ),
+        "whatsapp_native_payment_supported": bool(
+            cart_ready and WHATSAPP_NATIVE_PAYMENT_SUPPORTED
+        ),
+        "whatsapp_payment_supported": bool(cart_ready and WHATSAPP_PAYMENT_SUPPORTED),
         "site_checkout_supported": supported["site"],
         "requires_channel_choice": bool(
             cart_ready

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from typing import Literal
 
@@ -7,6 +8,7 @@ from openai import BadRequestError
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
+from app.commerce_context import CommerceConversationState
 from app.models import IncomingMessage, SalesInterpretation
 
 
@@ -112,7 +114,13 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
         {"role": "system", "content": sales_agent.SALES_INTERPRETER_INSTRUCTIONS},
         {
             "role": "system",
-                "content": 'COMMERCE_STATE:\n{"active_domain": null, "active_topic": null, "active_product": null, "last_presented_products": [], "active_preferences": {}, "purchase_stage": null, "has_cart": false, "cart_item_count": 0, "selected_payment_method": null, "checkout_channel_preference": null, "pending_action": null, "pending_action_product_count": 0}',
+            "content": (
+                "COMMERCE_STATE:\n"
+                + json.dumps(
+                    CommerceConversationState().interpreter_payload(),
+                    ensure_ascii=False,
+                )
+            ),
         },
         {"role": "user", "content": "quero comprar um relógio"},
         {"role": "user", "content": "esportivo"},

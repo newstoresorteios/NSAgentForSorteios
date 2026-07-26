@@ -398,4 +398,104 @@ def test_cart_side_effect_is_not_exposed_as_an_openai_tool():
     }
 
     assert "create_cart" not in exposed
+    assert "create_order" not in exposed
+    assert "quote_shipping" not in exposed
+    assert "update_order_shipping" not in exposed
+    assert "get_order_payment" not in exposed
     assert {"get_cart", "get_cart_complete", "get_payment_options"} <= exposed
+
+
+@pytest.mark.asyncio
+async def test_shipping_and_order_tools_normalize_internal_contracts():
+    class CommerceAdapter:
+        async def quote_shipping(self, **kwargs):
+            assert kwargs["zipcode"] == "19900000"
+            return {"success": True, "zipcode": "19900000", "options": [{
+                "shipping_id": 1, "quotation_id": "Q1", "name": "PAC Tray",
+                "price": "35.10", "min_period": 3, "max_period": 8,
+                "secret": "omit",
+            }]}
+
+        async def create_order(self, payload):
+            assert payload["session_id"] == "S1"
+            return {"success": True, "order_id": 123, "status": "AGUARDANDO VINDI"}
+
+        async def get_order_complete(self, order_id):
+            assert order_id == "123"
+            return {
+                "order_id": 123, "status": "ENVIADO", "status_group": "shipped",
+                "sending_code": "TRACK123", "tracking_url": "https://track.example/123",
+            }
+
+        async def get_order_payment(self, order_id):
+            assert order_id == "123"
+            return {
+                "success": True,
+                "order_id": 123,
+                "payment": {
+                    "method_id": "10545",
+                    "method": "Pix - Vindi",
+                    "type": "pix",
+                    "has_payment": False,
+                    "payment_date": None,
+                    "payment_url": "https://pay.example/x?token=exact%2Bvalue",
+                    "transaction_urls": ["https://internal.example/omit"],
+                    "records": [{"access_code": "omit"}],
+                    "payments_notification": {"notification": "omit"},
+                },
+            }
+
+    adapter = CommerceAdapter()
+    quote = await execute_tool("quote_shipping", {
+        "zipcode": "19900000",
+        "products": [{"product_id": "803", "price": "4699.99", "quantity": 1}],
+    }, adapter)
+    created = await execute_tool("create_order", {"session_id": "S1"}, adapter)
+    status = await execute_tool("get_order_complete", {"order_id": "123"}, adapter)
+    payment = await execute_tool("get_order_payment", {"order_id": "123"}, adapter)
+
+    assert quote["options"] == [{
+        "shipping_id": 1, "quotation_id": "Q1", "name": "PAC Tray",
+        "price": "35.10", "min_period": 3, "max_period": 8,
+    }]
+    assert created["order_id"] == 123
+    assert status["status"] == "ENVIADO"
+    assert status["status_group"] == "shipped"
+    assert status["sending_code"] == "TRACK123"
+    assert payment == {
+        "success": True,
+        "order_id": 123,
+        "payment": {
+            "method_id": "10545",
+            "method": "Pix - Vindi",
+            "type": "pix",
+            "has_payment": False,
+            "payment_date": None,
+            "payment_url": "https://pay.example/x?token=exact%2Bvalue",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_orders_accepts_orders_envelope_for_session_reconciliation():
+    class OrdersAdapter:
+        async def list_orders(self, **kwargs):
+            assert kwargs == {"session_id": "SESSION-1"}
+            return {
+                "success": True,
+                "orders": [{
+                    "order_id": 321,
+                    "status": "AGUARDANDO PAGAMENTO",
+                    "status_group": "awaiting_payment",
+                }],
+            }
+
+    result = await execute_tool(
+        "list_orders", {"session_id": "SESSION-1"}, OrdersAdapter(),
+    )
+
+    assert result == {"orders": [{
+        "order_id": 321,
+        "status": "AGUARDANDO PAGAMENTO",
+        "status_group": "awaiting_payment",
+    }]}

@@ -28,6 +28,82 @@ class CommerceCartItem(BaseModel):
     quantity: int = Field(ge=1)
 
 
+class ShippingQuote(BaseModel):
+    shipping_id: int | str
+    quotation_id: str | None = None
+    name: str
+    price: str
+    min_period: int | None = None
+    max_period: int | None = None
+    estimated_delivery_date: str | None = None
+    information: str | None = None
+    identifier: str | None = None
+    tax_name: str | None = None
+    tax_value: str | None = None
+
+
+class SelectedPaymentOption(BaseModel):
+    id: str | None = None
+    name: str
+    method: Literal["pix", "card", "boleto", "other"] | None = None
+
+
+class CheckoutCustomer(BaseModel):
+    type: str = "0"
+    name: str | None = None
+    cpf: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    rg: str | None = None
+    gender: str | None = None
+
+
+class CheckoutAddress(BaseModel):
+    address: str | None = None
+    zip_code: str | None = None
+    number: str | None = None
+    complement: str | None = None
+    neighborhood: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str = "BRA"
+    type: str = "1"
+
+
+class CheckoutDraft(BaseModel):
+    customer: CheckoutCustomer = Field(default_factory=CheckoutCustomer)
+    address: CheckoutAddress = Field(default_factory=CheckoutAddress)
+
+
+CHECKOUT_REQUIRED_FIELDS = (
+    "name", "cpf", "email", "phone", "address", "zipcode", "number",
+    "neighborhood", "city", "state",
+)
+
+
+def checkout_fields_view(draft: CheckoutDraft) -> dict[str, bool]:
+    customer = draft.customer
+    address = draft.address
+    return {
+        "name": bool(customer.name),
+        "cpf": bool(customer.cpf),
+        "email": bool(customer.email),
+        "phone": bool(customer.phone),
+        "address": bool(address.address),
+        "zipcode": bool(address.zip_code),
+        "number": bool(address.number),
+        "complement": bool(address.complement),
+        "neighborhood": bool(address.neighborhood),
+        "city": bool(address.city),
+        "state": bool(address.state),
+    }
+
+
+def checkout_missing_fields(draft: CheckoutDraft) -> list[str]:
+    fields = checkout_fields_view(draft)
+    return [field for field in CHECKOUT_REQUIRED_FIELDS if not fields[field]]
+
+
 class CommerceConversationState(BaseModel):
     active_domain: Literal["commerce", "raffle"] | None = None
     active_topic: str | None = None
@@ -49,7 +125,31 @@ class CommerceConversationState(BaseModel):
         "other",
     ] | None = None
     selected_payment_option_id: str | None = None
+    selected_payment_option: SelectedPaymentOption | None = None
     checkout_channel_preference: Literal["whatsapp", "site"] | None = None
+    shipping_quote_zipcode: str | None = None
+    shipping_quotes: list[ShippingQuote] = Field(default_factory=list)
+    selected_shipping: ShippingQuote | None = None
+    checkout_draft: CheckoutDraft = Field(default_factory=CheckoutDraft)
+    order_confirmation_status: Literal["not_ready", "pending", "confirmed"] = "not_ready"
+    order_review_version: str | None = None
+    confirmed_order_review_version: str | None = None
+    order_id: str | None = None
+    order_status: str | None = None
+    order_status_group: str | None = None
+    order_session_id: str | None = None
+    order_created_at: str | None = None
+    order_creation_ambiguous: bool = False
+    order_payment_method_id: str | None = None
+    order_payment_method: str | None = None
+    order_payment_type: str | None = None
+    order_payment_url: str | None = None
+    order_payment_status: Literal[
+        "not_available", "pending", "confirmed", "unknown"
+    ] = "not_available"
+    order_has_payment: bool | None = None
+    order_payment_date: str | None = None
+    order_payment_checked_at: str | None = None
     pending_action: Literal[
         "send_product_link",
         "create_cart",
@@ -57,8 +157,16 @@ class CommerceConversationState(BaseModel):
         "show_payment_options",
         "confirm_purchase",
         "choose_checkout_channel",
+        "awaiting_shipping_selection",
+        "awaiting_checkout_data",
+        "awaiting_order_confirmation",
+        "awaiting_payment",
     ] | None = None
     pending_action_product_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def order_confirmation_pending(self) -> bool:
+        return self.order_confirmation_status == "pending"
 
     @classmethod
     def from_payload(cls, value: Any) -> "CommerceConversationState":
@@ -101,7 +209,42 @@ class CommerceConversationState(BaseModel):
             "has_cart": bool(self.cart_session_id and self.cart_url),
             "cart_item_count": len(self.cart_items),
             "selected_payment_method": self.selected_payment_method,
+            "selected_payment": (
+                self.selected_payment_option.model_dump(mode="json")
+                if self.selected_payment_option else None
+            ),
             "checkout_channel_preference": self.checkout_channel_preference,
+            "shipping_quote_available": bool(self.shipping_quotes),
+            "shipping_quote_count": len(self.shipping_quotes),
+            "selected_shipping": (
+                {
+                    "shipping_id": self.selected_shipping.shipping_id,
+                    "quotation_id": self.selected_shipping.quotation_id,
+                    "name": self.selected_shipping.name,
+                }
+                if self.selected_shipping else None
+            ),
+            "checkout_fields": checkout_fields_view(self.checkout_draft),
+            "required_fields": list(CHECKOUT_REQUIRED_FIELDS),
+            "missing_fields": checkout_missing_fields(self.checkout_draft),
+            "order_confirmation_status": self.order_confirmation_status,
+            "order_confirmation_pending": self.order_confirmation_pending,
+            "order_ready": bool(
+                self.cart_session_id
+                and self.checkout_channel_preference == "whatsapp"
+                and self.selected_shipping
+                and self.selected_payment_option
+                and not checkout_missing_fields(self.checkout_draft)
+            ),
+            "has_order": bool(self.order_id),
+            "order_id": self.order_id,
+            "order_payment": {
+                "status": self.order_payment_status,
+                "method": self.order_payment_method,
+                "type": self.order_payment_type,
+                "has_payment": self.order_has_payment,
+                "payment_url_available": bool(self.order_payment_url),
+            },
             "pending_action": self.pending_action,
             "pending_action_product_count": len(self.pending_action_product_ids),
         }
@@ -316,6 +459,59 @@ def evolve_commerce_state(
     if domain != "commerce":
         return state
 
+    cart_state = metadata.get("cart_state")
+    next_cart_session_id = (
+        cart_state.get("cart_session_id")
+        if isinstance(cart_state, dict) else None
+    )
+    starts_new_checkout = bool(
+        state.order_id
+        and state.order_session_id
+        and next_cart_session_id
+        and str(next_cart_session_id) != str(state.order_session_id)
+    )
+    if starts_new_checkout:
+        state.order_id = None
+        state.order_status = None
+        state.order_status_group = None
+        state.order_session_id = None
+        state.order_created_at = None
+        state.order_creation_ambiguous = False
+        state.order_payment_method_id = None
+        state.order_payment_method = None
+        state.order_payment_type = None
+        state.order_payment_url = None
+        state.order_payment_status = "not_available"
+        state.order_has_payment = None
+        state.order_payment_date = None
+        state.order_payment_checked_at = None
+
+    material_checkout_change = any(
+        key in metadata
+        for key in (
+            "cart_state",
+            "selected_payment_option",
+            "shipping_state",
+            "checkout_state",
+            "checkout_channel_preference",
+        )
+    )
+    if (
+        material_checkout_change
+        and (not state.order_id or starts_new_checkout)
+        and "order_state" not in metadata
+    ):
+        state.order_confirmation_status = "not_ready"
+        state.order_review_version = None
+        state.confirmed_order_review_version = None
+    if "cart_state" in metadata and (not state.order_id or starts_new_checkout):
+        state.shipping_quote_zipcode = None
+        state.shipping_quotes = []
+        state.selected_shipping = None
+        state.selected_payment_method = None
+        state.selected_payment_option_id = None
+        state.selected_payment_option = None
+
     if metadata.get("active_topic"):
         state.active_topic = str(metadata["active_topic"])
     if metadata.get("purchase_stage"):
@@ -331,6 +527,10 @@ def evolve_commerce_state(
         "show_payment_options",
         "confirm_purchase",
         "choose_checkout_channel",
+        "awaiting_shipping_selection",
+        "awaiting_checkout_data",
+        "awaiting_order_confirmation",
+        "awaiting_payment",
     }:
         state.pending_action = pending_action
         pending_ids = metadata.get("pending_action_product_ids")
@@ -368,9 +568,66 @@ def evolve_commerce_state(
         state.selected_payment_option_id = str(
             metadata["selected_payment_option_id"]
         )
+    selected_payment = metadata.get("selected_payment_option")
+    if isinstance(selected_payment, dict):
+        try:
+            state.selected_payment_option = SelectedPaymentOption.model_validate(
+                selected_payment
+            )
+        except (TypeError, ValueError):
+            pass
     checkout_channel = metadata.get("checkout_channel_preference")
     if checkout_channel in {"whatsapp", "site"}:
         state.checkout_channel_preference = checkout_channel
+    shipping_state = metadata.get("shipping_state")
+    if isinstance(shipping_state, dict):
+        if "shipping_quote_zipcode" in shipping_state:
+            state.shipping_quote_zipcode = shipping_state.get("shipping_quote_zipcode")
+        if isinstance(shipping_state.get("shipping_quotes"), list):
+            parsed_quotes: list[ShippingQuote] = []
+            for quote in shipping_state["shipping_quotes"]:
+                try:
+                    parsed_quotes.append(ShippingQuote.model_validate(quote))
+                except (TypeError, ValueError):
+                    continue
+            state.shipping_quotes = parsed_quotes
+        if "selected_shipping" in shipping_state:
+            selected = shipping_state.get("selected_shipping")
+            try:
+                state.selected_shipping = (
+                    ShippingQuote.model_validate(selected)
+                    if isinstance(selected, dict) else None
+                )
+            except (TypeError, ValueError):
+                pass
+    checkout_state = metadata.get("checkout_state")
+    if isinstance(checkout_state, dict):
+        draft = checkout_state.get("checkout_draft")
+        if isinstance(draft, dict):
+            try:
+                state.checkout_draft = CheckoutDraft.model_validate(draft)
+            except (TypeError, ValueError):
+                pass
+    order_state = metadata.get("order_state")
+    if isinstance(order_state, dict):
+        for field in (
+            "order_confirmation_status", "order_review_version",
+            "confirmed_order_review_version", "order_id", "order_status",
+            "order_status_group", "order_session_id", "order_created_at",
+            "order_creation_ambiguous",
+        ):
+            if field in order_state:
+                setattr(state, field, order_state[field])
+    payment_state = metadata.get("payment_state")
+    if isinstance(payment_state, dict):
+        for field in (
+            "order_payment_method_id", "order_payment_method",
+            "order_payment_type", "order_payment_url",
+            "order_payment_status", "order_has_payment",
+            "order_payment_date", "order_payment_checked_at",
+        ):
+            if field in payment_state:
+                setattr(state, field, payment_state[field])
     active_preferences = _compact_preferences(metadata.get("active_preferences"))
     if active_preferences:
         state.active_preferences = active_preferences

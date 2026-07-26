@@ -37,6 +37,22 @@ class PurchaseItem(BaseModel):
     quantity: int = Field(default_factory=lambda: 1, ge=1)
 
 
+class CheckoutDataInput(BaseModel):
+    name: str | None = None
+    cpf: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    rg: str | None = None
+    gender: str | None = None
+    address: str | None = None
+    zipcode: str | None = None
+    number: str | None = None
+    complement: str | None = None
+    neighborhood: str | None = None
+    city: str | None = None
+    state: str | None = None
+
+
 class SalesInterpretation(BaseModel):
     domain: Literal[
         "commerce",
@@ -88,6 +104,7 @@ class SalesInterpretation(BaseModel):
     payment_action: Literal[
         "payment_options",
         "installment",
+        "order_payment",
     ] | None = Field(default_factory=lambda: None)
     payment_method_preference: Literal[
         "pix",
@@ -99,6 +116,27 @@ class SalesInterpretation(BaseModel):
         "whatsapp",
         "site",
     ] | None = Field(default_factory=lambda: None)
+    payment_option_id: str | None = None
+    shipping_action: Literal[
+        "quote",
+        "select",
+        "list_methods",
+    ] | None = Field(default_factory=lambda: None)
+    shipping_zipcode: str | None = None
+    shipping_selection_id: str | None = None
+    shipping_selection_position: int | None = Field(default_factory=lambda: None, ge=1)
+    checkout_action: Literal[
+        "update_data",
+        "prepare_order",
+        "create_order",
+    ] | None = Field(default_factory=lambda: None)
+    checkout_data: CheckoutDataInput | None = None
+    order_action: Literal[
+        "get_order",
+        "get_order_status",
+        "get_order_tracking",
+    ] | None = Field(default_factory=lambda: None)
+    order_id: str | None = None
     confirmation: Literal[
         "confirm",
         "reject",
@@ -115,6 +153,8 @@ class SalesInterpretation(BaseModel):
         "checkout_channel_selection",
         "checkout_ready",
         "after_sales",
+        "awaiting_payment",
+        "payment_confirmed",
     ] | None = None
     domain_change_explicit: bool = Field(default_factory=bool)
     confidence: float = Field(ge=0.0, le=1.0)

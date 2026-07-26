@@ -23,6 +23,7 @@ class TrayAdapterError(RuntimeError):
         safe = diagnostics or {}
         self.error = _safe_diagnostic_text(safe.get("error"), limit=100)
         self.tray_error_code = _safe_diagnostic_text(safe.get("tray_error_code"), limit=100)
+        self.tray_error_name = _safe_diagnostic_text(safe.get("tray_error_name"), limit=100)
         self.tray_error_type = _safe_diagnostic_text(safe.get("tray_error_type"), limit=100)
         self.tray_error_field = _safe_error_field(safe.get("tray_error_field"))
         raw_fields = safe.get("tray_error_fields")
@@ -33,13 +34,22 @@ class TrayAdapterError(RuntimeError):
             if isinstance(raw_fields, (list, tuple, set)) else []
         )
         self.tray_error_message = _safe_diagnostic_text(safe.get("tray_error_message"), limit=300)
+        raw_causes = safe.get("tray_error_causes")
+        self.tray_error_causes = [
+            cause for cause in (
+                _safe_diagnostic_text(value, limit=200)
+                for value in (raw_causes if isinstance(raw_causes, list) else [])[:20]
+            ) if cause
+        ]
         self.diagnostics = {
             "error": self.error,
             "tray_error_code": self.tray_error_code,
+            "tray_error_name": self.tray_error_name,
             "tray_error_type": self.tray_error_type,
             "tray_error_field": self.tray_error_field,
             "tray_error_fields": self.tray_error_fields,
             "tray_error_message": self.tray_error_message,
+            "tray_error_causes": self.tray_error_causes,
         }
 
 
@@ -155,12 +165,19 @@ def _tray_error_diagnostics(payload: Any) -> dict[str, Any]:
     diagnostics = {
         "error": first_scalar("error"),
         "tray_error_code": first_scalar("tray_error_code", "code", "error_code"),
+        "tray_error_name": first_scalar("tray_error_name", "error_name"),
         "tray_error_type": first_scalar("tray_error_type", "type", "error_type"),
         "tray_error_field": unique_fields[0] if unique_fields else None,
         "tray_error_fields": unique_fields,
         "tray_error_message": first_scalar(
             "tray_error_message", "message", "msg", "detail"
         ),
+        "tray_error_causes": list(dict.fromkeys(
+            cause for cause in (
+                _safe_diagnostic_text(item.get("msg") or item.get("message"), limit=200)
+                for item in detail_items
+            ) if cause
+        ))[:20],
     }
     return {
         key: value
@@ -210,6 +227,10 @@ class TrayAdapterClient:
     def _operation_name(path: str) -> str:
         if path.startswith("/internal/carts"):
             return "carts"
+        if path.startswith("/internal/shippings"):
+            return "shippings"
+        if path.startswith("/internal/orders"):
+            return "orders"
         if path.startswith("/internal/products"):
             return "products"
         if path.startswith("/internal/categories"):
@@ -432,6 +453,33 @@ class TrayAdapterClient:
             "/internal/payments/options",
             params={"cart_session_id": cart_session_id},
         )
+
+    async def quote_shipping(self, *, zipcode: str, products: list[dict[str, Any]]) -> Any:
+        return await self._request(
+            "POST",
+            "/internal/shippings/quote",
+            json_body={"zipcode": zipcode, "products": products},
+        )
+
+    async def list_shipping_methods(self) -> Any:
+        return await self._request("GET", "/internal/shippings/methods")
+
+    async def create_order(self, payload: dict[str, Any]) -> Any:
+        return await self._request("POST", "/internal/orders", json_body=payload)
+
+    async def list_orders(self, *, session_id: str | None = None) -> Any:
+        return await self._request(
+            "GET", "/internal/orders", params={"session_id": session_id}
+        )
+
+    async def get_order(self, order_id: str | int) -> Any:
+        return await self._request("GET", f"/internal/orders/{order_id}")
+
+    async def get_order_complete(self, order_id: str | int) -> Any:
+        return await self._request("GET", f"/internal/orders/{order_id}/complete")
+
+    async def get_order_payment(self, order_id: str | int) -> Any:
+        return await self._request("GET", f"/internal/orders/{order_id}/payment")
 
     async def list_categories(self, *, limit: int = 50, page: int = 1) -> Any:
         return await self._request(

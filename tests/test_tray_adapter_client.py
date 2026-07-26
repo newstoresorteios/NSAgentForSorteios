@@ -106,6 +106,38 @@ async def test_cart_post_is_never_retried_on_transient_error():
 
 
 @pytest.mark.asyncio
+async def test_shipping_and_order_methods_use_only_internal_adapter_contracts():
+    fake = FakeClient(FakeResponse(payload={"success": True, "order_id": 123}))
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+    products = [{
+        "product_id": "803", "variant_id": None,
+        "price": "4699.99", "quantity": 1,
+    }]
+
+    await client.quote_shipping(zipcode="19900000", products=products)
+    await client.list_shipping_methods()
+    await client.create_order({"session_id": "S1", "products": products})
+    await client.list_orders(session_id="S1")
+    await client.get_order("123")
+    await client.get_order_complete("123")
+    await client.get_order_payment("123")
+
+    assert [call[0] for call in fake.calls] == [
+        ("POST", "https://tray.example/internal/shippings/quote"),
+        ("GET", "https://tray.example/internal/shippings/methods"),
+        ("POST", "https://tray.example/internal/orders"),
+        ("GET", "https://tray.example/internal/orders"),
+        ("GET", "https://tray.example/internal/orders/123"),
+        ("GET", "https://tray.example/internal/orders/123/complete"),
+        ("GET", "https://tray.example/internal/orders/123/payment"),
+    ]
+    assert fake.calls[0][1]["json"] == {
+        "zipcode": "19900000", "products": products,
+    }
+    assert fake.calls[3][1]["params"] == {"session_id": "S1"}
+
+
+@pytest.mark.asyncio
 async def test_get_cart_uses_adapter_session_route():
     fake = FakeClient(FakeResponse(payload={"session_id": "S1"}))
     client = TrayAdapterClient("https://tray.example", "secret", fake)

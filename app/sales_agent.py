@@ -16,6 +16,7 @@ from .commerce_router import (
 )
 from .category_resolver import CategoryResolver
 from .checkout_service import select_checkout_channel
+from .checkout_data_service import update_checkout_data
 from .cart_service import (
     CartItemRequest,
     create_cart_checkout,
@@ -41,7 +42,18 @@ from .guardrails import (
     detect_coupon_code_inquiry,
 )
 from .models import AgentResult, IncomingMessage, SalesInterpretation
-from .payment_service import inspect_current_cart, inspect_payment_options
+from .payment_service import (
+    inspect_current_cart,
+    inspect_order_payment,
+    inspect_payment_options,
+)
+from .shipping_service import list_shipping_methods, quote_shipping, select_shipping
+from .order_service import (
+    confirm_prepared_order,
+    create_order,
+    get_order_facts,
+    prepare_order,
+)
 from .product_media import resolve_product_image
 from .product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
@@ -236,6 +248,40 @@ informe, deixe quantity=null. Nunca invente product_id, variant_id, session_id o
 """.strip()
 
 CHECKOUT_FLOW_INSTRUCTIONS = """
+FLUXO DE PEDIDO PELO WHATSAPP:
+- Para escolher o canal, whatsapp_order_supported indica criacao de pedido pelo agente;
+  whatsapp_hosted_payment_supported indica link oficial hospedado;
+  whatsapp_native_payment_supported e whatsapp_payment_supported permanecem false.
+- Quando o cliente escolher continuar pelo WhatsApp, conduza o restante da compra com
+  as acoes estruturadas disponiveis e use required_fields/missing_fields do estado.
+- Nao peca novamente um dado de checkout ja valido. Aceite checkout_data parcial e
+  nunca invente um campo ausente.
+- Para entrega, solicite CEP quando necessario e use shipping_action=quote. O servidor
+  adiciona os produtos reais do carrinho; nunca extraia produto, preco ou quantidade
+  da fala do cliente para a cotacao.
+- Apresente somente fretes retornados em FACTS. Para resposta como "o primeiro", use
+  shipping_action=select e shipping_selection_position. Nunca envie preco livre.
+- A forma de pagamento deve vir das opcoes reais. Esta etapa apenas seleciona a forma
+  no pedido; nao processa Pix, boleto ou cartao.
+- Quando os dados estiverem completos, use checkout_action=prepare_order para obter o
+  resumo factual. Essa acao nao cria pedido.
+- Antes de criar pedido real, peca confirmacao explicita do resumo atual. So use
+  checkout_action=create_order apos essa confirmacao.
+- Se item, quantidade, frete, endereco ou pagamento mudar, prepare novo resumo e peca
+  nova confirmacao. Nunca reutilize confirmacao antiga.
+- Nunca diga que criou pedido antes de FACTS confirmar order_id.
+- Depois da criacao, use somente payment_url retornada em FACTS. Preserve a URL exata.
+  Nunca construa link, QR Code, Pix copia-e-cola, boleto, linha digitavel ou cobranca.
+- Use payment_action=order_payment quando o cliente disser que pagou ou pedir confirmacao.
+  Essa acao consulta o estado atual uma unica vez; nao use memoria antiga como confirmacao.
+- has_payment=true confirma pagamento; has_payment=false significa pendente; null significa
+  desconhecido. URL ausente nao autoriza inventar alternativa nem recriar o pedido.
+- Pagamento confirmado nao significa pedido enviado. Preserve separadamente o status do pedido.
+- Para cartao, nunca solicite PAN, numero completo, CVV, CVC, senha ou autenticacao no chat.
+- Para perguntas de status, pagamento, envio, prazo ou rastreio, use order_action e
+  consulte o pedido atual antes de responder.
+- Preserve status e status_group. Nunca invente pagamento, rastreio, prazo,
+  transportadora, tracking_url ou status.
 REGRAS ADICIONAIS DE CHECKOUT E PAGAMENTO:
 - O estado e as capacidades são contexto factual; a mensagem atual continua sendo a
   autoridade semântica.
@@ -556,7 +602,19 @@ def interpretation_to_plan(
         "product_action": interpretation.product_action,
         "payment_action": interpretation.payment_action,
         "payment_method_preference": interpretation.payment_method_preference,
+        "payment_option_id": interpretation.payment_option_id,
         "checkout_channel_preference": interpretation.checkout_channel_preference,
+        "shipping_action": interpretation.shipping_action,
+        "shipping_zipcode": interpretation.shipping_zipcode,
+        "shipping_selection_id": interpretation.shipping_selection_id,
+        "shipping_selection_position": interpretation.shipping_selection_position,
+        "checkout_action": interpretation.checkout_action,
+        "checkout_data": (
+            interpretation.checkout_data.model_dump(mode="json", exclude_none=True)
+            if interpretation.checkout_data else None
+        ),
+        "order_action": interpretation.order_action,
+        "order_id": interpretation.order_id,
         "confirmation": interpretation.confirmation,
         "installment_count": interpretation.installment_count,
         "_source": interpretation._source,
@@ -1668,6 +1726,73 @@ def _combine_checkout_channel_result(
     )
 
 
+async def _respond_to_commerce_service(
+    *,
+    message: IncomingMessage,
+    plan: dict[str, Any],
+    result: AgentResult,
+    interpretation: SalesInterpretation,
+) -> AgentResult:
+    final = await _sales_response_with_openai(
+        message, plan, result, interpretation,
+    )
+    if final:
+        return final
+    return _mark_sales_result(
+        result,
+        interpretation=interpretation,
+        goal=plan.get("goal"),
+        response_source=(
+            "technical_fallback"
+            if result.safety_reason and "technical_failure" in result.safety_reason
+            else "deterministic_fallback"
+        ),
+        used_openai_responder=False,
+        used_tray=bool(result.response_metadata.get("used_tray")),
+        fallback_reason=result.safety_reason,
+    )
+
+
+def _combine_order_and_payment_results(
+    order_result: AgentResult,
+    payment_result: AgentResult,
+) -> AgentResult:
+    order_facts = dict(order_result.commercial_data or {})
+    payment_facts = payment_result.commercial_data or {}
+    order_facts["payment"] = payment_facts.get("payment", {
+        "status": "unknown",
+        "has_payment": None,
+        "payment_url_available": False,
+    })
+    metadata = dict(order_result.response_metadata or {})
+    metadata.update(payment_result.response_metadata or {})
+    if "order_state" in order_result.response_metadata:
+        metadata["order_state"] = order_result.response_metadata["order_state"]
+    return AgentResult(
+        reply_text="Pedido identificado e pagamento factual consultado.",
+        intent="commerce",
+        safety_reason=payment_result.safety_reason,
+        commercial_data=order_facts,
+        response_metadata=metadata,
+    )
+
+
+async def _create_order_with_payment_lookup(
+    state: CommerceConversationState,
+) -> AgentResult:
+    order_result = await create_order(state=state, execute=execute_tool)
+    order_id = (order_result.commercial_data or {}).get("order_id")
+    if not order_id or not (order_result.commercial_data or {}).get("success"):
+        return order_result
+    created_state = evolve_commerce_state(state, order_result)
+    payment_result = await inspect_order_payment(
+        state=created_state,
+        execute=execute_tool,
+        order_id=str(order_id),
+    )
+    return _combine_order_and_payment_results(order_result, payment_result)
+
+
 def _purchase_product_required_result(
     state: CommerceConversationState,
 ) -> AgentResult:
@@ -1741,7 +1866,20 @@ def _pending_action_rejected_result(
             reply_text="Tudo bem. Não vou executar essa ação.",
             intent="commerce",
             handoff_required=False,
-            response_metadata={"clear_pending_action": True},
+            response_metadata={
+                "clear_pending_action": True,
+                **(
+                    {
+                        "order_state": {
+                            "order_confirmation_status": "not_ready",
+                            "order_review_version": None,
+                            "confirmed_order_review_version": None,
+                        }
+                    }
+                    if state.pending_action == "awaiting_order_confirmation"
+                    else {}
+                ),
+            },
         ),
         interpretation=interpretation,
         goal=interpretation.goal,
@@ -1832,6 +1970,103 @@ async def handle_sales_message(
         "has_pending_action": bool(state.pending_action),
         "current_purchase_stage": state.purchase_stage,
     })
+    if interpretation is not None and interpretation.payment_action == "order_payment":
+        payment_result = await inspect_order_payment(
+            state=state,
+            execute=execute_tool,
+            order_id=interpretation.order_id,
+        )
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=payment_result,
+            interpretation=interpretation,
+        )
+    if interpretation is not None and interpretation.order_action is not None:
+        order_result = await get_order_facts(
+            state=state,
+            execute=execute_tool,
+            order_id=interpretation.order_id,
+        )
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=order_result,
+            interpretation=interpretation,
+        )
+    if (
+        interpretation is not None
+        and state.pending_action == "awaiting_order_confirmation"
+        and interpretation.confirmation == "confirm"
+    ):
+        confirmed = confirm_prepared_order(state)
+        confirmed_state = evolve_commerce_state(state, confirmed)
+        order_result = await _create_order_with_payment_lookup(confirmed_state)
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=order_result,
+            interpretation=interpretation,
+        )
+    if interpretation is not None and interpretation.checkout_data is not None:
+        checkout_result = update_checkout_data(
+            state,
+            interpretation.checkout_data.model_dump(mode="json", exclude_none=True),
+        )
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=checkout_result,
+            interpretation=interpretation,
+        )
+    if interpretation is not None and interpretation.shipping_action == "quote":
+        shipping_result = await quote_shipping(
+            state=state,
+            zipcode=interpretation.shipping_zipcode or "",
+            execute=execute_tool,
+        )
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=shipping_result,
+            interpretation=interpretation,
+        )
+    if interpretation is not None and interpretation.shipping_action == "list_methods":
+        shipping_result = await list_shipping_methods(execute=execute_tool)
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=shipping_result,
+            interpretation=interpretation,
+        )
+    if interpretation is not None and interpretation.shipping_action == "select":
+        shipping_result = select_shipping(
+            state,
+            selection_id=interpretation.shipping_selection_id,
+            selection_position=interpretation.shipping_selection_position,
+        )
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=shipping_result,
+            interpretation=interpretation,
+        )
+    if interpretation is not None and interpretation.checkout_action == "prepare_order":
+        order_result = await prepare_order(state=state, execute=execute_tool)
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=order_result,
+            interpretation=interpretation,
+        )
+    if interpretation is not None and interpretation.checkout_action == "create_order":
+        order_result = await _create_order_with_payment_lookup(state)
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=order_result,
+            interpretation=interpretation,
+        )
     if (
         interpretation is not None
         and state.pending_action
@@ -2394,6 +2629,7 @@ async def handle_sales_message(
             installment_count=interpretation.installment_count,
             payment_method_preference=payment_preference,
             execute=execute_tool,
+            payment_option_id=interpretation.payment_option_id,
         )
         combined_result = (
             _combine_cart_and_payment_results(cart_result, payment_result)
