@@ -447,6 +447,23 @@ class TrayAdapterClient:
     async def get_cart_complete(self, session_id: str) -> Any:
         return await self._request("GET", f"/internal/carts/{session_id}/complete")
 
+    async def set_cart_item_quantity(
+        self,
+        *,
+        session_id: str,
+        product_id: str | int,
+        variant_id: str | int | None,
+        quantity: int,
+    ) -> Any:
+        return await self._request(
+            "PUT",
+            f"/internal/carts/{session_id}/items",
+            json_body={
+                "product_id": str(product_id),
+                "variant_id": str(variant_id) if variant_id is not None else None,
+                "quantity": quantity,
+            },
+        )
     async def get_payment_options(self, cart_session_id: str) -> Any:
         return await self._request(
             "GET",

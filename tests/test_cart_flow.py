@@ -176,7 +176,7 @@ async def test_list_selection_revalidates_price_quantity_and_creates_cart(monkey
         "https://loja.example/checkout/SESSION-1"
     )
     assert "cart_url" not in result.commercial_data["cart"]
-    assert result.commercial_data["checkout"]["cart_url"] is None
+    assert "cart_url" not in result.commercial_data["checkout"]
     assert "https://loja.example/checkout/SESSION-1" not in result.reply_text
     assert result.commercial_data["current_price"] == "125.50"
 
@@ -438,6 +438,7 @@ async def test_existing_cart_link_is_reused_without_new_post(monkeypatch):
         cart_product_id="B",
         cart_quantity=1,
         purchase_stage="cart_created",
+        checkout_channel_preference="site",
     )
     interpretation = _interpretation(
         goal="inspect",
@@ -460,13 +461,22 @@ async def test_existing_cart_link_is_reused_without_new_post(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_repeated_cart_creation_reuses_same_checkout_without_post(monkeypatch):
+async def test_repeated_cart_creation_reconciles_without_post(monkeypatch):
     import app.sales_agent as sales_agent
 
-    async def never_execute(*_args, **_kwargs):
-        raise AssertionError("same cart selection must be idempotent")
+    calls = []
 
-    monkeypatch.setattr(sales_agent, "execute_tool", never_execute)
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        assert tool == "get_cart_complete"
+        return {
+            "session_id": "S1",
+            "cart_url": "https://loja.example/checkout/S1",
+            "items": [{"product_id": "B", "variant_id": None, "quantity": 1}],
+            "total": "10.00",
+        }
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
     monkeypatch.setattr(sales_agent, "get_settings", _settings)
     state = _state(
         active_product={"product_id": "B", "name": "Produto B"},
@@ -475,6 +485,7 @@ async def test_repeated_cart_creation_reuses_same_checkout_without_post(monkeypa
         cart_url="https://loja.example/checkout/S1",
         cart_product_id="B",
         cart_quantity=1,
+        cart_items=[{"product_id": "B", "quantity": 1}],
         purchase_stage="cart_created",
     )
 
@@ -487,9 +498,10 @@ async def test_repeated_cart_creation_reuses_same_checkout_without_post(monkeypa
     )
 
     assert result is not None
-    assert "https://loja.example/checkout/S1" in result.reply_text
-    assert result.response_metadata["used_tray"] is False
-
+    assert [name for name, _ in calls] == ["get_cart_complete"]
+    assert result.commercial_data["cart"]["already_satisfied"] is True
+    assert "cart_url" not in result.commercial_data["cart"]
+    assert result.response_metadata["used_tray"] is True
 
 @pytest.mark.asyncio
 async def test_persistent_cart_state_is_loaded_by_evolution():

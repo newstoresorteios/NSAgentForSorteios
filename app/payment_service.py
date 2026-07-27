@@ -69,7 +69,7 @@ async def inspect_current_cart(
         intent="commerce",
         handoff_required=False,
         commercial_data={
-            "cart": cart,
+            "cart": _safe_cart_facts(cart, state),
             "checkout": checkout_capabilities(state),
         },
         response_metadata={
@@ -80,6 +80,88 @@ async def inspect_current_cart(
     )
 
 
+def checkout_payment_blockers(
+    state: CommerceConversationState,
+) -> list[str]:
+    if state.checkout_channel_preference != "whatsapp":
+        return []
+    blockers: list[str] = []
+    if not state.shipping_quote_zipcode and not state.shipping_quotes:
+        blockers.append("shipping_zipcode_missing")
+    elif not state.selected_shipping:
+        blockers.append("shipping_not_selected")
+    missing = checkout_missing_fields(state.checkout_draft)
+    if missing:
+        blockers.append("checkout_data_missing")
+    return blockers
+
+
+def _blocked_payment_advance(
+    state: CommerceConversationState,
+    blockers: list[str],
+) -> AgentResult:
+    if "shipping_zipcode_missing" in blockers:
+        pending_action = "awaiting_shipping_zipcode"
+        purchase_stage = "shipping"
+    elif "shipping_not_selected" in blockers:
+        pending_action = "awaiting_shipping_selection"
+        purchase_stage = "shipping"
+    else:
+        pending_action = "awaiting_checkout_data"
+        purchase_stage = "checkout_ready"
+    print("[sales.checkout.blocked]", {
+        "purchase_stage": purchase_stage,
+        "pending_action": pending_action,
+        "blocker_codes": blockers,
+    })
+    return AgentResult(
+        reply_text="O avanço do checkout está bloqueado por requisitos factuais pendentes.",
+        intent="commerce",
+        handoff_required=False,
+        safety_reason="checkout_requirements_missing",
+        commercial_data={
+            "checkout_ready_for_payment": False,
+            "checkout_blockers": blockers,
+            "missing_checkout_requirements": blockers,
+            "payment_method": {
+                "type": state.selected_payment_method,
+                "name": (
+                    state.selected_payment_option.name
+                    if state.selected_payment_option else None
+                ),
+                "available": bool(state.selected_payment_option),
+            },
+            "hosted_payment": {
+                "order_created": bool(state.order_id),
+                "payment_url_available": bool(
+                    state.order_id and state.order_payment_url
+                ),
+            },
+        },
+        response_metadata={
+            "domain": "commerce",
+            "purchase_stage": purchase_stage,
+            "pending_action": pending_action,
+            "pending_action_product_ids": [],
+            "used_tray": False,
+        },
+    )
+
+
+def _safe_cart_facts(
+    cart: dict[str, Any],
+    state: CommerceConversationState,
+) -> dict[str, Any]:
+    safe = {
+        key: value
+        for key, value in cart.items()
+        if key != "cart_url"
+    }
+    if state.checkout_channel_preference == "site" and cart.get("cart_url"):
+        safe["cart_url"] = cart["cart_url"]
+    return safe
+
+
 async def inspect_payment_options(
     *,
     state: CommerceConversationState,
@@ -87,9 +169,34 @@ async def inspect_payment_options(
     payment_method_preference: str | None = None,
     execute: ToolExecutor,
     payment_option_id: str | None = None,
+    advance_checkout: bool = False,
+    reconciled_cart: dict[str, Any] | None = None,
 ) -> AgentResult:
     if not state.cart_session_id:
         return _no_cart()
+    blockers = checkout_payment_blockers(state)
+    if advance_checkout and blockers:
+        return _blocked_payment_advance(state, blockers)
+
+    cart = reconciled_cart
+    if cart is None:
+        cart = await execute(
+            "get_cart_complete",
+            {"session_id": state.cart_session_id},
+        )
+    if "error" in cart:
+        return AgentResult(
+            reply_text="Não consegui reconciliar o carrinho neste momento.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="cart_technical_failure",
+            response_metadata={"used_tray": True},
+        )
+    print("[sales.cart.reconcile]", {
+        "attempted": True,
+        "found": bool(cart.get("items")),
+        "item_count": len(cart.get("items") or []),
+    })
     result = await execute(
         "get_payment_options",
         {"cart_session_id": state.cart_session_id},
@@ -106,6 +213,7 @@ async def inspect_payment_options(
             intent="commerce",
             handoff_required=False,
             safety_reason="payment_options_technical_failure",
+            commercial_data={"cart": _safe_cart_facts(cart, state)},
             response_metadata={"used_tray": True},
         )
     options = result.get("payment_options")
@@ -138,28 +246,13 @@ async def inspect_payment_options(
         )
         method_available = selected_option is not None
     elif payment_method_preference == "pix":
-        selected_option = (
-            options.get("pix")
-            if isinstance(options.get("pix"), dict)
-            else None
-        )
+        selected_option = options.get("pix") if isinstance(options.get("pix"), dict) else None
         method_available = selected_option is not None
     elif payment_method_preference == "card":
-        selected_option = (
-            options.get("card")
-            if isinstance(options.get("card"), dict)
-            else None
-        )
-        method_available = (
-            selected_option is not None
-            or bool(installments)
-        )
+        selected_option = options.get("card") if isinstance(options.get("card"), dict) else None
+        method_available = selected_option is not None or bool(installments)
     elif payment_method_preference == "boleto":
-        selected_option = (
-            options.get("boleto")
-            if isinstance(options.get("boleto"), dict)
-            else None
-        )
+        selected_option = options.get("boleto") if isinstance(options.get("boleto"), dict) else None
         method_available = selected_option is not None
     print("[sales.payment.options]", {
         "has_session_id": True,
@@ -169,11 +262,11 @@ async def inspect_payment_options(
             else len(installments) + int("pix" in options) + int("boleto" in options)
         ),
     })
-    print("[sales.purchase.payment]", {
-        "has_cart_session": True,
+    print("[sales.payment.method]", {
         "requested_method": payment_method_preference,
-        "options_loaded": True,
         "method_available": method_available,
+        "order_id": state.order_id,
+        "payment_url_present": bool(state.order_id and state.order_payment_url),
     })
     facts: dict[str, Any] = {
         "payment_options": options,
@@ -182,21 +275,90 @@ async def inspect_payment_options(
         "requested_method_available": method_available,
         "requested_installment_count": installment_count,
         "requested_installment": selected,
-        "cart_url": state.cart_url,
+        "payment_method": {
+            "type": payment_method_preference,
+            "name": selected_option.get("name") if selected_option else None,
+            "available": method_available,
+        },
+        "hosted_payment": {
+            "order_created": bool(state.order_id),
+            "payment_url_available": bool(
+                state.order_id and state.order_payment_url
+            ),
+        },
+        "checkout_ready_for_payment": not blockers,
+        "checkout_blockers": blockers,
+        "cart": _safe_cart_facts(cart, state),
         "checkout": checkout_capabilities(state),
     }
     if payment_method_preference is not None and method_available is False:
-        reply = (
-            "A forma de pagamento escolhida não aparece entre as opções "
-            "reais deste carrinho."
-        )
+        reply = "A forma escolhida não aparece nas opções factuais deste carrinho."
     elif installment_count is not None and selected is None:
-        reply = (
-            f"A Tray não informou uma opção de {installment_count} parcelas "
-            "para este carrinho."
-        )
+        reply = "A Tray não informou essa quantidade de parcelas para este carrinho."
     else:
         reply = "Consultei as formas de pagamento reais deste carrinho."
+    cart_items = cart.get("items") if isinstance(cart.get("items"), list) else []
+    previous_prices = {
+        (item.product_id, item.variant_id): item.unit_price
+        for item in state.cart_items
+        if item.unit_price is not None
+    }
+    normalized_cart_items = [
+        {
+            "product_id": str(item.get("product_id") or item.get("id")),
+            "variant_id": (
+                str(item["variant_id"])
+                if item.get("variant_id") is not None else None
+            ),
+            "quantity": int(item.get("quantity") or 1),
+            "unit_price": (
+                str(item.get("unit_price") or item.get("price"))
+                if item.get("unit_price") is not None
+                or item.get("price") is not None
+                else previous_prices.get((
+                    str(item.get("product_id") or item.get("id")),
+                    str(item["variant_id"])
+                    if item.get("variant_id") is not None else None,
+                ))
+            ),
+        }
+        for item in cart_items
+        if isinstance(item, dict)
+        and (item.get("product_id") is not None or item.get("id") is not None)
+    ]
+    previous_signature = sorted(
+        (item.product_id, item.variant_id, item.quantity, item.unit_price)
+        for item in state.cart_items
+    )
+    current_signature = sorted(
+        (
+            item["product_id"], item["variant_id"],
+            item["quantity"], item["unit_price"],
+        )
+        for item in normalized_cart_items
+    )
+    cart_state_metadata = {}
+    if current_signature != previous_signature:
+        cart_state_metadata = {
+            "cart_state": {
+                "cart_id": state.cart_id,
+                "cart_session_id": state.cart_session_id,
+                "cart_url": state.cart_url,
+                "cart_product_id": (
+                    normalized_cart_items[-1]["product_id"]
+                    if normalized_cart_items else None
+                ),
+                "cart_variant_id": (
+                    normalized_cart_items[-1]["variant_id"]
+                    if normalized_cart_items else None
+                ),
+                "cart_quantity": (
+                    normalized_cart_items[-1]["quantity"]
+                    if normalized_cart_items else None
+                ),
+                "cart_items": normalized_cart_items,
+            },
+        }
     return AgentResult(
         reply_text=reply,
         intent="commerce",
@@ -211,14 +373,12 @@ async def inspect_payment_options(
         response_metadata={
             "domain": "commerce",
             "purchase_stage": "payment_discussion",
+            **cart_state_metadata,
             **(
                 {
                     "selected_payment_method": payment_method_preference,
                     "selected_payment_option": {
-                        "id": (
-                            str(selected_option["id"])
-                            if selected_option.get("id") is not None else None
-                        ),
+                        "id": str(selected_option["id"]) if selected_option.get("id") is not None else None,
                         "name": str(selected_option["name"]),
                         "method": payment_method_preference,
                     },
@@ -247,16 +407,13 @@ async def inspect_payment_options(
                     "pending_action": "awaiting_checkout_data",
                     "pending_action_product_ids": [],
                 }
-                if (
-                    state.checkout_channel_preference == "whatsapp"
-                    and checkout_missing_fields(state.checkout_draft)
-                )
+                if state.checkout_channel_preference == "whatsapp"
+                and checkout_missing_fields(state.checkout_draft)
                 else {"clear_pending_action": True}
             ),
             "used_tray": True,
         },
     )
-
 
 async def inspect_order_payment(
     *,
@@ -366,6 +523,11 @@ async def inspect_order_payment(
         "order_id": target,
         "payment_type": payment_type,
         "has_payment": has_payment,
+        "payment_url_present": payment_url is not None,
+        "status": status,
+    })
+    print("[sales.payment.hosted]", {
+        "order_id": target,
         "payment_url_present": payment_url is not None,
         "status": status,
     })

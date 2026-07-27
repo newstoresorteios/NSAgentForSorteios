@@ -165,6 +165,7 @@ async def test_failed_attempt_persists_session_and_next_message_reuses_it():
             }
         if tool == "get_cart_complete":
             return {
+                "cart_url": f"https://loja.example/checkout/{arguments['session_id']}",
                 "items": [{"product_id": "A", "quantity": 1}],
                 "total": "100.00",
             }
@@ -176,7 +177,7 @@ async def test_failed_attempt_persists_session_and_next_message_reuses_it():
         execute=successful_execute,
     )
 
-    assert second_posts[0]["session_id"] == generated_session
+    assert second_posts == []
 
 
 @pytest.mark.asyncio

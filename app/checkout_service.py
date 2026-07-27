@@ -44,9 +44,8 @@ def checkout_capabilities(
         "whatsapp": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
         "site": bool(cart_ready and official_cart_url),
     }
-    return {
+    facts = {
         "cart_ready": cart_ready,
-        "cart_url": official_cart_url if effective_channel == "site" else None,
         "whatsapp_checkout_supported": bool(cart_ready and WHATSAPP_CHECKOUT_SUPPORTED),
         "whatsapp_order_supported": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
         "whatsapp_hosted_payment_supported": bool(
@@ -72,7 +71,9 @@ def checkout_capabilities(
         ),
         "sensitive_payment_data_allowed_in_chat": False,
     }
-
+    if effective_channel == "site" and official_cart_url:
+        facts["cart_url"] = official_cart_url
+    return facts
 
 def select_checkout_channel(
     state: CommerceConversationState,
@@ -90,6 +91,18 @@ def select_checkout_channel(
         )
 
     supported = bool(facts["selected_channel_supported"])
+    whatsapp_needs_zipcode = bool(
+        supported
+        and channel == "whatsapp"
+        and not state.shipping_quotes
+        and not state.selected_shipping
+    )
+    if whatsapp_needs_zipcode:
+        print("[sales.checkout.next_requirement]", {
+            "purchase_stage": "shipping",
+            "pending_action": "awaiting_shipping_zipcode",
+            "blocker_codes": ["shipping_zipcode_missing"],
+        })
     return AgentResult(
         reply_text=(
             "Canal de checkout registrado."
@@ -103,28 +116,38 @@ def select_checkout_channel(
             "checkout": facts,
             "cart": {
                 "status": "cart_ready",
-                "cart_url": facts["cart_url"],
                 "items": [
                     item.model_dump(mode="json")
                     for item in state.cart_items
                 ],
-            },
+                **(
+                    {"cart_url": facts["cart_url"]}
+                    if "cart_url" in facts else {}
+                ),
+            }
         },
         response_metadata={
             "domain": "commerce",
             "checkout_channel_preference": channel,
             "purchase_stage": (
-                "checkout_ready"
+                "shipping"
+                if whatsapp_needs_zipcode
+                else "checkout_ready"
                 if supported
                 else "checkout_channel_selection"
             ),
-            "clear_pending_action": supported,
+            "clear_pending_action": supported and not whatsapp_needs_zipcode,
             **(
                 {
                     "pending_action": "choose_checkout_channel",
                     "pending_action_product_ids": [],
                 }
                 if not supported
+                else {
+                    "pending_action": "awaiting_shipping_zipcode",
+                    "pending_action_product_ids": [],
+                }
+                if whatsapp_needs_zipcode
                 else {}
             ),
             "used_tray": False,

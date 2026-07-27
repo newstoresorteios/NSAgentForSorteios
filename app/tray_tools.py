@@ -26,7 +26,7 @@ TOOL_SCHEMAS = [
 ]
 
 TOOL_REGISTRY = {
-    "commerce": ("search_products", "get_product", "get_product_link", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart", "get_cart_complete", "get_payment_options", "quote_shipping", "list_shipping_methods", "create_order", "list_orders", "get_order", "get_order_complete", "get_order_payment"),
+    "commerce": ("search_products", "get_product", "get_product_link", "check_inventory", "list_categories", "get_category", "get_category_tree", "list_product_variants", "get_product_variant", "search_customer", "get_customer", "list_coupons", "get_coupon", "create_cart", "get_cart", "get_cart_complete", "set_cart_item_quantity", "get_payment_options", "quote_shipping", "list_shipping_methods", "create_order", "list_orders", "get_order", "get_order_complete", "get_order_payment"),
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
@@ -35,8 +35,9 @@ _CATEGORY_FIELDS = ("id", "name", "parent_id", "parent", "slug", "path")
 _VARIANT_FIELDS = ("id", "variant_id", "product_id", "name", "value", "color", "size", "version", "choices", "properties", "attributes", "options", "option", "variation", "Variation", "reference", "sku", "Sku", "price", "promotional_price", "current_price", "stock", "available", "available_in_store", "availability", "VariationSettings", "primary_image_url", "primary_image", "image_url", "image", "images")
 _CUSTOMER_FIELDS = ("id", "name", "email", "city", "state", "last_purchase", "total_orders")
 _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", "type", "value_start", "value_end", "usage_counter_limit", "usage_counter_limit_customer", "coupon_type", "local_application", "freight_application")
-_CART_FIELDS = ("cart_id", "session_id", "cart_url", "message", "code")
-_CART_COMPLETE_FIELDS = ("cart_id", "session_id", "cart_url", "subtotal", "total", "current_total", "currency", "message", "code")
+_CART_CREATE_FIELDS = ("cart_id", "session_id", "cart_url", "message", "code")
+_CART_FIELDS = ("cart_id", "session_id", "message", "code")
+_CART_COMPLETE_FIELDS = ("cart_id", "session_id", "subtotal", "total", "current_total", "currency", "message", "code")
 _CART_ITEM_FIELDS = ("product_id", "variant_id", "quantity", "price", "unit_price", "total", "name", "reference")
 _SHIPPING_FIELDS = (
     "shipping_id", "quotation_id", "name", "identifier", "price",
@@ -487,7 +488,7 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             payload = await client.create_cart(**arguments)
             return _reduce(
                 _unwrap_entity(payload, ("cart", "data", "result")),
-                _CART_FIELDS,
+                _CART_CREATE_FIELDS,
             )
         if name == "get_cart":
             payload = await client.get_cart(arguments["session_id"])
@@ -499,6 +500,14 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             return _reduce_cart_complete(
                 await client.get_cart_complete(arguments["session_id"])
             )
+        if name == "set_cart_item_quantity":
+            payload = await client.set_cart_item_quantity(**arguments)
+            reduced = _reduce_cart_complete(payload)
+            if isinstance(payload, dict):
+                for key in ("success", "changed", "already_satisfied"):
+                    if payload.get(key) is not None:
+                        reduced[key] = payload[key]
+            return reduced
         if name == "get_payment_options":
             payload = await client.get_payment_options(arguments["cart_session_id"])
             semantic = _semantic_payment_options(payload)

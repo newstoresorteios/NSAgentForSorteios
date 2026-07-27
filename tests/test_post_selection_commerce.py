@@ -451,6 +451,9 @@ async def test_image_fallback_delivery_failure_is_not_reported_as_native_media(m
 @pytest.mark.asyncio
 async def test_payment_options_and_requested_installment_use_tray_values():
     async def execute(tool, arguments):
+        if tool == "get_cart_complete":
+            assert arguments == {"session_id": "S1"}
+            return {"items": [], "total": "1000.00"}
         assert tool == "get_payment_options"
         assert arguments == {"cart_session_id": "S1"}
         return {
@@ -461,7 +464,6 @@ async def test_payment_options_and_requested_installment_use_tray_values():
                 ],
             }
         }
-
     result = await inspect_payment_options(
         state=CommerceConversationState(
             cart_session_id="S1",
@@ -537,6 +539,7 @@ async def test_payment_question_in_sales_flow_uses_active_cart(monkeypatch):
     )
 
     assert calls == [
+        ("get_cart_complete", {"session_id": "S1"}),
         ("get_payment_options", {"cart_session_id": "S1"}),
     ]
     assert result.commercial_data["requested_installment"]["value"] == 123.45

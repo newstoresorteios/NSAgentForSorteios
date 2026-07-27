@@ -545,6 +545,28 @@ def current_cart_reply(
         return _validation_failure(
             "Ainda não há um carrinho ativo nesta conversa.",
         )
+    if state.checkout_channel_preference != "site":
+        return AgentResult(
+            reply_text="O link do carrinho só fica disponível no checkout pelo site.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="site_checkout_not_selected",
+            commercial_data={
+                "cart": {
+                    "status": "cart_ready",
+                    "items": [
+                        item.model_dump(mode="json")
+                        for item in state.cart_items
+                    ],
+                },
+                "checkout": checkout_capabilities(state),
+            },
+            response_metadata={
+                "domain": "commerce",
+                "purchase_stage": state.purchase_stage or "cart_created",
+                "used_tray": False,
+            },
+        )
     checkout = checkout_capabilities(state)
     return AgentResult(
         reply_text=f"Carrinho atual consultado.\n{cart_url}",
@@ -575,7 +597,6 @@ def current_cart_reply(
             "used_tray": False,
         },
     )
-
 
 async def _prepare_item(
     request: CartItemRequest,
@@ -857,6 +878,240 @@ def _cart_state(
         "cart_items": [item.model_dump(mode="json") for item in items],
     }
 
+
+def _cart_next_metadata(
+    state: CommerceConversationState,
+) -> dict[str, Any]:
+    if state.checkout_channel_preference is None:
+        return {
+            "purchase_stage": "cart_created",
+            "pending_action": "choose_checkout_channel",
+            "pending_action_product_ids": [],
+        }
+    if state.checkout_channel_preference == "whatsapp":
+        if not state.shipping_quotes:
+            pending = "awaiting_shipping_zipcode"
+            blockers = ["shipping_zipcode_missing"]
+        elif not state.selected_shipping:
+            pending = "awaiting_shipping_selection"
+            blockers = ["shipping_not_selected"]
+        else:
+            pending = "awaiting_checkout_data"
+            blockers = []
+        print("[sales.checkout.next_requirement]", {
+            "purchase_stage": "shipping",
+            "pending_action": pending,
+            "blocker_codes": blockers,
+        })
+        return {
+            "purchase_stage": "shipping",
+            "pending_action": pending,
+            "pending_action_product_ids": [],
+        }
+    return {
+        "purchase_stage": "cart_created",
+        "clear_pending_action": True,
+    }
+
+
+def _reconciled_cart_result(
+    *,
+    state: CommerceConversationState,
+    complete: dict[str, Any],
+    requested: CartItemRequest,
+    changed: bool,
+    already_satisfied: bool,
+) -> AgentResult:
+    cart_url = _valid_cart_url(complete.get("cart_url")) or _valid_cart_url(
+        state.cart_url
+    )
+    if not cart_url or not state.cart_session_id:
+        return _technical_failure(
+            stage="cart_validation",
+            exception_type="invalid_cart_response",
+            diagnostics=complete,
+        )
+    items = _merge_cart_item_prices(
+        _verified_items(complete),
+        list(state.cart_items),
+    )
+    checkout_state = state.model_copy(deep=True)
+    checkout_state.cart_url = cart_url
+    checkout_state.cart_items = items
+    next_metadata = _cart_next_metadata(checkout_state)
+    cart_facts: dict[str, Any] = {
+        "status": "cart_ready",
+        "items": [item.model_dump(mode="json") for item in items],
+        "subtotal": complete.get("subtotal"),
+        "total": complete.get("total") or complete.get("current_total"),
+        "mutation_success": True,
+        "changed": changed,
+        "already_satisfied": already_satisfied,
+    }
+    if state.checkout_channel_preference == "site":
+        cart_facts["cart_url"] = cart_url
+    print("[sales.cart.ensure]", {
+        "session_hash": state.cart_session_id[-8:],
+        "product_id": requested.product_reference.product_id,
+        "variant_present": requested.product_reference.variant_id is not None,
+        "quantity": requested.quantity,
+        "already_satisfied": already_satisfied,
+        "changed": changed,
+    })
+    return AgentResult(
+        reply_text="Estado factual do carrinho confirmado.",
+        intent="commerce",
+        handoff_required=False,
+        commercial_data={
+            "cart": cart_facts,
+            "checkout": checkout_capabilities(checkout_state),
+        },
+        response_metadata={
+            "domain": "commerce",
+            "cart_state": _cart_state(
+                cart=complete,
+                session_id=state.cart_session_id,
+                cart_url=cart_url,
+                items=items,
+            ),
+            **next_metadata,
+            "used_tray": True,
+        },
+    )
+
+
+async def _ensure_existing_cart_item(
+    *,
+    request: CartItemRequest,
+    state: CommerceConversationState,
+    execute: ToolExecutor,
+    allow_create: bool,
+) -> AgentResult | None:
+    if not state.cart_session_id:
+        return None
+    try:
+        complete = await execute(
+            "get_cart_complete",
+            {"session_id": state.cart_session_id},
+        )
+    except Exception as exc:
+        return _technical_failure(
+            stage="cart_reconcile",
+            exception_type=type(exc).__name__,
+        )
+    if "error" in complete:
+        return _technical_failure(
+            stage="cart_reconcile",
+            status_code=complete.get("status_code"),
+            exception_type=complete.get("error_type"),
+            diagnostics=complete,
+        )
+    items = _verified_items(complete)
+    target = next(
+        (
+            item
+            for item in items
+            if item.product_id == request.product_reference.product_id
+            and item.variant_id == request.product_reference.variant_id
+        ),
+        None,
+    )
+    print("[sales.cart.reconcile]", {
+        "attempted": True,
+        "found": target is not None,
+        "item_count": len(items),
+    })
+    if target is None:
+        return None if allow_create else _validation_failure(
+            "O item informado não existe no carrinho atual.",
+            "cart_item_not_found",
+        )
+    if target.quantity == request.quantity:
+        return _reconciled_cart_result(
+            state=state,
+            complete=complete,
+            requested=request,
+            changed=False,
+            already_satisfied=True,
+        )
+    print("[sales.cart.quantity]", {
+        "session_hash": state.cart_session_id[-8:],
+        "product_id": request.product_reference.product_id,
+        "variant_present": request.product_reference.variant_id is not None,
+        "quantity": request.quantity,
+    })
+    try:
+        updated = await execute(
+            "set_cart_item_quantity",
+            {
+                "session_id": state.cart_session_id,
+                "product_id": request.product_reference.product_id,
+                "variant_id": request.product_reference.variant_id,
+                "quantity": request.quantity,
+            },
+        )
+    except Exception as exc:
+        return _technical_failure(
+            stage="cart_quantity_update",
+            exception_type=type(exc).__name__,
+        )
+    if "error" in updated:
+        return _technical_failure(
+            stage="cart_quantity_update",
+            status_code=updated.get("status_code"),
+            exception_type=updated.get("error_type"),
+            diagnostics=updated,
+        )
+    final_item = next(
+        (
+            item
+            for item in _verified_items(updated)
+            if item.product_id == request.product_reference.product_id
+            and item.variant_id == request.product_reference.variant_id
+        ),
+        None,
+    )
+    if final_item is None or final_item.quantity != request.quantity:
+        return _technical_failure(
+            stage="cart_quantity_verification",
+            exception_type="cart_quantity_not_reconciled",
+            diagnostics=updated,
+        )
+    return _reconciled_cart_result(
+        state=state,
+        complete=updated,
+        requested=request,
+        changed=True,
+        already_satisfied=False,
+    )
+
+
+async def set_cart_item_quantity(
+    *,
+    product_reference: CommerceProductReference,
+    quantity: int,
+    state: CommerceConversationState,
+    execute: ToolExecutor,
+) -> AgentResult:
+    if isinstance(quantity, bool) or quantity < 1:
+        return _validation_failure(
+            "Informe uma quantidade final válida.",
+            "cart_validation_error",
+        )
+    result = await _ensure_existing_cart_item(
+        request=CartItemRequest(
+            product_reference=product_reference,
+            quantity=quantity,
+            resolved_from="context",
+        ),
+        state=state,
+        execute=execute,
+        allow_create=False,
+    )
+    return result or _validation_failure(
+        "O item informado não existe no carrinho atual.",
+        "cart_item_not_found",
+    )
 
 async def _create_cart_items_checkout_impl(
     *,
@@ -1251,6 +1506,19 @@ async def create_cart_items_checkout(
     state: CommerceConversationState,
     execute: ToolExecutor,
 ) -> AgentResult:
+    if len(item_requests) == 1 and state.cart_session_id:
+        ensured = await _ensure_existing_cart_item(
+            request=item_requests[0],
+            state=state,
+            execute=execute,
+            allow_create=True,
+        )
+        if ensured is not None:
+            return _persist_cart_session(
+                ensured,
+                state,
+                state.cart_session_id,
+            )
     execution_state = state
     if item_requests and not state.cart_session_id:
         execution_state = state.model_copy(deep=True)

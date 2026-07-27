@@ -24,7 +24,6 @@ def test_checkout_capabilities_reflect_only_supported_backend_paths():
 
     assert facts == {
         "cart_ready": True,
-        "cart_url": None,
         "whatsapp_checkout_supported": False,
         "whatsapp_order_supported": True,
         "whatsapp_hosted_payment_supported": True,
@@ -73,7 +72,7 @@ def test_whatsapp_choice_enables_order_but_not_payment_execution():
     assert result.commercial_data["checkout"]["whatsapp_payment_supported"] is False
     assert result.commercial_data["checkout"]["selected_channel_supported"] is True
     assert result.commercial_data["checkout"]["requires_channel_choice"] is False
-    assert result.commercial_data["checkout"]["cart_url"] is None
+    assert "cart_url" not in result.commercial_data["checkout"]
     assert updated.checkout_channel_preference == "whatsapp"
-    assert updated.purchase_stage == "checkout_ready"
-    assert updated.pending_action is None
+    assert updated.purchase_stage == "shipping"
+    assert updated.pending_action == "awaiting_shipping_zipcode"

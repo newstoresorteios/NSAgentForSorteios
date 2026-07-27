@@ -158,6 +158,7 @@ class CommerceConversationState(BaseModel):
         "show_payment_options",
         "confirm_purchase",
         "choose_checkout_channel",
+        "awaiting_shipping_zipcode",
         "awaiting_shipping_selection",
         "awaiting_checkout_data",
         "awaiting_order_confirmation",
@@ -215,6 +216,20 @@ class CommerceConversationState(BaseModel):
                 if self.selected_payment_option else None
             ),
             "checkout_channel_preference": self.checkout_channel_preference,
+            "payment_method": {
+                "type": self.selected_payment_method,
+                "name": (
+                    self.selected_payment_option.name
+                    if self.selected_payment_option else None
+                ),
+                "available": bool(self.selected_payment_option),
+            },
+            "hosted_payment": {
+                "order_created": bool(self.order_id),
+                "payment_url_available": bool(
+                    self.order_id and self.order_payment_url
+                ),
+            },
             "shipping_quote_available": bool(self.shipping_quotes),
             "shipping_quote_count": len(self.shipping_quotes),
             "selected_shipping": (
@@ -528,6 +543,7 @@ def evolve_commerce_state(
         "show_payment_options",
         "confirm_purchase",
         "choose_checkout_channel",
+        "awaiting_shipping_zipcode",
         "awaiting_shipping_selection",
         "awaiting_checkout_data",
         "awaiting_order_confirmation",

@@ -261,6 +261,7 @@ async def test_existing_cart_queries_payment_without_new_cart(monkeypatch):
     )
 
     assert calls == [
+        ("get_cart_complete", {"session_id": "S1"}),
         ("get_payment_options", {"cart_session_id": "S1"}),
     ]
 
@@ -448,7 +449,7 @@ async def test_payment_failure_after_cart_keeps_created_cart_state(monkeypatch):
     assert result.safety_reason == "payment_options_technical_failure"
     assert result.response_metadata["cart_state"]["cart_session_id"] == "S1"
     assert result.commercial_data["checkout"]["cart_ready"] is True
-    assert result.commercial_data["checkout"]["cart_url"] is None
+    assert "cart_url" not in result.commercial_data["checkout"]
     assert result.response_metadata["cart_state"]["cart_url"].endswith(
         "/checkout/S1"
     )

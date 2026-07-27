@@ -228,6 +228,23 @@ async def quote_shipping(
         },
         response_metadata={
             "domain": "commerce",
+            "cart_state": {
+                "cart_id": state.cart_id,
+                "cart_session_id": state.cart_session_id,
+                "cart_url": state.cart_url,
+                "cart_product_id": products[-1]["product_id"],
+                "cart_variant_id": products[-1]["variant_id"],
+                "cart_quantity": products[-1]["quantity"],
+                "cart_items": [
+                    {
+                        "product_id": product["product_id"],
+                        "variant_id": product["variant_id"],
+                        "quantity": product["quantity"],
+                        "unit_price": product["price"],
+                    }
+                    for product in products
+                ],
+            },
             "shipping_state": {
                 "shipping_quote_zipcode": normalized_zipcode,
                 "shipping_quotes": quote_payload,

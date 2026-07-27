@@ -94,6 +94,7 @@ class SalesInterpretation(BaseModel):
         "show_cart_link",
         "checkout_question",
         "inspect_cart",
+        "set_cart_item_quantity",
     ] | None = Field(default_factory=lambda: None)
     quantity: int | None = Field(default_factory=lambda: None, ge=1)
     purchase_items: list[PurchaseItem] = Field(default_factory=list)
@@ -105,6 +106,10 @@ class SalesInterpretation(BaseModel):
         "payment_options",
         "installment",
         "order_payment",
+    ] | None = Field(default_factory=lambda: None)
+    payment_request_kind: Literal[
+        "informational",
+        "checkout",
     ] | None = Field(default_factory=lambda: None)
     payment_method_preference: Literal[
         "pix",
@@ -151,6 +156,7 @@ class SalesInterpretation(BaseModel):
         "payment_discussion",
         "cart_created",
         "checkout_channel_selection",
+        "shipping",
         "checkout_ready",
         "after_sales",
         "awaiting_payment",

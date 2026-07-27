@@ -89,10 +89,12 @@ async def test_payment_service_uses_exact_ten_installment_plot():
     )
 
     async def execute(tool, arguments):
+        if tool == "get_cart_complete":
+            assert arguments == {"session_id": "SESSION"}
+            return {"items": [], "total": "1250.00"}
         assert tool == "get_payment_options"
         assert arguments == {"cart_session_id": "SESSION"}
         return normalized
-
     result = await inspect_payment_options(
         state=CommerceConversationState(
             cart_session_id="SESSION",

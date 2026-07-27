@@ -217,6 +217,15 @@ continuar a conversa antes de buscar. Decida semanticamente quais informacoes se
 uteis e quantas perguntas fazem sentido, sem transformar a conversa em interrogatorio.
 Se o cliente pedir explicitamente para ver produtos, opcoes ou modelos, use goal=find
 ou recommend e ready_for_retrieval=true para pesquisar imediatamente.
+Exemplos semanticos obrigatorios:
+- "quero comprar um relogio" e apenas interesse amplo: normalmente use goal=discover,
+  needs_clarification=true, enough_information_to_search=false e
+  ready_for_retrieval=false, sem busca de produto.
+- "quero um relogio casual ate uns R$ 5.000" ja pode ter contexto suficiente para
+  retrieval, conforme seu julgamento semantico.
+- "me mostre os relogios disponiveis" e "procure Tissot casual ate R$ 5.000" sao
+  pedidos explicitos de retrieval e podem usar ready_for_retrieval=true imediatamente.
+Esses exemplos valem para qualquer categoria; nao exija preferencias fixas.
 Quando o contexto ja for suficiente para uma recomendacao util, marque
 enough_information_to_search=true. Nunca exija uma lista fixa de preferencias e nunca
 pergunte novamente algo que o cliente ja informou.
@@ -228,6 +237,9 @@ Interprete semanticamente a etapa de carrinho:
 - purchase_action=show_cart_link quando pede novamente o link do carrinho atual;
 - purchase_action=checkout_question quando pergunta como ou onde concluir o pagamento.
 - purchase_action=inspect_cart quando pergunta o total ou os itens do carrinho atual.
+- purchase_action=set_cart_item_quantity quando o cliente pede uma quantidade FINAL
+  para um item ja presente no carrinho. Extraia quantity e a referencia semantica;
+  nunca invente IDs nem session_id.
 Para comprar vários produtos, preencha purchase_items com uma entrada para cada item,
 preservando referência semântica e quantidade. Não invente IDs. Use list_position para
 itens numerados, current_product para o produto ativo e explicit_product com o nome citado.
@@ -239,6 +251,9 @@ e defina purchase_action=create_cart no mesmo resultado. Nao deixe a intencao de
 pagamento apagar o compromisso de compra.
 Use payment_method_preference somente quando o cliente escolher ou declarar preferencia
 por pix, card, boleto ou other; uma pergunta geral sobre aceitacao nao e uma escolha.
+Use payment_request_kind=informational para perguntas como "voces aceitam Pix?" e
+payment_request_kind=checkout quando o cliente quiser avancar factualmente para a etapa
+financeira. Uma consulta informativa nao pula nem altera requisitos do checkout.
 COMMERCE_STATE.pending_action representa uma acao concreta oferecida imediatamente antes.
 Ela é uma proposta anterior, não uma obrigação do turno atual.
 Defina confirmation=confirm quando a mensagem atual aceitar semanticamente essa acao,
@@ -301,6 +316,16 @@ REGRAS ADICIONAIS DE CHECKOUT E PAGAMENTO:
 - Quando FACTS.checkout.requires_channel_choice=true, conduza uma escolha curta entre
   os canais marcados como suportados. Não ofereça um canal com suporte false.
 - Se o site for escolhido e site_checkout_supported=true, use somente cart_url.
+- Nao repita confirmacao de carrinho quando o estado factual indicar que o item ja esta
+  na quantidade desejada. Respeite pending_action e purchase_stage atuais.
+- Nunca diga que adicionou, removeu ou alterou quantidade, criou pedido ou confirmou
+  pagamento antes de FACTS confirmar sucesso da operacao correspondente.
+- Nao pule requisitos factuais do checkout WhatsApp. Se FACTS trouxer bloqueadores,
+  continue a conversa obtendo o que falta; a linguagem continua sendo sua decisao.
+- cart_url e exclusivamente checkout pelo site. payment_url e exclusivamente o link
+  hospedado factual de um pedido ja criado. Nunca use cart_url como Pix, boleto, cartao
+  ou fallback de payment_url.
+- A ausencia de payment_url nao significa que o metodo selecionado esteja indisponivel.
 - Se WhatsApp for escolhido, avance apenas até as capacidades explicitamente marcadas
   como suportadas. Não prometa conclusão de pagamento no chat sem suporte backend.
 - Nunca solicite número completo de cartão, CVV, senha, validade ou código de
@@ -1643,7 +1668,12 @@ async def _ensure_cart_for_purchase(
     purchase_requests: list[CartItemRequest],
     resolved_product: CommerceProductReference | None,
 ) -> tuple[CommerceConversationState, AgentResult | None]:
-    if state.cart_session_id and state.cart_url:
+    if (
+        state.cart_session_id
+        and state.cart_url
+        and not purchase_requests
+        and resolved_product is None
+    ):
         print("[sales.purchase.ensure_cart]", {
             "cart_existed": True,
             "cart_created": False,
@@ -2169,6 +2199,32 @@ async def handle_sales_message(
             pending_action_used = bool(
                 interpretation.checkout_channel_preference
             )
+        elif pending_action == "awaiting_shipping_zipcode":
+            interpretation._clear_pending_action = False
+            requirement_result = AgentResult(
+                reply_text="Ainda existe um requisito factual de entrega pendente.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="checkout_requirements_missing",
+                commercial_data={
+                    "checkout_ready_for_payment": False,
+                    "missing_checkout_requirements": ["shipping_zipcode"],
+                    "checkout_blockers": ["shipping_zipcode_missing"],
+                },
+                response_metadata={
+                    "domain": "commerce",
+                    "purchase_stage": "shipping",
+                    "pending_action": "awaiting_shipping_zipcode",
+                    "pending_action_product_ids": [],
+                    "used_tray": False,
+                },
+            )
+            return await _respond_to_commerce_service(
+                message=message,
+                plan=plan,
+                result=requirement_result,
+                interpretation=interpretation,
+            )
         pending_action_used = bool(
             pending_action_used
             or pending_references
@@ -2492,6 +2548,53 @@ async def handle_sales_message(
             used_tray=True,
             fallback_reason=link_result.safety_reason,
         )
+    if purchase_action == "set_cart_item_quantity":
+        if resolved_product is None:
+            missing = _purchase_product_required_result(state)
+            return _mark_sales_result(
+                missing,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=missing.safety_reason,
+            )
+        if interpretation.quantity is None:
+            quantity_result = AgentResult(
+                reply_text="A quantidade final não foi identificada.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="cart_validation_error",
+                commercial_data={
+                    "cart": {"mutation_success": False},
+                },
+                response_metadata={"domain": "commerce", "used_tray": False},
+            )
+        else:
+            quantity_result = await set_cart_item_quantity(
+                product_reference=resolved_product,
+                quantity=interpretation.quantity,
+                state=state,
+                execute=execute_tool,
+            )
+        final = await _sales_response_with_openai(
+            message,
+            plan,
+            quantity_result,
+            interpretation,
+        )
+        if final:
+            return final
+        return _mark_sales_result(
+            quantity_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=bool(quantity_result.response_metadata.get("used_tray")),
+            fallback_reason=quantity_result.safety_reason,
+        )
     payment_requested = bool(interpretation and interpretation.payment_action)
     payment_preference = (
         interpretation.payment_method_preference
@@ -2512,10 +2615,14 @@ async def handle_sales_message(
         })
     needs_cart = bool(
         payment_requested
-        and not (state.cart_session_id and state.cart_url)
         and (
             purchase_action in {"create_cart", "checkout_question", "show_cart_link"}
             or purchase_requests
+        )
+        and (
+            not (state.cart_session_id and state.cart_url)
+            or purchase_action == "create_cart"
+            or bool(purchase_requests)
         )
     )
     print("[sales.purchase.orchestrator.decision]", {
@@ -2588,7 +2695,7 @@ async def handle_sales_message(
 
         payment_state = state
         cart_result: AgentResult | None = None
-        if not (state.cart_session_id and state.cart_url) and needs_cart:
+        if needs_cart:
             payment_state, cart_result = await _ensure_cart_for_purchase(
                 interpretation=interpretation,
                 state=state,
@@ -2633,6 +2740,22 @@ async def handle_sales_message(
             payment_method_preference=payment_preference,
             execute=execute_tool,
             payment_option_id=interpretation.payment_option_id,
+            advance_checkout=bool(
+                interpretation.payment_request_kind == "checkout"
+                or purchase_action == "checkout_question"
+            ),
+            reconciled_cart=(
+                {
+                    **((cart_result.commercial_data or {}).get("cart") or {}),
+                    "items": (
+                        (cart_result.response_metadata.get("cart_state") or {}).get(
+                            "cart_items", []
+                        )
+                    ),
+                }
+                if cart_result is not None
+                else None
+            ),
         )
         combined_result = (
             _combine_cart_and_payment_results(cart_result, payment_result)
