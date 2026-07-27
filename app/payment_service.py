@@ -354,7 +354,7 @@ async def inspect_payment_options(
             **{
                 key: selected_option[key]
                 for key in (
-                    "discount_value", "increase_value", "total_base", "tax_value"
+                    "discount_value", "increase_value", "application_value", "total_base", "tax_value"
                 )
                 if selected_option.get(key) is not None
             },
@@ -377,6 +377,26 @@ async def inspect_payment_options(
             "available": method_available,
         },
         "selected_payment_option": selected_option_facts,
+        "payment_amounts": {
+            "product_subtotal": cart.get("subtotal"),
+            "shipping_value": (
+                state.selected_shipping.price if state.selected_shipping else None
+            ),
+            "cart_total": (
+                cart.get("total") or cart.get("current_total")
+            ),
+            "payment_discount_value": (
+                selected_option.get("discount_value") if selected_option else None
+            ),
+            "payment_application_value": (
+                selected_option.get("application_value") if selected_option else None
+            ),
+            "payment_option_total_base": (
+                selected_option.get("total_base") if selected_option else None
+            ),
+            # Tray's option fields do not prove a payable total including freight.
+            "payment_payable_total": None,
+        },
         "hosted_payment": {
             "order_created": bool(state.order_id),
             "payment_url_available": bool(

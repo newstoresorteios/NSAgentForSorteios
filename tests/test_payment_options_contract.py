@@ -278,4 +278,7 @@ def test_responder_contract_keeps_pix_available_when_link_is_pending():
         "payment_link_state": "pending",
         "order_state": "created",
         "order_payment_revalidation_status": "confirmed",
+        "hosted_payment_supported": False,
+        "customer_confirmation_required": False,
+        "payment_payable_total": None,
     }

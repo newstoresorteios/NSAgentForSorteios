@@ -157,6 +157,7 @@ def _normalize_payment_options(value: Any) -> Any:
             for key, number in {
                 "discount_value": _number(item.get("discount_value")),
                 "increase_value": _number(item.get("increase_value")),
+                "application_value": _number(item.get("application_value")),
                 "total_base": _number(item.get("total_base")),
                 "tax_value": _number(item.get("tax_value")),
             }.items()

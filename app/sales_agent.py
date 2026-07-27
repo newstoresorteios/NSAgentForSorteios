@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import html
+import unicodedata
 from typing import Any
 
 from openai import APIError, AsyncOpenAI, BadRequestError
@@ -15,7 +16,7 @@ from .commerce_router import (
     _product_lines,
 )
 from .category_resolver import CategoryResolver
-from .checkout_service import select_checkout_channel
+from .checkout_service import checkout_capabilities, select_checkout_channel
 from .checkout_data_service import update_checkout_data
 from .cart_service import (
     CartItemRequest,
@@ -111,6 +112,10 @@ commercial_availability.immediate_delivery_supported nos FACTS for igual a true.
 informe o prazo comercial e não o contradiga com uma promessa de pronta entrega.
 Quando FACTS indicar falha técnica da integração, descreva apenas uma falha interna temporária.
 Não atribua a causa ao navegador, cache, internet ou dispositivo do cliente sem fato explícito.
+RESPONSE_CONTRACT é uma restrição factual: só peça confirmação final quando
+customer_confirmation_required=true; se payment_link_state não for available, não prometa
+nem afirme que um link de pagamento já existe. Nunca chame um método de indisponível quando
+payment_method_state=available.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -1224,6 +1229,12 @@ def _responder_contract(state: CommerceConversationState | None) -> dict[str, An
         payment_method_state = "pending_selection"
     else:
         payment_method_state = "not_selected"
+    checkout = checkout_capabilities(state)
+    confirmation_required = bool(
+        state.pending_action == "awaiting_order_confirmation"
+        and state.order_confirmation_status == "pending"
+        and state.order_review_version
+    )
     return {
         "product_state": "in_cart" if state.cart_items else "missing",
         "payment_method_state": payment_method_state,
@@ -1233,7 +1244,78 @@ def _responder_contract(state: CommerceConversationState | None) -> dict[str, An
         ),
         "order_state": "created" if state.order_id else "not_created",
         "order_payment_revalidation_status": revalidation,
+        "hosted_payment_supported": bool(
+            checkout.get("whatsapp_hosted_payment_supported")
+        ),
+        "customer_confirmation_required": confirmation_required,
+        "payment_payable_total": None,
     }
+
+
+def _confirmation_text_kind(state: CommerceConversationState, text: str) -> str | None:
+    """Recognize a short final answer only for an already prepared order review."""
+    if not (
+        state.pending_action == "awaiting_order_confirmation"
+        and state.order_confirmation_status == "pending"
+        and state.order_review_version
+    ):
+        return None
+    folded = "".join(
+        char for char in unicodedata.normalize("NFKD", text.casefold())
+        if not unicodedata.combining(char)
+    )
+    normalized = " ".join(re.findall(r"[a-z0-9]+", folded))
+    if not normalized:
+        return None
+    explicit_change = any(term in normalized for term in (
+        "cartao", "pix", "boleto", "pagamento", "quantidade", "produto",
+        "endereco", "frete", "trocar", "alterar", "mudar",
+    ))
+    if explicit_change or " mas " in f" {normalized} ":
+        return "change"
+    if normalized in {"nao", "nao confirma", "cancela", "cancelar", "nao quero"}:
+        return "reject"
+    if normalized in {
+        "sim", "confirmo", "confirmado", "pode finalizar", "pode concluir",
+        "pode prosseguir", "finaliza", "pode fazer",
+    }:
+        return "confirm"
+    return None
+
+
+async def _confirm_current_order_review(
+    *,
+    message: IncomingMessage,
+    plan: dict[str, Any],
+    state: CommerceConversationState,
+    source: str,
+) -> AgentResult:
+    print("[sales.order.confirmation.turn]", {
+        "pending_action_before": state.pending_action,
+        "confirmation_source": source,
+        "explicit_change_detected": False,
+        "review_version_present": bool(state.order_review_version),
+        "confirmed_review_version_present": bool(state.confirmed_order_review_version),
+        "branch_taken": "confirm_order_review",
+        "prepare_order_called": False,
+        "confirm_prepared_order_called": True,
+        "create_order_called": True,
+    })
+    confirmed = confirm_prepared_order(state)
+    confirmed_state = evolve_commerce_state(state, confirmed)
+    order_result = await _create_order_with_payment_lookup(confirmed_state)
+    final_state = evolve_commerce_state(confirmed_state, order_result)
+    print("[sales.order.confirmation.turn]", {
+        "pending_action_after": final_state.pending_action,
+        "branch_taken": "order_created" if final_state.order_id else "order_not_created",
+    })
+    return await _respond_to_commerce_service(
+        message=message,
+        plan=plan,
+        result=order_result,
+        interpretation=None,
+        state=final_state,
+    )
 
 
 async def _execute_contextual_product_lookup(
@@ -2139,6 +2221,48 @@ async def handle_sales_message(
 ) -> AgentResult | None:
     interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
     state = commerce_state or CommerceConversationState()
+    deterministic_confirmation = _confirmation_text_kind(state, message.text)
+    if deterministic_confirmation == "confirm":
+        return await _confirm_current_order_review(
+            message=message,
+            plan={"intent": "commerce", "goal": "buy"},
+            state=state,
+            source="contextual_text",
+        )
+    if deterministic_confirmation == "reject":
+        rejected = AgentResult(
+            reply_text="A confirmação do pedido foi cancelada.",
+            intent="commerce",
+            response_metadata={
+                "domain": "commerce",
+                "clear_pending_action": True,
+                "order_state": {
+                    "order_confirmation_status": "not_ready",
+                    "order_review_version": None,
+                    "confirmed_order_review_version": None,
+                },
+                "used_tray": False,
+            },
+        )
+        print("[sales.order.confirmation.turn]", {
+            "pending_action_before": state.pending_action,
+            "confirmation_source": "contextual_text",
+            "explicit_change_detected": False,
+            "review_version_present": bool(state.order_review_version),
+            "confirmed_review_version_present": bool(state.confirmed_order_review_version),
+            "branch_taken": "reject_order_review",
+            "prepare_order_called": False,
+            "confirm_prepared_order_called": False,
+            "create_order_called": False,
+            "pending_action_after": None,
+        })
+        return await _respond_to_commerce_service(
+            message=message,
+            plan={"intent": "commerce", "goal": "buy"},
+            result=rejected,
+            interpretation=None,
+            state=evolve_commerce_state(state, rejected),
+        )
     log_purchase_progress("interpretation", "start")
     if isinstance(semantic_plan, SalesInterpretation):
         plan = interpretation_to_plan(semantic_plan, message.text)
@@ -2703,6 +2827,16 @@ async def handle_sales_message(
             state,
             interpretation.checkout_channel_preference,
         )
+        if (
+            interpretation.checkout_channel_preference == "whatsapp"
+            and state.checkout_channel_preference == "whatsapp"
+        ):
+            channel_result = await _advance_whatsapp_checkout(
+                state,
+                channel_result,
+                state.payment_method_preference,
+                interpretation.installment_count,
+            )
         final = await _sales_response_with_openai(
             message,
             plan,

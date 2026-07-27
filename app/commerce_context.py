@@ -77,6 +77,7 @@ class SelectedPaymentOption(BaseModel):
     installments: list[dict[str, Any]] = Field(default_factory=list)
     discount_value: float | None = None
     increase_value: float | None = None
+    application_value: float | None = None
     total_base: float | None = None
     tax_value: float | None = None
 

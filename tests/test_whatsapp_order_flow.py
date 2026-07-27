@@ -864,6 +864,86 @@ async def test_prepare_requires_shipping_and_email_then_sets_pending_when_ready(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["sim", "confirmo", "pode finalizar"])
+async def test_textual_order_confirmation_bypasses_interpreter_and_creates_once(monkeypatch, text):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def execute(tool, _arguments):
+        calls.append(tool)
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "create_order":
+            return {"order_id": "123", "status": "AGUARDANDO PAGAMENTO"}
+        if tool == "get_payment_options":
+            return {"payment_options": {"options": [{"id": "10545", "name": "Pix factual"}]}}
+        if tool == "get_order_payment":
+            return {"order_id": "123", "payment": {"has_payment": False}}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    prepared = await prepare_order(state=_ready_state(), execute=execute)
+    review_state = evolve_commerce_state(_ready_state(), prepared)
+    calls.clear()
+
+    async def must_not_prepare(**_kwargs):
+        raise AssertionError("confirmation must not prepare a new review")
+
+    monkeypatch.setattr(sales_agent, "prepare_order", must_not_prepare)
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text=text), {}, {}, _interpretation(confirmation="none"),
+        commerce_state=review_state,
+    )
+    updated = evolve_commerce_state(review_state, result)
+
+    assert calls.count("create_order") == 1
+    assert updated.order_id == "123"
+    assert "get_product" not in calls
+
+
+@pytest.mark.asyncio
+async def test_confirmation_text_with_payment_change_does_not_create_order(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    state = _ready_state(payment_method_preference="pix")
+    async def prepare_execute(_tool, _arguments):
+        return _cart()
+
+    prepared = await prepare_order(state=state, execute=prepare_execute)
+    review_state = evolve_commerce_state(state, prepared)
+    calls = []
+
+    async def execute(tool, _arguments):
+        calls.append(tool)
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "get_payment_options":
+            return {"payment_options": {
+                "card": {"id": "C1", "name": "Cartao factual", "card": 1},
+                "options": [{"id": "C1", "name": "Cartao factual", "card": 1}],
+            }}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(sales_agent, "get_settings", lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"))
+    changed = await sales_agent.handle_sales_message(
+        IncomingMessage(text="sim, mas quero cartao"), {}, {},
+        _interpretation(payment_action="payment_options", payment_method_preference="card"),
+        commerce_state=review_state,
+    )
+    updated = evolve_commerce_state(review_state, changed)
+
+    assert "create_order" not in calls
+    assert updated.selected_payment_method == "card"
+    assert updated.pending_action == "awaiting_order_confirmation"
+
+
+@pytest.mark.asyncio
 async def test_create_is_blocked_without_confirmation_and_stale_confirmation():
     calls = []
 
