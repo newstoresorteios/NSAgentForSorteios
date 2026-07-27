@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 import unicodedata
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -11,6 +11,7 @@ from .commerce_context import (
     CommerceCartItem,
     CommerceConversationState,
     CommerceProductReference,
+    normalize_variant_identity,
 )
 from .checkout_service import checkout_capabilities
 from .models import AgentResult, SalesInterpretation
@@ -40,6 +41,7 @@ class _PreparedCartItem:
     variant: dict[str, Any] | None
     quantity: int
     price: str
+    original_price: str | None
     position: int | None
     resolved_from: str
 
@@ -195,8 +197,10 @@ def _valid_cart_url(value: Any) -> str | None:
 
 
 def _variant_id(variant: dict[str, Any]) -> str | None:
-    value = variant.get("variant_id") or variant.get("id")
-    return str(value) if value is not None else None
+    value = variant.get("variant_id")
+    if value is None:
+        value = variant.get("id")
+    return normalize_variant_identity(value)
 
 
 def _flag_is_true(value: Any) -> bool:
@@ -534,6 +538,26 @@ def _price_for_cart(
         return None, selected.source
     return format(selected.amount.quantize(Decimal("0.01")), "f"), selected.source
 
+def _original_price_for_cart(
+    product: dict[str, Any],
+    variant: dict[str, Any] | None,
+) -> str | None:
+    candidates = (
+        [variant.get("price"), product.get("price")]
+        if variant is not None
+        else [product.get("price")]
+    )
+    for value in candidates:
+        if value is None:
+            continue
+        try:
+            amount = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+        if amount > Decimal("0"):
+            return format(amount.quantize(Decimal("0.01")), "f")
+    return None
+
 
 def current_cart_reply(
     state: CommerceConversationState,
@@ -746,6 +770,7 @@ async def _prepare_item(
         variant=variant,
         quantity=request.quantity,
         price=price,
+        original_price=_original_price_for_cart(product, variant),
         position=request.position,
         resolved_from=request.resolved_from,
     ), None
@@ -764,16 +789,17 @@ def _verified_items(
             if product_id is not None:
                 parsed.append(CommerceCartItem(
                     product_id=str(product_id),
-                    variant_id=(
-                        str(item["variant_id"])
-                        if item.get("variant_id") is not None
-                        else None
-                    ),
+                    variant_id=normalize_variant_identity(item.get("variant_id")),
                     quantity=int(quantity or 1),
                     unit_price=(
                         str(item.get("unit_price") or item.get("price"))
                         if item.get("unit_price") is not None
                         or item.get("price") is not None
+                        else None
+                    ),
+                    original_price=(
+                        str(item["original_price"])
+                        if item.get("original_price") is not None
                         else None
                     ),
                 ))
@@ -787,19 +813,23 @@ def _merge_cart_item_prices(
     factual_sources: list[CommerceCartItem],
 ) -> list[CommerceCartItem]:
     prices = {
-        (source.product_id, source.variant_id): source.unit_price
+        (source.product_id, normalize_variant_identity(source.variant_id)): (
+            source.unit_price,
+            source.original_price,
+        )
         for source in factual_sources
-        if source.unit_price is not None
     }
-    return [
-        item
-        if item.unit_price is not None
-        else item.model_copy(update={
-            "unit_price": prices.get((item.product_id, item.variant_id))
-        })
-        for item in items
-    ]
-
+    merged: list[CommerceCartItem] = []
+    for item in items:
+        factual = prices.get((
+            item.product_id,
+            normalize_variant_identity(item.variant_id),
+        ))
+        merged.append(item.model_copy(update={
+            "unit_price": item.unit_price or (factual[0] if factual else None),
+            "original_price": item.original_price or (factual[1] if factual else None),
+        }))
+    return merged
 
 _TRANSIENT_CART_STATUSES = {502, 503, 504}
 
@@ -1246,6 +1276,7 @@ async def _create_cart_items_checkout_impl(
                     variant_id=item.product_reference.variant_id,
                     quantity=item.quantity,
                     unit_price=item.price,
+                    original_price=item.original_price,
                 ))
                 reconciled_complete = reconciled
                 log_purchase_progress("cart_http", "success")
@@ -1292,6 +1323,7 @@ async def _create_cart_items_checkout_impl(
                     variant_id=item.product_reference.variant_id,
                     quantity=item.quantity,
                     unit_price=item.price,
+                    original_price=item.original_price,
                 ))
                 reconciled_complete = reconciled
                 log_purchase_progress("cart_http", "success")
@@ -1325,6 +1357,7 @@ async def _create_cart_items_checkout_impl(
             variant_id=item.product_reference.variant_id,
             quantity=item.quantity,
             unit_price=item.price,
+            original_price=item.original_price,
         ))
         print("[sales.cart.item]", {
             "position": item.position,

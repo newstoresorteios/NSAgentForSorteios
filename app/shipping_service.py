@@ -9,6 +9,7 @@ from .commerce_context import (
     CommerceCartItem,
     CommerceConversationState,
     ShippingQuote,
+    normalize_variant_identity,
 )
 from .models import AgentResult
 
@@ -45,7 +46,7 @@ def cart_shipping_products(
     factual_items: list[CommerceCartItem] | None = None,
 ) -> list[dict[str, Any]]:
     factual_prices = {
-        (item.product_id, item.variant_id): item.unit_price
+        (item.product_id, normalize_variant_identity(item.variant_id)): item.unit_price
         for item in factual_items or []
         if item.unit_price is not None
     }
@@ -58,10 +59,7 @@ def cart_shipping_products(
         price = item.get("unit_price")
         if price is None:
             price = item.get("price")
-        variant_id = (
-            str(item["variant_id"])
-            if item.get("variant_id") is not None else None
-        )
+        variant_id = normalize_variant_identity(item.get("variant_id"))
         if price is None and product_id is not None:
             price = factual_prices.get((str(product_id), variant_id))
         try:
@@ -191,7 +189,11 @@ async def quote_shipping(
         return AgentResult(
             reply_text="A cota\u00e7\u00e3o de frete n\u00e3o p\u00f4de ser conclu\u00edda.",
             intent="commerce",
-            safety_reason="shipping_quote_technical_failure",
+            safety_reason=(
+                "shipping_quote_upstream_validation_failed"
+                if result.get("status_code") == 422
+                else "shipping_quote_technical_failure"
+            ),
             commercial_data={
                 "success": False,
                 "stage": "shipping_quote",
@@ -210,6 +212,11 @@ async def quote_shipping(
         if parsed is not None:
             quotes.append(parsed)
     quote_payload = [quote.model_dump(mode="json") for quote in quotes]
+    factual_original_prices = {
+        (item.product_id, normalize_variant_identity(item.variant_id)): item.original_price
+        for item in state.cart_items
+        if item.original_price is not None
+    }
     draft = state.checkout_draft.model_copy(deep=True)
     draft.address.zip_code = normalized_zipcode
     print("[sales.shipping.quote.result]", {
@@ -241,6 +248,10 @@ async def quote_shipping(
                         "variant_id": product["variant_id"],
                         "quantity": product["quantity"],
                         "unit_price": product["price"],
+                        "original_price": factual_original_prices.get((
+                            product["product_id"],
+                            normalize_variant_identity(product["variant_id"]),
+                        )),
                     }
                     for product in products
                 ],

@@ -160,12 +160,14 @@ async def test_multi_item_uses_one_session_and_verifies_complete_cart():
             "variant_id": None,
             "quantity": 1,
             "unit_price": "100.00",
+            "original_price": None,
         },
         {
             "product_id": "B",
             "variant_id": None,
             "quantity": 2,
             "unit_price": "100.00",
+            "original_price": None,
         },
     ]
     assert result.commercial_data["cart"]["total"] == "300.00"
@@ -217,6 +219,7 @@ async def test_second_item_failure_reports_verified_partial_state():
             "variant_id": None,
             "quantity": 1,
             "unit_price": "50.00",
+            "original_price": "50.00",
         },
     ]
 

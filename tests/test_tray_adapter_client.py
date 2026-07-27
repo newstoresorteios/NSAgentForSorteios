@@ -43,14 +43,14 @@ async def test_categories_and_variants_use_new_read_only_routes():
     await client.get_category("10")
     await client.get_category_tree("10")
     await client.list_product_variants("641")
-    await client.get_product_variant("V1")
+    await client.get_product_variant("123")
 
     assert [call[0][1] for call in fake.calls] == [
         "https://tray.example/internal/categories",
         "https://tray.example/internal/categories/10",
         "https://tray.example/internal/categories/tree/10",
         "https://tray.example/internal/products/variants",
-        "https://tray.example/internal/products/variants/V1",
+        "https://tray.example/internal/products/variants/123",
     ]
     assert fake.calls[0][1]["params"] == {"limit": 50, "page": 2}
     assert fake.calls[3][1]["params"] == {"product_id": "641"}
@@ -89,7 +89,7 @@ async def test_cart_post_is_never_retried_on_transient_error():
     with pytest.raises(TrayAdapterError):
         await client.create_cart(
             product_id="641",
-            variant_id="V1",
+            variant_id="123",
             quantity=1,
             price="10.00",
             session_id="S1",
@@ -98,7 +98,7 @@ async def test_cart_post_is_never_retried_on_transient_error():
     assert len(fake.calls) == 1
     assert fake.calls[0][1]["json"] == {
         "product_id": "641",
-        "variant_id": "V1",
+        "variant_id": "123",
         "quantity": 1,
         "price": "10.00",
         "session_id": "S1",

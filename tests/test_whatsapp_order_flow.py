@@ -18,7 +18,7 @@ from app.models import AgentResult, IncomingMessage, SalesInterpretation
 def _cart(*, variant=True, multiple=False):
     items = [{
         "product_id": "803",
-        "variant_id": "V1" if variant else None,
+        "variant_id": "123" if variant else None,
         "quantity": 1,
         "unit_price": "4699.99",
         "name": "Relogio",
@@ -40,7 +40,10 @@ def _whatsapp_state(**overrides):
         "checkout_channel_preference": "whatsapp",
         "cart_session_id": "SESSION-1",
         "cart_url": "https://loja.example/checkout/SESSION-1",
-        "cart_items": [{"product_id": "803", "variant_id": "V1", "quantity": 1}],
+        "cart_items": [{
+            "product_id": "803", "variant_id": "123", "quantity": 1,
+            "unit_price": "4699.99", "original_price": "4699.99",
+        }],
     }
     payload.update(overrides)
     return CommerceConversationState(**payload)
@@ -132,7 +135,7 @@ async def test_shipping_quote_uses_only_complete_cart_products(variant, multiple
     assert len(posted["products"]) == (2 if multiple else 1)
     assert posted["products"][0] == {
         "product_id": "803",
-        "variant_id": "V1" if variant else None,
+        "variant_id": "123" if variant else None,
         "price": "4699.99",
         "quantity": 1,
     }
@@ -144,7 +147,7 @@ async def test_shipping_uses_reconciled_cart_price_when_complete_read_omits_it()
     calls = []
     state = _whatsapp_state(cart_items=[{
         "product_id": "803",
-        "variant_id": "V1",
+        "variant_id": "123",
         "quantity": 1,
         "unit_price": "4699.99",
     }])
@@ -155,7 +158,7 @@ async def test_shipping_uses_reconciled_cart_price_when_complete_read_omits_it()
             return {
                 "items": [{
                     "product_id": "803",
-                    "variant_id": "V1",
+                    "variant_id": "123",
                     "quantity": 1,
                 }]
             }
@@ -184,7 +187,7 @@ async def test_shipping_uses_reconciled_cart_price_when_complete_read_omits_it()
     ]
     assert calls[1][1]["products"] == [{
         "product_id": "803",
-        "variant_id": "V1",
+        "variant_id": "123",
         "price": "4699.99",
         "quantity": 1,
     }]

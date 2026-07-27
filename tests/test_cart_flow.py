@@ -234,7 +234,7 @@ async def test_successful_cart_post_is_not_downgraded_when_complete_lags(monkeyp
     assert result.commercial_data["cart"]["status"] == "cart_created"
     assert result.commercial_data["cart"]["verification_status"] == "pending"
     assert result.commercial_data["cart"]["items"] == [
-        {"product_id": "B", "variant_id": None, "quantity": 1}
+        {"product_id": "B", "variant_id": None, "quantity": 1, "original_price": None}
     ]
     assert result.response_metadata["pending_action"] == "choose_checkout_channel"
 
@@ -346,7 +346,7 @@ async def test_single_variant_is_validated_and_used(monkeypatch):
         if tool == "list_product_variants":
             return {
                 "variants": [{
-                    "id": "V1",
+                    "id": "123",
                     "product_id": "B",
                     "price": "95.00",
                     "available": True,
@@ -360,7 +360,7 @@ async def test_single_variant_is_validated_and_used(monkeypatch):
             }
         if tool == "get_cart_complete":
             return {
-                "items": [{"product_id": "B", "variant_id": "V1", "quantity": 1}],
+                "items": [{"product_id": "B", "variant_id": "123", "quantity": 1}],
                 "total": "95.00",
             }
         raise AssertionError(tool)
@@ -377,9 +377,9 @@ async def test_single_variant_is_validated_and_used(monkeypatch):
 
     assert result is not None
     create_call = next(arguments for tool, arguments in calls if tool == "create_cart")
-    assert create_call["variant_id"] == "V1"
+    assert create_call["variant_id"] == "123"
     assert create_call["price"] == "95.00"
-    assert result.response_metadata["active_product"]["variant_id"] == "V1"
+    assert result.response_metadata["active_product"]["variant_id"] == "123"
 
 
 @pytest.mark.asyncio
@@ -400,8 +400,8 @@ async def test_multiple_variants_require_choice_before_cart(monkeypatch):
         if tool == "list_product_variants":
             return {
                 "variants": [
-                    {"id": "V1", "available": True, "color": "Preto"},
-                    {"id": "V2", "available": True, "color": "Azul"},
+                    {"id": "123", "available": True, "color": "Preto"},
+                    {"id": "124", "available": True, "color": "Azul"},
                 ]
             }
         raise AssertionError("cart must not be created")

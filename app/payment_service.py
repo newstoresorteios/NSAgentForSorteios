@@ -4,7 +4,11 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from .checkout_service import checkout_capabilities
-from .commerce_context import CommerceConversationState, checkout_missing_fields
+from .commerce_context import (
+    CommerceConversationState,
+    checkout_missing_fields,
+    normalize_variant_identity,
+)
 from .models import AgentResult
 
 
@@ -299,41 +303,54 @@ async def inspect_payment_options(
         reply = "Consultei as formas de pagamento reais deste carrinho."
     cart_items = cart.get("items") if isinstance(cart.get("items"), list) else []
     previous_prices = {
-        (item.product_id, item.variant_id): item.unit_price
+        (item.product_id, normalize_variant_identity(item.variant_id)): (
+            item.unit_price,
+            item.original_price,
+        )
         for item in state.cart_items
-        if item.unit_price is not None
     }
-    normalized_cart_items = [
-        {
-            "product_id": str(item.get("product_id") or item.get("id")),
-            "variant_id": (
-                str(item["variant_id"])
-                if item.get("variant_id") is not None else None
-            ),
-            "quantity": int(item.get("quantity") or 1),
+    normalized_cart_items = []
+    for item in cart_items:
+        if not isinstance(item, dict):
+            continue
+        product_id = item.get("product_id") or item.get("id")
+        if product_id is None:
+            continue
+        try:
+            variant_id = normalize_variant_identity(item.get("variant_id"))
+            quantity = int(item.get("quantity") or 1)
+        except (TypeError, ValueError):
+            continue
+        persisted = previous_prices.get((str(product_id), variant_id), (None, None))
+        normalized_cart_items.append({
+            "product_id": str(product_id),
+            "variant_id": variant_id,
+            "quantity": quantity,
             "unit_price": (
                 str(item.get("unit_price") or item.get("price"))
-                if item.get("unit_price") is not None
-                or item.get("price") is not None
-                else previous_prices.get((
-                    str(item.get("product_id") or item.get("id")),
-                    str(item["variant_id"])
-                    if item.get("variant_id") is not None else None,
-                ))
+                if item.get("unit_price") is not None or item.get("price") is not None
+                else persisted[0]
             ),
-        }
-        for item in cart_items
-        if isinstance(item, dict)
-        and (item.get("product_id") is not None or item.get("id") is not None)
-    ]
+            "original_price": (
+                str(item["original_price"])
+                if item.get("original_price") is not None
+                else persisted[1]
+            ),
+        })
     previous_signature = sorted(
-        (item.product_id, item.variant_id, item.quantity, item.unit_price)
+        (
+            item.product_id,
+            normalize_variant_identity(item.variant_id),
+            item.quantity,
+            item.unit_price,
+            item.original_price,
+        )
         for item in state.cart_items
     )
     current_signature = sorted(
         (
-            item["product_id"], item["variant_id"],
-            item["quantity"], item["unit_price"],
+            item["product_id"], item["variant_id"], item["quantity"],
+            item["unit_price"], item["original_price"],
         )
         for item in normalized_cart_items
     )

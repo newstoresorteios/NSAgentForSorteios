@@ -135,7 +135,7 @@ async def test_false_string_variation_flag_does_not_trigger_variant_lookup():
 @pytest.mark.asyncio
 async def test_single_eligible_variant_is_auto_selected():
     execute, calls = _cart_execute([
-        {"variant_id": "V1", "available": True, "color": "Preto"},
+        {"variant_id": "123", "available": True, "color": "Preto"},
     ])
 
     await create_cart_items_checkout(
@@ -149,14 +149,14 @@ async def test_single_eligible_variant_is_auto_selected():
     )
 
     create = next(args for name, args in calls if name == "create_cart")
-    assert create["variant_id"] == "V1"
+    assert create["variant_id"] == "123"
 
 
 @pytest.mark.asyncio
 async def test_distinct_real_variant_choices_are_presented():
     execute, calls = _cart_execute([
-        {"variant_id": "V1", "available": True, "properties": [{"name": "Acabamento", "value": "Fosco"}]},
-        {"variant_id": "V2", "available": True, "properties": [{"name": "Acabamento", "value": "Polido"}]},
+        {"variant_id": "123", "available": True, "properties": [{"name": "Acabamento", "value": "Fosco"}]},
+        {"variant_id": "124", "available": True, "properties": [{"name": "Acabamento", "value": "Polido"}]},
     ])
 
     result = await create_cart_items_checkout(
@@ -178,7 +178,7 @@ async def test_distinct_real_variant_choices_are_presented():
 
 def test_nested_sku_choice_is_kept_without_technical_fields():
     choices = variant_choices({
-        "variant_id": "V1",
+        "variant_id": "123",
         "Sku": {
             "name": "Acabamento",
             "value": "Fosco",
@@ -193,8 +193,8 @@ def test_nested_sku_choice_is_kept_without_technical_fields():
 @pytest.mark.asyncio
 async def test_duplicate_technical_variants_do_not_create_impossible_question():
     execute, calls = _cart_execute([
-        {"variant_id": "V1", "available": True, "properties": [{"name": "Acabamento", "value": "Fosco"}]},
-        {"variant_id": "V2", "available": True, "properties": [{"name": "Acabamento", "value": "Fosco"}]},
+        {"variant_id": "123", "available": True, "properties": [{"name": "Acabamento", "value": "Fosco"}]},
+        {"variant_id": "124", "available": True, "properties": [{"name": "Acabamento", "value": "Fosco"}]},
     ])
 
     result = await create_cart_items_checkout(
@@ -214,8 +214,8 @@ async def test_duplicate_technical_variants_do_not_create_impossible_question():
 @pytest.mark.asyncio
 async def test_structured_preference_selects_real_variant_and_continues_cart():
     execute, calls = _cart_execute([
-        {"variant_id": "V1", "available": True, "properties": [{"name": "Acabamento", "value": "Fosco"}]},
-        {"variant_id": "V2", "available": True, "properties": [{"name": "Acabamento", "value": "Polido"}]},
+        {"variant_id": "123", "available": True, "properties": [{"name": "Acabamento", "value": "Fosco"}]},
+        {"variant_id": "124", "available": True, "properties": [{"name": "Acabamento", "value": "Polido"}]},
     ])
 
     result = await create_cart_items_checkout(
@@ -230,7 +230,7 @@ async def test_structured_preference_selects_real_variant_and_continues_cart():
     )
 
     create = next(args for name, args in calls if name == "create_cart")
-    assert create["variant_id"] == "V2"
+    assert create["variant_id"] == "124"
     assert result.safety_reason is None
 
 

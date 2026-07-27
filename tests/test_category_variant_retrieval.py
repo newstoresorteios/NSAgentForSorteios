@@ -320,7 +320,7 @@ async def test_variant_color_is_loaded_as_real_evidence():
         calls.append((name, arguments))
         return {
             "variants": [{
-                "variant_id": "V1",
+                "variant_id": "123",
                 "product_id": "P1",
                 "color": "Preto",
                 "stock": 2,
@@ -336,7 +336,7 @@ async def test_variant_color_is_loaded_as_real_evidence():
 
     assert calls == [("list_product_variants", {"product_id": "P1"})]
     assert enriched[0]["variants"][0]["color"] == "Preto"
-    assert compact_candidates(enriched)[0]["variants"][0]["variant_id"] == "V1"
+    assert compact_candidates(enriched)[0]["variants"][0]["variant_id"] == "123"
 
 
 @pytest.mark.asyncio

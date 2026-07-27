@@ -7,6 +7,7 @@ import unicodedata
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from .commerce_context import normalize_variant_identity
 from .product_media import official_product_url
 from .tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
@@ -38,7 +39,7 @@ _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", 
 _CART_CREATE_FIELDS = ("cart_id", "session_id", "cart_url", "message", "code")
 _CART_FIELDS = ("cart_id", "session_id", "message", "code")
 _CART_COMPLETE_FIELDS = ("cart_id", "session_id", "subtotal", "total", "current_total", "currency", "message", "code")
-_CART_ITEM_FIELDS = ("product_id", "variant_id", "quantity", "price", "unit_price", "total", "name", "reference")
+_CART_ITEM_FIELDS = ("product_id", "variant_id", "quantity", "price", "unit_price", "original_price", "total", "name", "reference")
 _SHIPPING_FIELDS = (
     "shipping_id", "quotation_id", "name", "identifier", "price",
     "min_period", "max_period", "estimated_delivery_date", "information",
@@ -319,6 +320,9 @@ def _reduce_cart_complete(payload: Any) -> dict[str, Any]:
         if not isinstance(item, dict):
             continue
         normalized = _reduce(item, _CART_ITEM_FIELDS)
+        normalized["variant_id"] = normalize_variant_identity(
+            normalized.get("variant_id")
+        )
         product = item.get("product") or item.get("Product")
         if isinstance(product, dict):
             if normalized.get("product_id") is None and product.get("id") is not None:

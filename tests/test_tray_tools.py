@@ -33,7 +33,7 @@ class FakeTray:
 
     async def list_product_variants(self, product_id):
         self.calls.append(("list_product_variants", product_id))
-        return {"variants": [{"id": "V1", "product_id": product_id, "color": "Preto", "stock": 2, "secret": "omit"}]}
+        return {"variants": [{"id": "123", "product_id": product_id, "color": "Preto", "stock": 2, "secret": "omit"}]}
 
     async def create_cart(self, **kwargs):
         self.calls.append(("create_cart", kwargs))
@@ -63,7 +63,7 @@ class FakeTray:
                     "total": "199.80",
                     "items": [{
                         "product_id": "641",
-                        "variant_id": "V1",
+                        "variant_id": "123",
                         "quantity": 2,
                         "unit_price": "99.90",
                     }],
@@ -200,11 +200,11 @@ async def test_category_and_variant_tools_reduce_payloads():
     }
     assert tree["tree"]["children"] == [{"id": 11, "name": "Masculinos"}]
     assert variants == {"variants": [{
-        "id": "V1",
+        "id": "123",
         "product_id": "641",
         "color": "Preto",
         "stock": 2,
-        "variant_id": "V1",
+        "variant_id": "123",
     }]}
 
 
@@ -266,7 +266,7 @@ async def test_cart_tools_use_normalized_adapter_contract():
         "create_cart",
         {
             "product_id": "641",
-            "variant_id": "V1",
+            "variant_id": "123",
             "quantity": 2,
             "price": "99.90",
         },
@@ -284,7 +284,7 @@ async def test_cart_tools_use_normalized_adapter_contract():
         "create_cart",
         {
             "product_id": "641",
-            "variant_id": "V1",
+            "variant_id": "123",
             "quantity": 2,
             "price": "99.90",
         },
@@ -378,7 +378,7 @@ async def test_complete_cart_and_payment_options_are_normalized():
     assert cart["total"] == "199.80"
     assert cart["items"] == [{
         "product_id": "641",
-        "variant_id": "V1",
+        "variant_id": "123",
         "quantity": 2,
         "unit_price": "99.90",
     }]

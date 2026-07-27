@@ -10,7 +10,7 @@ def _cart_state() -> CommerceConversationState:
         cart_items=[
             {
                 "product_id": "P1",
-                "variant_id": "V1",
+                "variant_id": "123",
                 "quantity": 2,
             }
         ],

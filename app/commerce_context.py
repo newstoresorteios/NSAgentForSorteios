@@ -3,15 +3,34 @@ from __future__ import annotations
 import unicodedata
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .models import AgentResult, PurchaseItem, SalesInterpretation
+
+def normalize_variant_identity(value: Any) -> str | None:
+    """Return the canonical NSAgent identity for an optional Tray variant."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("variant_id must be a positive numeric identifier")
+    text = str(value).strip()
+    if text in {"", "0"}:
+        return None
+    if not text.isascii() or not text.isdecimal() or int(text) < 1:
+        raise ValueError("variant_id must be a positive numeric identifier")
+    return str(int(text))
 
 
 class CommerceProductReference(BaseModel):
     product_id: str
     reference: str | None = None
     variant_id: str | None = None
+
+    @field_validator("variant_id", mode="before")
+    @classmethod
+    def normalize_variant_id(cls, value: Any) -> str | None:
+        return normalize_variant_identity(value)
+
     name: str | None = None
     ean: str | None = None
     brand: str | None = None
@@ -27,6 +46,12 @@ class CommerceCartItem(BaseModel):
     variant_id: str | None = None
     quantity: int = Field(ge=1)
     unit_price: str | None = None
+    original_price: str | None = None
+
+    @field_validator("variant_id", mode="before")
+    @classmethod
+    def normalize_variant_id(cls, value: Any) -> str | None:
+        return normalize_variant_identity(value)
 
 
 class ShippingQuote(BaseModel):
@@ -119,6 +144,12 @@ class CommerceConversationState(BaseModel):
     cart_variant_id: str | None = None
     cart_quantity: int | None = None
     cart_items: list[CommerceCartItem] = Field(default_factory=list)
+
+    @field_validator("cart_variant_id", mode="before")
+    @classmethod
+    def normalize_cart_variant_id(cls, value: Any) -> str | None:
+        return normalize_variant_identity(value)
+
     selected_payment_method: Literal[
         "pix",
         "card",
@@ -281,7 +312,7 @@ def product_reference_from_product(product: dict[str, Any]) -> CommerceProductRe
     return CommerceProductReference(
         product_id=str(product_id),
         reference=str(product["reference"]) if product.get("reference") is not None else None,
-        variant_id=str(product["variant_id"]) if product.get("variant_id") is not None else None,
+        variant_id=normalize_variant_identity(product.get("variant_id")),
         name=str(product["name"]) if product.get("name") is not None else None,
         ean=str(product["ean"]) if product.get("ean") is not None else None,
         brand=str(product["brand"]) if product.get("brand") is not None else None,

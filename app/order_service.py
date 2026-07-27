@@ -7,11 +7,12 @@ from typing import Any, Awaitable, Callable
 
 from .commerce_context import (
     CHECKOUT_REQUIRED_FIELDS,
+    CommerceCartItem,
     CommerceConversationState,
     checkout_missing_fields,
+    normalize_variant_identity,
 )
 from .models import AgentResult
-from .shipping_service import cart_shipping_products
 
 
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -47,6 +48,53 @@ def _money(value: Any) -> str | None:
     except (InvalidOperation, TypeError, ValueError):
         return None
 
+
+def cart_order_products(
+    cart: dict[str, Any],
+    factual_items: list[CommerceCartItem] | None = None,
+) -> list[dict[str, Any]]:
+    factual_prices = {
+        (item.product_id, normalize_variant_identity(item.variant_id)): (
+            item.unit_price,
+            item.original_price,
+        )
+        for item in factual_items or []
+    }
+    products: list[dict[str, Any]] = []
+    for item in cart.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        product_id = item.get("product_id") or item.get("id")
+        if product_id is None:
+            continue
+        try:
+            variant_id = normalize_variant_identity(item.get("variant_id"))
+            quantity = int(item.get("quantity"))
+        except (TypeError, ValueError):
+            continue
+        persisted = factual_prices.get((str(product_id), variant_id), (None, None))
+        price = item.get("unit_price")
+        if price is None:
+            price = item.get("price")
+        if price is None:
+            price = persisted[0]
+        original_price = item.get("original_price")
+        if original_price is None:
+            original_price = persisted[1]
+        normalized_price = _money(price)
+        normalized_original_price = _money(original_price)
+        if normalized_price is None or Decimal(normalized_price) <= 0 or quantity < 1:
+            continue
+        if normalized_original_price is not None and Decimal(normalized_original_price) <= 0:
+            normalized_original_price = None
+        products.append({
+            "product_id": str(product_id),
+            "variant_id": variant_id,
+            "price": normalized_price,
+            "original_price": normalized_original_price,
+            "quantity": quantity,
+        })
+    return products
 
 def _preconditions(state: CommerceConversationState) -> list[str]:
     missing: list[str] = []
@@ -86,12 +134,14 @@ async def _current_order_facts(
         cart = {"error": "commerce_upstream_error"}
     if "error" in cart:
         return None, [*missing, "cart_unavailable"]
-    products = cart_shipping_products(cart, state.cart_items)
+    products = cart_order_products(cart, state.cart_items)
     cart_items = cart.get("items") or []
     if not products or len(products) != len(cart_items):
         return None, [*missing, "cart_products"]
     if not cart_items:
         return None, [*missing, "cart_products"]
+    if any(product.get("original_price") is None for product in products):
+        return None, [*missing, "cart_original_price_missing"]
 
     draft = state.checkout_draft
     shipping = state.selected_shipping
