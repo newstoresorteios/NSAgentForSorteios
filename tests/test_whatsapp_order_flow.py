@@ -594,7 +594,7 @@ async def test_isolated_payment_preference_is_persisted_until_cpf_arrives(
 
     assert updated.selected_payment_method == preference
     assert updated.selected_payment_option.name == option_name
-    assert calls == ["get_cart_complete", "get_payment_options"]
+    assert calls == ["get_cart_complete", "get_payment_options", "get_cart_complete"]
 
 
 @pytest.mark.asyncio
@@ -743,7 +743,101 @@ async def test_cpf_after_payment_change_selects_only_the_new_factual_method(monk
     assert updated.payment_method_preference == "card"
     assert updated.selected_payment_method == "card"
     assert updated.selected_payment_option.name == "Cartao - Gateway XPTO"
-    assert calls == ["get_cart_complete", "get_payment_options"]
+    assert calls == ["get_cart_complete", "get_payment_options", "get_cart_complete"]
+
+
+@pytest.mark.asyncio
+async def test_payment_change_during_review_reprepares_the_only_confirmable_order(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def execute(tool, _arguments):
+        calls.append(tool)
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "get_payment_options":
+            return {"payment_options": {
+                "card": {"id": "CARD-1", "name": "Cartao factual", "card": 1},
+                "options": [{"id": "CARD-1", "name": "Cartao factual", "card": 1}],
+            }}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    initial = _ready_state(payment_method_preference="pix")
+    prepared = await prepare_order(state=initial, execute=execute)
+    review_state = evolve_commerce_state(initial, prepared)
+    old_review = review_state.order_review_version
+    calls.clear()
+
+    changed = await sales_agent.handle_sales_message(
+        IncomingMessage(text="prefiro cartao"), {}, {},
+        _interpretation(
+            payment_action="payment_options", payment_method_preference="card",
+            payment_request_kind="checkout",
+        ),
+        commerce_state=review_state,
+    )
+    updated = evolve_commerce_state(review_state, changed)
+
+    assert updated.order_id is None
+    assert updated.payment_method_preference == "card"
+    assert updated.selected_payment_method == "card"
+    assert updated.selected_payment_option.name == "Cartao factual"
+    assert updated.pending_action == "awaiting_order_confirmation"
+    assert updated.order_review_version != old_review
+    assert calls == ["get_cart_complete", "get_payment_options", "get_cart_complete"]
+
+
+@pytest.mark.asyncio
+async def test_automatic_checkout_reuses_one_cart_snapshot_before_order_review(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def execute(tool, _arguments):
+        calls.append(tool)
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "quote_shipping":
+            return {"success": True, "options": [{
+                "shipping_id": "1", "quotation_id": "Q1", "name": "Sedex",
+                "price": "35.10", "min_period": 3, "max_period": 8,
+            }]}
+        if tool == "get_payment_options":
+            return {"payment_options": {
+                "pix": {"id": "PIX-1", "name": "Pix factual"},
+                "options": [{"id": "PIX-1", "name": "Pix factual"}],
+            }}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    state = _ready_state(
+        shipping_quote_zipcode=None, shipping_quotes=[], selected_shipping=None,
+        payment_method_preference="pix", selected_payment_method=None,
+        selected_payment_option=None, selected_payment_option_id=None,
+    )
+    result = await sales_agent._advance_whatsapp_checkout(
+        state,
+        AgentResult(
+            reply_text="Dados persistidos.", intent="commerce",
+            response_metadata={"domain": "commerce"},
+        ),
+        "pix",
+        None,
+    )
+    updated = evolve_commerce_state(state, result)
+
+    assert calls == [
+        "get_cart_complete", "quote_shipping", "get_cart_complete",
+        "get_payment_options",
+    ]
+    assert calls.count("get_cart_complete") <= 2
+    assert updated.pending_action == "awaiting_order_confirmation"
 
 
 @pytest.mark.asyncio

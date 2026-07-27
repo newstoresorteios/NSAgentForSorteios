@@ -170,6 +170,18 @@ async def test_complete_cart_and_payment_options_use_adapter_routes():
 
 
 @pytest.mark.asyncio
+async def test_payment_options_accepts_order_scope_and_rejects_ambiguous_scope():
+    fake = FakeClient(FakeResponse(payload={}))
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+
+    await client.get_payment_options(order_id="123")
+
+    assert fake.calls[0][1]["params"] == {"order_id": "123"}
+    with pytest.raises(ValueError, match="exactly one"):
+        await client.get_payment_options("S1", "123")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [401, 403, 404, 429, 500, 502, 503])
 async def test_http_errors_are_typed(status):
     fake = FakeClient(FakeResponse(status_code=status))

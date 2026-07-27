@@ -464,11 +464,20 @@ class TrayAdapterClient:
                 "quantity": quantity,
             },
         )
-    async def get_payment_options(self, cart_session_id: str) -> Any:
+    async def get_payment_options(
+        self,
+        cart_session_id: str | None = None,
+        order_id: str | None = None,
+    ) -> Any:
+        if bool(cart_session_id) == bool(order_id):
+            raise ValueError("exactly one of cart_session_id or order_id is required")
         return await self._request(
             "GET",
             "/internal/payments/options",
-            params={"cart_session_id": cart_session_id},
+            params=(
+                {"cart_session_id": cart_session_id}
+                if cart_session_id else {"order_id": order_id}
+            ),
         )
 
     async def quote_shipping(self, *, zipcode: str, products: list[dict[str, Any]]) -> Any:

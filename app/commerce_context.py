@@ -73,6 +73,7 @@ class SelectedPaymentOption(BaseModel):
     id: str | None = None
     name: str
     method: Literal["pix", "card", "boleto", "other"] | None = None
+    integration_code: str | None = None
     installments: list[dict[str, Any]] = Field(default_factory=list)
     discount_value: float | None = None
     increase_value: float | None = None
@@ -189,6 +190,9 @@ class CommerceConversationState(BaseModel):
     order_has_payment: bool | None = None
     order_payment_date: str | None = None
     order_payment_checked_at: str | None = None
+    order_payment_revalidation_status: Literal[
+        "not_checked", "confirmed", "unavailable", "ambiguous"
+    ] = "not_checked"
     pending_action: Literal[
         "send_product_link",
         "create_cart",
@@ -308,6 +312,7 @@ class CommerceConversationState(BaseModel):
                 "type": self.order_payment_type,
                 "has_payment": self.order_has_payment,
                 "payment_url_available": bool(self.order_payment_url),
+                "revalidation_status": self.order_payment_revalidation_status,
             },
             "pending_action": self.pending_action,
             "pending_action_product_count": len(self.pending_action_product_ids),
@@ -612,6 +617,7 @@ def evolve_commerce_state(
         state.order_has_payment = None
         state.order_payment_date = None
         state.order_payment_checked_at = None
+        state.order_payment_revalidation_status = "not_checked"
 
     material_checkout_change = any(
         key in metadata
@@ -693,15 +699,10 @@ def evolve_commerce_state(
     if selected_payment_method in {"pix", "card", "boleto", "other"}:
         state.selected_payment_method = selected_payment_method
     payment_method_preference = metadata.get("payment_method_preference")
+    preference_changed = False
     if payment_method_preference in {"pix", "card", "boleto", "other"}:
         preference_changed = payment_method_preference != state.payment_method_preference
         state.payment_method_preference = payment_method_preference
-        if preference_changed and not _selected_payment_matches_preference(
-            state, payment_method_preference,
-        ):
-            state.selected_payment_method = None
-            state.selected_payment_option_id = None
-            state.selected_payment_option = None
     if metadata.get("selected_payment_option_id") is not None:
         state.selected_payment_option_id = str(
             metadata["selected_payment_option_id"]
@@ -714,6 +715,14 @@ def evolve_commerce_state(
             )
         except (TypeError, ValueError):
             pass
+    if (
+        preference_changed
+        and payment_method_preference is not None
+        and not _selected_payment_matches_preference(state, payment_method_preference)
+    ):
+        state.selected_payment_method = None
+        state.selected_payment_option_id = None
+        state.selected_payment_option = None
     checkout_channel = metadata.get("checkout_channel_preference")
     if checkout_channel in {"whatsapp", "site"}:
         state.checkout_channel_preference = checkout_channel
@@ -763,6 +772,7 @@ def evolve_commerce_state(
             "order_payment_type", "order_payment_url",
             "order_payment_status", "order_has_payment",
             "order_payment_date", "order_payment_checked_at",
+            "order_payment_revalidation_status",
         ):
             if field in payment_state:
                 setattr(state, field, payment_state[field])

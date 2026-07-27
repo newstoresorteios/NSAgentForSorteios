@@ -129,6 +129,7 @@ async def test_explicit_payment_commitment_with_active_product_creates_cart_befo
         "get_product",
         "create_cart",
         "get_cart_complete",
+        "get_cart_complete",
         "get_payment_options",
     ]
     assert result.response_metadata["cart_state"]["cart_session_id"] == "S1"

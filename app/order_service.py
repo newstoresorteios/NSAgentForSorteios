@@ -124,14 +124,18 @@ def _preconditions(state: CommerceConversationState) -> list[str]:
 async def _current_order_facts(
     state: CommerceConversationState,
     execute: ToolExecutor,
+    cart_snapshot: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     missing = _preconditions(state)
     if not state.cart_session_id:
         return None, missing
-    try:
-        cart = await execute("get_cart_complete", {"session_id": state.cart_session_id})
-    except Exception:
-        cart = {"error": "commerce_upstream_error"}
+    if cart_snapshot is not None:
+        cart = cart_snapshot
+    else:
+        try:
+            cart = await execute("get_cart_complete", {"session_id": state.cart_session_id})
+        except Exception:
+            cart = {"error": "commerce_upstream_error"}
     if "error" in cart:
         return None, [*missing, "cart_unavailable"]
     products = cart_order_products(cart, state.cart_items)
@@ -229,13 +233,14 @@ async def prepare_order(
     *,
     state: CommerceConversationState,
     execute: ToolExecutor,
+    cart_snapshot: dict[str, Any] | None = None,
 ) -> AgentResult:
     print("[sales.order.prepare]", {
         "session": _session_tag(state.cart_session_id),
         "has_shipping": bool(state.selected_shipping),
         "has_payment": bool(state.selected_payment_option),
     })
-    facts, missing = await _current_order_facts(state, execute)
+    facts, missing = await _current_order_facts(state, execute, cart_snapshot)
     if facts is None:
         print("[sales.checkout.missing_fields]", {
             "missing_count": len(missing), "missing_fields": missing,

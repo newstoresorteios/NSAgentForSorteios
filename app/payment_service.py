@@ -166,6 +166,58 @@ def _safe_cart_facts(
     return safe
 
 
+def _product_payment_restrictions(
+    cart: dict[str, Any],
+    option: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply factual PaymentMethodByProduct rules only when a product supplies them."""
+    if not isinstance(option, dict) or option.get("id") is None:
+        return {"blocked": False, "max_plots": None}
+    option_id = str(option["id"])
+    caps: list[int] = []
+    for item in cart.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        methods = item.get("payment_methods")
+        if not isinstance(methods, list) or not methods:
+            continue
+        for rule in methods:
+            if not isinstance(rule, dict):
+                continue
+            rule_id = rule.get("payment_method_id") or rule.get("id")
+            if rule_id is None or str(rule_id) != option_id:
+                continue
+            if str(rule.get("blocked", "0")).strip() in {"1", "true", "True"}:
+                return {"blocked": True, "max_plots": None}
+            try:
+                cap = int(rule.get("max_plots") or 0)
+            except (TypeError, ValueError):
+                cap = 0
+            if cap > 0:
+                caps.append(cap)
+    return {"blocked": False, "max_plots": min(caps) if caps else None}
+
+
+def _cap_option_plots(option: dict[str, Any], max_plots: int | None) -> dict[str, Any]:
+    if not max_plots:
+        return option
+    capped = dict(option)
+    plots = option.get("plots")
+    if isinstance(plots, list):
+        capped_plots = []
+        for plot in plots:
+            if not isinstance(plot, dict):
+                continue
+            try:
+                count = int(plot.get("count") or 0)
+            except (TypeError, ValueError):
+                continue
+            if count <= max_plots:
+                capped_plots.append(plot)
+        capped["plots"] = capped_plots
+    return capped
+
+
 async def inspect_payment_options(
     *,
     state: CommerceConversationState,
@@ -183,7 +235,13 @@ async def inspect_payment_options(
         return _blocked_payment_advance(state, blockers)
 
     cart = reconciled_cart
-    if cart is None:
+    # Cart state intentionally stores only stable checkout identity.  Fetch the
+    # complete factual cart when product payment rules are not present there.
+    has_product_payment_methods = any(
+        isinstance(item, dict) and "payment_methods" in item
+        for item in ((cart or {}).get("items") or [])
+    )
+    if cart is None or not has_product_payment_methods:
         cart = await execute(
             "get_cart_complete",
             {"session_id": state.cart_session_id},
@@ -258,6 +316,14 @@ async def inspect_payment_options(
     elif payment_method_preference == "boleto":
         selected_option = options.get("boleto") if isinstance(options.get("boleto"), dict) else None
         method_available = selected_option is not None
+    restrictions = _product_payment_restrictions(cart, selected_option)
+    if restrictions["blocked"]:
+        selected_option = None
+        method_available = False
+    elif selected_option is not None:
+        selected_option = _cap_option_plots(
+            selected_option, restrictions["max_plots"],
+        )
     print("[sales.payment.options]", {
         "has_session_id": True,
         "option_count": (
@@ -281,6 +347,10 @@ async def inspect_payment_options(
             "name": str(selected_option["name"]),
             "method": payment_method_preference,
             "installments": selected_option.get("plots") or [],
+            **(
+                {"integration_code": str(selected_option["integration_code"])}
+                if selected_option.get("integration_code") is not None else {}
+            ),
             **{
                 key: selected_option[key]
                 for key in (
@@ -297,6 +367,8 @@ async def inspect_payment_options(
         "requested_method": payment_method_preference,
         "requested_payment_option_id": payment_option_id,
         "requested_method_available": method_available,
+        "cart_payment_method_available": method_available is True,
+        "product_payment_restrictions": restrictions,
         "requested_installment_count": installment_count,
         "requested_installment": selected,
         "payment_method": {

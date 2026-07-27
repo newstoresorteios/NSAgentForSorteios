@@ -470,6 +470,7 @@ async def test_pix_commitment_with_zero_variants_reaches_cart_then_payment(monke
         "list_product_variants",
         "create_cart",
         "get_cart_complete",
+        "get_cart_complete",
         "get_payment_options",
     ]
     assert result.commercial_data["requested_method_available"] is True

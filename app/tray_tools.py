@@ -19,7 +19,7 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "check_inventory", "description": "Confirmar estoque e regras de disponibilidade de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_cart", "description": "Consultar um carrinho já identificado por sua sessão.", "parameters": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_cart_complete", "description": "Consultar itens e totais atuais de um carrinho já identificado.", "parameters": {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"], "additionalProperties": False}}},
-    {"type": "function", "function": {"name": "get_payment_options", "description": "Consultar opções reais de pagamento de um carrinho existente.", "parameters": {"type": "object", "properties": {"cart_session_id": {"type": "string"}}, "required": ["cart_session_id"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "get_payment_options", "description": "Consultar opções reais de pagamento de um carrinho ou pedido existente. Informe exatamente um escopo.", "parameters": {"type": "object", "properties": {"cart_session_id": {"type": "string"}, "order_id": {"type": "string"}}, "oneOf": [{"required": ["cart_session_id"]}, {"required": ["order_id"]}], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "search_customer", "description": "Pesquisar um cliente com filtro específico, quando necessário.", "parameters": {"type": "object", "properties": {"email": {"type": "string"}, "cpf": {"type": "string"}, "cnpj": {"type": "string"}, "name": {"type": "string"}, "limit": {"type": "integer", "maximum": 5}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_customer", "description": "Consultar um cliente identificado.", "parameters": {"type": "object", "properties": {"customer_id": {"type": "string"}}, "required": ["customer_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "list_coupons", "description": "Consultar cupons quando a conversa precisar disso.", "parameters": {"type": "object", "properties": {"code": {"type": "string"}, "limit": {"type": "integer", "maximum": 5}}, "additionalProperties": False}}},
@@ -39,7 +39,7 @@ _COUPON_FIELDS = ("id", "code", "description", "starts_at", "ends_at", "value", 
 _CART_CREATE_FIELDS = ("cart_id", "session_id", "cart_url", "message", "code")
 _CART_FIELDS = ("cart_id", "session_id", "message", "code")
 _CART_COMPLETE_FIELDS = ("cart_id", "session_id", "subtotal", "total", "current_total", "currency", "message", "code")
-_CART_ITEM_FIELDS = ("product_id", "variant_id", "quantity", "price", "unit_price", "original_price", "total", "name", "reference")
+_CART_ITEM_FIELDS = ("product_id", "variant_id", "quantity", "price", "unit_price", "original_price", "total", "name", "reference", "payment_methods")
 _SHIPPING_FIELDS = (
     "shipping_id", "quotation_id", "name", "identifier", "price",
     "min_period", "max_period", "estimated_delivery_date", "information",
@@ -149,7 +149,7 @@ def _normalize_payment_options(value: Any) -> Any:
         ]
         option = {
             key: _clean_value(item[key])
-            for key in ("id", "name", "text")
+            for key in ("id", "name", "text", "integration_code", "payment_method_id")
             if item.get(key) is not None
         }
         option.update({
@@ -513,7 +513,17 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
                         reduced[key] = payload[key]
             return reduced
         if name == "get_payment_options":
-            payload = await client.get_payment_options(arguments["cart_session_id"])
+            cart_session_id = arguments.get("cart_session_id")
+            order_id = arguments.get("order_id")
+            if bool(cart_session_id) == bool(order_id):
+                return {
+                    "error": "commerce_validation_error",
+                    "error_type": "payment_options_scope_invalid",
+                }
+            payload = (
+                await client.get_payment_options(cart_session_id)
+                if cart_session_id else await client.get_payment_options(order_id=order_id)
+            )
             semantic = _semantic_payment_options(payload)
             return {
                 "payment_options": (

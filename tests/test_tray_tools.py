@@ -66,6 +66,11 @@ class FakeTray:
                         "variant_id": "123",
                         "quantity": 2,
                         "unit_price": "99.90",
+                        "payment_methods": [{
+                            "payment_method_id": "CARD",
+                            "blocked": "0",
+                            "max_plots": "6",
+                        }],
                     }],
                 }
             }
@@ -381,6 +386,11 @@ async def test_complete_cart_and_payment_options_are_normalized():
         "variant_id": "123",
         "quantity": 2,
         "unit_price": "99.90",
+        "payment_methods": [{
+            "payment_method_id": "CARD",
+            "blocked": "0",
+            "max_plots": "6",
+        }],
     }]
     assert payments["payment_options"]["pix"]["total_base"] == 189.81
     assert payments["payment_options"]["installments"][0] == {
@@ -389,6 +399,13 @@ async def test_complete_cart_and_payment_options_are_normalized():
         "interest": False,
         "order_total": 199.8,
     }
+    payment_schema = next(
+        schema for schema in TOOL_SCHEMAS
+        if schema["function"]["name"] == "get_payment_options"
+    )
+    assert payment_schema["function"]["parameters"]["oneOf"] == [
+        {"required": ["cart_session_id"]}, {"required": ["order_id"]},
+    ]
 
 
 def test_cart_side_effect_is_not_exposed_as_an_openai_tool():

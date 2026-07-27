@@ -112,6 +112,7 @@ async def quote_shipping(
     state: CommerceConversationState,
     zipcode: str,
     execute: ToolExecutor,
+    cart_snapshot: dict[str, Any] | None = None,
 ) -> AgentResult:
     if state.checkout_channel_preference != "whatsapp":
         return AgentResult(
@@ -144,10 +145,13 @@ async def quote_shipping(
         "session": session_tag,
         "zipcode_valid": True,
     })
-    try:
-        cart = await execute("get_cart_complete", {"session_id": state.cart_session_id})
-    except Exception as exc:
-        cart = {"error": "commerce_upstream_error", "error_type": type(exc).__name__}
+    if cart_snapshot is not None:
+        cart = cart_snapshot
+    else:
+        try:
+            cart = await execute("get_cart_complete", {"session_id": state.cart_session_id})
+        except Exception as exc:
+            cart = {"error": "commerce_upstream_error", "error_type": type(exc).__name__}
     if "error" in cart:
         print("[sales.shipping.quote.result]", {
             "session": session_tag, "success": False, "option_count": 0,
@@ -272,6 +276,7 @@ async def quote_shipping(
                     for product in products
                 ],
             },
+            "cart_snapshot": cart,
             "shipping_state": {
                 "shipping_quote_zipcode": normalized_zipcode,
                 "shipping_quotes": quote_payload,
