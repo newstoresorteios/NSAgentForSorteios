@@ -40,12 +40,13 @@ def _normalize_cpf(value: Any) -> str | None:
 
 
 def _normalize_phone(value: Any) -> str | None:
-    raw = str(value or "").strip()
-    prefix = "+" if raw.startswith("+") else ""
-    digits = re.sub(r"\D", "", raw)
-    if len(digits) < 10 or len(digits) > 13:
+    """Canoniza para o contrato do TrayAdapter: 10 ou 11 dígitos, sem DDI."""
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) in (12, 13) and digits.startswith("55"):
+        digits = digits[2:]
+    if len(digits) not in (10, 11):
         return None
-    return prefix + digits
+    return digits
 
 
 def _clean_text(value: Any) -> str | None:

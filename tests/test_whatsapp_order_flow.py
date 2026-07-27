@@ -78,7 +78,7 @@ def _ready_state(**overrides):
         "checkout_draft": {
             "customer": {
                 "type": "0", "name": "Joao Pedro", "cpf": "52998224725",
-                "email": "joao@example.com", "phone": "5511999999999",
+                "email": "joao@example.com", "phone": "11999999999",
             },
             "address": {
                 "address": "Rua Um", "zip_code": "19900000", "number": "10",
@@ -1375,7 +1375,7 @@ async def test_sales_agent_orchestrates_whatsapp_flow_without_real_openai(monkey
     await turn(_interpretation(
         checkout_data={
             "name": "Joao", "cpf": "52998224725", "email": "joao@example.com",
-            "phone": "5511999999999", "address": "Rua Um", "zipcode": "19900000",
+            "phone": "11999999999", "address": "Rua Um", "zipcode": "19900000",
             "number": "10", "neighborhood": "Centro", "city": "Ourinhos", "state": "SP",
         }
     ))
@@ -1397,3 +1397,58 @@ async def test_sales_agent_orchestrates_whatsapp_flow_without_real_openai(monkey
     assert state.order_payment_status == "pending"
     assert state.pending_action == "awaiting_payment"
     assert posts == 1
+
+
+@pytest.mark.asyncio
+async def test_order_failure_propagates_adapter_validation_error_field():
+    async def execute(tool, arguments):
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "create_order":
+            return {
+                "error": "validation_error",
+                "status_code": 422,
+                "tray_error_field": "body.customer.phone",
+                "tray_error_fields": ["body.customer.phone"],
+                "tray_error_message": "Value error, must contain 10 or 11 digits",
+            }
+        raise AssertionError(tool)
+
+    base = _ready_state()
+    prepared = evolve_commerce_state(base, await prepare_order(state=base, execute=execute))
+    confirmed = evolve_commerce_state(prepared, confirm_prepared_order(prepared))
+    created = await create_order(state=confirmed, execute=execute)
+
+    assert created.commercial_data["success"] is False
+    assert created.response_metadata["order_failure_status"] == 422
+    assert created.response_metadata["order_failure_field"] == "body.customer.phone"
+    assert created.response_metadata["order_failure_fields"] == ["body.customer.phone"]
+    assert "must contain 10 or 11 digits" in created.response_metadata["order_failure_message"]
+
+
+@pytest.mark.asyncio
+async def test_order_failure_preserves_adapter_error_causes():
+    async def execute(tool, arguments):
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "create_order":
+            return {
+                "success": False,
+                "error": "tray_api_error",
+                "status_code": 400,
+                "tray_error_code": "INVALID_PAYMENT",
+                "tray_error_causes": [
+                    {"field": "payment_form", "message": "nao encontrado"},
+                ],
+            }
+        raise AssertionError(tool)
+
+    base = _ready_state()
+    prepared = evolve_commerce_state(base, await prepare_order(state=base, execute=execute))
+    confirmed = evolve_commerce_state(prepared, confirm_prepared_order(prepared))
+    created = await create_order(state=confirmed, execute=execute)
+
+    assert created.commercial_data["success"] is False
+    assert created.response_metadata.get("order_failure_causes") == [
+        {"field": "payment_form", "message": "nao encontrado"},
+    ]

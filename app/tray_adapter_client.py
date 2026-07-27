@@ -97,7 +97,7 @@ def _tray_error_diagnostics(payload: Any) -> dict[str, Any]:
             return
         if isinstance(value, dict):
             containers.append(value)
-            for key in ("error", "detail", "errors"):
+            for key in ("error", "detail", "errors", "causes", "tray_error_causes"):
                 nested = value.get(key)
                 if isinstance(nested, dict):
                     visit(nested, depth=depth + 1)

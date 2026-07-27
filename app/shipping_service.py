@@ -91,7 +91,7 @@ def _parse_quote(option: dict[str, Any]) -> ShippingQuote | None:
         **option,
         "shipping_id": shipping_id,
         "quotation_id": (
-            str(option["quotation_id"])
+            str(option["quotation_id"]).strip() or None
             if option.get("quotation_id") is not None else None
         ),
         "identifier": (

@@ -120,7 +120,7 @@ def _ready_state(*, original_price="3999.99"):
                 "name": "Joao",
                 "cpf": "52998224725",
                 "email": "joao@example.com",
-                "phone": "5511999999999",
+                "phone": "11999999999",
             },
             "address": {
                 "address": "Rua Um",

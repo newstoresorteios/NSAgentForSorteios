@@ -459,7 +459,13 @@ async def create_order(
     order_id = effective.get("order_id") or effective.get("id")
     if "error" in effective or order_id is None:
         print("[sales.order.create.result]", {
-            "session": _session_tag(state.cart_session_id), "success": False,
+            "session": _session_tag(state.cart_session_id),
+            "success": False,
+            "status_code": effective.get("status_code"),
+            "tray_error_field": effective.get("tray_error_field"),
+            "tray_error_fields": effective.get("tray_error_fields"),
+            "tray_error_code": effective.get("tray_error_code"),
+            "tray_error_message": effective.get("tray_error_message"),
         })
         return AgentResult(
             reply_text="A cria\u00e7\u00e3o do pedido n\u00e3o foi confirmada pela integra\u00e7\u00e3o.",
