@@ -272,6 +272,26 @@ async def inspect_payment_options(
         "order_id": state.order_id,
         "payment_url_present": bool(state.order_id and state.order_payment_url),
     })
+    selected_option_facts = (
+        {
+            "id": (
+                str(selected_option["id"])
+                if selected_option.get("id") is not None else None
+            ),
+            "name": str(selected_option["name"]),
+            "method": payment_method_preference,
+            "installments": selected_option.get("plots") or [],
+            **{
+                key: selected_option[key]
+                for key in (
+                    "discount_value", "increase_value", "total_base", "tax_value"
+                )
+                if selected_option.get(key) is not None
+            },
+        }
+        if selected_option is not None and selected_option.get("name")
+        else None
+    )
     facts: dict[str, Any] = {
         "payment_options": options,
         "requested_method": payment_method_preference,
@@ -284,6 +304,7 @@ async def inspect_payment_options(
             "name": selected_option.get("name") if selected_option else None,
             "available": method_available,
         },
+        "selected_payment_option": selected_option_facts,
         "hosted_payment": {
             "order_created": bool(state.order_id),
             "payment_url_available": bool(
@@ -342,21 +363,17 @@ async def inspect_payment_options(
             item.product_id,
             normalize_variant_identity(item.variant_id),
             item.quantity,
-            item.unit_price,
-            item.original_price,
         )
         for item in state.cart_items
     )
     current_signature = sorted(
-        (
-            item["product_id"], item["variant_id"], item["quantity"],
-            item["unit_price"], item["original_price"],
-        )
+        (item["product_id"], item["variant_id"], item["quantity"])
         for item in normalized_cart_items
     )
     cart_state_metadata = {}
     if current_signature != previous_signature:
         cart_state_metadata = {
+            "cart_materially_changed": True,
             "cart_state": {
                 "cart_id": state.cart_id,
                 "cart_session_id": state.cart_session_id,
@@ -394,11 +411,7 @@ async def inspect_payment_options(
             **(
                 {
                     "selected_payment_method": payment_method_preference,
-                    "selected_payment_option": {
-                        "id": str(selected_option["id"]) if selected_option.get("id") is not None else None,
-                        "name": str(selected_option["name"]),
-                        "method": payment_method_preference,
-                    },
+                    "selected_payment_option": selected_option_facts,
                     **(
                         {"selected_payment_option_id": str(selected_option["id"])}
                         if selected_option.get("id") is not None else {}

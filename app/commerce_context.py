@@ -72,6 +72,11 @@ class SelectedPaymentOption(BaseModel):
     id: str | None = None
     name: str
     method: Literal["pix", "card", "boleto", "other"] | None = None
+    installments: list[dict[str, Any]] = Field(default_factory=list)
+    discount_value: float | None = None
+    increase_value: float | None = None
+    total_base: float | None = None
+    tax_value: float | None = None
 
 
 class CheckoutCustomer(BaseModel):
@@ -494,6 +499,49 @@ def _compact_preferences(value: Any) -> dict[str, Any]:
     }
 
 
+def _cart_material_signature(items: Any) -> tuple[tuple[str, str | None, int], ...] | None:
+    """Compare only checkout-relevant cart identity, never reconciled prices."""
+    if not isinstance(items, list):
+        return None
+    signature: list[tuple[str, str | None, int]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            return None
+        product_id = item.get("product_id") or item.get("id")
+        if product_id is None:
+            return None
+        try:
+            quantity = int(item.get("quantity") or 1)
+        except (TypeError, ValueError):
+            return None
+        signature.append((
+            str(product_id),
+            normalize_variant_identity(item.get("variant_id")),
+            quantity,
+        ))
+    return tuple(sorted(signature))
+
+
+def _cart_state_materially_changed(
+    state: CommerceConversationState,
+    cart_state: Any,
+    metadata: dict[str, Any],
+) -> bool:
+    """Distinguish cart reconciliation from a mutation that obsoletes checkout."""
+    if metadata.get("cart_materially_changed") is True:
+        return True
+    if not isinstance(cart_state, dict):
+        return False
+    next_session_id = cart_state.get("cart_session_id")
+    if next_session_id and str(next_session_id) != str(state.cart_session_id or ""):
+        return True
+    incoming = _cart_material_signature(cart_state.get("cart_items"))
+    current = _cart_material_signature(
+        [item.model_dump(mode="json") for item in state.cart_items]
+    )
+    return incoming is not None and incoming != current
+
+
 def evolve_commerce_state(
     previous: CommerceConversationState,
     result: AgentResult,
@@ -507,6 +555,11 @@ def evolve_commerce_state(
         return state
 
     cart_state = metadata.get("cart_state")
+    cart_materially_changed = _cart_state_materially_changed(
+        state,
+        cart_state,
+        metadata,
+    )
     next_cart_session_id = (
         cart_state.get("cart_session_id")
         if isinstance(cart_state, dict) else None
@@ -551,7 +604,7 @@ def evolve_commerce_state(
         state.order_confirmation_status = "not_ready"
         state.order_review_version = None
         state.confirmed_order_review_version = None
-    if "cart_state" in metadata and (not state.order_id or starts_new_checkout):
+    if cart_materially_changed and (not state.order_id or starts_new_checkout):
         state.shipping_quote_zipcode = None
         state.shipping_quotes = []
         state.selected_shipping = None

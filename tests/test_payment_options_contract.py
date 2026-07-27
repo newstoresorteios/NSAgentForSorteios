@@ -1,6 +1,6 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState
+from app.commerce_context import CommerceConversationState, evolve_commerce_state
 from app.payment_service import inspect_payment_options
 from app.tray_tools import execute_tool
 
@@ -112,3 +112,59 @@ async def test_payment_service_uses_exact_ten_installment_plot():
     assert result.response_metadata["selected_payment_method"] == "card"
     assert result.response_metadata["selected_payment_option_id"] == "C1"
     assert result.response_metadata["pending_action"] == "choose_checkout_channel"
+
+
+@pytest.mark.asyncio
+async def test_pix_selection_uses_factual_gateway_name_and_persists_option_details():
+    async def execute(tool, _arguments):
+        if tool == "get_cart_complete":
+            return {"items": [], "total": "10.00"}
+        assert tool == "get_payment_options"
+        return {"payment_options": {
+            "pix": {
+                "id": "PIX-XPTO",
+                "name": "Pix - Gateway XPTO",
+                "discount_value": 2.5,
+                "plots": [{"count": 1, "value": 97.5}],
+            },
+            "options": [{"id": "PIX-XPTO", "name": "Pix - Gateway XPTO"}],
+        }}
+
+    previous = CommerceConversationState(cart_session_id="SESSION")
+    result = await inspect_payment_options(
+        state=previous,
+        installment_count=None,
+        payment_method_preference="pix",
+        execute=execute,
+    )
+    current = evolve_commerce_state(previous, result)
+
+    assert result.commercial_data["payment_method"]["name"] == "Pix - Gateway XPTO"
+    assert current.selected_payment_option.name == "Pix - Gateway XPTO"
+    assert current.selected_payment_option.installments == [{"count": 1, "value": 97.5}]
+    assert current.selected_payment_option.discount_value == 2.5
+
+
+@pytest.mark.asyncio
+async def test_unavailable_pix_does_not_select_another_factual_option():
+    async def execute(tool, _arguments):
+        if tool == "get_cart_complete":
+            return {"items": [], "total": "10.00"}
+        assert tool == "get_payment_options"
+        return {"payment_options": {
+            "boleto": {"id": "B1", "name": "Boleto - Gateway XPTO"},
+            "options": [{"id": "B1", "name": "Boleto - Gateway XPTO"}],
+        }}
+
+    result = await inspect_payment_options(
+        state=CommerceConversationState(cart_session_id="SESSION"),
+        installment_count=None,
+        payment_method_preference="pix",
+        execute=execute,
+    )
+
+    assert result.safety_reason == "payment_method_unavailable"
+    assert result.commercial_data["payment_method"] == {
+        "type": "pix", "name": None, "available": False,
+    }
+    assert "selected_payment_option" not in result.response_metadata

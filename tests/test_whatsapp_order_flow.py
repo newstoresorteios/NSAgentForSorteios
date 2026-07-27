@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from app.checkout_data_service import update_checkout_data
 from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.payment_service import checkout_payment_blockers, inspect_payment_options
 from app.order_service import (
     confirm_prepared_order,
     create_order,
@@ -341,6 +342,166 @@ def test_new_cart_session_starts_new_order_scope():
     assert current.order_session_id is None
     assert current.selected_shipping is None
     assert current.selected_payment_option is None
+
+
+def test_cart_reconciliation_keeps_whatsapp_shipping_and_checkout_state():
+    previous = _ready_state(
+        shipping_quote_zipcode="86480000",
+        checkout_channel_preference="whatsapp",
+    )
+    reconciled = AgentResult(
+        reply_text="Estado factual do carrinho confirmado.",
+        intent="commerce",
+        response_metadata={
+            "domain": "commerce",
+            "cart_state": {
+                "cart_id": previous.cart_id,
+                "cart_session_id": previous.cart_session_id,
+                "cart_url": previous.cart_url,
+                "cart_items": [item.model_dump(mode="json") for item in previous.cart_items],
+            },
+        },
+    )
+
+    current = evolve_commerce_state(previous, reconciled)
+
+    assert current.shipping_quote_zipcode == "86480000"
+    assert current.shipping_quotes
+    assert current.selected_shipping is not None
+    assert current.checkout_channel_preference == "whatsapp"
+    assert current.selected_payment_method == "pix"
+    assert current.selected_payment_option_id == "10545"
+
+
+def test_payment_reconciliation_does_not_return_whatsapp_checkout_to_zipcode():
+    previous = _ready_state(
+        shipping_quote_zipcode="86480000",
+        pending_action="awaiting_payment",
+    )
+    payment_reconciliation = AgentResult(
+        reply_text="Consultei as formas de pagamento reais deste carrinho.",
+        intent="commerce",
+        response_metadata={
+            "domain": "commerce",
+            "purchase_stage": "payment_discussion",
+            "clear_pending_action": True,
+            "selected_payment_method": "pix",
+            "selected_payment_option_id": "10545",
+            "cart_state": {
+                "cart_session_id": previous.cart_session_id,
+                "cart_url": previous.cart_url,
+                "cart_items": [item.model_dump(mode="json") for item in previous.cart_items],
+            },
+        },
+    )
+
+    current = evolve_commerce_state(previous, payment_reconciliation)
+
+    assert "shipping_zipcode_missing" not in checkout_payment_blockers(current)
+    assert current.pending_action != "awaiting_shipping_zipcode"
+    assert current.shipping_quote_zipcode == "86480000"
+    assert current.selected_shipping is not None
+
+
+def test_material_cart_change_invalidates_whatsapp_shipping_and_payment_state():
+    previous = _ready_state(shipping_quote_zipcode="86480000")
+    changed_cart = AgentResult(
+        reply_text="Carrinho atualizado.",
+        intent="commerce",
+        response_metadata={
+            "domain": "commerce",
+            "cart_materially_changed": True,
+            "cart_state": {
+                "cart_session_id": previous.cart_session_id,
+                "cart_url": previous.cart_url,
+                "cart_items": [{
+                    "product_id": "803", "variant_id": "123", "quantity": 2,
+                    "unit_price": "4699.99", "original_price": "4699.99",
+                }],
+            },
+        },
+    )
+
+    current = evolve_commerce_state(previous, changed_cart)
+
+    assert current.cart_items[0].quantity == 2
+    assert current.shipping_quote_zipcode is None
+    assert current.shipping_quotes == []
+    assert current.selected_shipping is None
+    assert current.selected_payment_method is None
+    assert current.selected_payment_option is None
+
+
+def test_legacy_commerce_state_roundtrip_remains_compatible():
+    legacy_payload = {
+        "active_domain": "commerce",
+        "cart_session_id": "SESSION-1",
+        "cart_items": [{"product_id": "803", "quantity": 1}],
+        "checkout_channel_preference": "whatsapp",
+    }
+
+    restored = CommerceConversationState.from_payload(legacy_payload)
+
+    assert restored.cart_session_id == "SESSION-1"
+    assert restored.cart_items[0].product_id == "803"
+    assert restored.shipping_quotes == []
+    assert CommerceConversationState.from_payload(
+        restored.model_dump(mode="json")
+    ) == restored
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "option", "expected_installments"),
+    [
+        ("pix", {"id": "PIX", "name": "Pix - Gateway XPTO"}, []),
+        ("card", {
+            "id": "CARD", "name": "Cartao - Gateway XPTO",
+            "plots": [{"count": 3, "value": 40.0}],
+            "increase_value": 3.5,
+        }, [{"count": 3, "value": 40.0}]),
+    ],
+)
+async def test_payment_lookup_keeps_whatsapp_checkout_after_price_reconciliation(
+    method,
+    option,
+    expected_installments,
+):
+    previous = _ready_state(shipping_quote_zipcode="86480000")
+    previous.checkout_draft.address.zip_code = "86480000"
+
+    async def execute(tool, arguments):
+        if tool == "get_cart_complete":
+            assert arguments == {"session_id": "SESSION-1"}
+            return {"items": [{
+                "product_id": "803", "variant_id": "123", "quantity": 1,
+                "unit_price": "4699.990", "original_price": "4699.990",
+            }]}
+        assert tool == "get_payment_options"
+        return {"payment_options": {
+            method: option,
+            "options": [option],
+            "installments": option.get("plots", []),
+        }}
+
+    result = await inspect_payment_options(
+        state=previous,
+        installment_count=None,
+        payment_method_preference=method,
+        execute=execute,
+        advance_checkout=True,
+    )
+    current = evolve_commerce_state(previous, result)
+
+    assert current.shipping_quote_zipcode == "86480000"
+    assert current.shipping_quotes
+    assert current.selected_shipping is not None
+    assert current.checkout_channel_preference == "whatsapp"
+    assert current.checkout_draft.address.zip_code == "86480000"
+    assert current.selected_payment_option.name == option["name"]
+    assert current.selected_payment_option.installments == expected_installments
+    assert "shipping_zipcode_missing" not in checkout_payment_blockers(current)
+    assert current.pending_action != "awaiting_shipping_zipcode"
 
 
 @pytest.mark.asyncio

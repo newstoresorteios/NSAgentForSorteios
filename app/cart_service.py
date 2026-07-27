@@ -998,6 +998,7 @@ def _reconciled_cart_result(
         },
         response_metadata={
             "domain": "commerce",
+            "cart_materially_changed": changed,
             "cart_state": _cart_state(
                 cart=complete,
                 session_id=state.cart_session_id,
@@ -1517,6 +1518,7 @@ async def _create_cart_items_checkout_impl(
         },
         response_metadata={
             "domain": "commerce",
+            "cart_materially_changed": True,
             "active_product": active.model_dump(mode="json"),
             "purchase_stage": "cart_created",
             "cart_state": cart_state,
