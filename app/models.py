@@ -95,6 +95,7 @@ class SalesInterpretation(BaseModel):
         "checkout_question",
         "inspect_cart",
         "set_cart_item_quantity",
+        "remove_cart_item",
     ] | None = Field(default_factory=lambda: None)
     quantity: int | None = Field(default_factory=lambda: None, ge=1)
     purchase_items: list[PurchaseItem] = Field(default_factory=list)

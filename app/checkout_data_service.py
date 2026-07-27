@@ -104,21 +104,6 @@ def update_checkout_data(
             else:
                 normalized[canonical] = parsed or ""
 
-    if errors:
-        return AgentResult(
-            reply_text="Os dados de checkout informados possuem campos inv\u00e1lidos.",
-            intent="commerce",
-            safety_reason="checkout_data_validation_error",
-            commercial_data={
-                "success": False,
-                "stage": "checkout_data",
-                "field_errors": errors,
-                "required_fields": list(CHECKOUT_REQUIRED_FIELDS),
-                "missing_fields": checkout_missing_fields(state.checkout_draft),
-            },
-            response_metadata={"domain": "commerce", "used_tray": False},
-        )
-
     draft = state.checkout_draft.model_copy(deep=True)
     for field, value in normalized.items():
         if field in _CUSTOMER_FIELDS:
@@ -149,10 +134,11 @@ def update_checkout_data(
         reply_text="Dados de checkout atualizados.",
         intent="commerce",
         commercial_data={
-            "success": True,
+            "success": not errors,
             "checkout_fields": checkout_fields_view(draft),
             "required_fields": list(CHECKOUT_REQUIRED_FIELDS),
             "missing_fields": missing,
+            "field_errors": errors,
             "shipping_quote_required": shipping_zipcode_changed,
         },
         response_metadata={

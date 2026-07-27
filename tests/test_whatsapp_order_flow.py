@@ -253,6 +253,499 @@ def test_checkout_draft_partial_updates_and_missing_fields_are_persistent():
     assert address.commercial_data["missing_fields"] == []
 
 
+def test_checkout_block_merges_valid_fields_when_cpf_is_absent():
+    state = _ready_state(
+        shipping_quote_zipcode="86480000",
+        checkout_draft={
+            "customer": {"type": "0"},
+            "address": {"zip_code": "86480000", "country": "BRA", "type": "1"},
+        },
+    )
+    result = update_checkout_data(state, {
+        "name": "joao pedro",
+        "email": "jpfmatosfm@gmail.com",
+        "phone": "43998640480",
+        "city": "Conselheiro Mairinck",
+        "state": "pr",
+        "address": "Rua Prefeito Paulo de Oliveira",
+        "number": "345",
+        "neighborhood": "Centro",
+    })
+    updated = evolve_commerce_state(state, result)
+
+    assert result.commercial_data["missing_fields"] == ["cpf"]
+    assert updated.checkout_draft.customer.name == "joao pedro"
+    assert updated.checkout_draft.customer.email == "jpfmatosfm@gmail.com"
+    assert updated.checkout_draft.customer.phone == "43998640480"
+    assert updated.checkout_draft.address.city == "Conselheiro Mairinck"
+    assert updated.checkout_draft.address.state == "PR"
+    assert updated.checkout_draft.address.zip_code == "86480000"
+
+
+def test_invalid_field_does_not_discard_valid_checkout_updates_or_email():
+    state = _whatsapp_state()
+    first = update_checkout_data(state, {
+        "name": "Joao Pedro", "email": "jpfmatosfm@gmail.com",
+        "phone": "43998640480", "address": "Rua Prefeito Paulo de Oliveira",
+        "number": "345", "neighborhood": "Centro", "city": "Conselheiro Mairinck",
+        "state": "Parana", "zipcode": "86480000",
+    })
+    state = evolve_commerce_state(state, first)
+    assert first.commercial_data["field_errors"] == {"state": "invalid_state"}
+    assert state.checkout_draft.customer.email == "jpfmatosfm@gmail.com"
+    assert state.checkout_draft.address.city == "Conselheiro Mairinck"
+
+    second = update_checkout_data(state, {"state": "PR"})
+    state = evolve_commerce_state(state, second)
+    assert state.checkout_draft.address.state == "PR"
+    assert state.checkout_draft.customer.email == "jpfmatosfm@gmail.com"
+
+
+@pytest.mark.asyncio
+async def test_checkout_data_and_pix_are_processed_in_the_same_turn(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    async def execute(tool, _arguments):
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "get_payment_options":
+            return {"payment_options": {
+                "pix": {"id": "10545", "name": "Pix - Gateway XPTO"},
+                "options": [{"id": "10545", "name": "Pix - Gateway XPTO"}],
+            }}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    state = _ready_state(
+        selected_payment_method=None,
+        selected_payment_option=None,
+        checkout_draft={
+            **_ready_state().checkout_draft.model_dump(mode="json"),
+            "customer": {
+                **_ready_state().checkout_draft.customer.model_dump(mode="json"),
+                "cpf": None,
+            },
+        },
+    )
+    first = await sales_agent.handle_sales_message(
+        IncomingMessage(text="dados e pix"), {}, {},
+        _interpretation(
+            checkout_data={"name": "Joao Pedro", "email": "jpfmatosfm@gmail.com", "phone": "43998640480",
+                           "address": "Rua Prefeito Paulo de Oliveira", "number": "345", "neighborhood": "Centro",
+                           "city": "Conselheiro Mairinck", "state": "PR"},
+            payment_action="payment_options",
+            payment_method_preference="pix",
+            payment_request_kind="checkout",
+        ),
+        commerce_state=state,
+    )
+    state = evolve_commerce_state(state, first)
+
+    assert first.commercial_data["missing_fields"] == ["cpf"]
+    assert state.checkout_draft.customer.email == "jpfmatosfm@gmail.com"
+    assert state.payment_method_preference == "pix"
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="10425415902"), {}, {},
+        _interpretation(checkout_data={"cpf": "10425415902"}),
+        commerce_state=state,
+    )
+    updated = evolve_commerce_state(state, result)
+
+    assert updated.checkout_draft.customer.email == "jpfmatosfm@gmail.com"
+    assert updated.payment_method_preference == "pix"
+    assert updated.selected_payment_option is not None
+    assert updated.selected_payment_option.name == "Pix - Gateway XPTO"
+
+
+@pytest.mark.asyncio
+async def test_remove_request_overrides_pending_zipcode_without_local_cart_mutation(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    state = _whatsapp_state(
+        pending_action="awaiting_shipping_zipcode",
+        cart_items=[
+            {"product_id": "803", "variant_id": "123", "quantity": 1, "name": "Citizen"},
+            {"product_id": "804", "variant_id": None, "quantity": 1, "name": "Tissot"},
+        ],
+    )
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="tire o primeiro relogio"), {}, {},
+        _interpretation(purchase_action="remove_cart_item", reference_type="list_position", reference_position=1),
+        commerce_state=state,
+    )
+
+    assert result.safety_reason == "cart_item_removal_not_supported"
+    assert result.commercial_data["cart"]["items"] == [
+        {"product_id": "803", "variant_id": "123", "quantity": 1, "unit_price": None, "original_price": None, "name": "Citizen"},
+        {"product_id": "804", "variant_id": None, "quantity": 1, "unit_price": None, "original_price": None, "name": "Tissot"},
+    ]
+    assert result.response_metadata["clear_pending_action"] is True
+
+
+@pytest.mark.asyncio
+async def test_quantity_request_overrides_pending_zipcode(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+    quantity_updated = False
+
+    async def execute(tool, arguments):
+        nonlocal quantity_updated
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            return {"cart_url": "https://loja.example/checkout/SESSION-1", "items": [{
+                "product_id": "803", "variant_id": "123",
+                "quantity": 1 if quantity_updated else 2,
+                "unit_price": "4699.99", "name": "Citizen",
+            }]}
+        if tool == "set_cart_item_quantity":
+            quantity_updated = True
+            return {"success": True}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    state = _whatsapp_state(
+        active_product={"product_id": "803", "variant_id": "123", "name": "Citizen"},
+        cart_items=[{"product_id": "803", "variant_id": "123", "quantity": 2}],
+        pending_action="awaiting_shipping_zipcode",
+    )
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="quero alterar a quantidade para 1"), {}, {},
+        _interpretation(
+            purchase_action="set_cart_item_quantity", quantity=1,
+            reference_type="current_product", confirmation="confirm",
+        ),
+        commerce_state=state,
+    )
+
+    assert "set_cart_item_quantity" in [tool for tool, _ in calls]
+    assert result.safety_reason != "checkout_requirements_missing"
+    assert result.response_metadata["cart_state"]["cart_quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_quantity_change_requotes_with_saved_zipcode(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+    quantity_updated = False
+
+    async def execute(tool, arguments):
+        nonlocal quantity_updated
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            return {**_cart(), "items": [{
+                "product_id": "803", "variant_id": "123",
+                "quantity": 1 if quantity_updated else 2,
+                "unit_price": "4699.99", "name": "Citizen",
+            }]}
+        if tool == "set_cart_item_quantity":
+            quantity_updated = True
+            return {**_cart(), "items": [{
+                "product_id": "803", "variant_id": "123", "quantity": 1,
+                "unit_price": "4699.99", "name": "Citizen",
+            }]}
+        if tool == "quote_shipping":
+            return {"success": True, "options": [{
+                "shipping_id": "SEDEX", "quotation_id": "Q2", "name": "Sedex",
+                "price": "74.97", "min_period": 40, "max_period": 40,
+            }]}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    state = _ready_state(
+        active_product={"product_id": "803", "variant_id": "123", "name": "Citizen"},
+        cart_items=[{"product_id": "803", "variant_id": "123", "quantity": 2}],
+        shipping_quote_zipcode="86480000",
+        checkout_draft={
+            **_ready_state().checkout_draft.model_dump(mode="json"),
+            "address": {
+                **_ready_state().checkout_draft.address.model_dump(mode="json"),
+                "zip_code": "86480000",
+            },
+        },
+    )
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="somente uma unidade"), {}, {},
+        _interpretation(
+            purchase_action="set_cart_item_quantity", quantity=1,
+            reference_type="current_product",
+        ),
+        commerce_state=state,
+    )
+    updated = evolve_commerce_state(state, result)
+
+    assert any(tool == "quote_shipping" and args["zipcode"] == "86480000" for tool, args in calls)
+    assert updated.checkout_draft.address.zip_code == "86480000"
+    assert updated.shipping_quotes and updated.shipping_quotes[0].name == "Sedex"
+    assert updated.selected_shipping is None
+
+
+@pytest.mark.asyncio
+async def test_shipping_quote_preserves_factual_names_per_cart_item():
+    state = _whatsapp_state(
+        cart_items=[
+            {"product_id": "803", "variant_id": "123", "quantity": 1, "name": "Citizen"},
+            {"product_id": "804", "variant_id": None, "quantity": 1, "name": "Tissot"},
+        ],
+    )
+
+    async def execute(tool, _arguments):
+        if tool == "get_cart_complete":
+            return {"items": [
+                {"product_id": "803", "variant_id": "123", "quantity": 1, "price": "100.00"},
+                {"product_id": "804", "variant_id": None, "quantity": 1, "price": "200.00"},
+            ]}
+        assert tool == "quote_shipping"
+        return {"success": True, "options": [{
+            "shipping_id": "1", "name": "Sedex", "price": "20.00",
+        }]}
+
+    result = await quote_shipping(state=state, zipcode="13010000", execute=execute)
+    updated = evolve_commerce_state(state, result)
+
+    assert [(item.product_id, item.variant_id, item.quantity, item.name) for item in updated.cart_items] == [
+        ("803", "123", 1, "Citizen"),
+        ("804", None, 1, "Tissot"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("preference", "option_name"),
+    [
+        ("pix", "Pix - Gateway XPTO"),
+        ("card", "Cartao - Gateway XPTO"),
+        ("boleto", "Boleto - Gateway XPTO"),
+    ],
+)
+async def test_isolated_payment_preference_is_persisted_until_cpf_arrives(
+    monkeypatch, preference, option_name,
+):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def execute(tool, _arguments):
+        calls.append(tool)
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "get_payment_options":
+            return {"payment_options": {
+                preference: {"id": preference.upper(), "name": option_name},
+                "options": [{"id": preference.upper(), "name": option_name}],
+            }}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    state = _ready_state(
+        selected_payment_method=None,
+        selected_payment_option=None,
+        checkout_draft={
+            **_ready_state().checkout_draft.model_dump(mode="json"),
+            "customer": {
+                **_ready_state().checkout_draft.customer.model_dump(mode="json"),
+                "cpf": None,
+            },
+        },
+    )
+    first = await sales_agent.handle_sales_message(
+        IncomingMessage(text=preference), {}, {},
+        _interpretation(
+            payment_action="payment_options",
+            payment_method_preference=preference,
+            payment_request_kind="checkout",
+        ),
+        commerce_state=state,
+    )
+    state = evolve_commerce_state(state, first)
+
+    assert state.payment_method_preference == preference
+    assert state.checkout_draft.customer.cpf is None
+    assert calls == []
+
+    second = await sales_agent.handle_sales_message(
+        IncomingMessage(text="10425415902"), {}, {},
+        _interpretation(checkout_data={"cpf": "10425415902"}),
+        commerce_state=state,
+    )
+    updated = evolve_commerce_state(state, second)
+
+    assert updated.selected_payment_method == preference
+    assert updated.selected_payment_option.name == option_name
+    assert calls == ["get_cart_complete", "get_payment_options"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("previous", "replacement", "previous_name"),
+    [
+        ("pix", "card", "Pix - Gateway XPTO"),
+        ("card", "pix", "Cartao - Gateway XPTO"),
+    ],
+)
+async def test_isolated_payment_preference_replaces_an_incompatible_selection(
+    monkeypatch, previous, replacement, previous_name,
+):
+    import app.sales_agent as sales_agent
+
+    async def never_execute(*_args, **_kwargs):
+        raise AssertionError("incomplete checkout must not query payment options")
+
+    monkeypatch.setattr(sales_agent, "execute_tool", never_execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    state = _ready_state(
+        payment_method_preference=previous,
+        selected_payment_method=previous,
+        selected_payment_option_id=f"{previous}-1",
+        selected_payment_option={
+            "id": f"{previous}-1", "name": previous_name, "method": previous,
+        },
+        checkout_draft={
+            **_ready_state().checkout_draft.model_dump(mode="json"),
+            "customer": {
+                **_ready_state().checkout_draft.customer.model_dump(mode="json"),
+                "cpf": None,
+            },
+        },
+    )
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text=f"prefiro {replacement}"), {}, {},
+        _interpretation(
+            payment_action="payment_options",
+            payment_method_preference=replacement,
+            payment_request_kind="checkout",
+        ),
+        commerce_state=state,
+    )
+
+    updated = evolve_commerce_state(state, result)
+    assert updated.payment_method_preference == replacement
+    assert updated.selected_payment_method is None
+    assert updated.selected_payment_option_id is None
+    assert updated.selected_payment_option is None
+    assert updated.checkout_draft.customer.cpf is None
+    assert updated.checkout_draft.customer.email == state.checkout_draft.customer.email
+    assert updated.shipping_quotes == state.shipping_quotes
+    assert updated.selected_shipping == state.selected_shipping
+    assert updated.cart_items == state.cart_items
+
+
+@pytest.mark.asyncio
+async def test_repeated_payment_preference_keeps_a_compatible_factual_selection(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    async def never_execute(*_args, **_kwargs):
+        raise AssertionError("incomplete checkout must not query payment options")
+
+    monkeypatch.setattr(sales_agent, "execute_tool", never_execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    state = _ready_state(
+        payment_method_preference="pix",
+        checkout_draft={
+            **_ready_state().checkout_draft.model_dump(mode="json"),
+            "customer": {
+                **_ready_state().checkout_draft.customer.model_dump(mode="json"),
+                "cpf": None,
+            },
+        },
+    )
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="pix"), {}, {},
+        _interpretation(
+            payment_action="payment_options", payment_method_preference="pix",
+            payment_request_kind="checkout",
+        ),
+        commerce_state=state,
+    )
+    updated = evolve_commerce_state(state, result)
+
+    assert updated.selected_payment_method == "pix"
+    assert updated.selected_payment_option_id == "10545"
+    assert updated.selected_payment_option.name == "Pix - Vindi"
+
+
+@pytest.mark.asyncio
+async def test_cpf_after_payment_change_selects_only_the_new_factual_method(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls = []
+
+    async def execute(tool, _arguments):
+        calls.append(tool)
+        if tool == "get_cart_complete":
+            return _cart()
+        if tool == "get_payment_options":
+            return {"payment_options": {
+                "card": {"id": "CARD-1", "name": "Cartao - Gateway XPTO"},
+                "options": [{"id": "CARD-1", "name": "Cartao - Gateway XPTO"}],
+            }}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    state = _ready_state(
+        payment_method_preference="pix",
+        checkout_draft={
+            **_ready_state().checkout_draft.model_dump(mode="json"),
+            "customer": {
+                **_ready_state().checkout_draft.customer.model_dump(mode="json"),
+                "cpf": None,
+            },
+        },
+    )
+    changed = await sales_agent.handle_sales_message(
+        IncomingMessage(text="prefiro cartao"), {}, {},
+        _interpretation(
+            payment_action="payment_options", payment_method_preference="card",
+            payment_request_kind="checkout",
+        ),
+        commerce_state=state,
+    )
+    state = evolve_commerce_state(state, changed)
+    completed = await sales_agent.handle_sales_message(
+        IncomingMessage(text="10425415902"), {}, {},
+        _interpretation(checkout_data={"cpf": "10425415902"}),
+        commerce_state=state,
+    )
+    updated = evolve_commerce_state(state, completed)
+
+    assert updated.payment_method_preference == "card"
+    assert updated.selected_payment_method == "card"
+    assert updated.selected_payment_option.name == "Cartao - Gateway XPTO"
+    assert calls == ["get_cart_complete", "get_payment_options"]
+
+
 @pytest.mark.asyncio
 async def test_prepare_requires_shipping_and_email_then_sets_pending_when_ready():
     async def execute(_tool, _arguments):
@@ -460,6 +953,7 @@ def test_legacy_commerce_state_roundtrip_remains_compatible():
             "plots": [{"count": 3, "value": 40.0}],
             "increase_value": 3.5,
         }, [{"count": 3, "value": 40.0}]),
+        ("boleto", {"id": "BOLETO", "name": "Boleto - Gateway XPTO"}, []),
     ],
 )
 async def test_payment_lookup_keeps_whatsapp_checkout_after_price_reconciliation(

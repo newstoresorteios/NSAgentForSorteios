@@ -147,11 +147,16 @@ def _cart_session_state(
         "cart_product_id": state.cart_product_id,
         "cart_variant_id": state.cart_variant_id,
         "cart_quantity": state.cart_quantity,
-        "cart_items": [
-            item.model_dump(mode="json")
-            for item in state.cart_items
-        ],
+        "cart_items": [_cart_item_state(item) for item in state.cart_items],
     }
+
+
+def _cart_item_state(item: CommerceCartItem) -> dict[str, Any]:
+    """Keep a factual item name when Tray supplied one without changing old payloads."""
+    payload = item.model_dump(mode="json")
+    if payload.get("name") is None:
+        payload.pop("name", None)
+    return payload
 
 
 def _persist_cart_session(
@@ -579,7 +584,7 @@ def current_cart_reply(
                 "cart": {
                     "status": "cart_ready",
                     "items": [
-                        item.model_dump(mode="json")
+                        _cart_item_state(item)
                         for item in state.cart_items
                     ],
                 },
@@ -601,7 +606,7 @@ def current_cart_reply(
                 "status": "cart_ready",
                 "cart_url": cart_url,
                 "items": [
-                    item.model_dump(mode="json")
+                    _cart_item_state(item)
                     for item in state.cart_items
                 ],
             },
@@ -802,6 +807,11 @@ def _verified_items(
                         if item.get("original_price") is not None
                         else None
                     ),
+                    name=(
+                        str(item.get("name") or item.get("product_name"))
+                        if item.get("name") or item.get("product_name")
+                        else None
+                    ),
                 ))
         except (TypeError, ValueError):
             continue
@@ -828,6 +838,13 @@ def _merge_cart_item_prices(
         merged.append(item.model_copy(update={
             "unit_price": item.unit_price or (factual[0] if factual else None),
             "original_price": item.original_price or (factual[1] if factual else None),
+            "name": item.name or next((
+                source.name
+                for source in factual_sources
+                if source.product_id == item.product_id
+                and normalize_variant_identity(source.variant_id)
+                == normalize_variant_identity(item.variant_id)
+            ), None),
         }))
     return merged
 
@@ -905,7 +922,7 @@ def _cart_state(
         "cart_product_id": last.product_id if last else None,
         "cart_variant_id": last.variant_id if last else None,
         "cart_quantity": last.quantity if last else None,
-        "cart_items": [item.model_dump(mode="json") for item in items],
+        "cart_items": [_cart_item_state(item) for item in items],
     }
 
 
@@ -971,7 +988,7 @@ def _reconciled_cart_result(
     next_metadata = _cart_next_metadata(checkout_state)
     cart_facts: dict[str, Any] = {
         "status": "cart_ready",
-        "items": [item.model_dump(mode="json") for item in items],
+        "items": [item.model_dump(mode="json", exclude={"name"}) for item in items],
         "subtotal": complete.get("subtotal"),
         "total": complete.get("total") or complete.get("current_total"),
         "mutation_success": True,
@@ -1093,10 +1110,27 @@ async def _ensure_existing_cart_item(
             exception_type=updated.get("error_type"),
             diagnostics=updated,
         )
+    try:
+        complete = await execute(
+            "get_cart_complete",
+            {"session_id": state.cart_session_id},
+        )
+    except Exception as exc:
+        return _technical_failure(
+            stage="cart_quantity_reconcile",
+            exception_type=type(exc).__name__,
+        )
+    if "error" in complete:
+        return _technical_failure(
+            stage="cart_quantity_reconcile",
+            status_code=complete.get("status_code"),
+            exception_type=complete.get("error_type"),
+            diagnostics=complete,
+        )
     final_item = next(
         (
             item
-            for item in _verified_items(updated)
+            for item in _verified_items(complete)
             if item.product_id == request.product_reference.product_id
             and item.variant_id == request.product_reference.variant_id
         ),
@@ -1106,11 +1140,11 @@ async def _ensure_existing_cart_item(
         return _technical_failure(
             stage="cart_quantity_verification",
             exception_type="cart_quantity_not_reconciled",
-            diagnostics=updated,
+            diagnostics=complete,
         )
     return _reconciled_cart_result(
         state=state,
-        complete=updated,
+        complete=complete,
         requested=request,
         changed=True,
         already_satisfied=False,
@@ -1278,6 +1312,7 @@ async def _create_cart_items_checkout_impl(
                     quantity=item.quantity,
                     unit_price=item.price,
                     original_price=item.original_price,
+                    name=item.product_reference.name,
                 ))
                 reconciled_complete = reconciled
                 log_purchase_progress("cart_http", "success")
@@ -1325,6 +1360,7 @@ async def _create_cart_items_checkout_impl(
                     quantity=item.quantity,
                     unit_price=item.price,
                     original_price=item.original_price,
+                    name=item.product_reference.name,
                 ))
                 reconciled_complete = reconciled
                 log_purchase_progress("cart_http", "success")
@@ -1359,6 +1395,7 @@ async def _create_cart_items_checkout_impl(
             quantity=item.quantity,
             unit_price=item.price,
             original_price=item.original_price,
+            name=item.product_reference.name,
         ))
         print("[sales.cart.item]", {
             "position": item.position,
@@ -1492,7 +1529,7 @@ async def _create_cart_items_checkout_impl(
                 "cart_id": cart_state["cart_id"],
                 "session_id": session_id,
                 "items": [
-                    item.model_dump(mode="json", exclude={"unit_price"})
+                    item.model_dump(mode="json", exclude={"unit_price", "name"})
                     for item in verified_items
                 ],
                 "total": complete.get("total") or complete.get("current_total"),

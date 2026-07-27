@@ -23,6 +23,7 @@ from .cart_service import (
     create_cart_items_checkout,
     current_cart_reply,
     log_purchase_progress,
+    set_cart_item_quantity,
 )
 from .commerce_context import (
     CommerceConversationState,
@@ -240,6 +241,8 @@ Interprete semanticamente a etapa de carrinho:
 - purchase_action=set_cart_item_quantity quando o cliente pede uma quantidade FINAL
   para um item ja presente no carrinho. Extraia quantity e a referencia semantica;
   nunca invente IDs nem session_id.
+- purchase_action=remove_cart_item quando o cliente pede explicitamente para remover
+  um item do carrinho. Essa intencao nova vence qualquer pending_action anterior.
 Para comprar vários produtos, preencha purchase_items com uma entrada para cada item,
 preservando referência semântica e quantidade. Não invente IDs. Use list_position para
 itens numerados, current_product para o produto ativo e explicit_product com o nome citado.
@@ -280,6 +283,12 @@ FLUXO DE PEDIDO PELO WHATSAPP:
   as acoes estruturadas disponiveis e use required_fields/missing_fields do estado.
 - Nao peca novamente um dado de checkout ja valido. Aceite checkout_data parcial e
   nunca invente um campo ausente.
+- Uma unica mensagem pode conter checkout_data, payment_method_preference e uma
+  correcao de endereco: extraia todos os fatos simultaneamente. Cidade pode aparecer
+  sozinha em uma linha; aceite UF brasileira com duas letras sem diferenciar maiusculas.
+- Quando faltarem dados, a resposta deve solicitar somente required_fields que ainda
+  aparecem em missing_fields, em uma unica pergunta. Nao inclua CEP se ele ja estiver
+  preenchido no estado.
 - Para entrega, solicite CEP quando necessario e use shipping_action=quote. O servidor
   adiciona os produtos reais do carrinho; nunca extraia produto, preco ou quantidade
   da fala do cliente para a cotacao.
@@ -1703,6 +1712,21 @@ async def _ensure_cart_for_purchase(
         return state, None
 
     updated_state = evolve_commerce_state(state, cart_result)
+    if (
+        cart_result.response_metadata.get("cart_materially_changed") is True
+        and updated_state.checkout_channel_preference == "whatsapp"
+        and updated_state.checkout_draft.address.zip_code
+    ):
+        quote_result = await quote_shipping(
+            state=updated_state,
+            zipcode=updated_state.checkout_draft.address.zip_code,
+            execute=execute_tool,
+        )
+        cart_result = _combine_checkout_and_followup_results(
+            cart_result,
+            quote_result,
+        )
+        updated_state = evolve_commerce_state(state, cart_result)
     print("[sales.purchase.ensure_cart]", {
         "cart_existed": False,
         "cart_created": bool(
@@ -1783,6 +1807,25 @@ async def _respond_to_commerce_service(
         used_openai_responder=False,
         used_tray=bool(result.response_metadata.get("used_tray")),
         fallback_reason=result.safety_reason,
+    )
+
+
+def _combine_checkout_and_followup_results(
+    checkout_result: AgentResult,
+    followup_result: AgentResult,
+) -> AgentResult:
+    """Keep persisted checkout updates while continuing the same customer turn."""
+    commercial_data = dict(checkout_result.commercial_data or {})
+    commercial_data.update(followup_result.commercial_data or {})
+    metadata = dict(checkout_result.response_metadata or {})
+    metadata.update(followup_result.response_metadata or {})
+    return AgentResult(
+        reply_text=followup_result.reply_text,
+        intent="commerce",
+        handoff_required=False,
+        safety_reason=followup_result.safety_reason or checkout_result.safety_reason,
+        commercial_data=commercial_data,
+        response_metadata=metadata,
     )
 
 
@@ -2031,6 +2074,14 @@ async def handle_sales_message(
         interpretation is not None
         and state.pending_action == "awaiting_order_confirmation"
         and interpretation.confirmation == "confirm"
+        and interpretation.purchase_action not in {
+            "set_cart_item_quantity", "remove_cart_item",
+        }
+        and interpretation.checkout_data is None
+        and interpretation.shipping_action is None
+        and interpretation.payment_action is None
+        and interpretation.checkout_channel_preference is None
+        and not interpretation.domain_change_explicit
     ):
         confirmed = confirm_prepared_order(state)
         confirmed_state = evolve_commerce_state(state, confirmed)
@@ -2046,6 +2097,32 @@ async def handle_sales_message(
             state,
             interpretation.checkout_data.model_dump(mode="json", exclude_none=True),
         )
+        payment_preference = (
+            interpretation.payment_method_preference
+            or state.payment_method_preference
+        )
+        if payment_preference is not None:
+            checkout_result.response_metadata["payment_method_preference"] = (
+                payment_preference
+            )
+        updated_state = evolve_commerce_state(state, checkout_result)
+        missing_fields = (checkout_result.commercial_data or {}).get("missing_fields") or []
+        if (
+            not missing_fields
+            and payment_preference is not None
+            and updated_state.cart_session_id
+        ):
+            payment_result = await inspect_payment_options(
+                state=updated_state,
+                installment_count=interpretation.installment_count,
+                payment_method_preference=payment_preference,
+                execute=execute_tool,
+                advance_checkout=True,
+            )
+            checkout_result = _combine_checkout_and_followup_results(
+                checkout_result,
+                payment_result,
+            )
         return await _respond_to_commerce_service(
             message=message,
             plan=plan,
@@ -2078,6 +2155,19 @@ async def handle_sales_message(
             selection_id=interpretation.shipping_selection_id,
             selection_position=interpretation.shipping_selection_position,
         )
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=shipping_result,
+            interpretation=interpretation,
+        )
+    if (
+        interpretation is not None
+        and interpretation.confirmation == "confirm"
+        and state.pending_action == "awaiting_shipping_selection"
+        and len(state.shipping_quotes) == 1
+    ):
+        shipping_result = select_shipping(state, selection_position=1)
         return await _respond_to_commerce_service(
             message=message,
             plan=plan,
@@ -2129,6 +2219,34 @@ async def handle_sales_message(
             "resolved_by": resolved_by,
         })
     purchase_action = interpretation.purchase_action if interpretation is not None else None
+    if purchase_action == "remove_cart_item":
+        # The adapter only supports final positive quantities.  Do not claim that a
+        # local state edit removed an item that remains upstream.
+        removal_result = AgentResult(
+            reply_text="",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="cart_item_removal_not_supported",
+            commercial_data={
+                "cart": {
+                    "mutation_success": False,
+                    "removal_requested": True,
+                    "removal_supported": False,
+                    "items": [item.model_dump(mode="json") for item in state.cart_items],
+                },
+            },
+            response_metadata={
+                "domain": "commerce",
+                "clear_pending_action": True,
+                "used_tray": False,
+            },
+        )
+        return await _respond_to_commerce_service(
+            message=message,
+            plan=plan,
+            result=removal_result,
+            interpretation=interpretation,
+        )
     purchase_requests: list[CartItemRequest] = []
     unresolved_purchase_items = 0
     unresolved_candidates: list[dict[str, Any]] = []
@@ -2141,6 +2259,23 @@ async def handle_sales_message(
         interpretation is not None
         and state.pending_action
         and interpretation.confirmation == "confirm"
+        and interpretation.goal in {"discover", "find", "recommend", "compare"}
+    ):
+        # A new explicit discovery request is not confirmation of an old checkout step.
+        interpretation._clear_pending_action = True
+    if (
+        interpretation is not None
+        and state.pending_action
+        and interpretation.confirmation == "confirm"
+        and purchase_action not in {"set_cart_item_quantity", "remove_cart_item"}
+        and interpretation.payment_action is None
+        and interpretation.checkout_data is None
+        and interpretation.shipping_action is None
+        and interpretation.goal not in {"discover", "find", "recommend", "compare"}
+        and not (
+            purchase_action == "create_cart"
+            and interpretation.reference_type in {"list_position", "explicit_product"}
+        )
     ):
         pending_references = _pending_product_references(state)
         pending_action = state.pending_action
@@ -2578,6 +2713,22 @@ async def handle_sales_message(
                 state=state,
                 execute=execute_tool,
             )
+        if (
+            quantity_result.response_metadata.get("cart_materially_changed") is True
+            and state.checkout_channel_preference == "whatsapp"
+        ):
+            updated_state = evolve_commerce_state(state, quantity_result)
+            known_zipcode = updated_state.checkout_draft.address.zip_code
+            if known_zipcode:
+                quote_result = await quote_shipping(
+                    state=updated_state,
+                    zipcode=known_zipcode,
+                    execute=execute_tool,
+                )
+                quantity_result = _combine_checkout_and_followup_results(
+                    quantity_result,
+                    quote_result,
+                )
         final = await _sales_response_with_openai(
             message,
             plan,
@@ -2595,11 +2746,14 @@ async def handle_sales_message(
             used_tray=bool(quantity_result.response_metadata.get("used_tray")),
             fallback_reason=quantity_result.safety_reason,
         )
-    payment_requested = bool(interpretation and interpretation.payment_action)
     payment_preference = (
         interpretation.payment_method_preference
         if interpretation is not None
         else None
+    )
+    payment_requested = bool(
+        interpretation
+        and (interpretation.payment_action or payment_preference)
     )
     if purchase_action == "create_cart":
         target_count = len(purchase_requests) + (
@@ -2741,7 +2895,8 @@ async def handle_sales_message(
             execute=execute_tool,
             payment_option_id=interpretation.payment_option_id,
             advance_checkout=bool(
-                interpretation.payment_request_kind == "checkout"
+                payment_preference is not None
+                or interpretation.payment_request_kind == "checkout"
                 or purchase_action == "checkout_question"
             ),
             reconciled_cart=(
@@ -2757,6 +2912,10 @@ async def handle_sales_message(
                 else None
             ),
         )
+        if payment_preference is not None:
+            payment_result.response_metadata["payment_method_preference"] = (
+                payment_preference
+            )
         combined_result = (
             _combine_cart_and_payment_results(cart_result, payment_result)
             if cart_result is not None

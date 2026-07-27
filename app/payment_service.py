@@ -323,10 +323,11 @@ async def inspect_payment_options(
     else:
         reply = "Consultei as formas de pagamento reais deste carrinho."
     cart_items = cart.get("items") if isinstance(cart.get("items"), list) else []
-    previous_prices = {
+    previous_items = {
         (item.product_id, normalize_variant_identity(item.variant_id)): (
             item.unit_price,
             item.original_price,
+            item.name,
         )
         for item in state.cart_items
     }
@@ -342,7 +343,7 @@ async def inspect_payment_options(
             quantity = int(item.get("quantity") or 1)
         except (TypeError, ValueError):
             continue
-        persisted = previous_prices.get((str(product_id), variant_id), (None, None))
+        persisted = previous_items.get((str(product_id), variant_id), (None, None, None))
         normalized_cart_items.append({
             "product_id": str(product_id),
             "variant_id": variant_id,
@@ -356,6 +357,11 @@ async def inspect_payment_options(
                 str(item["original_price"])
                 if item.get("original_price") is not None
                 else persisted[1]
+            ),
+            "name": (
+                str(item.get("name") or item.get("product_name"))
+                if item.get("name") or item.get("product_name")
+                else persisted[2]
             ),
         })
     previous_signature = sorted(
@@ -407,6 +413,10 @@ async def inspect_payment_options(
         response_metadata={
             "domain": "commerce",
             "purchase_stage": "payment_discussion",
+            **(
+                {"payment_method_preference": payment_method_preference}
+                if payment_method_preference is not None else {}
+            ),
             **cart_state_metadata,
             **(
                 {

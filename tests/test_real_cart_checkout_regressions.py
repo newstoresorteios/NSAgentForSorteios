@@ -116,18 +116,20 @@ async def test_repeated_confirmations_reconcile_but_never_post_or_increment():
 @pytest.mark.asyncio
 async def test_absolute_quantity_reconciles_four_to_one_with_put_result():
     calls = []
+    quantity_updated = False
 
     async def execute(tool, arguments):
+        nonlocal quantity_updated
         calls.append((tool, arguments))
         if tool == "get_cart_complete":
             return {
                 "cart_url": "https://loja.example/redirect_cart_service.php?session=S1",
                 "items": [{
                     "product_id": "803", "variant_id": None,
-                    "quantity": 4, "unit_price": "3799.99",
+                    "quantity": 1 if quantity_updated else 4, "unit_price": "3799.99",
                 }],
-                "subtotal": "15199.96",
-                "total": "15199.96",
+                "subtotal": "3799.99" if quantity_updated else "15199.96",
+                "total": "3799.99" if quantity_updated else "15199.96",
             }
         assert tool == "set_cart_item_quantity"
         assert arguments == {
@@ -136,6 +138,7 @@ async def test_absolute_quantity_reconciles_four_to_one_with_put_result():
             "variant_id": None,
             "quantity": 1,
         }
+        quantity_updated = True
         return {
             "success": True,
             "changed": True,
@@ -156,7 +159,7 @@ async def test_absolute_quantity_reconciles_four_to_one_with_put_result():
         execute=execute,
     )
     assert [name for name, _ in calls] == [
-        "get_cart_complete", "set_cart_item_quantity",
+        "get_cart_complete", "set_cart_item_quantity", "get_cart_complete",
     ]
     assert result.commercial_data["cart"]["mutation_success"] is True
     assert result.commercial_data["cart"]["total"] == "3799.99"

@@ -217,6 +217,21 @@ async def quote_shipping(
         for item in state.cart_items
         if item.original_price is not None
     }
+    known_item_names: dict[tuple[str, str | None], list[str]] = {}
+    for item in state.cart_items:
+        if not item.name:
+            continue
+        key = (item.product_id, normalize_variant_identity(item.variant_id))
+        known_item_names.setdefault(key, []).append(item.name)
+
+    def reconciled_item_name(product: dict[str, Any]) -> str | None:
+        key = (
+            str(product["product_id"]),
+            normalize_variant_identity(product.get("variant_id")),
+        )
+        names = known_item_names.get(key, [])
+        return names[0] if len(names) == 1 else None
+
     draft = state.checkout_draft.model_copy(deep=True)
     draft.address.zip_code = normalized_zipcode
     print("[sales.shipping.quote.result]", {
@@ -252,6 +267,7 @@ async def quote_shipping(
                             product["product_id"],
                             normalize_variant_identity(product["variant_id"]),
                         )),
+                        "name": reconciled_item_name(product),
                     }
                     for product in products
                 ],

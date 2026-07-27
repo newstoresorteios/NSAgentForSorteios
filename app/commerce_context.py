@@ -47,6 +47,7 @@ class CommerceCartItem(BaseModel):
     quantity: int = Field(ge=1)
     unit_price: str | None = None
     original_price: str | None = None
+    name: str | None = None
 
     @field_validator("variant_id", mode="before")
     @classmethod
@@ -161,6 +162,7 @@ class CommerceConversationState(BaseModel):
         "boleto",
         "other",
     ] | None = None
+    payment_method_preference: Literal["pix", "card", "boleto", "other"] | None = None
     selected_payment_option_id: str | None = None
     selected_payment_option: SelectedPaymentOption | None = None
     checkout_channel_preference: Literal["whatsapp", "site"] | None = None
@@ -246,7 +248,17 @@ class CommerceConversationState(BaseModel):
             "purchase_stage": self.purchase_stage,
             "has_cart": bool(self.cart_session_id and self.cart_url),
             "cart_item_count": len(self.cart_items),
+            "cart_items": [
+                {
+                    "product_id": item.product_id,
+                    "variant_id": item.variant_id,
+                    "name": item.name,
+                    "quantity": item.quantity,
+                }
+                for item in self.cart_items
+            ],
             "selected_payment_method": self.selected_payment_method,
+            "payment_method_preference": self.payment_method_preference,
             "selected_payment": (
                 self.selected_payment_option.model_dump(mode="json")
                 if self.selected_payment_option else None
@@ -542,6 +554,21 @@ def _cart_state_materially_changed(
     return incoming is not None and incoming != current
 
 
+def _selected_payment_matches_preference(
+    state: CommerceConversationState,
+    preference: str,
+) -> bool:
+    """Only retain a factual selection when its semantic method is still current."""
+    if preference == "other":
+        return False
+    selected_method = (
+        state.selected_payment_option.method
+        if state.selected_payment_option and state.selected_payment_option.method
+        else state.selected_payment_method
+    )
+    return selected_method == preference
+
+
 def evolve_commerce_state(
     previous: CommerceConversationState,
     result: AgentResult,
@@ -665,6 +692,16 @@ def evolve_commerce_state(
     selected_payment_method = metadata.get("selected_payment_method")
     if selected_payment_method in {"pix", "card", "boleto", "other"}:
         state.selected_payment_method = selected_payment_method
+    payment_method_preference = metadata.get("payment_method_preference")
+    if payment_method_preference in {"pix", "card", "boleto", "other"}:
+        preference_changed = payment_method_preference != state.payment_method_preference
+        state.payment_method_preference = payment_method_preference
+        if preference_changed and not _selected_payment_matches_preference(
+            state, payment_method_preference,
+        ):
+            state.selected_payment_method = None
+            state.selected_payment_option_id = None
+            state.selected_payment_option = None
     if metadata.get("selected_payment_option_id") is not None:
         state.selected_payment_option_id = str(
             metadata["selected_payment_option_id"]
