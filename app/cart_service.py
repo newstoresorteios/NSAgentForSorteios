@@ -1733,6 +1733,7 @@ async def rebuild_cart_without(
             "reason": "invalid_parameters",
         }
 
+    # A. get_cart_complete(sessão antiga) -> falhou? aborta, nada apagado
     cart_result = await execute("get_cart_complete", {"session_id": old_session_id})
     if "error" in cart_result:
         return state, {
@@ -1748,6 +1749,7 @@ async def rebuild_cart_without(
         for product_id, variant_id in targets
     }
 
+    # B. separar itens que saem / que ficam
     items_to_remove = []
     items_to_keep = []
     for item in current_items:
@@ -1761,6 +1763,7 @@ async def rebuild_cart_without(
         else:
             items_to_keep.append(item)
 
+    # C. item alvo não existe -> aborta, nada apagado
     if len(items_to_remove) != len(targets):
         missing_count = len(targets) - len(items_to_remove)
         return state, {
@@ -1769,6 +1772,7 @@ async def rebuild_cart_without(
             "missing_count": missing_count,
         }
 
+    # Caso especial: carrinho vazio após remoção
     if not items_to_keep:
         delete_result = await execute("delete_cart", {"session_id": old_session_id})
         if "error" in delete_result:
@@ -1798,25 +1802,35 @@ async def rebuild_cart_without(
             "items": [],
         }
 
-    delete_result = await execute("delete_cart", {"session_id": old_session_id})
-    if "error" in delete_result:
-        return state, {
-            "success": False,
-            "reason": "delete_failed",
-            "error": delete_result.get("error"),
-        }
+    # D. PREÇO: para cada item que fica, extrair o preço factual do snapshot.
+    #    Se QUALQUER item ficar sem preço utilizável -> aborta, nada apagado
+    items_with_price = []
+    for item in items_to_keep:
+        if not isinstance(item, dict):
+            continue
+        unit_price = item.get("unit_price") or item.get("price")
+        if not unit_price:
+            return state, {
+                "success": False,
+                "reason": "price_missing",
+                "item": {
+                    "product_id": str(item.get("product_id")) if item.get("product_id") is not None else None,
+                    "variant_id": normalize_variant_identity(item.get("variant_id")),
+                },
+            }
+        items_with_price.append((item, unit_price))
 
+    # E. gerar new_session_id
     new_session_id = secrets.token_hex(16)
     recovered_items = []
     failed_items = []
 
-    for item in items_to_keep:
-        if not isinstance(item, dict):
-            continue
+    # F. create_cart de cada item que fica, no novo session_id, COM price
+    #    qualquer falha -> aborta, nada apagado, motivo "rebuild_failed"
+    for item, unit_price in items_with_price:
         product_id = item.get("product_id")
         variant_id = normalize_variant_identity(item.get("variant_id"))
         quantity = item.get("quantity", 1)
-        unit_price = item.get("unit_price") or item.get("price")
 
         create_result = await execute(
             "create_cart",
@@ -1825,56 +1839,73 @@ async def rebuild_cart_without(
                 "product_id": str(product_id) if product_id is not None else None,
                 "variant_id": str(variant_id) if variant_id is not None else None,
                 "quantity": quantity,
+                "price": str(unit_price),
             },
         )
 
         if "error" in create_result:
-            failed_items.append({
-                "product_id": str(product_id) if product_id is not None else None,
-                "variant_id": variant_id,
-                "quantity": quantity,
+            # best-effort cleanup de carrinho novo parcial (sem propagar erro)
+            await execute("delete_cart", {"session_id": new_session_id})
+            return state, {
+                "success": False,
+                "reason": "rebuild_failed",
                 "error": create_result.get("error"),
-            })
-        else:
-            recovered_items.append({
-                "product_id": str(product_id) if product_id is not None else None,
-                "variant_id": variant_id,
-                "quantity": quantity,
-                "unit_price": unit_price,
-            })
+            }
 
+        recovered_items.append({
+            "product_id": str(product_id) if product_id is not None else None,
+            "variant_id": variant_id,
+            "quantity": quantity,
+            "unit_price": unit_price,
+        })
+
+    # G. get_cart_complete(new_session_id) e conferir contra o snapshot esperado:
+    #    contagem, product_id, variant_id e quantity de cada item
+    #    divergiu -> aborta, nada apagado, motivo "verification_failed"
     verification_result = await execute("get_cart_complete", {"session_id": new_session_id})
 
     if "error" in verification_result:
+        # best-effort cleanup
+        await execute("delete_cart", {"session_id": new_session_id})
         return state, {
             "success": False,
             "reason": "verification_failed",
-            "partial_rebuild": True,
-            "recovered_items": recovered_items,
-            "failed_items": failed_items,
+            "error": verification_result.get("error"),
         }
 
     final_items = verification_result.get("items", [])
     if len(final_items) != len(recovered_items):
+        # best-effort cleanup
+        await execute("delete_cart", {"session_id": new_session_id})
         return state, {
             "success": False,
-            "reason": "item_count_mismatch",
-            "partial_rebuild": True,
-            "expected": len(recovered_items),
-            "actual": len(final_items),
-            "recovered_items": recovered_items,
-            "failed_items": failed_items,
+            "reason": "verification_failed",
+            "expected_count": len(recovered_items),
+            "actual_count": len(final_items),
         }
 
-    if failed_items:
-        return state, {
-            "success": False,
-            "reason": "partial_rebuild",
-            "partial_rebuild": True,
-            "recovered_items": recovered_items,
-            "failed_items": failed_items,
-        }
+    # Verificar conteúdo: product_id, variant_id e quantity de cada item
+    for recovered, actual in zip(recovered_items, final_items):
+        if not isinstance(actual, dict):
+            await execute("delete_cart", {"session_id": new_session_id})
+            return state, {
+                "success": False,
+                "reason": "verification_failed",
+            }
+        actual_product_id = str(actual.get("product_id")) if actual.get("product_id") is not None else None
+        actual_variant_id = normalize_variant_identity(actual.get("variant_id"))
+        actual_quantity = actual.get("quantity", 1)
 
+        if (actual_product_id != recovered["product_id"] or
+            actual_variant_id != recovered["variant_id"] or
+            actual_quantity != recovered["quantity"]):
+            await execute("delete_cart", {"session_id": new_session_id})
+            return state, {
+                "success": False,
+                "reason": "verification_failed",
+            }
+
+    # H. trocar o estado para a nova sessão
     new_state = state.model_copy(deep=True)
     new_state.cart_session_id = new_session_id
     new_state.cart_items = [
@@ -1899,6 +1930,10 @@ async def rebuild_cart_without(
     new_state.order_confirmation_status = "not_ready"
     new_state.order_review_version = None
     new_state.confirmed_order_review_version = None
+
+    # I. delete_cart(sessão antiga) em BEST-EFFORT: se falhar, apenas registre
+    delete_result = await execute("delete_cart", {"session_id": old_session_id})
+    # Não propagamos erro; o carrinho novo é válido e o estado já aponta para ele
 
     return new_state, {
         "success": True,

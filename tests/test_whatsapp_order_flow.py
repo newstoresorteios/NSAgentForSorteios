@@ -367,9 +367,8 @@ async def test_remove_request_overrides_pending_zipcode_without_local_cart_mutat
     import app.sales_agent as sales_agent
 
     calls = []
-    cart_state = {
-        "session_id": "old_session",
-        "items": [
+    sessions = {
+        "SESSION-1": [
             {"product_id": "803", "variant_id": "123", "quantity": 1, "unit_price": "4699.99"},
             {"product_id": "804", "variant_id": None, "quantity": 1, "unit_price": "2000.00"},
         ]
@@ -378,14 +377,20 @@ async def test_remove_request_overrides_pending_zipcode_without_local_cart_mutat
     async def execute(tool, arguments):
         calls.append((tool, arguments))
         if tool == "get_cart_complete":
-            return {"items": cart_state["items"]}
+            session_id = arguments.get("session_id")
+            return {"items": sessions.get(session_id, [])}
         if tool == "delete_cart":
-            cart_state["items"] = []
+            session_id = arguments.get("session_id")
+            if session_id in sessions:
+                del sessions[session_id]
             return {"success": True}
         if tool == "create_cart":
             # When called with product_id, it adds item to cart
             if "product_id" in arguments:
-                cart_state["items"].append({
+                session_id = arguments["session_id"]
+                if session_id not in sessions:
+                    sessions[session_id] = []
+                sessions[session_id].append({
                     "product_id": arguments["product_id"],
                     "variant_id": arguments.get("variant_id"),
                     "quantity": arguments.get("quantity", 1),
@@ -394,10 +399,14 @@ async def test_remove_request_overrides_pending_zipcode_without_local_cart_mutat
                 return {"success": True, "quantity": arguments.get("quantity", 1)}
             else:
                 # When called without product_id, it creates a new session
-                cart_state["session_id"] = arguments["session_id"]
-                return {"session_id": arguments["session_id"]}
+                session_id = arguments["session_id"]
+                sessions[session_id] = []
+                return {"session_id": session_id}
         if tool == "add_cart_item":
-            cart_state["items"].append({
+            session_id = arguments.get("session_id")
+            if session_id not in sessions:
+                sessions[session_id] = []
+            sessions[session_id].append({
                 "product_id": arguments["product_id"],
                 "variant_id": arguments.get("variant_id"),
                 "quantity": arguments.get("quantity", 1),
