@@ -24,6 +24,8 @@ from .cart_service import (
     create_cart_items_checkout,
     current_cart_reply,
     log_purchase_progress,
+    rebuild_cart_without,
+    resolve_cart_item_reference,
     set_cart_item_quantity,
 )
 from .commerce_context import (
@@ -249,6 +251,7 @@ Interprete semanticamente a etapa de carrinho:
   nunca invente IDs nem session_id.
 - purchase_action=remove_cart_item quando o cliente pede explicitamente para remover
   um item do carrinho. Essa intencao nova vence qualquer pending_action anterior.
+  Apos remocao, frete e forma de pagamento sao descartados e precisam ser refeitos.
 Para comprar vários produtos, preencha purchase_items com uma entrada para cada item,
 preservando referência semântica e quantidade. Não invente IDs. Use list_position para
 itens numerados, current_product para o produto ativo e explicit_product com o nome citado.
@@ -2499,27 +2502,157 @@ async def handle_sales_message(
         })
     purchase_action = interpretation.purchase_action if interpretation is not None else None
     if purchase_action == "remove_cart_item":
-        # The adapter only supports final positive quantities.  Do not claim that a
-        # local state edit removed an item that remains upstream.
-        removal_result = AgentResult(
-            reply_text="",
-            intent="commerce",
-            handoff_required=False,
-            safety_reason="cart_item_removal_not_supported",
-            commercial_data={
-                "cart": {
-                    "mutation_success": False,
+        if not state.cart_session_id:
+            removal_result = AgentResult(
+                reply_text="",
+                intent="commerce",
+                safety_reason="cart_item_removal_cart_invalid",
+                commercial_data={
                     "removal_requested": True,
                     "removal_supported": False,
-                    "items": [item.model_dump(mode="json") for item in state.cart_items],
                 },
-            },
-            response_metadata={
-                "domain": "commerce",
-                "clear_pending_action": True,
-                "used_tray": False,
-            },
-        )
+                response_metadata={
+                    "domain": "commerce",
+                    "clear_pending_action": True,
+                    "used_tray": False,
+                },
+            )
+            return await _respond_to_commerce_service(
+                message=message,
+                plan=plan,
+                result=removal_result,
+                interpretation=interpretation,
+            )
+        targets, resolution_reason = resolve_cart_item_reference(interpretation, state, resolved_product)
+        if not targets:
+            if resolution_reason == "ambiguous":
+                removal_result = AgentResult(
+                    reply_text="",
+                    intent="commerce",
+                    safety_reason="cart_item_removal_ambiguous",
+                    commercial_data={
+                        "removal_requested": True,
+                        "removal_supported": True,
+                        "mutation_success": False,
+                        "reason": "ambiguous",
+                        "cart_items": [
+                            {
+                                "position": i + 1,
+                                "product_id": item.product_id,
+                                "variant_id": item.variant_id,
+                                "name": item.name,
+                                "quantity": item.quantity,
+                            }
+                            for i, item in enumerate(state.cart_items)
+                        ],
+                    },
+                    response_metadata={
+                        "domain": "commerce",
+                        "clear_pending_action": True,
+                        "used_tray": False,
+                    },
+                )
+            else:
+                removal_result = AgentResult(
+                    reply_text="",
+                    intent="commerce",
+                    safety_reason="cart_item_removal_not_found",
+                    commercial_data={
+                        "removal_requested": True,
+                        "removal_supported": True,
+                        "mutation_success": False,
+                        "reason": resolution_reason,
+                        "cart_items": [
+                            {
+                                "position": i + 1,
+                                "product_id": item.product_id,
+                                "variant_id": item.variant_id,
+                                "name": item.name,
+                                "quantity": item.quantity,
+                            }
+                            for i, item in enumerate(state.cart_items)
+                        ],
+                    },
+                    response_metadata={
+                        "domain": "commerce",
+                        "clear_pending_action": True,
+                        "used_tray": False,
+                    },
+                )
+            return await _respond_to_commerce_service(
+                message=message,
+                plan=plan,
+                result=removal_result,
+                interpretation=interpretation,
+            )
+        new_state, rebuild_result = await rebuild_cart_without(state, targets, execute_tool)
+        if rebuild_result.get("success"):
+            final_state = new_state
+            removal_result = AgentResult(
+                reply_text="",
+                intent="commerce",
+                commercial_data={
+                    "removal_requested": True,
+                    "removal_supported": True,
+                    "mutation_success": True,
+                    "cart_items": [
+                        {
+                            "product_id": item.product_id,
+                            "variant_id": item.variant_id,
+                            "quantity": item.quantity,
+                        }
+                        for item in final_state.cart_items
+                    ],
+                    "shipping_reset": True,
+                    "payment_reset": True,
+                },
+                response_metadata={
+                    "domain": "commerce",
+                    "cart_state": {
+                        "cart_session_id": final_state.cart_session_id,
+                        "cart_items": [item.model_dump(mode="json") for item in final_state.cart_items],
+                    } if final_state.cart_session_id else {"cart_session_id": None, "cart_items": []},
+                    "purchase_stage": "shopping",
+                    "clear_pending_action": True,
+                    "used_tray": True,
+                },
+            )
+            state = final_state
+        else:
+            reason = rebuild_result.get("reason", "unknown")
+            is_partial = rebuild_result.get("partial_rebuild", False)
+            if reason == "item_not_found":
+                safety_reason = "cart_item_removal_item_not_found"
+            elif is_partial:
+                safety_reason = "cart_item_removal_partial"
+            elif reason == "delete_failed":
+                safety_reason = "cart_item_removal_delete_failed"
+            else:
+                safety_reason = "cart_item_removal_failed"
+            removal_result = AgentResult(
+                reply_text="",
+                intent="commerce",
+                safety_reason=safety_reason,
+                commercial_data={
+                    "removal_requested": True,
+                    "removal_supported": True,
+                    "mutation_success": False,
+                    "reason": reason,
+                    "cart_items": [
+                        {
+                            "product_id": item.product_id,
+                            "variant_id": item.variant_id,
+                            "quantity": item.quantity,
+                        }
+                        for item in (new_state.cart_items if is_partial else state.cart_items)
+                    ] if is_partial or rebuild_result.get("success") is False else [],
+                },
+                response_metadata={
+                    "domain": "commerce",
+                    "clear_pending_action": True,
+                    "used_tray": True,
+                },
+            )
         return await _respond_to_commerce_service(
             message=message,
             plan=plan,

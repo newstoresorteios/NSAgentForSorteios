@@ -7,6 +7,7 @@ from app.product_retrieval import (
     ProductRerankSelection,
     ProductRetrievalCompiler,
     hard_filter_products,
+    product_availability_state,
     rerank_products,
 )
 
@@ -238,3 +239,106 @@ async def test_exact_missing_product_keeps_product_not_found(monkeypatch):
 
     assert result.safety_reason == "product_not_found"
     assert "esse produto" in result.reply_text
+
+
+@pytest.mark.parametrize("upon_request_value", ["1", 1, True])
+def test_product_upon_request_is_unavailable_regardless_of_available_flags(upon_request_value):
+    product = {
+        "id": "123",
+        "name": "Relógio sob consulta",
+        "available": 1,
+        "available_in_store": 1,
+        "upon_request": upon_request_value,
+    }
+
+    state = product_availability_state(product)
+
+    assert state == "unavailable"
+
+
+def test_product_upon_request_in_settings_is_unavailable():
+    product = {
+        "id": "123",
+        "name": "Relógio sob consulta",
+        "available": 1,
+        "available_in_store": 1,
+        "ProductSettings": {
+            "upon_request": True,
+        },
+    }
+
+    state = product_availability_state(product)
+
+    assert state == "unavailable"
+
+
+@pytest.mark.parametrize("upon_request_value", ["0", 0, False, None])
+def test_product_with_upon_request_false_or_absent_respects_availability_flags(upon_request_value):
+    product = {
+        "id": "123",
+        "name": "Relógio disponível",
+        "available": 1,
+        "upon_request": upon_request_value,
+    }
+
+    state = product_availability_state(product)
+
+    assert state == "available"
+
+
+def test_product_with_zero_stock_and_available_flag_is_still_available():
+    product = {
+        "id": "123",
+        "name": "Relógio por encomenda",
+        "available": 1,
+        "available_in_store": 0,
+        "stock": 0,
+        "upon_request": 0,
+    }
+
+    state = product_availability_state(product)
+
+    assert state == "available"
+
+
+@pytest.mark.asyncio
+async def test_rerank_products_filters_out_upon_request_items(monkeypatch):
+    import app.product_retrieval as retrieval
+
+    class FakeCompletions:
+        async def parse(self, **kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(
+                    message=SimpleNamespace(
+                        parsed=ProductRerankSelection(
+                            selected_product_ids=["1", "2", "3"]
+                        )
+                    )
+                )]
+            )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(
+        retrieval,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="key", openai_model="gpt-4.1-mini"),
+    )
+    monkeypatch.setattr(retrieval, "AsyncOpenAI", FakeClient)
+
+    products = [
+        {"id": "1", "name": "Disponível A", "available": 1},
+        {"id": "2", "name": "Sob consulta", "upon_request": 1, "available": 1},
+        {"id": "3", "name": "Disponível B", "available": 1},
+    ]
+
+    selected = await rerank_products(
+        products,
+        _interpretation(preferences={"style": "social"}),
+    )
+
+    selected_ids = [product["id"] for product in selected]
+    assert "2" not in selected_ids
+    assert all(pid in ["1", "3"] for pid in selected_ids)

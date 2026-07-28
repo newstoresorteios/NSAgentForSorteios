@@ -352,14 +352,19 @@ def _truth_state(value: Any) -> bool | None:
 def product_availability_state(
     product: dict[str, Any],
 ) -> Literal["available", "unavailable", "unknown"]:
+    for source in (product, product.get("ProductSettings")):
+        if not isinstance(source, dict):
+            continue
+        if _truth_state(source.get("upon_request")) is True:
+            return "unavailable"
     values: list[bool] = []
-    for key in ("available", "available_in_store", "available_for_purchase", "upon_request"):
+    for key in ("available", "available_in_store", "available_for_purchase"):
         state = _truth_state(product.get(key))
         if state is not None:
             values.append(state)
     settings = product.get("ProductSettings")
     if isinstance(settings, dict):
-        for key in ("available", "available_in_store", "available_for_purchase", "upon_request"):
+        for key in ("available", "available_in_store", "available_for_purchase"):
             state = _truth_state(settings.get(key))
             if state is not None:
                 values.append(state)
@@ -924,18 +929,22 @@ async def rerank_products(
     products: list[dict[str, Any]],
     interpretation: SalesInterpretation,
 ) -> list[dict[str, Any]]:
+    available_products = [
+        product for product in products
+        if product_availability_state(product) != "unavailable"
+    ]
     settings = get_settings()
-    fallback = _deterministic_semantic_order(products, interpretation)
-    if not products or not settings.openai_api_key:
+    fallback = _deterministic_semantic_order(available_products, interpretation)
+    if not available_products or not settings.openai_api_key:
         print("[sales.reranker]", {
             "source": "deterministic_fallback",
-            "candidate_count": len(products),
+            "candidate_count": len(available_products),
             "selected_count": len(fallback),
             "invalid_ids_count": 0,
         })
         return fallback
 
-    candidate_by_id = {str(product["id"]): product for product in products if product.get("id") is not None}
+    candidate_by_id = {str(product["id"]): product for product in available_products if product.get("id") is not None}
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.parse(
@@ -953,7 +962,7 @@ async def rerank_products(
                     "role": "user",
                     "content": json.dumps({
                         "PREFERENCES": semantic_preferences(interpretation),
-                        "CANDIDATES": compact_candidates(products),
+                        "CANDIDATES": compact_candidates(available_products),
                     }, ensure_ascii=False),
                 },
             ],
@@ -979,7 +988,7 @@ async def rerank_products(
             selected = fallback
         print("[sales.reranker]", {
             "source": "openai",
-            "candidate_count": len(products),
+            "candidate_count": len(available_products),
             "selected_count": len(selected),
             "invalid_ids_count": invalid_ids,
         })
@@ -987,7 +996,7 @@ async def rerank_products(
     except (APIError, ValueError, TypeError) as exc:
         print("[sales.reranker]", {
             "source": "deterministic_fallback",
-            "candidate_count": len(products),
+            "candidate_count": len(available_products),
             "selected_count": len(fallback),
             "invalid_ids_count": 0,
             "error_type": type(exc).__name__,

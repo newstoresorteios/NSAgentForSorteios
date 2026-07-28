@@ -349,7 +349,7 @@ def test_availability_uses_commercial_flags_not_stock_alone():
     assert product_availability_state({
         "stock": 0,
         "ProductSettings": {"upon_request": True},
-    }) == "available"
+    }) == "unavailable"
 
 
 @pytest.mark.asyncio

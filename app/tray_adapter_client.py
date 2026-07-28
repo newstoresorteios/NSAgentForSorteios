@@ -464,6 +464,10 @@ class TrayAdapterClient:
                 "quantity": quantity,
             },
         )
+
+    async def delete_cart(self, session_id: str) -> Any:
+        return await self._request("DELETE", f"/internal/carts/{session_id}")
+
     async def get_payment_options(
         self,
         cart_session_id: str | None = None,

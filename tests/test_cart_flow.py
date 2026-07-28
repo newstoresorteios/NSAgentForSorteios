@@ -880,3 +880,304 @@ async def test_cart_failure_gives_openai_only_safe_semantic_facts(monkeypatch):
     facts_message = captured["messages"][1]["content"]
     assert '"category": "integration_failure"' in facts_message
     assert "tray_error_message" not in facts_message
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_of_one_of_two_items():
+    from app.cart_service import rebuild_cart_without
+
+    calls = []
+    new_session_id = None
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            session = arguments.get("session_id")
+            if session == "old_session":
+                return {
+                    "items": [
+                        {"product_id": "A", "variant_id": None, "quantity": 1, "unit_price": "100.00"},
+                        {"product_id": "B", "variant_id": None, "quantity": 1, "unit_price": "200.00"},
+                    ]
+                }
+            else:
+                return {"items": [{"product_id": "B", "variant_id": None, "quantity": 1, "unit_price": "200.00"}]}
+        if tool == "delete_cart":
+            return {"success": True}
+        if tool == "create_cart":
+            nonlocal new_session_id
+            new_session_id = arguments["session_id"]
+            return {"session_id": arguments["session_id"]}
+        return {}
+
+    state = _state(
+        cart_session_id="old_session",
+        cart_items=[
+            {"product_id": "A", "variant_id": None, "quantity": 1},
+            {"product_id": "B", "variant_id": None, "quantity": 1},
+        ],
+    )
+
+    new_state, result = await rebuild_cart_without(state, [("A", None)], execute)
+
+    assert result["success"] is True
+    assert len(new_state.cart_items) == 1
+    assert new_state.cart_items[0].product_id == "B"
+    assert new_state.cart_session_id != "old_session"
+    assert any(call[0] == "delete_cart" for call in calls)
+    assert sum(1 for call in calls if call[0] == "delete_cart") == 1
+    assert sum(1 for call in calls if call[0] == "create_cart") == 1
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_of_only_item():
+    from app.cart_service import rebuild_cart_without
+
+    calls = []
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            session = arguments.get("session_id")
+            if session == "old_session":
+                return {"items": [{"product_id": "A", "variant_id": None, "quantity": 1, "unit_price": "100"}]}
+            return {"items": []}
+        if tool == "delete_cart":
+            return {"success": True}
+        return {}
+
+    state = _state(cart_session_id="old_session", cart_items=[{"product_id": "A", "variant_id": None, "quantity": 1}])
+
+    new_state, result = await rebuild_cart_without(state, [("A", None)], execute)
+
+    assert result["success"] is True
+    assert result["empty_cart"] is True
+    assert new_state.cart_session_id is None
+    assert len(new_state.cart_items) == 0
+    assert any(call[0] == "delete_cart" for call in calls)
+    assert not any(call[0] == "create_cart" for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_item_not_found():
+    from app.cart_service import rebuild_cart_without
+
+    calls = []
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            return {"items": [{"product_id": "A", "variant_id": None, "quantity": 1, "unit_price": "100"}]}
+        return {}
+
+    state = _state(cart_session_id="session", cart_items=[{"product_id": "A", "variant_id": None, "quantity": 1}])
+
+    new_state, result = await rebuild_cart_without(state, [("B", None)], execute)
+
+    assert result["success"] is False
+    assert result["reason"] == "item_not_found"
+    assert not any(call[0] == "delete_cart" for call in calls)
+    assert new_state == state
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_get_cart_fails():
+    from app.cart_service import rebuild_cart_without
+
+    calls = []
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            return {"error": "upstream_error"}
+        return {}
+
+    state = _state(cart_session_id="session", cart_items=[{"product_id": "A", "variant_id": None, "quantity": 1}])
+
+    new_state, result = await rebuild_cart_without(state, [("A", None)], execute)
+
+    assert result["success"] is False
+    assert result["reason"] == "cart_read_failed"
+    assert not any(call[0] == "delete_cart" for call in calls)
+    assert new_state == state
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_partial_rebuild_failure():
+    from app.cart_service import rebuild_cart_without
+
+    calls = []
+    created_items = set()
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            session = arguments.get("session_id")
+            if session == "old":
+                return {
+                    "items": [
+                        {"product_id": "A", "variant_id": None, "quantity": 1, "unit_price": "100"},
+                        {"product_id": "B", "variant_id": None, "quantity": 1, "unit_price": "200"},
+                    ]
+                }
+            return {"items": [{"product_id": pid, "variant_id": None, "quantity": 1} for pid in created_items]}
+        if tool == "delete_cart":
+            return {"success": True}
+        if tool == "create_cart":
+            if arguments["product_id"] == "B":
+                return {"error": "api_error"}
+            created_items.add(arguments["product_id"])
+            return {"session_id": arguments["session_id"]}
+        return {}
+
+    state = _state(
+        cart_session_id="old",
+        cart_items=[
+            {"product_id": "A", "variant_id": None, "quantity": 1},
+            {"product_id": "B", "variant_id": None, "quantity": 1},
+        ],
+    )
+
+    new_state, result = await rebuild_cart_without(state, [("A", None)], execute)
+
+    assert result["success"] is False
+    assert result["partial_rebuild"] is True
+    assert len(result["recovered_items"]) == 0
+    assert len(result["failed_items"]) == 1
+    assert result["failed_items"][0]["product_id"] == "B"
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_invalidates_shipping_and_payment():
+    from app.cart_service import rebuild_cart_without
+
+    async def execute(tool, arguments):
+        if tool == "get_cart_complete":
+            session = arguments.get("session_id")
+            if session == "old":
+                return {
+                    "items": [
+                        {"product_id": "A", "variant_id": None, "quantity": 1, "unit_price": "100"},
+                        {"product_id": "B", "variant_id": None, "quantity": 1, "unit_price": "200"},
+                    ]
+                }
+            return {"items": [{"product_id": "B", "variant_id": None, "quantity": 1, "unit_price": "200"}]}
+        if tool == "delete_cart":
+            return {"success": True}
+        if tool == "create_cart":
+            return {"session_id": arguments["session_id"]}
+        return {}
+
+    state = _state(
+        cart_session_id="old",
+        cart_items=[
+            {"product_id": "A", "variant_id": None, "quantity": 1},
+            {"product_id": "B", "variant_id": None, "quantity": 1},
+        ],
+        selected_shipping={"shipping_id": "1", "quotation_id": "Q1", "name": "PAC", "price": "35.10"},
+        selected_payment_option={"id": "10545", "name": "Pix", "method": "pix"},
+        shipping_quote_zipcode="86480000",
+    )
+
+    new_state, result = await rebuild_cart_without(state, [("A", None)], execute)
+
+    assert new_state.selected_shipping is None
+    assert new_state.selected_payment_option is None
+    assert new_state.shipping_quote_zipcode is None
+    assert new_state.shipping_quotes == []
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_by_name():
+    from app.cart_service import resolve_cart_item_reference
+
+    state = _state(
+        cart_session_id="session",
+        cart_items=[
+            {"product_id": "A", "variant_id": None, "quantity": 1, "name": "Citizen Watch"},
+            {"product_id": "B", "variant_id": None, "quantity": 1, "name": "Tissot Watch"},
+        ],
+    )
+    interpretation = _interpretation(purchase_action="remove_cart_item")
+    interpretation.subject.model = "Tissot"
+
+    targets, reason = resolve_cart_item_reference(interpretation, state)
+
+    assert len(targets) == 1
+    assert targets[0][0] == "B"
+    assert reason == "name_match"
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_ambiguous_name():
+    from app.cart_service import resolve_cart_item_reference
+
+    state = _state(
+        cart_session_id="session",
+        cart_items=[
+            {"product_id": "A", "variant_id": None, "quantity": 1, "name": "Watch"},
+            {"product_id": "B", "variant_id": None, "quantity": 1, "name": "Watch"},
+        ],
+    )
+    interpretation = _interpretation(purchase_action="remove_cart_item")
+    interpretation.subject.model = "Watch"
+
+    targets, reason = resolve_cart_item_reference(interpretation, state)
+
+    assert len(targets) == 0
+    assert reason == "ambiguous"
+
+
+@pytest.mark.asyncio
+async def test_cart_removal_name_not_found():
+    from app.cart_service import resolve_cart_item_reference
+
+    state = _state(
+        cart_session_id="session",
+        cart_items=[
+            {"product_id": "A", "variant_id": None, "quantity": 1, "name": "Citizen"},
+            {"product_id": "B", "variant_id": None, "quantity": 1, "name": "Tissot"},
+        ],
+    )
+    interpretation = _interpretation(purchase_action="remove_cart_item")
+    interpretation.subject.model = "Seiko"
+
+    targets, reason = resolve_cart_item_reference(interpretation, state)
+
+    assert len(targets) == 0
+    assert reason == "not_found"
+
+
+def test_cart_removal_single_item():
+    from app.cart_service import resolve_cart_item_reference
+
+    state = _state(
+        cart_session_id="session",
+        cart_items=[{"product_id": "A", "variant_id": None, "quantity": 1}],
+    )
+    interpretation = _interpretation(purchase_action="remove_cart_item")
+
+    targets, reason = resolve_cart_item_reference(interpretation, state)
+
+    assert len(targets) == 1
+    assert targets[0][0] == "A"
+    assert reason == "single_item"
+
+
+def test_cart_removal_position_out_of_range():
+    from app.cart_service import resolve_cart_item_reference
+
+    state = _state(
+        cart_session_id="session",
+        cart_items=[
+            {"product_id": "A", "variant_id": None, "quantity": 1},
+            {"product_id": "B", "variant_id": None, "quantity": 1},
+        ],
+    )
+    interpretation = _interpretation(purchase_action="remove_cart_item", reference_position=3)
+    interpretation.reference_type = "list_position"
+
+    targets, reason = resolve_cart_item_reference(interpretation, state)
+
+    assert len(targets) == 0
+    assert reason == "position_out_of_range"

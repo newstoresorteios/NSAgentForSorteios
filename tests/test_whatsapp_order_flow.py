@@ -366,6 +366,47 @@ async def test_checkout_data_and_pix_are_processed_in_the_same_turn(monkeypatch)
 async def test_remove_request_overrides_pending_zipcode_without_local_cart_mutation(monkeypatch):
     import app.sales_agent as sales_agent
 
+    calls = []
+    cart_state = {
+        "session_id": "old_session",
+        "items": [
+            {"product_id": "803", "variant_id": "123", "quantity": 1, "unit_price": "4699.99"},
+            {"product_id": "804", "variant_id": None, "quantity": 1, "unit_price": "2000.00"},
+        ]
+    }
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_cart_complete":
+            return {"items": cart_state["items"]}
+        if tool == "delete_cart":
+            cart_state["items"] = []
+            return {"success": True}
+        if tool == "create_cart":
+            # When called with product_id, it adds item to cart
+            if "product_id" in arguments:
+                cart_state["items"].append({
+                    "product_id": arguments["product_id"],
+                    "variant_id": arguments.get("variant_id"),
+                    "quantity": arguments.get("quantity", 1),
+                    "unit_price": arguments.get("unit_price", "0.00"),
+                })
+                return {"success": True, "quantity": arguments.get("quantity", 1)}
+            else:
+                # When called without product_id, it creates a new session
+                cart_state["session_id"] = arguments["session_id"]
+                return {"session_id": arguments["session_id"]}
+        if tool == "add_cart_item":
+            cart_state["items"].append({
+                "product_id": arguments["product_id"],
+                "variant_id": arguments.get("variant_id"),
+                "quantity": arguments.get("quantity", 1),
+                "unit_price": arguments.get("unit_price", "0.00"),
+            })
+            return {"success": True, "quantity": arguments.get("quantity", 1)}
+        return {}
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
     monkeypatch.setattr(
         sales_agent, "get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
@@ -373,8 +414,8 @@ async def test_remove_request_overrides_pending_zipcode_without_local_cart_mutat
     state = _whatsapp_state(
         pending_action="awaiting_shipping_zipcode",
         cart_items=[
-            {"product_id": "803", "variant_id": "123", "quantity": 1, "name": "Citizen"},
-            {"product_id": "804", "variant_id": None, "quantity": 1, "name": "Tissot"},
+            {"product_id": "803", "variant_id": "123", "quantity": 1, "unit_price": "4699.99", "name": "Citizen"},
+            {"product_id": "804", "variant_id": None, "quantity": 1, "unit_price": "2000.00", "name": "Tissot"},
         ],
     )
     result = await sales_agent.handle_sales_message(
@@ -383,11 +424,12 @@ async def test_remove_request_overrides_pending_zipcode_without_local_cart_mutat
         commerce_state=state,
     )
 
-    assert result.safety_reason == "cart_item_removal_not_supported"
-    assert result.commercial_data["cart"]["items"] == [
-        {"product_id": "803", "variant_id": "123", "quantity": 1, "unit_price": None, "original_price": None, "name": "Citizen"},
-        {"product_id": "804", "variant_id": None, "quantity": 1, "unit_price": None, "original_price": None, "name": "Tissot"},
-    ]
+    assert result.safety_reason is None
+    assert result.commercial_data["removal_requested"] is True
+    assert result.commercial_data["removal_supported"] is True
+    assert result.commercial_data["mutation_success"] is True
+    assert len(result.commercial_data["cart_items"]) == 1
+    assert result.commercial_data["cart_items"][0]["product_id"] == "804"
     assert result.response_metadata["clear_pending_action"] is True
 
 
@@ -1452,3 +1494,32 @@ async def test_order_failure_preserves_adapter_error_causes():
     assert created.response_metadata.get("order_failure_causes") == [
         {"field": "payment_form", "message": "nao encontrado"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_removal_invalidates_state_after_removal(monkeypatch):
+    import app.sales_agent as sales_agent
+    from app.cart_service import resolve_cart_item_reference
+    from app.models import SalesInterpretation
+
+    monkeypatch.setattr(
+        sales_agent, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    state = _ready_state(
+        cart_items=[
+            {"product_id": "803", "variant_id": "123", "quantity": 1, "unit_price": "4699.99", "name": "Citizen"},
+            {"product_id": "804", "variant_id": None, "quantity": 1, "unit_price": "2000.00", "name": "Tissot"},
+        ],
+    )
+
+    interpretation = _interpretation(purchase_action="remove_cart_item", reference_type="list_position", reference_position=1)
+
+    targets, reason = resolve_cart_item_reference(interpretation, state)
+
+    assert len(targets) == 1
+    assert targets[0][0] == "803"
+    assert reason == "list_position"
+    assert state.selected_shipping is not None
+    assert state.selected_payment_option is not None

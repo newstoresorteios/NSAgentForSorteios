@@ -1667,3 +1667,253 @@ async def create_cart_checkout(
     if result.safety_reason == "cart_technical_failure":
         _with_selected_product(result, product_reference)
     return result
+
+
+def _normalize_text(value: str) -> str:
+    text = str(value or "").strip().lower()
+    text = "".join(
+        char for char in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(char)
+    )
+    return text
+
+
+def resolve_cart_item_reference(
+    interpretation: SalesInterpretation,
+    state: CommerceConversationState,
+    resolved_product: CommerceProductReference | None = None,
+) -> tuple[list[tuple[str | None, str | None]], str]:
+    if not state.cart_items:
+        return [], "empty_cart"
+
+    if resolved_product is not None:
+        for item in state.cart_items:
+            if (str(resolved_product.product_id) == str(item.product_id) and
+                normalize_variant_identity(resolved_product.variant_id) == item.variant_id):
+                return [(str(item.product_id), item.variant_id)], "exact_match"
+
+    if interpretation.reference_type == "list_position" and interpretation.reference_position is not None:
+        pos = interpretation.reference_position
+        if 1 <= pos <= len(state.cart_items):
+            item = state.cart_items[pos - 1]
+            return [(str(item.product_id), item.variant_id)], "list_position"
+        else:
+            return [], "position_out_of_range"
+
+    message_text = (interpretation.subject.model or "").strip() if interpretation.subject else ""
+    if message_text:
+        message_normalized = _normalize_text(message_text)
+        matches = []
+        for item in state.cart_items:
+            if item.name:
+                item_name_normalized = _normalize_text(item.name)
+                if item_name_normalized == message_normalized or message_normalized in item_name_normalized:
+                    matches.append((str(item.product_id), item.variant_id))
+        if len(matches) == 1:
+            return matches, "name_match"
+        elif len(matches) > 1:
+            return [], "ambiguous"
+
+    if len(state.cart_items) == 1 and interpretation.purchase_action == "remove_cart_item":
+        item = state.cart_items[0]
+        return [(str(item.product_id), item.variant_id)], "single_item"
+
+    return [], "not_found"
+
+
+async def rebuild_cart_without(
+    state: CommerceConversationState,
+    targets: list[tuple[str | None, str | None]],
+    execute: ToolExecutor,
+) -> tuple[CommerceConversationState, dict[str, Any]]:
+    old_session_id = state.cart_session_id
+    if not old_session_id or not targets:
+        return state, {
+            "success": False,
+            "reason": "invalid_parameters",
+        }
+
+    cart_result = await execute("get_cart_complete", {"session_id": old_session_id})
+    if "error" in cart_result:
+        return state, {
+            "success": False,
+            "reason": "cart_read_failed",
+            "error": cart_result.get("error"),
+        }
+
+    current_items = cart_result.get("items", [])
+    target_set = {
+        (str(product_id) if product_id is not None else None,
+         normalize_variant_identity(variant_id))
+        for product_id, variant_id in targets
+    }
+
+    items_to_remove = []
+    items_to_keep = []
+    for item in current_items:
+        if not isinstance(item, dict):
+            continue
+        item_product_id = str(item.get("product_id")) if item.get("product_id") is not None else None
+        item_variant_id = normalize_variant_identity(item.get("variant_id"))
+        item_key = (item_product_id, item_variant_id)
+        if item_key in target_set:
+            items_to_remove.append(item_key)
+        else:
+            items_to_keep.append(item)
+
+    if len(items_to_remove) != len(targets):
+        missing_count = len(targets) - len(items_to_remove)
+        return state, {
+            "success": False,
+            "reason": "item_not_found",
+            "missing_count": missing_count,
+        }
+
+    if not items_to_keep:
+        delete_result = await execute("delete_cart", {"session_id": old_session_id})
+        if "error" in delete_result:
+            return state, {
+                "success": False,
+                "reason": "delete_failed",
+                "error": delete_result.get("error"),
+            }
+
+        new_state = state.model_copy(deep=True)
+        new_state.cart_session_id = None
+        new_state.cart_items = []
+        new_state.shipping_quotes = []
+        new_state.shipping_quote_zipcode = None
+        new_state.selected_shipping = None
+        new_state.selected_payment_option = None
+        new_state.selected_payment_option_id = None
+        new_state.selected_payment_method = None
+        new_state.pending_action = None
+        new_state.order_confirmation_status = "not_ready"
+        new_state.order_review_version = None
+        new_state.confirmed_order_review_version = None
+
+        return new_state, {
+            "success": True,
+            "empty_cart": True,
+            "items": [],
+        }
+
+    delete_result = await execute("delete_cart", {"session_id": old_session_id})
+    if "error" in delete_result:
+        return state, {
+            "success": False,
+            "reason": "delete_failed",
+            "error": delete_result.get("error"),
+        }
+
+    new_session_id = secrets.token_hex(16)
+    recovered_items = []
+    failed_items = []
+
+    for item in items_to_keep:
+        if not isinstance(item, dict):
+            continue
+        product_id = item.get("product_id")
+        variant_id = normalize_variant_identity(item.get("variant_id"))
+        quantity = item.get("quantity", 1)
+        unit_price = item.get("unit_price") or item.get("price")
+
+        create_result = await execute(
+            "create_cart",
+            {
+                "session_id": new_session_id,
+                "product_id": str(product_id) if product_id is not None else None,
+                "variant_id": str(variant_id) if variant_id is not None else None,
+                "quantity": quantity,
+            },
+        )
+
+        if "error" in create_result:
+            failed_items.append({
+                "product_id": str(product_id) if product_id is not None else None,
+                "variant_id": variant_id,
+                "quantity": quantity,
+                "error": create_result.get("error"),
+            })
+        else:
+            recovered_items.append({
+                "product_id": str(product_id) if product_id is not None else None,
+                "variant_id": variant_id,
+                "quantity": quantity,
+                "unit_price": unit_price,
+            })
+
+    verification_result = await execute("get_cart_complete", {"session_id": new_session_id})
+
+    if "error" in verification_result:
+        return state, {
+            "success": False,
+            "reason": "verification_failed",
+            "partial_rebuild": True,
+            "recovered_items": recovered_items,
+            "failed_items": failed_items,
+        }
+
+    final_items = verification_result.get("items", [])
+    if len(final_items) != len(recovered_items):
+        return state, {
+            "success": False,
+            "reason": "item_count_mismatch",
+            "partial_rebuild": True,
+            "expected": len(recovered_items),
+            "actual": len(final_items),
+            "recovered_items": recovered_items,
+            "failed_items": failed_items,
+        }
+
+    if failed_items:
+        return state, {
+            "success": False,
+            "reason": "partial_rebuild",
+            "partial_rebuild": True,
+            "recovered_items": recovered_items,
+            "failed_items": failed_items,
+        }
+
+    new_state = state.model_copy(deep=True)
+    new_state.cart_session_id = new_session_id
+    new_state.cart_items = [
+        CommerceCartItem(
+            product_id=str(item.get("product_id")) if item.get("product_id") is not None else None,
+            variant_id=normalize_variant_identity(item.get("variant_id")),
+            quantity=item.get("quantity", 1),
+            unit_price=item.get("unit_price") or item.get("price"),
+            original_price=item.get("original_price") or item.get("unit_price") or item.get("price"),
+            name=item.get("name"),
+        )
+        for item in final_items
+        if isinstance(item, dict)
+    ]
+    new_state.shipping_quotes = []
+    new_state.shipping_quote_zipcode = None
+    new_state.selected_shipping = None
+    new_state.selected_payment_option = None
+    new_state.selected_payment_option_id = None
+    new_state.selected_payment_method = None
+    new_state.pending_action = None
+    new_state.order_confirmation_status = "not_ready"
+    new_state.order_review_version = None
+    new_state.confirmed_order_review_version = None
+
+    return new_state, {
+        "success": True,
+        "removal_supported": True,
+        "mutation_success": True,
+        "items": [
+            {
+                "product_id": str(item.get("product_id")) if item.get("product_id") is not None else None,
+                "variant_id": normalize_variant_identity(item.get("variant_id")),
+                "quantity": item.get("quantity", 1),
+                "unit_price": item.get("unit_price") or item.get("price"),
+            }
+            for item in final_items
+            if isinstance(item, dict)
+        ],
+        "shipping_reset": True,
+        "payment_reset": True,
+    }
