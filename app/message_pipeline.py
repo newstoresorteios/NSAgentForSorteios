@@ -26,9 +26,7 @@ async def prepare_incoming_message(incoming: IncomingMessage) -> IncomingMessage
     except Exception as exc:
         print("[audio.inbound] transcription_failed", {
             "error_type": type(exc).__name__,
-            "message": str(exc)[:180],
             "has_audio_url": bool(incoming.audio_url),
-            "audio_filename": incoming.audio_filename,
         })
         incoming.transcription_failed = True
         incoming.text = ""
@@ -37,7 +35,6 @@ async def prepare_incoming_message(incoming: IncomingMessage) -> IncomingMessage
 
     print("[audio.inbound] transcribed", {
         "chars": len(transcribed),
-        "preview": transcribed[:120],
     })
     incoming.text = transcribed
     incoming.input_modality = "audio"
@@ -60,7 +57,6 @@ async def enrich_agent_result(incoming: IncomingMessage, result: AgentResult) ->
     except Exception as exc:
         print("[audio.outbound] tts_or_upload_failed", {
             "error_type": type(exc).__name__,
-            "message": str(exc)[:180],
         })
         return result
 
@@ -79,12 +75,15 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         inbound_id = int(raw_inbound_id) if raw_inbound_id is not None else None
     except (TypeError, ValueError):
         inbound_id = None
+    state_lookup = {
+        "conversation_id": incoming.conversation_id,
+        "sender_phone": incoming.sender_phone,
+        "before_inbound_id": inbound_id,
+    }
+    if not incoming.conversation_id and incoming.sender_key:
+        state_lookup["sender_key"] = incoming.sender_key
     commerce_state = CommerceConversationState.from_payload(
-        load_commerce_conversation_state(
-            conversation_id=incoming.conversation_id,
-            sender_phone=incoming.sender_phone,
-            before_inbound_id=inbound_id,
-        )
+        load_commerce_conversation_state(**state_lookup)
     )
     customer_context = {
         **customer_context,

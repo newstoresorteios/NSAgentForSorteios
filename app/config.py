@@ -44,16 +44,24 @@ class Settings(BaseSettings):
     supabase_audio_bucket: str = Field(default="agent-audio", alias="SUPABASE_AUDIO_BUCKET")
 
     database_url: str = Field(default="", alias="DATABASE_URL")
-    auto_create_tables: bool = Field(default=True, alias="AUTO_CREATE_TABLES")
+    auto_create_tables: bool = Field(default=False, alias="AUTO_CREATE_TABLES")
 
     brevo_api_key: str = Field(default="", alias="BREVO_API_KEY")
     brevo_send_url: str = Field(default="", alias="BREVO_SEND_URL")
     brevo_sender_number: str = Field(default="", alias="BREVO_SENDER_NUMBER")
-    brevo_reply_mode: str = Field(default="dry_run", alias="BREVO_REPLY_MODE")
+    brevo_reply_mode: str = Field(default="auto", alias="BREVO_REPLY_MODE")
     brevo_agent_id: str = Field(default="", alias="BREVO_AGENT_ID")
     brevo_agent_email: str = Field(default="", alias="BREVO_AGENT_EMAIL")
     brevo_agent_name: str = Field(default="NewStoreAgent", alias="BREVO_AGENT_NAME")
     brevo_received_from: str = Field(default="NewStoreAgent", alias="BREVO_RECEIVED_FROM")
+    brevo_allowed_channels: str = Field(
+        default="whatsapp,instagram,facebook",
+        alias="BREVO_ALLOWED_CHANNELS",
+    )
+    brevo_social_channels_enabled: bool = Field(
+        default=True,
+        alias="BREVO_SOCIAL_CHANNELS_ENABLED",
+    )
 
     max_reply_chars: int = Field(default=900, alias="MAX_REPLY_CHARS")
 
@@ -85,3 +93,13 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+def get_allowed_channels(settings: Settings) -> set[str]:
+    return {
+        channel.strip().lower()
+        for channel in (
+            getattr(settings, "brevo_allowed_channels", "whatsapp,instagram,facebook") or ""
+        ).split(",")
+        if channel.strip()
+    }

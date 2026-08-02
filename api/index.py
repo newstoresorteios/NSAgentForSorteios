@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from app.security import verify_brevo_webhook, verify_admin_token
 from app.webhook_parser import (
     inbound_skip_reason,
-    parse_brevo_whatsapp_payload,
+    parse_brevo_conversations_payload,
     select_effective_inbound_message,
     selected_message_info,
     webhook_event_skip_reason,
@@ -19,7 +19,7 @@ from app.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
 from app.db import claim_inbound_message, inbound_message_exists, insert_agent_response, insert_inbound_message, is_latest_inbound_message
-from app.config import get_settings
+from app.config import get_allowed_channels, get_settings
 from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
@@ -128,13 +128,20 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-v2"
+AGENT_VERSION = "openai-db-context-multichannel-v3"
 
 
 @app.get("/api/health")
 async def health():
     settings = get_settings()
     openai_key = settings.openai_api_key
+    allowed_channels = get_allowed_channels(settings)
+    ordered_channels = [
+        channel
+        for channel in ("whatsapp", "instagram", "facebook")
+        if channel in allowed_channels
+    ]
+    ordered_channels.extend(sorted(allowed_channels.difference(ordered_channels)))
     return {
         "ok": True,
         "agent_version": AGENT_VERSION,
@@ -152,6 +159,18 @@ async def health():
                 or settings.brevo_sender_number
             )
         ),
+        "brevo_conversations_configured": bool(
+            settings.brevo_api_key
+            and (
+                settings.brevo_agent_id
+                or (settings.brevo_agent_email and settings.brevo_agent_name)
+            )
+        ),
+        "brevo_whatsapp_configured": bool(
+            settings.brevo_api_key and settings.brevo_sender_number
+        ),
+        "brevo_social_channels_enabled": getattr(settings, "brevo_social_channels_enabled", True),
+        "brevo_allowed_channels": ordered_channels,
         "brevo_reply_mode": settings.brevo_reply_mode,
         "brevo_live_send_enabled": (not settings.dry_run and settings.brevo_reply_mode.lower() != "dry_run"),
         "brevo_webhook_secret_configured": bool(settings.brevo_webhook_secret),
@@ -186,8 +205,7 @@ async def test_tray_integration():
     }
 
 
-@app.post("/api/webhooks/brevo/whatsapp")
-async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brevo_webhook)):
+async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
     try:
         payload = await read_request_payload(request)
     except HTTPException:
@@ -218,15 +236,21 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         )
 
     try:
-        incoming = parse_brevo_whatsapp_payload(payload)
+        incoming = parse_brevo_conversations_payload(payload)
     except Exception as exc:
         print("[brevo.webhook] parsed", {
             "parsed": False,
             "event_name": payload.get("eventName") if isinstance(payload, dict) else None,
+            "channel": "unknown",
+            "sender_key_present": False,
+            "visitor_id_present": False,
+            "source_conversation_ref_present": False,
             "message_id_present": False,
             "conversation_id_present": False,
             "sender_phone_present": False,
             "text_present": False,
+            "input_modality": None,
+            "attachment_type": None,
             "direction": None,
         })
         return _skip_webhook_event(
@@ -238,10 +262,16 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
     print("[brevo.webhook] parsed", {
         "parsed": True,
         "event_name": incoming.event_type,
+        "channel": incoming.channel,
+        "sender_key_present": bool(incoming.sender_key),
+        "visitor_id_present": bool(incoming.visitor_id),
+        "source_conversation_ref_present": bool(incoming.source_conversation_ref),
         "message_id_present": bool(incoming.message_id),
         "conversation_id_present": bool(incoming.conversation_id),
         "sender_phone_present": bool(incoming.sender_phone),
         "text_present": bool(incoming.text),
+        "input_modality": incoming.input_modality,
+        "attachment_type": incoming.attachment_type,
         "direction": selected_message_info(payload).get("role"),
     })
 
@@ -254,6 +284,10 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "text_length": len(incoming.text or ""),
         "text_hash": hashlib.sha256((incoming.text or "").encode("utf-8")).hexdigest()[:12],
         "ordering_fallback": selection_info.get("ordering_fallback"),
+        "channel": incoming.channel,
+        "event_name": incoming.event_type,
+        "input_modality": incoming.input_modality,
+        "attachment_type": incoming.attachment_type,
     })
 
     skip_reason = inbound_skip_reason(payload)
@@ -263,10 +297,23 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
             reason=skip_reason,
         )
 
-    if not incoming.sender_phone:
+    settings = get_settings()
+    allowed_channels = get_allowed_channels(settings)
+    if incoming.channel not in allowed_channels:
         return _skip_webhook_event(
             event_name=event_name,
-            reason="missing_sender",
+            reason="channel_not_allowed",
+        )
+    if incoming.channel in {"instagram", "facebook"} and not settings.brevo_social_channels_enabled:
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="social_channels_disabled",
+        )
+
+    if not any((incoming.sender_key, incoming.visitor_id, incoming.conversation_id)):
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="missing_sender_identity",
         )
 
     if not incoming.text.strip() and not incoming.audio_url:
@@ -288,10 +335,15 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
     except Exception as exc:
         print("[brevo.webhook] inbound_insert_failed", {
             "error_type": type(exc).__name__,
-            "message": str(exc)[:300],
             "event_type": incoming.event_type,
-            "has_sender_phone": bool(incoming.sender_phone),
-            "has_text": bool(incoming.text),
+            "channel": incoming.channel,
+            "sender_key_present": bool(incoming.sender_key),
+            "visitor_id_present": bool(incoming.visitor_id),
+            "conversation_id_present": bool(incoming.conversation_id),
+            "sender_phone_present": bool(incoming.sender_phone),
+            "message_id_present": bool(incoming.message_id),
+            "input_modality": incoming.input_modality,
+            "attachment_type": incoming.attachment_type,
         })
         raise HTTPException(status_code=500, detail={"error": "inbound_insert_failed"}) from exc
     if not claimed:
@@ -302,15 +354,31 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
 
     if isinstance(incoming.raw, dict):
         incoming.raw["inbound_id"] = inbound_id
-    customer_context = find_customer_profile_by_phone(incoming.sender_phone)
+    if incoming.sender_phone:
+        customer_context = find_customer_profile_by_phone(incoming.sender_phone)
+    else:
+        customer_context = {
+            "found": False,
+            "channel": incoming.channel,
+            "sender_key": incoming.sender_key,
+            "display_name": incoming.sender_name,
+        }
     print("[brevo.webhook] routing", {
         "event_name": event_name,
         "should_process": True,
         "reason": "inbound_message",
     })
     print("[brevo.webhook] processing", {
+        "channel": incoming.channel,
+        "sender_key_present": bool(incoming.sender_key),
+        "visitor_id_present": bool(incoming.visitor_id),
+        "source_conversation_ref_present": bool(incoming.source_conversation_ref),
+        "conversation_id_present": bool(incoming.conversation_id),
+        "sender_phone_present": bool(incoming.sender_phone),
         "message_id_present": bool(incoming.message_id),
         "event_name": incoming.event_type,
+        "input_modality": incoming.input_modality,
+        "attachment_type": incoming.attachment_type,
     })
     agent_result = await process_incoming_message(incoming, customer_context)
 
@@ -318,12 +386,19 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         "intent": agent_result.intent,
         "handoff_required": agent_result.handoff_required,
         "safety_reason": agent_result.safety_reason,
-        "reply_preview": agent_result.reply_text[:160],
+        "reply_length": len(agent_result.reply_text or ""),
+        "channel": incoming.channel,
         "input_modality": incoming.input_modality,
+        "attachment_type": incoming.attachment_type,
         "transcription_failed": incoming.transcription_failed,
     })
 
-    if not is_latest_inbound_message(inbound_id, incoming.conversation_id, incoming.sender_phone):
+    if not is_latest_inbound_message(
+        inbound_id,
+        incoming.conversation_id,
+        incoming.sender_key,
+        incoming.sender_phone,
+    ):
         print("[brevo.webhook] skipped_reply", {"reason": "stale_inbound", "inbound_id": inbound_id})
         send_result = None
         provider_send_ok = False
@@ -342,6 +417,8 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
         insert_agent_response(
             {
                 "inbound_id": inbound_id,
+                "channel": incoming.channel,
+                "sender_key": incoming.sender_key,
                 "sender_phone": incoming.sender_phone,
                 "reply_text": agent_result.reply_text,
                 "intent": agent_result.intent,
@@ -354,8 +431,8 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
     except Exception as exc:
         print("[brevo.webhook] response_insert_failed", {
             "error_type": type(exc).__name__,
-            "message": str(exc)[:300],
             "inbound_id": inbound_id,
+            "channel": incoming.channel,
         })
         raise HTTPException(
             status_code=500,
@@ -377,6 +454,22 @@ async def brevo_whatsapp_webhook(request: Request, _: None = Depends(verify_brev
     )
 
 
+@app.post("/api/webhooks/brevo/conversations")
+async def brevo_conversations_webhook(
+    request: Request,
+    _: None = Depends(verify_brevo_webhook),
+):
+    return await handle_brevo_conversations_webhook(request)
+
+
+@app.post("/api/webhooks/brevo/whatsapp")
+async def brevo_whatsapp_webhook(
+    request: Request,
+    _: None = Depends(verify_brevo_webhook),
+):
+    return await handle_brevo_conversations_webhook(request)
+
+
 @app.post("/api/test/agent")
 async def test_agent(request: Request, _: None = Depends(verify_admin_token)):
     payload = await read_request_payload(request)
@@ -387,7 +480,7 @@ async def test_agent(request: Request, _: None = Depends(verify_admin_token)):
         "has_text": bool(payload.get("text")) if isinstance(payload, dict) else False,
     })
 
-    incoming = parse_brevo_whatsapp_payload(
+    incoming = parse_brevo_conversations_payload(
         {
             "text": payload.get("text", "Olá"),
             "from": payload.get("phone"),

@@ -150,8 +150,14 @@ def build_agent_input(message: IncomingMessage, customer_context: dict, facts: d
     if message.input_modality == "audio":
         modality_note = "\n- Origem: áudio transcrito para texto"
 
+    channel_label = {
+        "instagram": "Instagram",
+        "facebook": "Facebook",
+        "whatsapp": "WhatsApp",
+        "widget": "chat do site",
+    }.get(message.channel, message.channel or "canal não identificado")
     return f"""
-Mensagem recebida via WhatsApp:
+Mensagem recebida via {channel_label}:
 - Nome para tratamento: {display_label}
 - Telefone presente: {'sim' if message.sender_phone else 'não'}{modality_note}
 - Texto do cliente: {message.text}
@@ -271,7 +277,7 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         "mode": "openai_with_db_context",
         "primary_intent": facts.get("primary_intent"),
         "input_modality": message.input_modality,
-        "text_preview": (message.text or "")[:160],
+        "text_length": len(message.text or ""),
         "has_openai_key": bool(get_settings().openai_api_key),
         "transcription_failed": message.transcription_failed,
     })
@@ -337,18 +343,26 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         inbound_id = int(raw_inbound_id) if raw_inbound_id is not None else None
     except (TypeError, ValueError):
         inbound_id = None
-    recent_turns = load_recent_conversation_turns(
-        conversation_id=message.conversation_id,
-        sender_phone=message.sender_phone,
-        before_inbound_id=inbound_id,
-        limit=8,
+    history_lookup = {
+        "conversation_id": message.conversation_id,
+        "sender_phone": message.sender_phone,
+        "before_inbound_id": inbound_id,
+        "limit": 8,
+    }
+    if not message.conversation_id and message.sender_key:
+        history_lookup["sender_key"] = message.sender_key
+    recent_turns = load_recent_conversation_turns(**history_lookup)
+    context_source = (
+        "conversation_id"
+        if message.conversation_id
+        else ("sender_key" if message.sender_key else ("sender_phone" if message.sender_phone else "none"))
     )
-    context_source = "conversation_id" if message.conversation_id else ("sender_phone" if message.sender_phone else "none")
     print("[sales.context]", {
         "history_turns": len(recent_turns),
         "history_user_turns": sum(1 for turn in recent_turns if turn.get("role") == "user"),
         "history_assistant_turns": sum(1 for turn in recent_turns if turn.get("role") == "assistant"),
         "conversation_id_present": bool(message.conversation_id),
+        "sender_key_present": bool(message.sender_key),
         "before_inbound_id_present": inbound_id is not None,
         "context_source": context_source,
     })

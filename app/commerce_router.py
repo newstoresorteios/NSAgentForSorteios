@@ -18,7 +18,7 @@ def clear_commerce_memory() -> None:
 
 
 def _context_key(message: IncomingMessage) -> str | None:
-    return message.conversation_id or message.sender_phone
+    return message.conversation_id or message.sender_key or message.sender_phone
 
 
 def _remember_product(message: IncomingMessage, product: dict[str, Any]) -> None:

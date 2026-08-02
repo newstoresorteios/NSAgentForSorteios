@@ -7,6 +7,50 @@ from .audio_service import extract_audio_attachment, is_audio_attachment, is_pla
 from .models import IncomingMessage
 
 
+CHANNEL_ALIASES = {
+    "ig": "instagram",
+    "instagram_direct": "instagram",
+    "instagram_dm": "instagram",
+    "facebook_messenger": "facebook",
+    "messenger": "facebook",
+    "fb": "facebook",
+    "wa": "whatsapp",
+    "whats_app": "whatsapp",
+    "website": "widget",
+    "chat": "widget",
+}
+
+
+def normalize_channel(value: str | None) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return "unknown"
+    return CHANNEL_ALIASES.get(normalized, normalized)
+
+
+def build_sender_key(
+    channel: str,
+    sender_phone: str | None,
+    source_conversation_ref: str | None,
+    visitor_id: str | None,
+    conversation_id: str | None,
+) -> str | None:
+    normalized_channel = normalize_channel(channel)
+    phone_digits = "".join(character for character in str(sender_phone or "") if character.isdigit())
+    if normalized_channel == "whatsapp" and phone_digits:
+        return f"whatsapp:{phone_digits}"
+    if normalized_channel in {"instagram", "facebook"}:
+        identity = source_conversation_ref or visitor_id
+        return f"{normalized_channel}:{identity}" if identity else (
+            f"conversation:{conversation_id}" if conversation_id else None
+        )
+    if visitor_id:
+        return f"{normalized_channel}:{visitor_id}"
+    if conversation_id:
+        return f"conversation:{conversation_id}"
+    return None
+
+
 def _get_nested(data: dict[str, Any], *path: str) -> Any:
     current: Any = data
     for key in path:
@@ -47,6 +91,7 @@ def _is_visitor_message(message: dict[str, Any]) -> bool:
 def _message_id(message: dict[str, Any]) -> str | None:
     return _first_non_empty(
         message.get("id"),
+        message.get("sourceMessageId"),
         message.get("messageId"),
         message.get("message_id"),
         message.get("uuid"),
@@ -59,11 +104,13 @@ def _message_timestamp(message: dict[str, Any]) -> float | None:
         if value is None or value == "":
             continue
         if isinstance(value, (int, float)):
-            return float(value)
+            numeric = float(value)
+            return numeric / 1000 if numeric >= 10_000_000_000 else numeric
         if isinstance(value, str):
             text = value.strip()
             try:
-                return float(text)
+                numeric = float(text)
+                return numeric / 1000 if numeric >= 10_000_000_000 else numeric
             except ValueError:
                 try:
                     parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
@@ -79,7 +126,8 @@ def select_effective_inbound_message(payload: dict[str, Any]) -> dict[str, Any]:
     """Select the chronologically newest fragment item, regardless of array order."""
     messages = payload.get("messages")
     if not isinstance(messages, list):
-        return {}
+        primary = payload.get("message")
+        return primary if isinstance(primary, dict) else {}
 
     valid_messages = [message for message in messages if isinstance(message, dict)]
     if not valid_messages:
@@ -130,25 +178,39 @@ def _extract_visitor(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def should_skip_auto_reply(payload: dict[str, Any]) -> bool:
-    """Skip when the latest message in a Conversations fragment is not from the visitor."""
-    messages = payload.get("messages")
-    if not isinstance(messages, list) or not messages:
-        return payload.get("eventName") == "conversationFragment"
-
+    """Skip when the effective Conversations message must not enter the pipeline."""
     selected = select_effective_inbound_message(payload)
     if not selected:
-        return False
+        return payload.get("eventName") == "conversationFragment"
 
     if not _is_visitor_message(selected):
         return True
 
-    return bool(selected.get("isPushed") or selected.get("isTrigger"))
+    return bool(
+        selected.get("isPushed")
+        or selected.get("isTrigger")
+        or _is_own_agent_message(selected)
+    )
+
+
+def _is_own_agent_message(message: dict[str, Any]) -> bool:
+    received_from = _first_non_empty(message.get("receivedFrom"), message.get("received_from"))
+    if not received_from:
+        return False
+    try:
+        from .config import get_settings
+
+        configured = (get_settings().brevo_received_from or "").strip()
+    except Exception:
+        configured = ""
+    return bool(configured and received_from.casefold() == configured.casefold())
 
 
 def inbound_skip_reason(payload: dict[str, Any]) -> str | None:
     """Explain why a webhook should not enter the agent pipeline."""
     messages = payload.get("messages")
-    if not isinstance(messages, list) or not messages:
+    has_primary_message = isinstance(payload.get("message"), dict)
+    if (not isinstance(messages, list) or not messages) and not has_primary_message:
         return "no_inbound_message" if payload.get("eventName") == "conversationFragment" else None
 
     selected = select_effective_inbound_message(payload)
@@ -157,7 +219,7 @@ def inbound_skip_reason(payload: dict[str, Any]) -> str | None:
     if not _is_visitor_message(selected):
         message_type = _message_type(selected)
         return "agent_message" if message_type in {"agent", "bot", "assistant"} else "outbound_message"
-    if selected.get("isPushed") or selected.get("isTrigger"):
+    if selected.get("isPushed") or selected.get("isTrigger") or _is_own_agent_message(selected):
         return "agent_message"
     return None
 
@@ -178,33 +240,116 @@ def _extract_primary_message(payload: dict[str, Any]) -> dict[str, Any]:
     return select_effective_inbound_message(payload)
 
 
-def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
-    """Parse Brevo/WhatsApp-like webhook payloads defensively."""
-    visitor_obj = _extract_visitor(payload)
-    last_visitor_message = _extract_primary_message(payload)
+def _scalar(value: Any) -> Any:
+    return value if isinstance(value, (str, int, float)) else None
 
-    audio_file = _extract_audio_from_message(last_visitor_message) or extract_audio_attachment(payload)
+
+def _valid_phone(value: str | None) -> str | None:
+    if not value:
+        return None
+    digits = "".join(character for character in value if character.isdigit())
+    return value if len(digits) >= 10 else None
+
+
+def _detect_channel(
+    payload: dict[str, Any],
+    visitor: dict[str, Any],
+    sender_phone: str | None,
+) -> str:
+    integration = payload.get("integration")
+    integration = integration if isinstance(integration, dict) else {}
+    for value in (
+        visitor.get("source"),
+        payload.get("channel"),
+        payload.get("source"),
+        integration.get("source"),
+    ):
+        channel = normalize_channel(_first_non_empty(value))
+        if channel != "unknown":
+            return channel
+    source_link = str(visitor.get("sourceChannelLink") or "").lower()
+    if "instagram.com" in source_link:
+        return "instagram"
+    if "facebook.com" in source_link or "m.me/" in source_link:
+        return "facebook"
+    return "whatsapp" if _valid_phone(sender_phone) else "unknown"
+
+
+def _attachment_candidates(message: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for key in ("file", "image", "sticker"):
+        value = message.get(key)
+        if isinstance(value, dict):
+            candidates.append({**value, "_source_key": key})
+    attachments = message.get("attachments")
+    if isinstance(attachments, list):
+        candidates.extend(item for item in attachments if isinstance(item, dict))
+    return candidates
+
+
+def _attachment_type(attachment: dict[str, Any]) -> str:
+    explicit = _first_non_empty(
+        attachment.get("type"),
+        attachment.get("fileType"),
+        attachment.get("contentType"),
+        attachment.get("_source_key"),
+    )
+    normalized = str(explicit or "").lower()
+    mime_type = str(attachment.get("mimeType") or attachment.get("mimetype") or "").lower()
+    filename = str(attachment.get("name") or attachment.get("filename") or "").lower()
+    if is_audio_attachment(attachment):
+        return "audio"
+    if "sticker" in normalized:
+        return "sticker"
+    if "image" in normalized or mime_type.startswith("image/"):
+        return "image"
+    if any(filename.endswith(extension) for extension in (".jpg", ".jpeg", ".png", ".gif", ".webp")):
+        return "image"
+    return "file"
+
+
+def _attachment_placeholder(channel: str, attachment_type: str, filename: str | None) -> str:
+    channel_label = {
+        "instagram": "Instagram",
+        "facebook": "Facebook",
+        "whatsapp": "WhatsApp",
+        "widget": "Chat",
+    }.get(channel, channel.title() if channel != "unknown" else "canal de atendimento")
+    if attachment_type == "image":
+        return f"[Imagem recebida via {channel_label}]"
+    if attachment_type == "sticker":
+        return f"[Sticker recebido via {channel_label}]"
+    safe_filename = (filename or "").strip()
+    suffix = f": {safe_filename}" if safe_filename else ""
+    return f"[Arquivo recebido via {channel_label}{suffix}]"
+
+
+def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessage:
+    """Normalize Brevo Conversations payloads for every supported channel."""
+    visitor_obj = _extract_visitor(payload)
+    effective_message = _extract_primary_message(payload)
+
+    audio_file = _extract_audio_from_message(effective_message) or extract_audio_attachment(payload)
 
     message_text = _first_non_empty(
-        last_visitor_message.get("text") if isinstance(last_visitor_message.get("text"), str) else None,
-        last_visitor_message.get("body") if isinstance(last_visitor_message.get("body"), str) else None,
-        _get_nested(last_visitor_message, "text", "body"),
+        effective_message.get("text") if isinstance(effective_message.get("text"), str) else None,
+        effective_message.get("body") if isinstance(effective_message.get("body"), str) else None,
+        _get_nested(effective_message, "text", "body"),
     )
     is_fragment = payload.get("eventName") == "conversationFragment"
     text = _first_non_empty(
         message_text,
         None if is_fragment else payload.get("text"),
-        None if is_fragment else payload.get("message"),
+        None if is_fragment else _scalar(payload.get("message")),
         None if is_fragment else payload.get("body"),
         None if is_fragment else payload.get("content"),
         None if is_fragment else _get_nested(payload, "text", "body"),
         None if is_fragment else _get_nested(payload, "message", "text"),
-        None if is_fragment else _get_nested(payload, "message", "text") if isinstance(payload.get("message"), dict) else None,
     ) or ""
 
-    sender_phone = _first_non_empty(
-        payload.get("sender"),
-        payload.get("from"),
+    sender_phone_candidate = _first_non_empty(
+        _scalar(payload.get("sender")),
+        _scalar(payload.get("from")),
         payload.get("phone"),
         payload.get("contactNumber"),
         payload.get("contact_number"),
@@ -217,27 +362,57 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         _get_nested(visitor_obj, "contactAttributes", "SMS"),
         _get_nested(visitor_obj, "contactAttributes", "WHATSAPP"),
         _get_nested(visitor_obj, "formattedAttributes", "SMS"),
-        last_visitor_message.get("from"),
+        _scalar(effective_message.get("from")),
     )
+    channel = _detect_channel(payload, visitor_obj, sender_phone_candidate)
+    sender_phone = _valid_phone(sender_phone_candidate)
+    if channel in {"instagram", "facebook"}:
+        sender_phone = _valid_phone(_first_non_empty(
+            _get_nested(visitor_obj, "attributes", "SMS"),
+            _get_nested(visitor_obj, "attributes", "WHATSAPP"),
+            _get_nested(visitor_obj, "contactAttributes", "SMS"),
+            _get_nested(visitor_obj, "contactAttributes", "WHATSAPP"),
+        ))
 
     sender_name = _first_non_empty(
-        payload.get("name"),
-        payload.get("senderName"),
-        payload.get("sender_name"),
-        _get_nested(payload, "contact", "name"),
-        _get_nested(payload, "sender", "name"),
         _get_nested(visitor_obj, "displayedName"),
         _get_nested(visitor_obj, "attributes", "FIRSTNAME"),
         _get_nested(visitor_obj, "integrationAttributes", "FIRSTNAME"),
-        _get_nested(last_visitor_message, "profile", "name"),
+        _get_nested(visitor_obj, "contactAttributes", "FIRSTNAME"),
+        payload.get("senderName"),
+        payload.get("name"),
+        payload.get("sender_name"),
+        _get_nested(payload, "contact", "name"),
+        _get_nested(payload, "sender", "name"),
+        _get_nested(effective_message, "profile", "name"),
     )
 
     visitor_id = _first_non_empty(
         payload.get("visitorId"),
         visitor_obj.get("id"),
     )
+    conversation_id = _first_non_empty(
+        payload.get("conversationId"),
+        payload.get("conversation_id"),
+        payload.get("threadId"),
+        visitor_obj.get("threadId"),
+    )
+    source_channel_ref = _first_non_empty(visitor_obj.get("sourceChannelRef"))
+    source_channel_link = _first_non_empty(visitor_obj.get("sourceChannelLink"))
+    source_conversation_ref = _first_non_empty(
+        visitor_obj.get("sourceConversationRef"),
+        _get_nested(effective_message, "from", "id"),
+        _get_nested(payload, "sender", "id"),
+    )
+    sender_username = _first_non_empty(
+        visitor_obj.get("username"),
+        _get_nested(visitor_obj, "attributes", "USERNAME"),
+        _get_nested(effective_message, "profile", "username"),
+        _get_nested(payload, "sender", "username"),
+    )
 
     input_modality = "text"
+    attachment_type = None
     audio_url = None
     audio_mime_type = None
     audio_filename = None
@@ -246,11 +421,33 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
         audio_url = audio_file.get("link")
         audio_mime_type = audio_file.get("mimeType")
         audio_filename = audio_file.get("name")
+        attachment_type = "audio"
         if is_placeholder_audio_text(text, audio_filename):
             text = ""
+    else:
+        attachments = _attachment_candidates(effective_message)
+        if attachments:
+            attachment = attachments[0]
+            attachment_type = _attachment_type(attachment)
+            filename = _first_non_empty(attachment.get("name"), attachment.get("filename"))
+            if not text.strip():
+                text = _attachment_placeholder(channel, attachment_type, filename)
+                input_modality = attachment_type
+            else:
+                input_modality = f"text_with_{attachment_type}"
 
-    if not text.strip() and audio_file and not is_audio_attachment(audio_file):
-        text = _first_non_empty(audio_file.get("name")) or text
+    sender_key = build_sender_key(
+        channel,
+        sender_phone,
+        source_conversation_ref,
+        visitor_id,
+        conversation_id,
+    )
+    channel_metadata: dict[str, Any] = {}
+    if attachment_type:
+        channel_metadata["attachment_type"] = attachment_type
+    if source_channel_ref:
+        channel_metadata["source_channel_ref_present"] = True
 
     return IncomingMessage(
         provider="brevo",
@@ -260,22 +457,31 @@ def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
             payload.get("type"),
             payload.get("eventType"),
         ),
-        message_id=_message_id(last_visitor_message) or (
+        message_id=_message_id(effective_message) or (
             None if is_fragment else _first_non_empty(payload.get("messageId"), payload.get("message_id"), payload.get("id"))
         ),
-        conversation_id=_first_non_empty(
-            payload.get("conversationId"),
-            payload.get("conversation_id"),
-            payload.get("threadId"),
-            visitor_obj.get("threadId"),
-        ),
+        channel=channel,
+        sender_key=sender_key,
+        sender_external_id=source_conversation_ref,
+        sender_username=sender_username,
+        source_channel_ref=source_channel_ref,
+        source_channel_link=source_channel_link,
+        source_conversation_ref=source_conversation_ref,
+        conversation_id=conversation_id,
         visitor_id=visitor_id,
         sender_phone=sender_phone,
         sender_name=sender_name,
         text=text,
         input_modality=input_modality,
+        attachment_type=attachment_type,
         audio_url=audio_url,
         audio_mime_type=audio_mime_type,
         audio_filename=audio_filename,
+        channel_metadata=channel_metadata,
         raw=payload,
     )
+
+
+def parse_brevo_whatsapp_payload(payload: dict[str, Any]) -> IncomingMessage:
+    """Backward-compatible alias for the omnichannel Conversations parser."""
+    return parse_brevo_conversations_payload(payload)

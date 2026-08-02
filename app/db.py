@@ -54,12 +54,32 @@ def ensure_tables() -> None:
                   event_type text NULL,
                   message_id text NULL,
                   conversation_id text NULL,
+                  channel text NOT NULL DEFAULT 'unknown',
+                  sender_key text NULL,
+                  sender_external_id text NULL,
+                  visitor_id text NULL,
+                  sender_username text NULL,
+                  source_channel_ref text NULL,
+                  source_channel_link text NULL,
+                  source_conversation_ref text NULL,
                   sender_phone text NULL,
                   sender_name text NULL,
                   text text NOT NULL DEFAULT '',
+                  channel_metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
                   raw jsonb NOT NULL DEFAULT '{}'::jsonb,
                   created_at timestamptz NOT NULL DEFAULT now()
                 );
+
+                ALTER TABLE public.ai_inbound_messages
+                  ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown',
+                  ADD COLUMN IF NOT EXISTS sender_key text,
+                  ADD COLUMN IF NOT EXISTS sender_external_id text,
+                  ADD COLUMN IF NOT EXISTS visitor_id text,
+                  ADD COLUMN IF NOT EXISTS sender_username text,
+                  ADD COLUMN IF NOT EXISTS source_channel_ref text,
+                  ADD COLUMN IF NOT EXISTS source_channel_link text,
+                  ADD COLUMN IF NOT EXISTS source_conversation_ref text,
+                  ADD COLUMN IF NOT EXISTS channel_metadata jsonb NOT NULL DEFAULT '{}'::jsonb;
 
                 CREATE INDEX IF NOT EXISTS idx_ai_inbound_messages_sender_phone
                 ON public.ai_inbound_messages(sender_phone);
@@ -67,9 +87,30 @@ def ensure_tables() -> None:
                 CREATE INDEX IF NOT EXISTS idx_ai_inbound_messages_created_at
                 ON public.ai_inbound_messages(created_at DESC);
 
+                CREATE INDEX IF NOT EXISTS idx_ai_inbound_sender_key_created_at
+                ON public.ai_inbound_messages(sender_key, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_inbound_channel_created_at
+                ON public.ai_inbound_messages(channel, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_inbound_visitor_id
+                ON public.ai_inbound_messages(visitor_id);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_inbound_source_conversation_ref
+                ON public.ai_inbound_messages(channel, source_conversation_ref);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_inbound_conversation_created_at
+                ON public.ai_inbound_messages(conversation_id, created_at DESC);
+
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_inbound_provider_message_id
+                ON public.ai_inbound_messages(provider, message_id)
+                WHERE message_id IS NOT NULL;
+
                 CREATE TABLE IF NOT EXISTS public.ai_agent_responses (
                   id bigserial PRIMARY KEY,
                   inbound_id bigint NULL REFERENCES public.ai_inbound_messages(id) ON DELETE SET NULL,
+                  channel text NOT NULL DEFAULT 'unknown',
+                  sender_key text NULL,
                   sender_phone text NULL,
                   reply_text text NOT NULL,
                   intent text NULL,
@@ -80,13 +121,71 @@ def ensure_tables() -> None:
                   created_at timestamptz NOT NULL DEFAULT now()
                 );
 
+                ALTER TABLE public.ai_agent_responses
+                  ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown',
+                  ADD COLUMN IF NOT EXISTS sender_key text;
+
                 CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_inbound_id
                 ON public.ai_agent_responses(inbound_id);
 
                 CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_created_at
                 ON public.ai_agent_responses(created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_sender_key_created_at
+                ON public.ai_agent_responses(sender_key, created_at DESC);
                 """
             )
+
+
+def _prepare_inbound_message(message: dict[str, Any]) -> dict[str, Any]:
+    safe_message = dict(message or {})
+    defaults = {
+        "provider": "brevo",
+        "event_type": None,
+        "message_id": None,
+        "conversation_id": None,
+        "channel": "unknown",
+        "sender_key": None,
+        "sender_external_id": None,
+        "visitor_id": None,
+        "sender_username": None,
+        "source_channel_ref": None,
+        "source_channel_link": None,
+        "source_conversation_ref": None,
+        "sender_phone": None,
+        "sender_name": None,
+        "text": "",
+    }
+    for key, value in defaults.items():
+        safe_message.setdefault(key, value)
+    safe_message["channel_metadata"] = to_jsonb(safe_message.get("channel_metadata") or {})
+    safe_message["raw"] = to_jsonb(safe_message.get("raw") or {})
+    return safe_message
+
+
+def resolve_context_filter(
+    conversation_id: str | None,
+    sender_key: str | None,
+    sender_phone: str | None,
+    *,
+    table_alias: str = "inbound",
+) -> tuple[str | None, dict[str, Any]]:
+    if conversation_id:
+        return (
+            f"{table_alias}.conversation_id = %(conversation_id)s",
+            {"conversation_id": conversation_id},
+        )
+    if sender_key:
+        return (
+            f"{table_alias}.sender_key = %(sender_key)s",
+            {"sender_key": sender_key},
+        )
+    if sender_phone:
+        return (
+            f"{table_alias}.sender_phone = %(sender_phone)s",
+            {"sender_phone": sender_phone},
+        )
+    return None, {}
 
 
 def insert_inbound_message(message: dict[str, Any]) -> int | None:
@@ -97,17 +196,7 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
 
     ensure_tables()
 
-    safe_message = dict(message or {})
-
-    safe_message.setdefault("provider", "brevo")
-    safe_message.setdefault("event_type", None)
-    safe_message.setdefault("message_id", None)
-    safe_message.setdefault("conversation_id", None)
-    safe_message.setdefault("sender_phone", None)
-    safe_message.setdefault("sender_name", None)
-    safe_message.setdefault("text", None)
-
-    safe_message["raw"] = to_jsonb(safe_message.get("raw") or {})
+    safe_message = _prepare_inbound_message(message)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -119,9 +208,18 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
                     event_type,
                     message_id,
                     conversation_id,
+                    channel,
+                    sender_key,
+                    sender_external_id,
+                    visitor_id,
+                    sender_username,
+                    source_channel_ref,
+                    source_channel_link,
+                    source_conversation_ref,
                     sender_phone,
                     sender_name,
                     text,
+                    channel_metadata,
                     raw
                   )
                 VALUES
@@ -130,9 +228,18 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
                     %(event_type)s,
                     %(message_id)s,
                     %(conversation_id)s,
+                    %(channel)s,
+                    %(sender_key)s,
+                    %(sender_external_id)s,
+                    %(visitor_id)s,
+                    %(sender_username)s,
+                    %(source_channel_ref)s,
+                    %(source_channel_link)s,
+                    %(source_conversation_ref)s,
                     %(sender_phone)s,
                     %(sender_name)s,
                     %(text)s,
+                    %(channel_metadata)s,
                     %(raw)s
                   )
                 RETURNING id
@@ -176,15 +283,7 @@ def claim_inbound_message(message: dict[str, Any]) -> tuple[bool, int | None]:
     if not settings.database_url:
         return True, None
 
-    safe_message = dict(message or {})
-    safe_message.setdefault("provider", "brevo")
-    safe_message.setdefault("event_type", None)
-    safe_message.setdefault("message_id", None)
-    safe_message.setdefault("conversation_id", None)
-    safe_message.setdefault("sender_phone", None)
-    safe_message.setdefault("sender_name", None)
-    safe_message.setdefault("text", None)
-    safe_message["raw"] = to_jsonb(safe_message.get("raw") or {})
+    safe_message = _prepare_inbound_message(message)
 
     if not safe_message.get("message_id"):
         return True, insert_inbound_message(message)
@@ -213,10 +312,20 @@ def claim_inbound_message(message: dict[str, Any]) -> tuple[bool, int | None]:
             cur.execute(
                 """
                 INSERT INTO public.ai_inbound_messages
-                  (provider, event_type, message_id, conversation_id, sender_phone, sender_name, text, raw)
+                  (
+                    provider, event_type, message_id, conversation_id, channel,
+                    sender_key, sender_external_id, visitor_id, sender_username,
+                    source_channel_ref, source_channel_link, source_conversation_ref,
+                    sender_phone, sender_name, text, channel_metadata, raw
+                  )
                 VALUES
-                  (%(provider)s, %(event_type)s, %(message_id)s, %(conversation_id)s,
-                   %(sender_phone)s, %(sender_name)s, %(text)s, %(raw)s)
+                  (
+                    %(provider)s, %(event_type)s, %(message_id)s, %(conversation_id)s,
+                    %(channel)s, %(sender_key)s, %(sender_external_id)s, %(visitor_id)s,
+                    %(sender_username)s, %(source_channel_ref)s, %(source_channel_link)s,
+                    %(source_conversation_ref)s, %(sender_phone)s, %(sender_name)s,
+                    %(text)s, %(channel_metadata)s, %(raw)s
+                  )
                 RETURNING id
                 """,
                 safe_message,
@@ -227,36 +336,35 @@ def claim_inbound_message(message: dict[str, Any]) -> tuple[bool, int | None]:
 def is_latest_inbound_message(
     inbound_id: int | None,
     conversation_id: str | None,
+    sender_key: str | None,
     sender_phone: str | None,
 ) -> bool:
     """Check whether no later inbound row exists for this conversation/contact."""
     settings = get_settings()
     if not settings.database_url or not inbound_id:
         return True
-    if not conversation_id and not sender_phone:
+    conversation_filter, params = resolve_context_filter(
+        conversation_id,
+        sender_key,
+        sender_phone,
+    )
+    if not conversation_filter:
         return True
 
     ensure_tables()
+    params["inbound_id"] = inbound_id
     with get_conn() as conn:
         with conn.cursor() as cur:
-            if conversation_id:
-                cur.execute(
-                    """
-                    SELECT 1 FROM public.ai_inbound_messages
-                    WHERE id > %(inbound_id)s AND conversation_id = %(conversation_id)s
-                    LIMIT 1
-                    """,
-                    {"inbound_id": inbound_id, "conversation_id": conversation_id},
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT 1 FROM public.ai_inbound_messages
-                    WHERE id > %(inbound_id)s AND sender_phone = %(sender_phone)s
-                    LIMIT 1
-                    """,
-                    {"inbound_id": inbound_id, "sender_phone": sender_phone},
-                )
+            cur.execute(
+                f"""
+                SELECT 1
+                FROM public.ai_inbound_messages AS inbound
+                WHERE inbound.id > %(inbound_id)s
+                  AND {conversation_filter}
+                LIMIT 1
+                """,
+                params,
+            )
             return cur.fetchone() is None
 
 
@@ -266,10 +374,16 @@ def load_recent_conversation_turns(
     sender_phone: str | None,
     before_inbound_id: int | None,
     limit: int = 8,
+    sender_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load a small, chronological transcript containing only delivered replies."""
     settings = get_settings()
-    if not settings.database_url or (not conversation_id and not sender_phone):
+    conversation_filter, identity_params = resolve_context_filter(
+        conversation_id,
+        sender_key,
+        sender_phone,
+    )
+    if not settings.database_url or not conversation_filter:
         return []
 
     safe_limit = max(1, min(int(limit), 8))
@@ -277,12 +391,7 @@ def load_recent_conversation_turns(
         "before_inbound_id": before_inbound_id,
         "limit": safe_limit,
     }
-    if conversation_id:
-        conversation_filter = "inbound.conversation_id = %(conversation_id)s"
-        params["conversation_id"] = conversation_id
-    else:
-        conversation_filter = "inbound.sender_phone = %(sender_phone)s"
-        params["sender_phone"] = sender_phone
+    params.update(identity_params)
 
     before_filter = (
         "AND inbound.id < %(before_inbound_id)s"
@@ -335,19 +444,20 @@ def load_commerce_conversation_state(
     conversation_id: str | None,
     sender_phone: str | None,
     before_inbound_id: int | None,
+    sender_key: str | None = None,
 ) -> dict[str, Any]:
     """Load the latest delivered compact commerce state from existing JSONB."""
     settings = get_settings()
-    if not settings.database_url or (not conversation_id and not sender_phone):
+    conversation_filter, identity_params = resolve_context_filter(
+        conversation_id,
+        sender_key,
+        sender_phone,
+    )
+    if not settings.database_url or not conversation_filter:
         return {}
 
     params: dict[str, Any] = {"before_inbound_id": before_inbound_id}
-    if conversation_id:
-        conversation_filter = "inbound.conversation_id = %(conversation_id)s"
-        params["conversation_id"] = conversation_id
-    else:
-        conversation_filter = "inbound.sender_phone = %(sender_phone)s"
-        params["sender_phone"] = sender_phone
+    params.update(identity_params)
     before_filter = (
         "AND inbound.id < %(before_inbound_id)s"
         if before_inbound_id is not None
@@ -397,6 +507,8 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
     safe_data = dict(data or {})
 
     safe_data.setdefault("inbound_id", None)
+    safe_data.setdefault("channel", "unknown")
+    safe_data.setdefault("sender_key", None)
     safe_data.setdefault("sender_phone", None)
     safe_data.setdefault("reply_text", "")
     safe_data.setdefault("intent", None)
@@ -413,6 +525,8 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
                 INSERT INTO public.ai_agent_responses
                   (
                     inbound_id,
+                    channel,
+                    sender_key,
                     sender_phone,
                     reply_text,
                     intent,
@@ -424,6 +538,8 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
                 VALUES
                   (
                     %(inbound_id)s,
+                    %(channel)s,
+                    %(sender_key)s,
                     %(sender_phone)s,
                     %(reply_text)s,
                     %(intent)s,

@@ -175,16 +175,25 @@ class IncomingMessage(BaseModel):
     provider: str = "brevo"
     event_type: str | None = None
     message_id: str | None = None
+    channel: str = "unknown"
+    sender_key: str | None = None
+    sender_external_id: str | None = None
+    sender_username: str | None = None
+    source_channel_ref: str | None = None
+    source_channel_link: str | None = None
+    source_conversation_ref: str | None = None
     conversation_id: str | None = None
     visitor_id: str | None = None
     sender_phone: str | None = None
     sender_name: str | None = None
     text: str = ""
     input_modality: str = "text"
+    attachment_type: str | None = None
     audio_url: str | None = None
     audio_mime_type: str | None = None
     audio_filename: str | None = None
     transcription_failed: bool = False
+    channel_metadata: dict[str, Any] = Field(default_factory=dict)
     raw: dict[str, Any] = Field(default_factory=dict)
 
 

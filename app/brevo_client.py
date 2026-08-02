@@ -84,7 +84,6 @@ async def _send_conversations_reply(
         print("[brevo.send] conversations_failed", {
             "status_code": resp.status_code,
             "visitor_id_present": bool(incoming.visitor_id),
-            "response_preview": str(body)[:300],
         })
 
     return BrevoSendResult(
@@ -139,7 +138,6 @@ async def _send_whatsapp_transactional_reply(incoming: IncomingMessage, text: st
             "status_code": resp.status_code,
             "recipient_present": bool(recipient),
             "sender_present": bool(sender),
-            "response_preview": str(body)[:300],
         })
 
     return BrevoSendResult(
@@ -185,6 +183,9 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
             "audio_bytes": len(result.reply_audio_bytes or b""),
         })
 
+    if incoming.channel in {"instagram", "facebook", "widget"} and audio_file:
+        audio_file = None
+
     if settings.dry_run or mode == "dry_run":
         sent = BrevoSendResult(
             ok=True,
@@ -199,11 +200,22 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
             },
         )
         channel = "dry_run"
-    elif mode == "whatsapp":
+    elif incoming.channel == "whatsapp" and incoming.sender_phone and mode != "conversations":
+        if audio_file and isinstance(result, AgentResult) and result.reply_audio_url:
+            text = f"{text}\n\nOuça: {result.reply_audio_url}".strip()
         sent = await _send_whatsapp_transactional_reply(incoming, text)
         channel = "whatsapp"
+    elif incoming.channel in {"instagram", "facebook", "widget"} and incoming.visitor_id:
+        sent = await _send_conversations_reply(incoming, text, audio_file=audio_file)
+        channel = "brevo_conversations"
+    elif incoming.channel in {"instagram", "facebook", "widget"}:
+        sent = BrevoSendResult(
+            ok=False,
+            dry_run=False,
+            error="brevo_recipient_missing",
+        )
+        channel = "none"
     elif incoming.visitor_id:
-        # Conversations documents text outbound, but not dynamic image attachments.
         sent = await _send_conversations_reply(incoming, text, audio_file=audio_file)
         channel = "brevo_conversations"
     elif incoming.sender_phone:
