@@ -24,6 +24,22 @@ ON public.ai_inbound_messages(channel, source_conversation_ref);
 CREATE INDEX IF NOT EXISTS idx_ai_inbound_conversation_created_at
 ON public.ai_inbound_messages(conversation_id, created_at DESC);
 
+WITH ranked_messages AS (
+    SELECT
+        id,
+        row_number() OVER (
+            PARTITION BY provider, message_id
+            ORDER BY id
+        ) AS occurrence
+    FROM public.ai_inbound_messages
+    WHERE message_id IS NOT NULL
+)
+UPDATE public.ai_inbound_messages AS inbound
+SET message_id = NULL
+FROM ranked_messages AS ranked
+WHERE inbound.id = ranked.id
+  AND ranked.occurrence > 1;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_inbound_provider_message_id
 ON public.ai_inbound_messages(provider, message_id)
 WHERE message_id IS NOT NULL;

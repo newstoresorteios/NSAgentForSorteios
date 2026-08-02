@@ -1169,6 +1169,10 @@ async def _sales_response_with_openai(
     if not settings.openai_api_key or tray_result.safety_reason in {
         "tray_adapter_unavailable", "product_match_failed", "product_not_found",
         "ambiguous_product", "product_context_missing", "coupon_not_found",
+        "order_not_found", "order_status_technical_failure",
+        "invalid_customer_document", "order_customer_not_confirmed",
+        "order_customer_mismatch", "order_customer_lookup_technical_failure",
+        "customer_orders_lookup_technical_failure",
     }:
         return None
     try:

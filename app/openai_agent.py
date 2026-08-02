@@ -30,6 +30,12 @@ from .guardrails import (
     default_safe_handoff,
 )
 from .models import IncomingMessage, AgentResult
+from .order_service import (
+    contains_tax_document_candidate,
+    extract_valid_tax_document,
+    find_order_by_customer_document,
+    invalid_tax_document_result,
+)
 from .repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
 from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
 from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
@@ -369,6 +375,34 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     commerce_state = CommerceConversationState.from_payload(
         customer_context.get("_commerce_state")
     )
+    if commerce_state.pending_action == "awaiting_order_customer_document":
+        customer_document = extract_valid_tax_document(message.text)
+        if customer_document:
+            document_kind, document = customer_document
+            result = await find_order_by_customer_document(
+                state=commerce_state,
+                execute=execute_tool,
+                document_kind=document_kind,
+                document=document,
+            )
+            return _annotate_agent_result(
+                result,
+                domain="commerce",
+                response_source="deterministic_fallback",
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=bool(result.response_metadata.get("used_tray")),
+            )
+        if contains_tax_document_candidate(message.text):
+            result = invalid_tax_document_result()
+            return _annotate_agent_result(
+                result,
+                domain="commerce",
+                response_source="deterministic_fallback",
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=False,
+            )
     interpretation = await interpret_message(
         message,
         recent_turns=recent_turns,

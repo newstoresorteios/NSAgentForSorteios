@@ -50,6 +50,7 @@ _ORDER_FIELDS = (
     "status_group", "created_at", "order_created_at", "total", "subtotal",
     "shipping", "shipment", "sending_code", "tracking_url", "sending_date",
     "estimated_delivery_date", "products", "items", "payment",
+    "customer_id", "customer",
 )
 _ORDER_PAYMENT_FIELDS = (
     "method_id", "method", "type", "has_payment", "payment_date",

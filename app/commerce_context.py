@@ -181,6 +181,7 @@ class CommerceConversationState(BaseModel):
     order_session_id: str | None = None
     order_created_at: str | None = None
     order_creation_ambiguous: bool = False
+    order_lookup_id: str | None = None
     order_payment_method_id: str | None = None
     order_payment_method: str | None = None
     order_payment_type: str | None = None
@@ -206,6 +207,7 @@ class CommerceConversationState(BaseModel):
         "awaiting_checkout_data",
         "awaiting_order_confirmation",
         "awaiting_payment",
+        "awaiting_order_customer_document",
     ] | None = None
     pending_action_product_ids: list[str] = Field(default_factory=list)
 
@@ -610,6 +612,7 @@ def evolve_commerce_state(
         state.order_session_id = None
         state.order_created_at = None
         state.order_creation_ambiguous = False
+        state.order_lookup_id = None
         state.order_payment_method_id = None
         state.order_payment_method = None
         state.order_payment_type = None
@@ -666,6 +669,7 @@ def evolve_commerce_state(
         "awaiting_checkout_data",
         "awaiting_order_confirmation",
         "awaiting_payment",
+        "awaiting_order_customer_document",
     }:
         state.pending_action = pending_action
         pending_ids = metadata.get("pending_action_product_ids")
@@ -762,7 +766,7 @@ def evolve_commerce_state(
             "order_confirmation_status", "order_review_version",
             "confirmed_order_review_version", "order_id", "order_status",
             "order_status_group", "order_session_id", "order_created_at",
-            "order_creation_ambiguous",
+            "order_creation_ambiguous", "order_lookup_id",
         ):
             if field in order_state:
                 setattr(state, field, order_state[field])

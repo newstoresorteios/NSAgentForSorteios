@@ -497,9 +497,16 @@ class TrayAdapterClient:
     async def create_order(self, payload: dict[str, Any]) -> Any:
         return await self._request("POST", "/internal/orders", json_body=payload)
 
-    async def list_orders(self, *, session_id: str | None = None) -> Any:
+    async def list_orders(
+        self,
+        *,
+        session_id: str | None = None,
+        customer_id: str | int | None = None,
+    ) -> Any:
         return await self._request(
-            "GET", "/internal/orders", params={"session_id": session_id}
+            "GET",
+            "/internal/orders",
+            params={"session_id": session_id, "customer_id": customer_id},
         )
 
     async def get_order(self, order_id: str | int) -> Any:

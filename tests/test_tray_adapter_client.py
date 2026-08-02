@@ -35,6 +35,18 @@ async def test_product_search_sends_bearer_params_and_limit():
 
 
 @pytest.mark.asyncio
+async def test_order_list_can_filter_by_confirmed_customer_id():
+    fake = FakeClient(FakeResponse(payload={"orders": []}))
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+
+    await client.list_orders(customer_id="customer-7")
+
+    args, kwargs = fake.calls[0]
+    assert args == ("GET", "https://tray.example/internal/orders")
+    assert kwargs["params"] == {"customer_id": "customer-7"}
+
+
+@pytest.mark.asyncio
 async def test_categories_and_variants_use_new_read_only_routes():
     fake = FakeClient()
     client = TrayAdapterClient("https://tray.example", "secret", fake)
