@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable
 
@@ -86,6 +87,50 @@ def contains_tax_document_candidate(text: str | None) -> bool:
         len("".join(character for character in candidate if character.isdigit())) in {11, 14}
         for candidate in re.findall(r"(?<!\d)(?:\d[\s./-]?){10,13}\d(?!\d)", text or "")
     )
+
+
+def _fold_text(value: str | None) -> str:
+    folded = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", (value or "").casefold())
+        if not unicodedata.combining(character)
+    )
+    return folded.replace("º", "o").replace("°", "o")
+
+
+def extract_order_reference(text: str | None) -> str | None:
+    folded = _fold_text(text)
+    patterns = (
+        r"\bcod(?:igo)?\.?\s*(?:do\s+)?pedido\s*[:#-]?\s*([a-z0-9][a-z0-9-]*)",
+        r"\bpedido\s+(?:n(?:umero|o)?|cod(?:igo)?)\.?\s*[:#-]?\s*([a-z0-9][a-z0-9-]*)",
+        r"\bpedido\s*[:#-]\s*([a-z0-9][a-z0-9-]*)",
+        r"\bpedido\s+([0-9][a-z0-9-]*)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, folded)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def is_order_lookup_request(text: str | None) -> bool:
+    folded = _fold_text(text)
+    if "pedido" not in folded:
+        return False
+    if extract_order_reference(text):
+        return True
+    lookup_signals = (
+        "status",
+        "como esta",
+        "acompanhar",
+        "acompanhamento",
+        "rastre",
+        "andamento",
+        "onde esta",
+        "fiz um pedido",
+        "meu pedido",
+    )
+    return any(signal in folded for signal in lookup_signals)
 
 
 def _money(value: Any) -> str | None:

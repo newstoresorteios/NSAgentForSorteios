@@ -32,9 +32,12 @@ from .guardrails import (
 from .models import IncomingMessage, AgentResult
 from .order_service import (
     contains_tax_document_candidate,
+    extract_order_reference,
     extract_valid_tax_document,
     find_order_by_customer_document,
+    get_order_facts,
     invalid_tax_document_result,
+    is_order_lookup_request,
 )
 from .repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
 from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
@@ -403,6 +406,29 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 used_openai_responder=False,
                 used_tray=False,
             )
+    order_reference = extract_order_reference(message.text)
+    if is_order_lookup_request(message.text) and (
+        order_reference
+        or commerce_state.order_id
+        or commerce_state.order_lookup_id
+    ):
+        print("[sales.order.route]", {
+            "route": "deterministic_status_lookup",
+            "order_reference_present": bool(order_reference),
+        })
+        result = await get_order_facts(
+            state=commerce_state,
+            execute=execute_tool,
+            order_id=order_reference,
+        )
+        return _annotate_agent_result(
+            result,
+            domain="commerce",
+            response_source="deterministic_fallback",
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=bool(result.response_metadata.get("used_tray")),
+        )
     interpretation = await interpret_message(
         message,
         recent_turns=recent_turns,

@@ -5,9 +5,11 @@ import pytest
 from app.commerce_context import CommerceConversationState, evolve_commerce_state
 from app.models import AgentResult, IncomingMessage
 from app.order_service import (
+    extract_order_reference,
     extract_valid_tax_document,
     find_order_by_customer_document,
     get_order_facts,
+    is_order_lookup_request,
 )
 
 
@@ -15,6 +17,19 @@ def test_tax_document_validation_accepts_real_check_digits_only():
     assert extract_valid_tax_document("CPF 529.982.247-25") == ("cpf", "52998224725")
     assert extract_valid_tax_document("CNPJ 11.222.333/0001-81") == ("cnpj", "11222333000181")
     assert extract_valid_tax_document("CPF 529.982.247-24") is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Cód.Pedido: 195", "195"),
+        ("qual o status do pedido 195?", "195"),
+        ("acompanhar pedido nº ABC-123", "abc-123"),
+    ],
+)
+def test_order_reference_is_extracted_from_customer_phrasing(text, expected):
+    assert extract_order_reference(text) == expected
+    assert is_order_lookup_request(text) is True
 
 
 @pytest.mark.asyncio
@@ -175,4 +190,42 @@ async def test_pending_document_is_handled_before_openai_interpretation(monkeypa
     assert result.reply_text == "Pedido confirmado."
     assert captured["document_kind"] == "cpf"
     assert captured["document"] == "52998224725"
+    assert result.response_metadata["used_openai_interpreter"] is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_order_status_bypasses_openai_and_calls_tray(monkeypatch):
+    import app.openai_agent as openai_agent
+
+    captured = {}
+
+    async def get_order(**kwargs):
+        captured.update(kwargs)
+        return AgentResult(
+            reply_text="Informe o CPF ou CNPJ do comprador.",
+            intent="commerce",
+            safety_reason="order_not_found",
+            commercial_data={"success": False},
+            response_metadata={"domain": "commerce", "used_tray": True},
+        )
+
+    monkeypatch.setattr(openai_agent, "get_order_facts", get_order)
+    monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        openai_agent,
+        "interpret_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("explicit order lookup must bypass interpretation")
+        ),
+    )
+
+    result = await openai_agent.generate_agent_reply_async(
+        IncomingMessage(
+            text="Me tira uma dúvida, fiz um pedido e queria saber como está! Cód.Pedido: 195"
+        ),
+        {"_commerce_state": {}},
+    )
+
+    assert captured["order_id"] == "195"
+    assert result.safety_reason == "order_not_found"
     assert result.response_metadata["used_openai_interpreter"] is False
