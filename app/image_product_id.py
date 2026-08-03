@@ -463,14 +463,53 @@ async def handle_image_product_search(
         )
         if visual is not None:
             return visual
-        color_hint = (identified.color or "").strip()
-        tray_result.reply_text = (
-            f"Pela foto, identifiquei {label or 'esse modelo'}"
-            f"{f' ({color_hint})' if color_hint else ''}, "
-            "mas ainda não localizei essa combinação exata no catálogo. "
-            "Pode confirmar se é o C63 Sealander Automático (não GMT), "
-            "ou me passar a referência do mostrador/caixa?"
+        products = (
+            (tray_result.commercial_data or {}).get("products")
+            if isinstance(tray_result.commercial_data, dict)
+            else None
         )
+        if isinstance(products, list) and products:
+            from .commerce_router import _product_lines
+
+            numbered_lines = [
+                f"{position}. {line}"
+                for position, line in enumerate(_product_lines(products), start=1)
+            ]
+            tray_result.reply_text = (
+                f"Pela foto, identifiquei {label or 'esse modelo'}. "
+                "Encontrei no catálogo:\n"
+                + "\n".join(numbered_lines)
+                + "\n\nÉ esse da foto?"
+            )
+        else:
+            color_hint = (identified.color or "").strip()
+            tray_result.reply_text = (
+                f"Pela foto, identifiquei {label or 'esse modelo'}"
+                f"{f' ({color_hint})' if color_hint else ''}, "
+                "mas ainda não localizei essa combinação exata no catálogo. "
+                "Quer que eu mostre as opções mais próximas dessa linha?"
+            )
+    elif tray_result.commercial_data and isinstance(
+        tray_result.commercial_data.get("products"),
+        list,
+    ) and tray_result.commercial_data["products"]:
+        # Exact/ambiguous catalog hit after Vision — confirm with the customer.
+        from .commerce_router import _product_lines
+
+        products = tray_result.commercial_data["products"]
+        numbered_lines = [
+            f"{position}. {line}"
+            for position, line in enumerate(_product_lines(products), start=1)
+        ]
+        if tray_result.safety_reason is None or not tray_result.reply_text.startswith(
+            "Pela foto"
+        ):
+            tray_result.reply_text = (
+                f"Pela foto, parece {label or 'este modelo'}. "
+                "Encontrei no catálogo:\n"
+                + "\n".join(numbered_lines)
+                + "\n\nÉ esse que você procura?"
+            )
 
     tray_result.response_metadata.update({
         "image_search": True,

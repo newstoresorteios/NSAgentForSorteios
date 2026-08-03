@@ -91,6 +91,7 @@ from .product_retrieval import (
     revalidate_products,
     rerank_products,
     semantic_preferences,
+    soft_confirm_candidates,
     specific_product_search_terms,
 )
 from .tray_tools import execute_tool
@@ -1851,6 +1852,48 @@ async def _execute_compiled_product_retrieval(
                 )
             brand = (interpretation.subject.brand or "").strip()
             if used_brand_candidates and brand and candidates:
+                soft = soft_confirm_candidates(
+                    candidates,
+                    interpretation,
+                    limit=CUSTOMER_RESULT_LIMIT,
+                )
+                if soft:
+                    refreshed, revalidation_failed = await revalidate_products(
+                        soft,
+                        interpretation,
+                        execute_tool,
+                    )
+                    if refreshed or not revalidation_failed:
+                        from .commerce_router import _product_lines
+
+                        final_products = refreshed or soft
+                        numbered_lines = [
+                            f"{position}. {line}"
+                            for position, line in enumerate(
+                                _product_lines(final_products),
+                                start=1,
+                            )
+                        ]
+                        return AgentResult(
+                            reply_text=(
+                                f"Não achei a combinação exata da foto, mas estes "
+                                f"{brand} parecem os mais próximos no catálogo:\n"
+                                + "\n".join(numbered_lines)
+                                + "\n\nÉ algum desses?"
+                            ),
+                            intent="commerce",
+                            handoff_required=False,
+                            safety_reason="exact_product_ambiguous_brand",
+                            commercial_data={
+                                "products": final_products,
+                                "match_status": "ambiguous",
+                            },
+                            response_metadata={
+                                "presented_products": True,
+                                "product_resolution_state": "plausible_matches",
+                                "clear_active_product": True,
+                            },
+                        )
                 return AgentResult(
                     reply_text=(
                         f"Não confirmei essa referência exata agora, mas tenho peças {brand} no catálogo. "

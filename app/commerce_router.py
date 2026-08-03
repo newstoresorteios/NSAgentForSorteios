@@ -139,6 +139,13 @@ def _product_lines(products: list[dict[str, Any]], inventory: dict[str, Any] | N
         price = _price(product)
         if price is not None:
             parts.append(f"Pre\u00e7o: {_price_label(price)}")
+        product_url = (
+            product.get("url")
+            or product.get("product_url")
+            or product.get("link")
+        )
+        if isinstance(product_url, str) and product_url.strip():
+            parts.append(f"Link: {product_url.strip()}")
         payment = _payment_label(product.get("payment_option_details")) or _payment_label(product.get("payment_option"))
         if payment:
             parts.append(f"Condi\u00e7\u00f5es comerciais: {payment}")

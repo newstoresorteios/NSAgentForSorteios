@@ -236,7 +236,66 @@ async def test_handle_image_product_search_retrieves_catalog(monkeypatch):
     assert result is not None
     assert result.response_metadata.get("image_search") is True
     assert "Certina" in result.reply_text
+    assert "É esse que você procura?" in result.reply_text
     assert result.commercial_data["products"][0]["id"] == "9001"
+
+
+@pytest.mark.asyncio
+async def test_handle_image_product_search_does_not_ask_for_sku(monkeypatch):
+    from app import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="qual o preço desse?",
+        input_modality="text_with_image",
+        attachment_type="image",
+        image_url="https://example.com/sealander.jpg",
+    )
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        color="rosa claro",
+        confidence=0.92,
+    )
+    tray_result = AgentResult(
+        reply_text="Não encontrei esse produto no catálogo agora.",
+        intent="commerce",
+        safety_reason="product_not_found",
+        response_metadata={"used_tray": True},
+    )
+
+    async def fake_identify(msg):
+        return identified
+
+    async def fake_retrieval(interpretation):
+        return tray_result
+
+    async def fake_visual(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        agent_image_search_enabled=True,
+        agent_image_search_min_confidence=0.55,
+        agent_visual_search_enabled=False,
+        database_url="",
+    ))
+    monkeypatch.setattr(module, "identify_product_from_image", fake_identify)
+    monkeypatch.setattr(module, "_try_visual_fallback", fake_visual)
+
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "_execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+
+    result = await handle_image_product_search(message)
+    assert result is not None
+    assert "referência" not in result.reply_text.casefold()
+    assert "opções mais próximas" in result.reply_text.casefold()
+    assert "Christopher Ward" in result.reply_text
 
 
 @pytest.mark.asyncio

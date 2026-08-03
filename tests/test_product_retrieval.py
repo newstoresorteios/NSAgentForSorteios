@@ -138,8 +138,14 @@ def test_long_model_title_matches_short_tray_model_field():
     plan = ProductRetrievalCompiler.compile(interpretation)
     strategies = [request.strategy for request in plan.requests]
     assert "exact_query_full" in strategies
-    assert "exact_catalog_title" in strategies
     assert "exact_model_code" in strategies
+    assert any(
+        request.name
+        and request.name.startswith("Relógio Christopher Ward")
+        and "Rosa" in request.name
+        for request in plan.requests
+        if request.name
+    )
 
 
 def test_vision_color_phrase_is_not_treated_as_product_reference():
@@ -283,13 +289,47 @@ async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
         for request in plan.requests
         if request.name
     )
-    # Keep probe count small — sequential Tray storms were timing out on Hobby.
+    assert not any(
+        request.name and request.name.casefold().count("rosa") > 1
+        for request in plan.requests
+        if request.name
+    )
+    # Keep probe count bounded — probes run in parallel but still cost Tray time.
     probe_count = sum(
         1
         for request in plan.requests
         if request.strategy not in {"brand_candidates", "category_candidates"}
     )
-    assert probe_count <= 10
+    assert probe_count <= 16
+
+
+@pytest.mark.asyncio
+async def test_color_mismatch_soft_confirms_automatic_not_gmt():
+    from app.product_retrieval import match_specific_products
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        preferences={"color": "rosa"},
+    )
+    products = [
+        {
+            "id": "auto-blue",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Azul 36 mm",
+        },
+        {
+            "id": "8975",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander GMT Automático Azul 39 mm",
+        },
+    ]
+    resolution = await match_specific_products(products, interpretation)
+    assert resolution.status == "ambiguous"
+    assert [product["id"] for product in resolution.products] == ["auto-blue"]
 
 
 def test_exact_progress_matches_requires_requested_color():
