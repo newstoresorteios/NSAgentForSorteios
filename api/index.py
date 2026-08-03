@@ -7,7 +7,7 @@ from json import JSONDecodeError
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from app.security import verify_brevo_webhook, verify_admin_token
+from app.security import verify_brevo_webhook, verify_admin_token, verify_remarketing_cron
 from app.webhook_parser import (
     inbound_skip_reason,
     parse_brevo_conversations_payload,
@@ -20,6 +20,7 @@ from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
 from app.db import claim_inbound_message, inbound_message_exists, insert_agent_response, insert_inbound_message, is_latest_inbound_message
 from app.config import get_allowed_channels, get_settings
+from app.remarketing import run_remarketing_batch, sync_remarketing_interaction
 from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
@@ -128,7 +129,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-v3"
+AGENT_VERSION = "openai-db-context-multichannel-remarketing-v4"
 
 
 @app.get("/api/health")
@@ -180,6 +181,20 @@ async def health():
         "dry_run": settings.dry_run,
         "tray_adapter_configured": bool(settings.tray_adapter_url and settings.tray_adapter_token),
         "tray_tools_enabled": bool(settings.tray_adapter_url and settings.tray_adapter_token),
+        "remarketing_enabled": getattr(settings, "remarketing_enabled", False),
+        "remarketing_cron_configured": bool(
+            getattr(settings, "remarketing_cron_secret", "")
+        ),
+        "remarketing_touch_hours": getattr(
+            settings,
+            "remarketing_touch_hours",
+            "1,12,23",
+        ),
+        "remarketing_meta_window_hours": getattr(
+            settings,
+            "remarketing_meta_window_hours",
+            24,
+        ),
     }
 
 
@@ -442,6 +457,24 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             },
         ) from exc
 
+    try:
+        sync_remarketing_interaction(
+            incoming,
+            inbound_id=inbound_id,
+            response_metadata=(
+                agent_result.response_metadata
+                if provider_send_ok
+                else {}
+            ),
+            handoff_required=agent_result.handoff_required,
+        )
+    except Exception as exc:
+        print("[remarketing.sync] failed", {
+            "error_type": type(exc).__name__,
+            "inbound_id": inbound_id,
+            "channel": incoming.channel,
+        })
+
     return JSONResponse(
         {
             "ok": True,
@@ -452,6 +485,24 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "skipped_reply": not bool(send_result),
         }
     )
+
+
+@app.get(
+    "/api/cron/remarketing",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def remarketing_cron():
+    result = await run_remarketing_batch()
+    print("[remarketing.cron] completed", result)
+    return {"ok": True, **result}
+
+
+@app.post(
+    "/api/cron/remarketing",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def remarketing_cron_manual():
+    return await remarketing_cron()
 
 
 @app.post("/api/webhooks/brevo/conversations")

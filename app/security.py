@@ -44,3 +44,15 @@ async def verify_admin_token(authorization: str | None = Header(default=None)) -
     expected = f"Bearer {settings.admin_api_token}"
     if not authorization or not _secure_equals(authorization, expected):
         raise HTTPException(status_code=401, detail="invalid_admin_token")
+
+
+async def verify_remarketing_cron(
+    authorization: str | None = Header(default=None),
+) -> None:
+    settings = get_settings()
+    if not settings.remarketing_cron_secret:
+        raise HTTPException(status_code=500, detail="remarketing_cron_secret_not_configured")
+
+    expected = f"Bearer {settings.remarketing_cron_secret}"
+    if not authorization or not _secure_equals(authorization, expected):
+        raise HTTPException(status_code=401, detail="invalid_remarketing_cron_token")

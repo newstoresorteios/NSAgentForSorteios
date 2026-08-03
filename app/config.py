@@ -45,6 +45,11 @@ class Settings(BaseSettings):
 
     database_url: str = Field(default="", alias="DATABASE_URL")
     auto_create_tables: bool = Field(default=False, alias="AUTO_CREATE_TABLES")
+    remarketing_enabled: bool = Field(default=False, alias="REMARKETING_ENABLED")
+    remarketing_cron_secret: str = Field(default="", alias="CRON_SECRET")
+    remarketing_touch_hours: str = Field(default="1,12,23", alias="REMARKETING_TOUCH_HOURS")
+    remarketing_meta_window_hours: int = Field(default=24, alias="REMARKETING_META_WINDOW_HOURS")
+    remarketing_batch_size: int = Field(default=25, alias="REMARKETING_BATCH_SIZE")
 
     brevo_api_key: str = Field(default="", alias="BREVO_API_KEY")
     brevo_send_url: str = Field(default="", alias="BREVO_SEND_URL")
@@ -67,7 +72,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "openai_api_key", "admin_api_token", "brevo_webhook_secret", "brevo_api_key",
-        "tray_adapter_token", mode="before"
+        "tray_adapter_token", "remarketing_cron_secret", mode="before"
     )
     @classmethod
     def normalize_secret(cls, value: object) -> object:
@@ -103,3 +108,15 @@ def get_allowed_channels(settings: Settings) -> set[str]:
         ).split(",")
         if channel.strip()
     }
+
+
+def get_remarketing_touch_hours(settings: Settings) -> list[int]:
+    hours: set[int] = set()
+    for value in (settings.remarketing_touch_hours or "").split(","):
+        try:
+            hour = int(value.strip())
+        except ValueError:
+            continue
+        if 0 < hour < settings.remarketing_meta_window_hours:
+            hours.add(hour)
+    return sorted(hours)

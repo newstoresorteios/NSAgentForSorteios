@@ -23,6 +23,7 @@ async def test_instagram_without_phone_runs_pipeline_and_replies_to_visitor(monk
     persisted = []
     processed = []
     sent = []
+    synced = []
 
     monkeypatch.setattr(index, "inbound_message_exists", lambda *_: False)
     monkeypatch.setattr(
@@ -48,6 +49,11 @@ async def test_instagram_without_phone_runs_pipeline_and_replies_to_visitor(monk
     monkeypatch.setattr(index, "process_incoming_message", process)
     monkeypatch.setattr(index, "send_brevo_reply", send)
     monkeypatch.setattr(index, "insert_agent_response", lambda _data: None)
+    monkeypatch.setattr(
+        index,
+        "sync_remarketing_interaction",
+        lambda incoming, **kwargs: synced.append((incoming, kwargs)),
+    )
 
     response = await _post(index, {
         "eventName": "conversationStarted",
@@ -77,6 +83,8 @@ async def test_instagram_without_phone_runs_pipeline_and_replies_to_visitor(monk
         "display_name": "Cliente Instagram",
     }
     assert sent[0][0].visitor_id == "brevo-visitor-instagram-001"
+    assert synced[0][0].sender_key == "instagram:instagram-user-999"
+    assert synced[0][1]["inbound_id"] == 91
 
 
 @pytest.mark.asyncio
