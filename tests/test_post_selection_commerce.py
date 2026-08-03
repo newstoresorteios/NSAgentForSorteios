@@ -359,6 +359,90 @@ async def test_product_and_position_images_use_real_tray_urls(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_inbound_photo_with_image_request_identifies_product(monkeypatch):
+    """Customer photo must not be blocked by the outbound show-image guard."""
+    from app import sales_agent
+    from app.models import AgentResult
+
+    async def fake_image_search(message):
+        assert message.image_url
+        return AgentResult(
+            reply_text="Encontrei o Christopher Ward Sealander.",
+            intent="commerce",
+            safety_reason=None,
+            commercial_data={
+                "products": [
+                    {"id": "cw-1", "name": "Christopher Ward C63 Sealander"}
+                ]
+            },
+            response_metadata={"image_search": True, "used_tray": True},
+        )
+
+    monkeypatch.setattr(
+        "app.image_product_id.handle_image_product_search",
+        fake_image_search,
+    )
+    monkeypatch.setattr(
+        "app.image_product_id.image_search_eligible",
+        lambda message: True,
+    )
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(
+            text="qual o preço do relogio da foto?",
+            input_modality="text_with_image",
+            attachment_type="image",
+            image_url="https://cdn.example.com/sealander.jpg",
+        ),
+        {},
+        {},
+        _interpretation(
+            goal="inspect",
+            purchase_action=None,
+            image_request=True,
+        ),
+        commerce_state=CommerceConversationState(),
+    )
+
+    assert result is not None
+    assert "Sealander" in result.reply_text
+    assert "antes de consultar a imagem" not in result.reply_text.casefold()
+    assert result.commercial_data["products"][0]["id"] == "cw-1"
+
+
+@pytest.mark.asyncio
+async def test_image_request_without_product_asks_for_photo_not_name_first(monkeypatch):
+    from app import sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="não sei o nome"),
+        {},
+        {},
+        _interpretation(
+            goal="inspect",
+            purchase_action=None,
+            image_request=True,
+        ),
+        commerce_state=CommerceConversationState(),
+    )
+
+    assert result is not None
+    assert "antes de consultar a imagem" not in result.reply_text.casefold()
+    assert "foto" in result.reply_text.casefold()
+
+
+@pytest.mark.asyncio
 async def test_missing_image_is_honest():
     async def execute(_tool, _arguments):
         return {"id": "A", "name": "Produto sem foto"}

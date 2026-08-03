@@ -254,3 +254,32 @@ async def test_handle_image_product_search_asks_when_confidence_low(monkeypatch)
     assert result is not None
     assert result.safety_reason == "image_identify_low_confidence"
     assert "não consegui" in result.reply_text.casefold() or "confirma" in result.reply_text.casefold()
+
+
+def test_parser_detects_image_from_url_extension_without_type():
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conv-image-002",
+        "messages": [
+            {
+                "id": "msg-image-002",
+                "type": "visitor",
+                "text": "qual o preço do relogio da foto?",
+                "createdAt": 1785700000000,
+                "file": {
+                    "link": "https://cdn.example.com/watch.jpg",
+                    "name": "attachment",
+                    "type": "file",
+                },
+            }
+        ],
+        "visitor": {
+            "id": "visitor-wa",
+            "source": "whatsapp",
+            "attributes": {"WHATSAPP": "5521999999999"},
+        },
+    }
+    incoming = parse_brevo_conversations_payload(payload)
+    assert incoming.attachment_type == "image"
+    assert incoming.image_url == "https://cdn.example.com/watch.jpg"
+    assert incoming.input_modality == "text_with_image"

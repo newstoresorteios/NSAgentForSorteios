@@ -287,6 +287,29 @@ def _attachment_candidates(message: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
+def _attachment_url(attachment: dict[str, Any]) -> str | None:
+    return _first_non_empty(
+        attachment.get("link"),
+        attachment.get("url"),
+        attachment.get("src"),
+        attachment.get("href"),
+        attachment.get("downloadUrl"),
+        attachment.get("download_url"),
+        attachment.get("fileUrl"),
+        attachment.get("file_url"),
+    )
+
+
+def _looks_like_image_url(url: str | None) -> bool:
+    if not url:
+        return False
+    path = str(url).split("?", 1)[0].casefold()
+    return any(
+        path.endswith(extension)
+        for extension in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp")
+    )
+
+
 def _attachment_type(attachment: dict[str, Any]) -> str:
     explicit = _first_non_empty(
         attachment.get("type"),
@@ -295,15 +318,26 @@ def _attachment_type(attachment: dict[str, Any]) -> str:
         attachment.get("_source_key"),
     )
     normalized = str(explicit or "").lower()
-    mime_type = str(attachment.get("mimeType") or attachment.get("mimetype") or "").lower()
+    mime_type = str(
+        attachment.get("mimeType")
+        or attachment.get("mimetype")
+        or attachment.get("contentType")
+        or ""
+    ).lower()
     filename = str(attachment.get("name") or attachment.get("filename") or "").lower()
+    url = _attachment_url(attachment)
     if is_audio_attachment(attachment):
         return "audio"
     if "sticker" in normalized:
         return "sticker"
     if "image" in normalized or mime_type.startswith("image/"):
         return "image"
-    if any(filename.endswith(extension) for extension in (".jpg", ".jpeg", ".png", ".gif", ".webp")):
+    if any(
+        filename.endswith(extension)
+        for extension in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp")
+    ):
+        return "image"
+    if _looks_like_image_url(url):
         return "image"
     return "file"
 
@@ -433,11 +467,7 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
             attachment_type = _attachment_type(attachment)
             filename = _first_non_empty(attachment.get("name"), attachment.get("filename"))
             if attachment_type == "image":
-                image_url = _first_non_empty(
-                    attachment.get("link"),
-                    attachment.get("url"),
-                    attachment.get("src"),
-                )
+                image_url = _attachment_url(attachment)
                 image_mime_type = _first_non_empty(
                     attachment.get("mimeType"),
                     attachment.get("mimetype"),

@@ -45,11 +45,12 @@ def image_search_eligible(message: IncomingMessage) -> bool:
     settings = get_settings()
     if not bool(getattr(settings, "agent_image_search_enabled", True)):
         return False
-    if (message.attachment_type or "").lower() != "image":
-        return False
     if not (message.image_url or "").strip():
         return False
+    attachment = (message.attachment_type or "").lower()
     modality = (message.input_modality or "").lower()
+    if attachment == "image":
+        return True
     return modality in {"image", "text_with_image"}
 
 

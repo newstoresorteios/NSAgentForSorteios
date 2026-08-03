@@ -279,7 +279,11 @@ Interprete semanticamente a etapa de carrinho:
 Para comprar vários produtos, preencha purchase_items com uma entrada para cada item,
 preservando referência semântica e quantidade. Não invente IDs. Use list_position para
 itens numerados, current_product para o produto ativo e explicit_product com o nome citado.
-Defina image_request=true quando pedir imagem/foto do produto referenciado.
+Defina image_request=true SOMENTE quando o cliente pedir que a loja envie a foto/imagem
+oficial de um produto ja identificado (ex.: "manda a foto desse", "quero ver a imagem").
+Se o cliente ENVIOU uma foto e pergunta preco/nome/modelo ("qual o preco do relogio da foto?",
+"o que e esse relogio?"), isso NAO e image_request: use goal=find (ou inspect de preco apos
+identificar), ready_for_retrieval=true quando houver marca/modelo, e image_request=false.
 Pedir para ver produtos, opções ou catálogo é retrieval, não image_request.
 Uma mensagem pode combinar payment_action e purchase_action. Quando o cliente confirmar
 que quer comprar um produto identificado e escolher como pagar, preserve payment_action
@@ -3184,11 +3188,46 @@ async def _handle_sales_message_inner(
             "blocking_reason": (
                 None if resolved_product is not None else "product_target_missing"
             ),
+            "inbound_image": bool((message.image_url or "").strip()),
         })
         if resolved_product is None:
+            # Customer sent a product photo — identify it, don't ask for the name first.
+            from .image_product_id import (
+                handle_image_product_search,
+                image_search_eligible,
+            )
+
+            if image_search_eligible(message):
+                image_result = await handle_image_product_search(message)
+                if image_result is not None:
+                    return _mark_sales_result(
+                        image_result,
+                        interpretation=interpretation,
+                        goal="find",
+                        response_source=image_result.response_metadata.get(
+                            "response_source",
+                            "image_vision",
+                        ),
+                        used_openai_responder=bool(
+                            image_result.response_metadata.get("used_openai_responder")
+                        ),
+                        used_tray=bool(
+                            image_result.response_metadata.get("used_tray")
+                            or (image_result.commercial_data or {}).get("products")
+                        ),
+                        fallback_reason=image_result.safety_reason,
+                    )
             return _mark_sales_result(
                 AgentResult(
-                    reply_text="Preciso saber qual produto você quer ver antes de consultar a imagem.",
+                    reply_text=(
+                        "Pode me enviar a foto do relógio (ou a marca e o modelo) "
+                        "que eu identifico no catálogo pra você?"
+                        if not (message.image_url or "").strip()
+                        else (
+                            "Recebi a foto, mas não consegui identificar o produto agora. "
+                            "Pode me dizer a marca e o modelo, ou enviar uma imagem mais nítida?"
+                        )
+                    ),
                     intent="commerce",
                     handoff_required=False,
                     safety_reason="product_context_missing",
