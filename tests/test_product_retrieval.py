@@ -265,7 +265,9 @@ async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
 
     plan = ProductRetrievalCompiler.compile(interpretation)
     strategies = [request.strategy for request in plan.requests]
-    assert any(strategy.startswith("exact_color_query_") for strategy in strategies)
+    assert any(strategy.startswith("exact_color_name_") for strategy in strategies)
+    assert "category_candidates" not in strategies
+    assert plan.discovery_max_pages >= 5
     assert any(
         request.name and "rosa" in request.name.casefold()
         for request in plan.requests
@@ -276,6 +278,45 @@ async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
         for request in plan.requests
         if request.name
     )
+    assert not any(
+        request.name and "claro" in request.name.casefold()
+        for request in plan.requests
+        if request.name
+    )
+    # Keep probe count small — sequential Tray storms were timing out on Hobby.
+    probe_count = sum(
+        1
+        for request in plan.requests
+        if request.strategy not in {"brand_candidates", "category_candidates"}
+    )
+    assert probe_count <= 10
+
+
+def test_exact_progress_matches_requires_requested_color():
+    from app.product_retrieval import exact_progress_matches
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        preferences={"color": "rosa claro"},
+    )
+    pink = {
+        "id": "pink",
+        "brand": "Christopher Ward",
+        "model": "Sealander",
+        "name": "Relógio Christopher Ward C63 Sealander Automático Rosa 36 mm",
+    }
+    blue_gmt = {
+        "id": "8975",
+        "brand": "Christopher Ward",
+        "model": "Sealander",
+        "name": "Relógio Christopher Ward C63 Sealander GMT Automático Azul 39 mm",
+    }
+    assert [product["id"] for product in exact_progress_matches([pink, blue_gmt], interpretation)] == [
+        "pink"
+    ]
+    assert exact_progress_matches([blue_gmt], interpretation) == []
 
 
 def test_certina_title_without_relogio_prefix_still_matches():

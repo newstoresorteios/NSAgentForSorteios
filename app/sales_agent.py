@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import html
@@ -81,6 +82,7 @@ from .product_retrieval import (
     ProductMatchError,
     ProductRetrievalCompiler,
     enrich_product_variants,
+    exact_progress_matches,
     exact_specific_product_matches,
     hard_filter_products,
     match_specific_products,
@@ -1558,107 +1560,178 @@ async def _execute_compiled_product_retrieval(
     used_category_candidates = False
     search_term_count = len(specific_product_search_terms(interpretation))
     catalog_discovered_count = 0
-    for request in retrieval_plan.requests:
-        catalog_discovery = (
+    discovery_strategies = {"brand_candidates", "category_candidates"}
+    probe_requests = [
+        request
+        for request in retrieval_plan.requests
+        if not (
             retrieval_plan.mode == "exact"
-            and request.strategy in {"brand_candidates", "category_candidates"}
+            and request.strategy in discovery_strategies
         )
-        pages = (
-            range(1, retrieval_plan.discovery_max_pages + 1)
-            if catalog_discovery
-            else (request.page,)
+    ]
+    discovery_requests = [
+        request
+        for request in retrieval_plan.requests
+        if retrieval_plan.mode == "exact"
+        and request.strategy in discovery_strategies
+    ]
+
+    def _accumulation_limit() -> int:
+        if retrieval_plan.mode == "exact":
+            return (
+                retrieval_plan.discovery_max_products
+                + retrieval_plan.candidate_limit
+            )
+        return retrieval_plan.candidate_limit
+
+    def _absorb_products(
+        raw_products: list[Any],
+        *,
+        catalog_discovery: bool = False,
+    ) -> None:
+        nonlocal catalog_discovered_count
+        for product in raw_products:
+            if len(candidates) >= _accumulation_limit():
+                return
+            if not isinstance(product, dict) or product.get("id") is None:
+                continue
+            product_id = str(product["id"])
+            if product_id in seen_ids:
+                continue
+            seen_ids.add(product_id)
+            candidates.append(product)
+            if catalog_discovery:
+                catalog_discovered_count += 1
+
+    def _refresh_hard_filtered() -> None:
+        nonlocal hard_filtered
+        if retrieval_plan.mode == "exact":
+            hard_filtered = exact_progress_matches(candidates, interpretation)
+        else:
+            hard_filtered = hard_filter_products(
+                candidates,
+                interpretation,
+                mode=retrieval_plan.mode,
+            )
+
+    async def _run_probe(request: Any) -> tuple[Any, dict[str, Any]]:
+        arguments = {
+            **request.tool_arguments(),
+            "limit": request.limit,
+            "page": request.page,
+        }
+        print("[sales.retrieval.request]", {
+            "strategy": request.strategy,
+            "category_id_present": bool(request.category_id),
+            "name_filter_present": bool(request.name),
+            "has_brand_filter": bool(request.brand),
+            "has_budget_filter": has_budget,
+            "candidate_limit": request.limit,
+        })
+        result = await execute_tool("search_products", arguments)
+        return request, result
+
+    if probe_requests:
+        probe_results = await asyncio.gather(
+            *[_run_probe(request) for request in probe_requests]
         )
-        for page in pages:
-            page_limit = (
-                retrieval_plan.discovery_page_limit
-                if catalog_discovery
-                else request.limit
-            )
-            arguments = {
-                **request.tool_arguments(),
-                "limit": page_limit,
-                "page": page,
-            }
-            print("[sales.retrieval.request]", {
-                "strategy": request.strategy,
-                "category_id_present": bool(request.category_id),
-                "name_filter_present": bool(request.name),
-                "has_brand_filter": bool(request.brand),
-                "has_budget_filter": has_budget,
-                "candidate_limit": page_limit,
-            })
-            result = await execute_tool("search_products", arguments)
-            used_brand_candidates = (
-                used_brand_candidates or request.strategy == "brand_candidates"
-            )
-            used_category_candidates = (
-                used_category_candidates or request.strategy == "category_candidates"
-            )
+        for request, result in probe_results:
             if "error" in result:
                 product_lookup_failed = True
-                break
+                continue
             raw_products = (
                 result.get("products")
                 if isinstance(result.get("products"), list)
                 else []
             )
-            accumulation_limit = (
-                retrieval_plan.discovery_max_products
-                + retrieval_plan.candidate_limit
-                if retrieval_plan.mode == "exact"
-                else retrieval_plan.candidate_limit
-            )
-            for product in raw_products:
-                if not isinstance(product, dict) or product.get("id") is None:
-                    continue
-                product_id = str(product["id"])
-                if product_id in seen_ids:
-                    continue
-                seen_ids.add(product_id)
-                candidates.append(product)
-                if catalog_discovery:
-                    catalog_discovered_count += 1
-                if len(candidates) >= accumulation_limit:
-                    break
-            if retrieval_plan.mode == "exact":
-                hard_filtered = exact_specific_product_matches(
-                    candidates,
-                    interpretation,
-                )
-            else:
-                hard_filtered = hard_filter_products(
-                    candidates,
-                    interpretation,
-                    mode=retrieval_plan.mode,
-                )
+            _absorb_products(raw_products)
             print("[sales.retrieval.result]", {
                 "strategy": request.strategy,
                 "raw_candidate_count": len(raw_products),
-                "hard_filtered_count": len(hard_filtered),
+                "hard_filtered_count": None,
             })
-            strategy = (
-                "reference" if request.reference
-                else "ean" if request.ean
-                else "brand_candidates" if request.strategy == "brand_candidates"
-                else "category_candidates" if request.category_id
-                else "model" if interpretation.subject.model
-                else "name"
-            )
-            print("[sales.product.resolve]", {
-                "strategy": strategy,
-                "has_brand": bool(interpretation.subject.brand),
-                "has_model": bool(interpretation.subject.model),
-                "candidate_count": len(candidates),
-                "matched_count": len(hard_filtered),
-            })
-            if catalog_discovery:
+        _refresh_hard_filtered()
+        print("[sales.product.resolve]", {
+            "strategy": "parallel_probes",
+            "has_brand": bool(interpretation.subject.brand),
+            "has_model": bool(interpretation.subject.model),
+            "candidate_count": len(candidates),
+            "matched_count": len(hard_filtered),
+            "probe_count": len(probe_requests),
+        })
+
+    if not hard_filtered or retrieval_plan.mode != "exact":
+        for request in discovery_requests:
+            if retrieval_plan.mode == "exact" and hard_filtered:
+                break
+            if (
+                retrieval_plan.mode == "recommendation"
+                and len(candidates) >= retrieval_plan.candidate_limit
+            ):
+                break
+            catalog_discovery = True
+            pages = range(1, retrieval_plan.discovery_max_pages + 1)
+            for page in pages:
+                page_limit = retrieval_plan.discovery_page_limit
+                arguments = {
+                    **request.tool_arguments(),
+                    "limit": page_limit,
+                    "page": page,
+                }
+                print("[sales.retrieval.request]", {
+                    "strategy": request.strategy,
+                    "category_id_present": bool(request.category_id),
+                    "name_filter_present": bool(request.name),
+                    "has_brand_filter": bool(request.brand),
+                    "has_budget_filter": has_budget,
+                    "candidate_limit": page_limit,
+                })
+                result = await execute_tool("search_products", arguments)
+                used_brand_candidates = (
+                    used_brand_candidates
+                    or request.strategy == "brand_candidates"
+                )
+                used_category_candidates = (
+                    used_category_candidates
+                    or request.strategy == "category_candidates"
+                )
+                if "error" in result:
+                    product_lookup_failed = True
+                    break
+                raw_products = (
+                    result.get("products")
+                    if isinstance(result.get("products"), list)
+                    else []
+                )
+                _absorb_products(raw_products, catalog_discovery=True)
+                _refresh_hard_filtered()
+                print("[sales.retrieval.result]", {
+                    "strategy": request.strategy,
+                    "raw_candidate_count": len(raw_products),
+                    "hard_filtered_count": len(hard_filtered),
+                })
+                print("[sales.product.resolve]", {
+                    "strategy": (
+                        "brand_candidates"
+                        if request.strategy == "brand_candidates"
+                        else "category_candidates"
+                    ),
+                    "has_brand": bool(interpretation.subject.brand),
+                    "has_model": bool(interpretation.subject.model),
+                    "candidate_count": len(candidates),
+                    "matched_count": len(hard_filtered),
+                })
                 paging = (
                     result.get("paging")
                     if isinstance(result.get("paging"), dict)
                     else {}
                 )
                 try:
-                    total = int(paging["total"]) if paging.get("total") is not None else None
+                    total = (
+                        int(paging["total"])
+                        if paging.get("total") is not None
+                        else None
+                    )
                 except (TypeError, ValueError):
                     total = None
                 try:
@@ -1692,14 +1765,12 @@ async def _execute_compiled_product_retrieval(
                     >= retrieval_plan.discovery_max_products
                 ):
                     break
-            else:
+            if retrieval_plan.mode == "exact" and hard_filtered:
                 break
-        if retrieval_plan.mode == "recommendation" and (
-            len(candidates) >= retrieval_plan.candidate_limit
-        ):
-            break
-        if retrieval_plan.mode == "exact" and hard_filtered:
-            break
+
+    # Recommendation mode with only probe requests (no discovery strategies).
+    if retrieval_plan.mode == "recommendation" and not discovery_requests:
+        _refresh_hard_filtered()
 
     if retrieval_plan.mode == "exact" and candidates:
         matcher_candidates = prefilter_specific_candidates(

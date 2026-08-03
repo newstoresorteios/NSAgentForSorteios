@@ -482,129 +482,142 @@ class ProductRetrievalCompiler:
         elif subject.model:
             pt_model = normalize_pt_catalog_query(subject.model)
             color_tokens = preference_color_tokens(interpretation)
+            # Use hue only in Tray probes — "claro"/"mostrador" exclude real titles.
             color_label = " ".join(color_tokens).strip()
             core_tokens = required_model_tokens(pt_model or subject.model)
             core_query = " ".join(core_tokens[:4]).strip()
-            full_query = " ".join(
-                part for part in (subject.brand, pt_model or subject.model) if part
-            ).strip()
-            # Tray catalog titles usually start with "Relógio {Brand} …".
-            catalog_title = " ".join(
-                part
-                for part in ("Relógio", subject.brand, pt_model or subject.model)
-                if part
-            ).strip()
             model_codes = extract_model_codes(pt_model or subject.model)
+            wants_automatic = bool(
+                re.search(r"\b(automatic|automatico)\b", _fold(subject.model))
+            )
+            seen_probe_keys: set[str] = set()
+
+            def _add_name_probe(
+                strategy: str,
+                name: str | None,
+                *,
+                brand: str | None = None,
+            ) -> None:
+                cleaned = " ".join(str(name or "").split()).strip()
+                if not cleaned:
+                    return
+                key = f"name|{_fold(cleaned)}|{_fold(brand)}"
+                if key in seen_probe_keys:
+                    return
+                seen_probe_keys.add(key)
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy=strategy,
+                        name=cleaned,
+                        brand=brand,
+                    )
+                )
+
             # Color-first probes so "Sealander rosa" beats GMT azul/verde siblings.
+            # Keep this list short — each probe is a sequential Tray round-trip.
             if color_label and core_query:
-                color_queries = [
-                    f"{core_query} {color_label}".strip(),
-                    f"{core_query} Automático {color_label}".strip(),
+                auto_bit = "Automático" if wants_automatic else None
+                core_label = core_query.title()
+                code_bit = model_codes[0] if model_codes else None
+                color_names = [
+                    " ".join(
+                        part for part in (core_label, color_label.title()) if part
+                    ),
                     " ".join(
                         part
-                        for part in (subject.brand, core_query, "Automático", color_label)
+                        for part in (core_label, auto_bit, color_label.title())
                         if part
-                    ).strip(),
+                    ),
+                    " ".join(
+                        part
+                        for part in (
+                            code_bit,
+                            core_label,
+                            auto_bit,
+                            color_label.title(),
+                        )
+                        if part
+                    ),
                     " ".join(
                         part
                         for part in (
                             "Relógio",
                             subject.brand,
-                            core_query,
-                            "Automático",
-                            color_label,
+                            code_bit,
+                            core_label,
+                            auto_bit,
+                            color_label.title(),
                         )
                         if part
-                    ).strip(),
+                    ),
+                    color_label.title(),
                 ]
-                for index, query in enumerate(dict.fromkeys(q for q in color_queries if q)):
-                    requests.append(
-                        ProductRetrievalRequest(
-                            strategy=f"exact_color_query_{index}",
-                            name=query if index < 2 else None,
-                            query=query if index >= 2 else None,
-                            brand=subject.brand if index < 2 else None,
-                        )
-                    )
-            requests.append(ProductRetrievalRequest(
-                strategy="exact_model_with_brand" if subject.brand else "exact_model",
-                name=pt_model or subject.model,
-                brand=subject.brand,
-            ))
-            if catalog_title:
-                requests.append(
-                    ProductRetrievalRequest(
-                        strategy="exact_catalog_title",
-                        name=catalog_title,
-                    )
-                )
-                requests.append(
-                    ProductRetrievalRequest(
-                        strategy="exact_catalog_title_query",
-                        query=catalog_title,
-                    )
-                )
-            for code in model_codes[:3]:
-                requests.append(
-                    ProductRetrievalRequest(
-                        strategy="exact_model_code",
-                        name=code,
+                for index, name in enumerate(color_names):
+                    _add_name_probe(
+                        f"exact_color_name_{index}",
+                        name,
                         brand=subject.brand,
                     )
-                )
-                requests.append(
-                    ProductRetrievalRequest(
-                        strategy="exact_model_code_broad",
-                        name=code,
+            # Identity probes without Vision filler ("rosa claro (mostrador)").
+            if color_label:
+                identity_name = " ".join(
+                    part
+                    for part in (
+                        " ".join(model_codes[:1]) if model_codes else None,
+                        core_query.title() if core_query else None,
+                        "Automático" if wants_automatic else None,
                     )
+                    if part
+                ).strip() or (pt_model or subject.model)
+            else:
+                identity_name = pt_model or subject.model
+            _add_name_probe(
+                "exact_model_with_brand" if subject.brand else "exact_model",
+                identity_name,
+                brand=subject.brand,
+            )
+            catalog_title = " ".join(
+                part
+                for part in (
+                    "Relógio",
+                    subject.brand,
+                    identity_name,
+                    color_label.title() if color_label else None,
                 )
-            if full_query:
+                if part
+            ).strip()
+            _add_name_probe("exact_catalog_title", catalog_title)
+            brand_model_query = " ".join(
+                part for part in (subject.brand, identity_name) if part
+            ).strip()
+            if brand_model_query and _fold(brand_model_query) != _fold(identity_name or ""):
                 requests.append(
                     ProductRetrievalRequest(
                         strategy="exact_query_full",
-                        query=full_query,
+                        query=brand_model_query,
                     )
                 )
-            if core_query and core_query.casefold() != _fold(pt_model or subject.model):
-                requests.append(
-                    ProductRetrievalRequest(
-                        strategy="exact_query_core",
-                        query=core_query,
-                        brand=subject.brand,
-                    )
-                )
-                # Short name/reference probes — Tray name search often misses
-                # long titles when the customer omits "Relógio {Brand}".
-                if len(core_tokens) >= 2:
-                    short_core = " ".join(core_tokens[:2])
-                    requests.append(
-                        ProductRetrievalRequest(
-                            strategy="exact_query_short",
-                            query=short_core,
-                            brand=subject.brand,
-                        )
-                    )
+            for code in model_codes[:1]:
+                _add_name_probe("exact_model_code", code, brand=subject.brand)
             if subject.brand:
-                requests.append(ProductRetrievalRequest(
-                    strategy="exact_model_broad",
-                    name=pt_model or subject.model,
-                ))
-                if core_query:
-                    requests.append(
-                        ProductRetrievalRequest(
-                            strategy="exact_query_core_broad",
-                            query=core_query,
-                        )
-                    )
+                _add_name_probe(
+                    "exact_model_broad",
+                    core_query.title() if core_query and color_label else (
+                        core_query or identity_name
+                    ),
+                )
                 requests.append(ProductRetrievalRequest(
                     strategy="brand_candidates",
                     brand=subject.brand,
                 ))
-            for category_id in category_ids[:5]:
-                requests.append(ProductRetrievalRequest(
-                    strategy="category_candidates",
-                    category_id=str(category_id),
-                ))
+            # Category paging is expensive; only use it when brand discovery
+            # isn't available.
+            if not subject.brand:
+                for category_id in category_ids[:5]:
+                    requests.append(ProductRetrievalRequest(
+                        strategy="category_candidates",
+                        category_id=str(category_id),
+                    ))
         else:
             available = True
             available_in_store = True
@@ -632,9 +645,20 @@ class ProductRetrievalCompiler:
                     available_in_store=available_in_store,
                 ))
 
+        discovery_pages = CATALOG_DISCOVERY_MAX_PAGES
+        if preference_color_tokens(interpretation):
+            # A few extra brand pages help surface color variants without
+            # blowing the Vercel Hobby wall-clock budget.
+            discovery_pages = max(discovery_pages, 8)
+
         return ProductRetrievalPlan(
             mode="exact" if exact else "recommendation",
             requests=tuple(requests),
+            discovery_max_pages=discovery_pages,
+            discovery_max_products=max(
+                CATALOG_DISCOVERY_MAX_PRODUCTS,
+                discovery_pages * PRODUCT_PAGE_LIMIT,
+            ),
         )
 
 
@@ -940,6 +964,22 @@ def _brand_compatible_candidates(
         if not candidate_brand and expected_brand in _product_text(product):
             compatible.append(product)
     return compatible
+
+
+def exact_progress_matches(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+) -> list[dict[str, Any]]:
+    """Matches good enough to stop searching — honors color when the customer asked for one."""
+    matches = exact_specific_product_matches(products, interpretation)
+    color_tokens = preference_color_tokens(interpretation)
+    if not color_tokens:
+        return matches
+    return [
+        product
+        for product in matches
+        if product_matches_color_tokens(product, color_tokens)
+    ]
 
 
 def exact_specific_product_matches(
