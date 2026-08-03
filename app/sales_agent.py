@@ -2111,8 +2111,29 @@ def _combine_order_and_payment_results(
     metadata.update(payment_result.response_metadata or {})
     if "order_state" in order_result.response_metadata:
         metadata["order_state"] = order_result.response_metadata["order_state"]
+    payment = order_facts.get("payment") if isinstance(order_facts.get("payment"), dict) else {}
+    payment_url = payment.get("payment_url")
+    status = str(
+        order_facts.get("status")
+        or payment.get("status")
+        or "em processamento"
+    ).strip()
+    order_id = order_facts.get("order_id")
+    if payment_url:
+        reply_text = (
+            f'Seu pedido {order_id} está com status "{status}". '
+            f"Segue o link para pagamento: {payment_url}"
+        )
+    else:
+        reply_text = (
+            payment_result.reply_text
+            if payment_result.reply_text
+            and "factual" not in payment_result.reply_text.casefold()
+            else f'Seu pedido {order_id} está com status "{status}".'
+        )
+    metadata["factual_fallback_text"] = reply_text
     return AgentResult(
-        reply_text="Pedido identificado e pagamento factual consultado.",
+        reply_text=reply_text,
         intent="commerce",
         safety_reason=payment_result.safety_reason,
         commercial_data=order_facts,

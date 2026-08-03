@@ -456,12 +456,28 @@ async def prepare_order(
         "session": _session_tag(state.cart_session_id),
         "review_version": facts["version"][:10],
     })
+    summary = facts["summary"] if isinstance(facts.get("summary"), dict) else {}
+    total = summary.get("display_total")
+    product_names = [
+        str(item.get("name") or "").strip()
+        for item in (summary.get("products") or [])
+        if isinstance(item, dict) and item.get("name")
+    ]
+    product_bit = product_names[0] if len(product_names) == 1 else (
+        f"{len(product_names)} itens" if product_names else "seus itens"
+    )
+    total_bit = f" Total: R$ {total}." if total else ""
+    review_reply = (
+        f"Separei o resumo do pedido ({product_bit}).{total_bit} "
+        "Confirma para eu criar o pedido?"
+    )
     return AgentResult(
-        reply_text="Resumo factual do pedido preparado.",
+        reply_text=review_reply,
         intent="commerce",
         commercial_data=facts["summary"],
         response_metadata={
             "domain": "commerce",
+            "factual_fallback_text": review_reply,
             "order_state": {
                 "order_confirmation_status": "pending",
                 "order_review_version": facts["version"],
@@ -783,13 +799,36 @@ def _order_facts_result(
         "status_group": facts["status_group"],
         "tracking_present": bool(tracking),
     })
+    status_label = str(facts["status"] or "").strip() or "em processamento"
+    status_group = str(facts["status_group"] or "").casefold()
+    awaiting_payment = (
+        state.order_payment_status == "pending"
+        or "aguard" in status_label.casefold()
+        or status_group in {"open", "pending", "unpaid", "awaiting"}
+    )
+    if awaiting_payment and state.order_payment_url:
+        reply_text = (
+            f'Seu pedido está com status "{status_label}". '
+            f"Segue o link para pagamento: {state.order_payment_url}"
+        )
+    elif awaiting_payment:
+        reply_text = (
+            f'Seu pedido está com status "{status_label}". '
+            "Posso enviar o link para você realizar o pagamento?"
+        )
+    else:
+        reply_text = f'Seu pedido está com status "{status_label}".'
+    tracking_url = tracking.get("tracking_url")
+    if tracking_url:
+        reply_text = f"{reply_text} Rastreio: {tracking_url}"
     return AgentResult(
-        reply_text="Status atual do pedido consultado.",
+        reply_text=reply_text,
         intent="commerce",
         commercial_data=facts,
         response_metadata={
             "domain": "commerce",
             "clear_pending_action": True,
+            "factual_fallback_text": reply_text,
             "order_state": {
                 "order_id": facts["order_id"],
                 "order_status": facts["status"],
@@ -800,8 +839,11 @@ def _order_facts_result(
                 "payment_confirmed"
                 if state.order_payment_status == "confirmed"
                 else "awaiting_payment"
-                if state.order_payment_status == "pending"
+                if state.order_payment_status == "pending" or awaiting_payment
                 else "order_created"
+            ),
+            "pending_action": (
+                "awaiting_payment" if awaiting_payment else None
             ),
             "used_tray": True,
         },

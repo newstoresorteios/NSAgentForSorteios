@@ -699,21 +699,46 @@ async def inspect_order_payment(
         "payment_url_present": payment_url is not None,
         "status": status,
     })
+    order_label = str(result.get("order_id") or target)
+    # Prefer hosted URL from Tray; fall back to state URL recovered from transcript.
+    effective_url = payment_url or state.order_payment_url
+    if status == "confirmed":
+        reply_text = f"O pagamento do pedido {order_label} já está confirmado."
+    elif effective_url:
+        reply_text = (
+            f"Seu pedido {order_label} ainda está aguardando pagamento. "
+            f"Segue o link: {effective_url}"
+        )
+    elif status == "pending":
+        reply_text = (
+            f"Seu pedido {order_label} ainda está aguardando pagamento, "
+            "mas não encontrei o link agora. Posso tentar de novo em instantes."
+        )
+    else:
+        reply_text = (
+            f"Não há informação de pagamento disponível para o pedido {order_label} "
+            "no momento."
+        )
     return AgentResult(
-        reply_text="Pagamento factual do pedido consultado.",
+        reply_text=reply_text,
         intent="commerce",
         commercial_data={
             "success": True,
-            "order_id": str(result.get("order_id") or target),
-            "payment": facts,
+            "order_id": order_label,
+            "payment": {
+                **facts,
+                "payment_url": effective_url,
+                "payment_url_available": effective_url is not None,
+            },
         },
         response_metadata={
             "domain": "commerce",
+            "factual_fallback_text": reply_text,
             "payment_state": {
                 "order_payment_method_id": method_id,
                 "order_payment_method": method,
                 "order_payment_type": payment_type,
-                "order_payment_url": payment_url,
+                "order_payment_url": effective_url,
                 "order_payment_status": status,
                 "order_has_payment": has_payment,
                 "order_payment_date": payment_date,
