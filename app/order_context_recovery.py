@@ -4,7 +4,11 @@ import re
 from typing import Any
 
 from .commerce_context import CommerceConversationState
-from .order_service import ToolExecutor, extract_valid_tax_document
+from .order_service import (
+    ToolExecutor,
+    extract_valid_tax_document,
+    order_reference_candidates,
+)
 
 
 _EMAIL_RE = re.compile(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", re.I)
@@ -62,10 +66,10 @@ def extract_handles_from_conversation(
 
     for blob in blobs:
         for match in _PAYMENT_URL_RE.finditer(blob):
-            order_ids.append(match.group(1))
+            order_ids.extend(order_reference_candidates(match.group(1)))
             payment_urls.append(match.group(0).rstrip(").,;"))
         for match in _ORDER_CODE_RE.finditer(blob):
-            order_ids.append(match.group(1))
+            order_ids.extend(order_reference_candidates(match.group(1)))
         for match in _EMAIL_RE.finditer(blob):
             emails.append(match.group(0).strip().casefold())
         document = extract_valid_tax_document(blob)

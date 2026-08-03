@@ -7,7 +7,11 @@ from app.order_context_recovery import (
     extract_handles_from_conversation,
     hydrate_state_from_handles,
 )
-from app.order_service import is_order_lookup_request
+from app.order_service import (
+    extract_order_reference,
+    is_order_lookup_request,
+    order_reference_candidates,
+)
 
 
 def test_extracts_order_payment_and_customer_from_transcript():
@@ -64,6 +68,45 @@ def test_detects_followup_order_and_pix_requests():
     assert is_unpaid_order_resume_request(
         "consegue confirmar se o pagamento caiu?"
     ) is True
+
+
+def test_splits_glued_store_code_and_internal_order_id():
+    candidates = order_reference_candidates("0CC131B51070AEF25400")
+    assert candidates[0].upper() == "0CC131B51070AEF"
+    assert "25400" in candidates
+    assert extract_order_reference(
+        "mais e esse pedido 0CC131B51070AEF25400?"
+    ).upper() == "0CC131B51070AEF"
+
+
+@pytest.mark.asyncio
+async def test_get_order_facts_retries_split_candidates_after_422():
+    from app.order_service import get_order_facts
+
+    calls: list[str] = []
+
+    async def execute(name, args):
+        assert name == "get_order_complete"
+        order_id = str(args["order_id"])
+        calls.append(order_id)
+        if order_id.lower() == "0cc131b51070aef25400":
+            return {"error": "commerce_upstream_error", "status_code": 422}
+        if order_id.upper() == "0CC131B51070AEF" or order_id.lower() == "0cc131b51070aef":
+            return {
+                "success": True,
+                "order_id": "0CC131B51070AEF",
+                "status": "Aguardando pagamento",
+                "status_group": "open",
+            }
+        return {"error": "commerce_upstream_error", "status_code": 404}
+
+    result = await get_order_facts(
+        state=CommerceConversationState(),
+        execute=execute,
+        order_id="0CC131B51070AEF25400",
+    )
+    assert result.commercial_data["order_id"].upper() == "0CC131B51070AEF"
+    assert any(call.lower() == "0cc131b51070aef" for call in calls)
 
 
 @pytest.mark.asyncio

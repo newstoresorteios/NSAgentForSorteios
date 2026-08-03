@@ -98,18 +98,98 @@ def _fold_text(value: str | None) -> str:
     return folded.replace("º", "o").replace("°", "o")
 
 
+def order_reference_candidates(value: str | None) -> list[str]:
+    """Expand glued store-code + internal-id references into lookup candidates.
+
+    Customers often paste both Tray handles together, e.g.
+    ``0CC131B51070AEF25400`` = store code ``0CC131B51070AEF`` + id ``25400``.
+    """
+    raw = str(value or "").strip().strip(".,;!?")
+    if not raw:
+        return []
+    candidates: list[str] = []
+
+    def add(token: str | None) -> None:
+        cleaned = str(token or "").strip().strip(".,;!?")
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+
+    add(raw)
+    # Non-greedy hex prefix + trailing internal numeric id
+    # e.g. 0CC131B51070AEF25400 -> 0CC131B51070AEF + 25400
+    glued = re.fullmatch(r"([0-9a-fA-F]+?)(\d{3,12})", raw, flags=re.IGNORECASE)
+    if glued:
+        store_code, internal_id = glued.group(1), glued.group(2)
+        if 10 <= len(store_code) <= 16 and not store_code.isdigit():
+            add(store_code)
+            add(internal_id)
+    # Prefer store hex code, then numeric internal id, then the raw token.
+    preferred: list[str] = []
+    for token in candidates:
+        if re.fullmatch(r"[0-9a-fA-F]{10,16}", token) and not token.isdigit():
+            preferred.append(token)
+    for token in candidates:
+        if token.isdigit() and token not in preferred:
+            preferred.append(token)
+    for token in candidates:
+        if token not in preferred:
+            preferred.append(token)
+    return preferred
+
+
+def _looks_like_order_token(value: str | None) -> bool:
+    token = str(value or "").strip()
+    if not token or len(token) < 3:
+        return False
+    blocked = {
+        "visual",
+        "aberto",
+        "criado",
+        "pendente",
+        "pagamento",
+        "carrinho",
+        "produto",
+        "ativo",
+        "novo",
+        "meu",
+        "minha",
+    }
+    if token.casefold() in blocked:
+        return False
+    if re.fullmatch(r"\d{3,12}", token):
+        return True
+    if re.fullmatch(r"[0-9a-fA-F]{10,16}", token):
+        return True
+    if re.fullmatch(r"[0-9a-fA-F]{10,16}\d{3,12}", token):
+        return True
+    # Codes like ABC-123 / ns-9981 must include a digit.
+    if any(char.isdigit() for char in token) and re.fullmatch(
+        r"[a-z0-9]+(?:-[a-z0-9]+)*",
+        token,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
 def extract_order_reference(text: str | None) -> str | None:
     folded = _fold_text(text)
     patterns = (
         r"\bcod(?:igo)?\.?\s*(?:do\s+)?pedido\s*[:#-]?\s*([a-z0-9][a-z0-9-]*)",
         r"\bpedido\s+(?:n(?:umero|o)?|cod(?:igo)?)\.?\s*[:#-]?\s*([a-z0-9][a-z0-9-]*)",
         r"\bpedido\s*[:#-]\s*([a-z0-9][a-z0-9-]*)",
+        # Keep digit-leading tokens (store codes like 0CC… / numeric ids).
         r"\bpedido\s+([0-9][a-z0-9-]*)",
     )
     for pattern in patterns:
         match = re.search(pattern, folded)
-        if match:
-            return match.group(1).strip()
+        if not match:
+            continue
+        raw = match.group(1).strip()
+        if not _looks_like_order_token(raw):
+            continue
+        candidates = order_reference_candidates(raw)
+        return candidates[0] if candidates else None
     return None
 
 
@@ -730,8 +810,9 @@ async def get_order_facts(
     order_id: str | None = None,
     allow_customer_recovery: bool = True,
 ) -> AgentResult:
-    target = str(order_id or state.order_id or state.order_lookup_id or "").strip()
-    if not target and (state.order_session_id or state.cart_session_id):
+    seed = str(order_id or state.order_id or state.order_lookup_id or "").strip()
+    targets = order_reference_candidates(seed)
+    if not targets and (state.order_session_id or state.cart_session_id):
         session_id = state.order_session_id or state.cart_session_id
         try:
             lookup = await execute("list_orders", {"session_id": session_id})
@@ -739,13 +820,14 @@ async def get_order_facts(
             lookup = {"error": "commerce_upstream_error"}
         existing = None if "error" in lookup else _existing_order(lookup)
         if existing is not None:
-            target = str(existing.get("order_id") or existing.get("id") or "").strip()
+            recovered = str(existing.get("order_id") or existing.get("id") or "").strip()
+            targets = order_reference_candidates(recovered)
         print("[sales.order.reconcile]", {
             "session": _session_tag(session_id),
-            "found": bool(target),
+            "found": bool(targets),
             "status_lookup": True,
         })
-    if not target:
+    if not targets:
         return AgentResult(
             reply_text="N\u00e3o h\u00e1 pedido identificado para consulta.",
             intent="commerce",
@@ -753,13 +835,50 @@ async def get_order_facts(
             commercial_data={"success": False, "stage": "order_status"},
             response_metadata={"domain": "commerce", "used_tray": False},
         )
-    try:
-        result = await execute("get_order_complete", {"order_id": target})
-    except Exception:
-        result = {"error": "commerce_upstream_error"}
-    if "error" in result:
-        if allow_customer_recovery and str(result.get("status_code") or "") == "404":
-            return _order_not_found_result(target)
+
+    last_error: dict[str, Any] | None = None
+    last_empty_target = targets[0]
+    for target in targets:
+        try:
+            result = await execute("get_order_complete", {"order_id": target})
+        except Exception:
+            result = {"error": "commerce_upstream_error"}
+        if "error" in result:
+            last_error = result
+            status_code = str(result.get("status_code") or "")
+            # Glued ids often yield 422; try the next candidate before failing.
+            if status_code in {"404", "422"} and target != targets[-1]:
+                print("[sales.order.lookup.retry]", {
+                    "failed_order_id": target,
+                    "status_code": status_code,
+                    "remaining_candidates": len(targets) - targets.index(target) - 1,
+                })
+                continue
+            if allow_customer_recovery and status_code == "404":
+                return _order_not_found_result(target)
+            return AgentResult(
+                reply_text="A consulta atual do pedido n\u00e3o p\u00f4de ser conclu\u00edda.",
+                intent="commerce",
+                safety_reason="order_status_technical_failure",
+                commercial_data={"success": False, "stage": "order_status"},
+                response_metadata={
+                    "domain": "commerce",
+                    "used_tray": True,
+                    **_failure_metadata(result),
+                },
+            )
+        if _order_payload_exists(result):
+            if target != seed:
+                print("[sales.order.lookup.normalized]", {
+                    "requested": seed,
+                    "resolved": target,
+                })
+            return _order_facts_result(result, target, state)
+        last_empty_target = target
+
+    if allow_customer_recovery:
+        return _order_not_found_result(last_empty_target)
+    if last_error is not None:
         return AgentResult(
             reply_text="A consulta atual do pedido n\u00e3o p\u00f4de ser conclu\u00edda.",
             intent="commerce",
@@ -768,20 +887,16 @@ async def get_order_facts(
             response_metadata={
                 "domain": "commerce",
                 "used_tray": True,
-                **_failure_metadata(result),
+                **_failure_metadata(last_error),
             },
         )
-    if not _order_payload_exists(result):
-        if allow_customer_recovery:
-            return _order_not_found_result(target)
-        return AgentResult(
-            reply_text="Não consegui confirmar esse pedido no cadastro informado.",
-            intent="commerce",
-            safety_reason="order_not_found",
-            commercial_data={"success": False, "stage": "order_status"},
-            response_metadata={"domain": "commerce", "used_tray": True},
-        )
-    return _order_facts_result(result, target, state)
+    return AgentResult(
+        reply_text="Não consegui confirmar esse pedido no cadastro informado.",
+        intent="commerce",
+        safety_reason="order_not_found",
+        commercial_data={"success": False, "stage": "order_status"},
+        response_metadata={"domain": "commerce", "used_tray": True},
+    )
 
 
 async def find_order_by_customer_document(
