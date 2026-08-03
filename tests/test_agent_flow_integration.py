@@ -40,7 +40,16 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
         state["inbound"].append({"id": inbound_id, **message})
         return True, inbound_id
 
-    def load_turns(*, conversation_id, sender_phone, before_inbound_id, limit=8, sender_key=None):
+    def load_turns(
+        *,
+        conversation_id,
+        sender_phone,
+        before_inbound_id,
+        limit=8,
+        sender_key=None,
+        hard_cap=40,
+    ):
+        _ = hard_cap
         rows = [
             row for row in state["inbound"]
             if row["id"] < before_inbound_id

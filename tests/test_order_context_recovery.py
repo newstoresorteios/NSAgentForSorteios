@@ -65,6 +65,8 @@ def test_detects_followup_order_and_pix_requests():
     assert is_order_lookup_request("como ficou") is True
     assert is_order_lookup_request("como ficou o meu pedido do seiko?") is True
     assert is_payment_link_request("me da o pix para pagamento") is True
+    assert is_payment_link_request("me da o link para pagamento") is True
+    assert is_payment_link_request("quero o link de pagamento") is True
     assert is_unpaid_order_resume_request(
         "consegue confirmar se o pagamento caiu?"
     ) is True
@@ -281,10 +283,11 @@ async def test_pipeline_pix_request_reuses_payment_link_from_transcript(monkeypa
             channel="whatsapp",
             conversation_id="conv-1",
             sender_phone="85999498149",
-            text="me da o pix para pagamento",
+            text="me da o link para pagamento",
             raw={"inbound_id": 22},
         ),
         {"found": False},
     )
     assert "0CC131B51070AEF" in result.reply_text
     assert payment_url in result.reply_text
+    assert result.response_metadata.get("response_source") == "context_resume_payment_url"

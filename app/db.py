@@ -445,13 +445,20 @@ def load_recent_conversation_turns(
     before_inbound_id: int | None,
     limit: int = 8,
     sender_key: str | None = None,
+    hard_cap: int = 40,
 ) -> list[dict[str, Any]]:
-    """Load a small, chronological transcript containing only delivered replies."""
+    """Load a chronological transcript containing only delivered replies.
+
+    ``limit`` controls how many turns are returned. ``hard_cap`` bounds the
+    SQL row fetch (inbound messages). Use a higher limit for commerce handle
+    recovery so payment links from earlier in the thread still surface.
+    """
     settings = get_settings()
     if not settings.database_url:
         return []
 
-    safe_limit = max(1, min(int(limit), 8))
+    safe_hard_cap = max(1, min(int(hard_cap), 80))
+    safe_limit = max(1, min(int(limit), safe_hard_cap))
     before_filter = (
         "AND inbound.id < %(before_inbound_id)s"
         if before_inbound_id is not None

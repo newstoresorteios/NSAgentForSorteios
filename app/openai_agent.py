@@ -420,6 +420,15 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         "sender_key": message.sender_key,
     }
     recent_turns = load_recent_conversation_turns(**history_lookup)
+    # Deeper window only for order/payment handle recovery (link often falls out of 8).
+    recovery_turns = load_recent_conversation_turns(
+        conversation_id=message.conversation_id,
+        sender_phone=message.sender_phone,
+        before_inbound_id=inbound_id,
+        limit=40,
+        sender_key=message.sender_key,
+        hard_cap=40,
+    )
     context_source = (
         "conversation_id"
         if message.conversation_id
@@ -429,6 +438,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
 
     print("[sales.context]", {
         "history_turns": len(recent_turns),
+        "recovery_turns": len(recovery_turns),
         "history_user_turns": sum(1 for turn in recent_turns if turn.get("role") == "user"),
         "history_assistant_turns": sum(1 for turn in recent_turns if turn.get("role") == "assistant"),
         "conversation_id_present": bool(message.conversation_id),
@@ -444,6 +454,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         {
             "context_source": context_source,
             "history_turns": len(recent_turns),
+            "recovery_turns": len(recovery_turns),
             "history_preview": [
                 {
                     "role": turn.get("role"),
@@ -486,7 +497,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     soft_greeting = _is_greeting(message.text) or is_soft_greeting(message.text)
     context_handles = extract_handles_from_conversation(
         state=commerce_state,
-        recent_turns=recent_turns,
+        recent_turns=recovery_turns or recent_turns,
         message_text=message.text,
     )
     commerce_state = hydrate_state_from_handles(commerce_state, context_handles)
@@ -507,6 +518,53 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 "response_source",
                 "context_resume_soft",
             ),
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+        )
+    # Fast path: customer asks for the link and we already recovered it from transcript.
+    if is_payment_link_request(message.text) and commerce_state.order_payment_url:
+        order_label = commerce_state.order_id or commerce_state.order_lookup_id
+        reply = (
+            f"Seu pedido {order_label} ainda está aguardando pagamento. "
+            f"Segue o link: {commerce_state.order_payment_url}"
+            if order_label
+            else (
+                "Seu pedido ainda está aguardando pagamento. "
+                f"Segue o link: {commerce_state.order_payment_url}"
+            )
+        )
+        print("[sales.order.route]", {
+            "route": "transcript_payment_url",
+            "order_id_present": bool(order_label),
+            "payment_url_present": True,
+        })
+        return _annotate_agent_result(
+            AgentResult(
+                reply_text=reply,
+                intent="commerce",
+                commercial_data={
+                    "order_id": order_label,
+                    "payment": {
+                        "payment_url": commerce_state.order_payment_url,
+                        "status": commerce_state.order_payment_status or "awaiting_payment",
+                    },
+                },
+                response_metadata={
+                    "domain": "commerce",
+                    "pending_action": "awaiting_payment",
+                    "order_state": {"order_id": order_label} if order_label else {},
+                    "payment_state": {
+                        "order_payment_url": commerce_state.order_payment_url,
+                        "order_payment_status": (
+                            commerce_state.order_payment_status or "awaiting_payment"
+                        ),
+                    },
+                    "used_tray": False,
+                },
+            ),
+            domain="commerce",
+            response_source="context_resume_payment_url",
             used_openai_interpreter=False,
             used_openai_responder=False,
             used_tray=False,
@@ -558,6 +616,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         is_greeting=soft_greeting,
         allow_without_state=bool(
             context_handles.get("order_ids")
+            or context_handles.get("payment_urls")
             or context_handles.get("documents")
             or context_handles.get("emails")
         ),
