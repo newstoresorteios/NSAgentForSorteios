@@ -204,6 +204,41 @@ async def test_image_only_fragment_is_not_skipped_as_no_text(monkeypatch):
     assert processed[0].attachment_type == "image"
 
 
+@pytest.mark.asyncio
+async def test_conversation_busy_returns_200_skip_not_503(monkeypatch):
+    import api.index as index
+    from app.conversation_lock import ConversationLockUnavailable
+
+    async def busy_lock(*_args, **_kwargs):
+        raise ConversationLockUnavailable("database_lock_unavailable")
+
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
+    monkeypatch.setattr(index, "acquire_conversation_lock", busy_lock)
+    monkeypatch.setattr(
+        index,
+        "claim_inbound_message",
+        lambda _message: (_ for _ in ()).throw(
+            AssertionError("busy conversation must not claim")
+        ),
+    )
+    monkeypatch.setattr(
+        index,
+        "process_incoming_message",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("busy conversation must not process")
+        ),
+    )
+
+    response = await _post_webhook(index, _fragment_payload())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "skipped": True,
+        "reason": "conversation_busy",
+    }
+
+
 def test_event_skip_reason_only_blocks_transcript_event():
     assert webhook_event_skip_reason({
         "eventName": "conversationTranscript",

@@ -468,6 +468,14 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             reason="no_text",
         )
 
+    # Cheap duplicate check before waiting on the conversation lock. Brevo often
+    # redelivers the same fragment while Vision/catalog still holds the lock.
+    if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="duplicate_message",
+        )
+
     if getattr(settings, "agent_conversation_lock_enabled", True):
         lock_key = conversation_lock_key(
             conversation_id=incoming.conversation_id,
@@ -483,12 +491,12 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                     15.0,
                 )
             )
-            # Image turns hold the lock longer (download + Vision + catalog).
-            # Concurrent Brevo fragments should wait instead of 503'ing early.
+            # Keep waits short: the in-flight turn owns the work. Returning 503
+            # makes Brevo retry and amplifies lock contention during photo turns.
             if (incoming.image_url or "").strip() or (
                 (incoming.attachment_type or "").lower() == "image"
             ):
-                lock_timeout = max(lock_timeout, 55.0)
+                lock_timeout = min(max(lock_timeout, 5.0), 12.0)
             try:
                 with runtime_stage("conversation_lock_wait"):
                     request.state.conversation_lock_handle = (
@@ -513,18 +521,12 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                     "inbound_image": bool((incoming.image_url or "").strip()),
                     "lock_timeout_seconds": lock_timeout,
                 })
-                raise HTTPException(
-                    status_code=503,
-                    detail={"error": "conversation_busy"},
-                ) from exc
-
-    # Fast path for already-seen IDs; claim_inbound_message remains the
-    # authoritative atomic check for concurrent requests.
-    if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
-        return _skip_webhook_event(
-            event_name=event_name,
-            reason="duplicate_message",
-        )
+                # Acknowledge to Brevo so it stops retrying; the lock holder is
+                # already processing this conversation.
+                return _skip_webhook_event(
+                    event_name=event_name,
+                    reason="conversation_busy",
+                )
 
     try:
         claimed, inbound_id = claim_inbound_message(incoming.model_dump())
