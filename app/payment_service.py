@@ -553,8 +553,14 @@ async def inspect_order_payment(
     execute: ToolExecutor,
     order_id: str | None = None,
 ) -> AgentResult:
-    target = str(order_id or state.order_id or "").strip()
-    if not target:
+    from .order_service import (
+        order_reference_candidates,
+        resolve_order_id_via_customer_state,
+    )
+
+    seed = str(order_id or state.order_id or "").strip()
+    targets = order_reference_candidates(seed)
+    if not targets:
         return AgentResult(
             reply_text="Nao ha pedido identificado para consultar o pagamento.",
             intent="commerce",
@@ -567,15 +573,45 @@ async def inspect_order_payment(
             response_metadata={"domain": "commerce", "used_tray": False},
         )
 
-    print("[sales.payment.lookup]", {"order_id": target})
+    if not any(token.isdigit() for token in targets):
+        resolved = await resolve_order_id_via_customer_state(
+            state=state,
+            execute=execute,
+            preferred_codes=targets,
+        )
+        if resolved:
+            for token in order_reference_candidates(resolved):
+                if token not in targets:
+                    targets.insert(0, token)
+
     checked_at = datetime.now(timezone.utc).isoformat()
-    try:
-        result = await execute("get_order_payment", {"order_id": target})
-    except Exception as exc:
-        result = {
-            "error": "commerce_upstream_error",
-            "error_type": type(exc).__name__,
-        }
+    result: dict[str, Any] = {"error": "commerce_upstream_error"}
+    target = targets[0]
+    for candidate in targets:
+        target = candidate
+        print("[sales.payment.lookup]", {"order_id": target})
+        try:
+            result = await execute("get_order_payment", {"order_id": target})
+        except Exception as exc:
+            result = {
+                "error": "commerce_upstream_error",
+                "error_type": type(exc).__name__,
+            }
+        if "error" not in result and result.get("success") is not False:
+            break
+        status_code = str(result.get("status_code") or "")
+        if status_code in {"404", "422"} and candidate != targets[-1]:
+            continue
+        if status_code in {"404", "422"}:
+            resolved = await resolve_order_id_via_customer_state(
+                state=state,
+                execute=execute,
+                preferred_codes=targets,
+            )
+            if resolved and resolved not in targets:
+                targets.append(resolved)
+                continue
+            break
 
     if "error" in result or result.get("success") is False:
         print("[sales.payment.state]", {

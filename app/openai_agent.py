@@ -516,17 +516,34 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         or is_payment_link_request(message.text)
         or is_unpaid_order_resume_request(message.text)
     )
-    if wants_order_context and not (
-        order_reference
-        or commerce_state.order_id
-        or commerce_state.order_lookup_id
-        or commerce_state.order_session_id
-        or commerce_state.cart_session_id
-        or commerce_state.order_payment_url
+    known_order_tokens = [
+        token
+        for token in (
+            order_reference,
+            commerce_state.order_id,
+            commerce_state.order_lookup_id,
+            *(context_handles.get("order_ids") or []),
+        )
+        if token
+    ]
+    has_numeric_order_id = any(str(token).isdigit() for token in known_order_tokens)
+    # Recover when missing order context, or when we only have storefront hex codes
+    # (Tray get_order*_ endpoints need the numeric internal id).
+    if wants_order_context and (
+        not (
+            order_reference
+            or commerce_state.order_id
+            or commerce_state.order_lookup_id
+            or commerce_state.order_session_id
+            or commerce_state.cart_session_id
+            or commerce_state.order_payment_url
+        )
+        or not has_numeric_order_id
     ):
         recovered_order_id = await recover_order_id_from_customer(
             execute=execute_tool,
             handles=context_handles,
+            preferred_codes=[str(token) for token in known_order_tokens],
         )
         if recovered_order_id:
             commerce_state.order_id = recovered_order_id

@@ -149,15 +149,50 @@ def _order_unpaid_score(order: dict[str, Any]) -> int:
     return score
 
 
+def _canonical_tray_order_id(order: dict[str, Any]) -> str | None:
+    """Prefer numeric Tray internal ids over storefront hex codes."""
+    values: list[str] = []
+    for field in ("id", "order_id", "code", "number"):
+        value = order.get(field)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            values.append(text)
+    for text in values:
+        if text.isdigit():
+            return text
+    return values[0] if values else None
+
+
+def _order_matches_preferred_codes(
+    order: dict[str, Any],
+    preferred_codes: set[str],
+) -> bool:
+    if not preferred_codes:
+        return False
+    for field in ("id", "order_id", "code", "number"):
+        value = str(order.get(field) or "").strip().casefold()
+        if value and value in preferred_codes:
+            return True
+    return False
+
+
 async def recover_order_id_from_customer(
     *,
     execute: ToolExecutor,
     handles: dict[str, Any],
+    preferred_codes: list[str] | None = None,
 ) -> str | None:
     """Locate the most relevant Tray order using CPF/email recovered from context."""
     documents = list(handles.get("documents") or [])
     for email in handles.get("emails") or []:
         documents.append(("email", email))
+    preferred = {
+        str(code).strip().casefold()
+        for code in (preferred_codes or handles.get("order_ids") or [])
+        if str(code).strip()
+    }
 
     for kind, value in documents:
         payload = {"limit": 5}
@@ -195,25 +230,34 @@ async def recover_order_id_from_customer(
             order
             for order in order_result.get("orders") or []
             if isinstance(order, dict)
-            and (order.get("order_id") or order.get("id"))
+            and _canonical_tray_order_id(order)
         ]
         if not orders:
             continue
+        matched = [
+            order
+            for order in orders
+            if _order_matches_preferred_codes(order, preferred)
+        ]
+        pool = matched or orders
         ranked = sorted(
-            orders,
+            pool,
             key=lambda order: (
+                1 if _order_matches_preferred_codes(order, preferred) else 0,
                 _order_unpaid_score(order),
                 str(order.get("created_at") or order.get("order_created_at") or ""),
             ),
             reverse=True,
         )
         best = ranked[0]
-        order_id = str(best.get("order_id") or best.get("id") or "").strip()
+        order_id = _canonical_tray_order_id(best)
         if order_id:
             print("[sales.order.recover]", {
                 "via": kind,
                 "order_id_present": True,
+                "matched_preferred_code": bool(matched),
                 "candidates": len(orders),
+                "resolved_numeric": order_id.isdigit(),
             })
             return order_id
     return None

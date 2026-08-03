@@ -123,13 +123,18 @@ def order_reference_candidates(value: str | None) -> list[str]:
         if 10 <= len(store_code) <= 16 and not store_code.isdigit():
             add(store_code)
             add(internal_id)
-    # Prefer store hex code, then numeric internal id, then the raw token.
+    # Tray get_order*_ endpoints expect the numeric internal id first.
+    # Store hex codes from payment URLs often return 422.
     preferred: list[str] = []
     for token in candidates:
-        if re.fullmatch(r"[0-9a-fA-F]{10,16}", token) and not token.isdigit():
+        if token.isdigit() and token not in preferred:
             preferred.append(token)
     for token in candidates:
-        if token.isdigit() and token not in preferred:
+        if (
+            re.fullmatch(r"[0-9a-fA-F]{10,16}", token)
+            and not token.isdigit()
+            and token not in preferred
+        ):
             preferred.append(token)
     for token in candidates:
         if token not in preferred:
@@ -803,6 +808,35 @@ def _order_facts_result(
     )
 
 
+async def resolve_order_id_via_customer_state(
+    *,
+    state: CommerceConversationState,
+    execute: ToolExecutor,
+    preferred_codes: list[str],
+) -> str | None:
+    from .order_context_recovery import recover_order_id_from_customer
+
+    customer = state.checkout_draft.customer
+    handles: dict[str, Any] = {
+        "documents": [],
+        "emails": [],
+        "order_ids": list(preferred_codes),
+    }
+    cpf = re.sub(r"\D+", "", str(customer.cpf or ""))
+    if cpf:
+        handles["documents"].append(("cpf", cpf))
+    email = str(customer.email or "").strip()
+    if email:
+        handles["emails"].append(email)
+    if not handles["documents"] and not handles["emails"]:
+        return None
+    return await recover_order_id_from_customer(
+        execute=execute,
+        handles=handles,
+        preferred_codes=preferred_codes,
+    )
+
+
 async def get_order_facts(
     *,
     state: CommerceConversationState,
@@ -827,6 +861,22 @@ async def get_order_facts(
             "found": bool(targets),
             "status_lookup": True,
         })
+
+    # Storefront hex codes often 422 on Tray; resolve numeric id via CPF/email first.
+    if allow_customer_recovery and (
+        not targets
+        or not any(token.isdigit() for token in targets)
+    ):
+        resolved = await resolve_order_id_via_customer_state(
+            state=state,
+            execute=execute,
+            preferred_codes=targets or order_reference_candidates(seed),
+        )
+        if resolved:
+            for token in order_reference_candidates(resolved):
+                if token not in targets:
+                    targets.insert(0, token)
+
     if not targets:
         return AgentResult(
             reply_text="N\u00e3o h\u00e1 pedido identificado para consulta.",
@@ -846,7 +896,7 @@ async def get_order_facts(
         if "error" in result:
             last_error = result
             status_code = str(result.get("status_code") or "")
-            # Glued ids often yield 422; try the next candidate before failing.
+            # Glued/store codes often yield 422; try the next candidate before failing.
             if status_code in {"404", "422"} and target != targets[-1]:
                 print("[sales.order.lookup.retry]", {
                     "failed_order_id": target,
@@ -854,6 +904,20 @@ async def get_order_facts(
                     "remaining_candidates": len(targets) - targets.index(target) - 1,
                 })
                 continue
+            if status_code in {"404", "422"} and allow_customer_recovery:
+                resolved = await resolve_order_id_via_customer_state(
+                    state=state,
+                    execute=execute,
+                    preferred_codes=targets,
+                )
+                if resolved and resolved not in targets:
+                    print("[sales.order.lookup.customer_resolve]", {
+                        "from": target,
+                        "resolved": resolved,
+                        "status_code": status_code,
+                    })
+                    targets.append(resolved)
+                    continue
             if allow_customer_recovery and status_code == "404":
                 return _order_not_found_result(target)
             return AgentResult(

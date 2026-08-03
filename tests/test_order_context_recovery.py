@@ -72,11 +72,12 @@ def test_detects_followup_order_and_pix_requests():
 
 def test_splits_glued_store_code_and_internal_order_id():
     candidates = order_reference_candidates("0CC131B51070AEF25400")
-    assert candidates[0].upper() == "0CC131B51070AEF"
-    assert "25400" in candidates
+    # Tray expects the numeric internal id; store hex codes often 422.
+    assert candidates[0] == "25400"
+    assert candidates[1].upper() == "0CC131B51070AEF"
     assert extract_order_reference(
         "mais e esse pedido 0CC131B51070AEF25400?"
-    ).upper() == "0CC131B51070AEF"
+    ) == "25400"
 
 
 @pytest.mark.asyncio
@@ -89,15 +90,15 @@ async def test_get_order_facts_retries_split_candidates_after_422():
         assert name == "get_order_complete"
         order_id = str(args["order_id"])
         calls.append(order_id)
-        if order_id.lower() == "0cc131b51070aef25400":
-            return {"error": "commerce_upstream_error", "status_code": 422}
-        if order_id.upper() == "0CC131B51070AEF" or order_id.lower() == "0cc131b51070aef":
+        if order_id == "25400":
             return {
                 "success": True,
-                "order_id": "0CC131B51070AEF",
+                "order_id": "25400",
                 "status": "Aguardando pagamento",
                 "status_group": "open",
             }
+        if order_id.lower() in {"0cc131b51070aef25400", "0cc131b51070aef"}:
+            return {"error": "commerce_upstream_error", "status_code": 422}
         return {"error": "commerce_upstream_error", "status_code": 404}
 
     result = await get_order_facts(
@@ -105,8 +106,56 @@ async def test_get_order_facts_retries_split_candidates_after_422():
         execute=execute,
         order_id="0CC131B51070AEF25400",
     )
-    assert result.commercial_data["order_id"].upper() == "0CC131B51070AEF"
-    assert any(call.lower() == "0cc131b51070aef" for call in calls)
+    assert result.commercial_data["order_id"] == "25400"
+    assert calls[0] == "25400"
+
+
+@pytest.mark.asyncio
+async def test_get_order_facts_resolves_store_code_via_cpf_after_422():
+    from app.commerce_context import CheckoutCustomer, CheckoutDraft
+    from app.order_service import get_order_facts
+
+    calls: list[tuple[str, dict]] = []
+
+    async def execute(name, args):
+        calls.append((name, args))
+        if name == "get_order_complete":
+            if str(args["order_id"]) == "25400":
+                return {
+                    "success": True,
+                    "order_id": "25400",
+                    "status": "Aguardando pagamento",
+                    "status_group": "open",
+                }
+            return {"error": "commerce_upstream_error", "status_code": 422}
+        if name == "search_customer":
+            return {"customers": [{"id": 99}]}
+        if name == "list_orders":
+            return {
+                "orders": [
+                    {
+                        "id": 25400,
+                        "code": "0CC131B51070AEF",
+                        "status": "Aguardando pagamento",
+                        "status_group": "open",
+                    }
+                ]
+            }
+        raise AssertionError(name)
+
+    state = CommerceConversationState(
+        order_id="0CC131B51070AEF",
+        checkout_draft=CheckoutDraft(
+            customer=CheckoutCustomer(cpf="12345678909"),
+        ),
+    )
+    result = await get_order_facts(
+        state=state,
+        execute=execute,
+        order_id="0CC131B51070AEF",
+    )
+    assert result.commercial_data["order_id"] == "25400"
+    assert any(name == "search_customer" for name, _ in calls)
 
 
 @pytest.mark.asyncio
