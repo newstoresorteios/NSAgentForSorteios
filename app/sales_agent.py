@@ -4,7 +4,13 @@ import json
 import re
 import html
 import unicodedata
+from contextvars import ContextVar
 from typing import Any
+
+_sales_recent_turns: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "sales_recent_turns",
+    default=None,
+)
 
 from openai import APIError, AsyncOpenAI, BadRequestError
 from pydantic import ValidationError
@@ -130,6 +136,9 @@ payment_method_state=available.
 WORKING_MEMORY/STATE_FACTS são memória interna de continuidade: use para não pedir de novo
 dados já conhecidos e para retomar pedido/pagamento só quando o cliente perguntar. Em saudação
 ou papo genérico, não despeje pedido, link, CPF ou endereço sem solicitação.
+CONVERSATION_HISTORY traz o histórico recente da conversa: use para continuidade e para não
+contradicir fatos já confirmados ao cliente (pedido, link, produto). AVAILABLE_CAPABILITIES
+lista o que o agente pode fazer; não afirme incapacidade se a capacidade existir.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -713,6 +722,8 @@ async def interpret_message(
         _log_interpretation(fallback, settings.openai_model, fallback_reason="empty_message")
         return fallback
 
+    from .capability_catalog import format_capability_catalog_for_prompt
+
     normalized_history = _normalize_interpreter_history(recent_turns)
     state_obj = commerce_state or CommerceConversationState()
     state_message = {
@@ -724,6 +735,8 @@ async def interpret_message(
             + json.dumps(build_working_memory(state_obj), ensure_ascii=False)
             + "\n"
             + WORKING_MEMORY_USAGE_POLICY
+            + "\n\n"
+            + format_capability_catalog_for_prompt()
         ),
     }
     messages = [
@@ -1202,7 +1215,13 @@ async def _sales_response_with_openai(
     tray_result: AgentResult,
     interpretation: SalesInterpretation | None = None,
     state: CommerceConversationState | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> AgentResult | None:
+    from .capability_catalog import (
+        build_capability_catalog,
+        format_capability_catalog_for_prompt,
+    )
+
     settings = get_settings()
     if not settings.openai_api_key or tray_result.safety_reason in {
         "tray_adapter_unavailable", "product_match_failed", "product_not_found",
@@ -1219,10 +1238,18 @@ async def _sales_response_with_openai(
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         responder_instructions = (
             f"{SALES_RESPONDER_INSTRUCTIONS}\n\n"
-            f"{channel_system_hint(message.channel)}"
+            f"{channel_system_hint(message.channel)}\n\n"
+            f"{format_capability_catalog_for_prompt()}"
         )
+        history_turns = (
+            recent_turns
+            if recent_turns is not None
+            else _sales_recent_turns.get()
+        )
+        history = _normalize_interpreter_history(history_turns)
         responder_messages = [
             {"role": "system", "content": responder_instructions},
+            *history[-40:],
             {
                 "role": "user",
                 "content": json.dumps(
@@ -1235,6 +1262,7 @@ async def _sales_response_with_openai(
                         "WORKING_MEMORY": (
                             build_working_memory(state) if state else {}
                         ),
+                        "AVAILABLE_CAPABILITIES": build_capability_catalog(),
                         "RESPONSE_CONTRACT": _responder_contract(state),
                         "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},
                     },
@@ -2278,6 +2306,28 @@ def _pending_action_rejected_result(
 
 
 async def handle_sales_message(
+    message: IncomingMessage,
+    facts: dict[str, Any],
+    customer_context: dict[str, Any],
+    semantic_plan: dict[str, Any] | SalesInterpretation | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
+    commerce_state: CommerceConversationState | None = None,
+) -> AgentResult | None:
+    history_token = _sales_recent_turns.set(recent_turns)
+    try:
+        return await _handle_sales_message_inner(
+            message,
+            facts,
+            customer_context,
+            semantic_plan=semantic_plan,
+            recent_turns=recent_turns,
+            commerce_state=commerce_state,
+        )
+    finally:
+        _sales_recent_turns.reset(history_token)
+
+
+async def _handle_sales_message_inner(
     message: IncomingMessage,
     facts: dict[str, Any],
     customer_context: dict[str, Any],

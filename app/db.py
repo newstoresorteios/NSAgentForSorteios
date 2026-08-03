@@ -457,7 +457,7 @@ def load_recent_conversation_turns(
     if not settings.database_url:
         return []
 
-    safe_hard_cap = max(1, min(int(hard_cap), 80))
+    safe_hard_cap = max(1, min(int(hard_cap), 200))
     safe_limit = max(1, min(int(limit), safe_hard_cap))
     before_filter = (
         "AND inbound.id < %(before_inbound_id)s"

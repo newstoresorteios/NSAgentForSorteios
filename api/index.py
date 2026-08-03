@@ -254,6 +254,13 @@ async def health():
             "agent_quality_judge_mode",
             "shadow",
         ),
+        "agent_critique_mode": getattr(settings, "agent_critique_mode", "off"),
+        "agent_critique_max_retries": getattr(
+            settings,
+            "agent_critique_max_retries",
+            2,
+        ),
+        "agent_history_limit": getattr(settings, "agent_history_limit", 80),
         "agent_send_idempotency_enabled": getattr(
             settings,
             "agent_send_idempotency_enabled",

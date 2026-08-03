@@ -7,7 +7,11 @@ from app.customer_identity import (
     resolve_person_key_candidates,
     upsert_customer_identity_links,
 )
-from app.db import load_commerce_conversation_state, persist_customer_commerce_session
+from app.db import (
+    load_commerce_conversation_state,
+    load_recent_conversation_turns,
+    persist_customer_commerce_session,
+)
 from app.observability import (
     log_event,
     redact_text,
@@ -20,6 +24,7 @@ from app.models import AgentResult, IncomingMessage
 from app.openai_agent import generate_agent_reply_async
 from app.quality_judge import attach_judge_report, run_quality_judge
 from app.response_composer import compose_outbound_reply
+from app.response_critique import apply_response_critique_loop
 from app.runtime_context import get_current_turn, runtime_stage
 from app.user_preferences import enrich_customer_context, learn_from_incoming_message, record_interaction_memory
 from app.audio_service import should_transcribe_incoming
@@ -225,16 +230,42 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     )
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
-    with runtime_stage("quality_judge"):
-        judge_report = await run_quality_judge(
-            incoming,
-            result,
-            mode=getattr(settings, "agent_quality_judge_mode", "off"),
-            risk_score=decision.risk.score,
-            factual_valid=bool(validation.get("valid", True)),
-            openai_call_count=runtime.openai_call_count if runtime else 0,
+    critique_mode = getattr(settings, "agent_critique_mode", "off")
+    conversation_turns = customer_context.get("_conversation_turns")
+    if not conversation_turns:
+        conversation_turns = load_recent_conversation_turns(
+            conversation_id=incoming.conversation_id,
+            sender_phone=incoming.sender_phone,
+            before_inbound_id=inbound_id,
+            limit=int(getattr(settings, "agent_history_limit", 80)),
+            sender_key=incoming.sender_key,
+            hard_cap=int(getattr(settings, "agent_history_hard_cap", 80)),
         )
-    result = attach_judge_report(result, judge_report)
+    # Dual-agent critique runs before outbound compose/send: judge + optional API retry.
+    with runtime_stage("response_critique"):
+        if critique_mode != "off":
+            result, critique_report = await apply_response_critique_loop(
+                incoming=incoming,
+                result=result,
+                recent_turns=conversation_turns,
+                commerce_state=commerce_state,
+                mode=critique_mode,
+                max_retries=int(getattr(settings, "agent_critique_max_retries", 2)),
+            )
+            judge_report = None
+            if critique_report.applied_handoff and runtime is not None:
+                runtime.register_fallback("response_critique_failed")
+        else:
+            critique_report = None
+            judge_report = await run_quality_judge(
+                incoming,
+                result,
+                mode=getattr(settings, "agent_quality_judge_mode", "off"),
+                risk_score=decision.risk.score,
+                factual_valid=bool(validation.get("valid", True)),
+                openai_call_count=runtime.openai_call_count if runtime else 0,
+            )
+            result = attach_judge_report(result, judge_report)
     max_reply_chars = getattr(settings, "max_reply_chars", 900)
     result = compose_outbound_reply(
         incoming,
@@ -246,7 +277,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         runtime.risk_score = decision.risk.score
         if validation.get("fallback_applied"):
             runtime.register_fallback("factual_validation_failed")
-        if judge_report.applied:
+        if judge_report is not None and judge_report.applied:
             runtime.register_fallback("quality_judge_failed")
 
     response_metadata = result.response_metadata or {}

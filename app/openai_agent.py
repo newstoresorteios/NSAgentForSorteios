@@ -412,23 +412,20 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         inbound_id = int(raw_inbound_id) if raw_inbound_id is not None else None
     except (TypeError, ValueError):
         inbound_id = None
+    settings = get_settings()
+    history_limit = int(getattr(settings, "agent_history_limit", 80))
+    history_hard_cap = int(getattr(settings, "agent_history_hard_cap", 80))
     history_lookup = {
         "conversation_id": message.conversation_id,
         "sender_phone": message.sender_phone,
         "before_inbound_id": inbound_id,
-        "limit": 8,
+        "limit": history_limit,
         "sender_key": message.sender_key,
+        "hard_cap": history_hard_cap,
     }
+    # Full conversation window for LLM + commerce recovery (config-capped).
     recent_turns = load_recent_conversation_turns(**history_lookup)
-    # Deeper window only for order/payment handle recovery (link often falls out of 8).
-    recovery_turns = load_recent_conversation_turns(
-        conversation_id=message.conversation_id,
-        sender_phone=message.sender_phone,
-        before_inbound_id=inbound_id,
-        limit=40,
-        sender_key=message.sender_key,
-        hard_cap=40,
-    )
+    recovery_turns = recent_turns
     context_source = (
         "conversation_id"
         if message.conversation_id
@@ -439,6 +436,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     print("[sales.context]", {
         "history_turns": len(recent_turns),
         "recovery_turns": len(recovery_turns),
+        "history_limit": history_limit,
         "history_user_turns": sum(1 for turn in recent_turns if turn.get("role") == "user"),
         "history_assistant_turns": sum(1 for turn in recent_turns if turn.get("role") == "assistant"),
         "conversation_id_present": bool(message.conversation_id),
@@ -446,6 +444,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         "before_inbound_id_present": inbound_id is not None,
         "context_source": context_source,
     })
+    customer_context["_conversation_turns"] = recent_turns
     commerce_state = CommerceConversationState.from_payload(
         customer_context.get("_commerce_state")
     )

@@ -78,6 +78,31 @@ class Settings(BaseSettings):
         ge=0,
         le=100,
     )
+    # Dual-agent critique: judge draft with API catalog and retry before send.
+    # Start in off; use shadow then enforce after validating latency/cost.
+    agent_critique_mode: Literal["off", "shadow", "enforce"] = Field(
+        default="off",
+        alias="AGENT_CRITIQUE_MODE",
+    )
+    agent_critique_max_retries: int = Field(
+        default=2,
+        alias="AGENT_CRITIQUE_MAX_RETRIES",
+        ge=0,
+        le=4,
+    )
+    # Max conversation turns loaded for LLM + critique (hard capped).
+    agent_history_limit: int = Field(
+        default=80,
+        alias="AGENT_HISTORY_LIMIT",
+        ge=8,
+        le=200,
+    )
+    agent_history_hard_cap: int = Field(
+        default=80,
+        alias="AGENT_HISTORY_HARD_CAP",
+        ge=8,
+        le=200,
+    )
     agent_send_idempotency_enabled: bool = Field(
         default=True,
         alias="AGENT_SEND_IDEMPOTENCY_ENABLED",
