@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import re
+import json
+import unicodedata
 from typing import Any
+
+from openai import APIError, AsyncOpenAI
+from pydantic import ValidationError
 
 from .commerce_context import (
     CHECKOUT_REQUIRED_FIELDS,
@@ -9,7 +14,8 @@ from .commerce_context import (
     checkout_fields_view,
     checkout_missing_fields,
 )
-from .models import AgentResult
+from .config import get_settings
+from .models import AgentResult, CheckoutDataInput
 
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -17,6 +23,47 @@ _CUSTOMER_FIELDS = {"name", "cpf", "email", "phone", "rg", "gender"}
 _ADDRESS_FIELDS = {
     "address", "zipcode", "zip_code", "number", "complement",
     "neighborhood", "city", "state",
+}
+_BRAZILIAN_STATE_CODES = {
+    "ac": "AC", "acre": "AC",
+    "al": "AL", "alagoas": "AL",
+    "ap": "AP", "amapa": "AP",
+    "am": "AM", "amazonas": "AM",
+    "ba": "BA", "bahia": "BA",
+    "ce": "CE", "ceara": "CE",
+    "df": "DF", "distrito federal": "DF",
+    "es": "ES", "espirito santo": "ES",
+    "go": "GO", "goias": "GO",
+    "ma": "MA", "maranhao": "MA",
+    "mt": "MT", "mato grosso": "MT",
+    "ms": "MS", "mato grosso do sul": "MS",
+    "mg": "MG", "minas gerais": "MG",
+    "pa": "PA", "para": "PA",
+    "pb": "PB", "paraiba": "PB",
+    "pr": "PR", "parana": "PR",
+    "pe": "PE", "pernambuco": "PE",
+    "pi": "PI", "piaui": "PI",
+    "rj": "RJ", "rio de janeiro": "RJ",
+    "rn": "RN", "rio grande do norte": "RN",
+    "rs": "RS", "rio grande do sul": "RS",
+    "ro": "RO", "rondonia": "RO",
+    "rr": "RR", "roraima": "RR",
+    "sc": "SC", "santa catarina": "SC",
+    "sp": "SP", "sao paulo": "SP",
+    "se": "SE", "sergipe": "SE",
+    "to": "TO", "tocantins": "TO",
+}
+_FIELD_LABELS = {
+    "name": ("Nome completo", "<seu nome completo>"),
+    "cpf": ("CPF", "<11 dígitos>"),
+    "email": ("E-mail", "<seu e-mail>"),
+    "phone": ("Telefone com DDD", "<seu telefone>"),
+    "address": ("Rua/Avenida", "<nome da rua ou avenida>"),
+    "zipcode": ("CEP", "<8 dígitos>"),
+    "number": ("Número", "<número do imóvel>"),
+    "neighborhood": ("Bairro", "<seu bairro>"),
+    "city": ("Cidade", "<sua cidade>"),
+    "state": ("Estado/UF", "<nome do estado ou sigla>"),
 }
 
 
@@ -52,6 +99,132 @@ def _normalize_phone(value: Any) -> str | None:
 def _clean_text(value: Any) -> str | None:
     text = " ".join(str(value or "").strip().split())
     return text or None
+
+
+def _fold_text(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
+    return " ".join(
+        "".join(
+            char for char in normalized
+            if not unicodedata.combining(char)
+        ).split()
+    )
+
+
+def normalize_brazilian_state(value: Any) -> str | None:
+    return _BRAZILIAN_STATE_CODES.get(_fold_text(value))
+
+
+def checkout_data_template(
+    missing_fields: list[str],
+    field_errors: dict[str, str] | None = None,
+) -> str:
+    errors = field_errors or {}
+    requested = [
+        field
+        for field in CHECKOUT_REQUIRED_FIELDS
+        if field in set(missing_fields) | set(errors)
+    ]
+    if not requested:
+        return ""
+    if errors:
+        intro = "Não consegui validar alguns dados. Corrija e envie neste modelo:"
+    else:
+        intro = "Para continuar, copie, preencha e envie neste modelo:"
+    lines = [
+        f"{_FIELD_LABELS[field][0]}: {_FIELD_LABELS[field][1]}"
+        for field in requested
+        if field in _FIELD_LABELS
+    ]
+    return "\n".join([
+        intro,
+        "",
+        *lines,
+        "",
+        "Não precisa repetir os dados que já foram validados.",
+    ])
+
+
+def should_repair_checkout_data(
+    message_text: str,
+    updates: dict[str, Any],
+    missing_fields: list[str],
+    field_errors: dict[str, str],
+) -> bool:
+    if field_errors:
+        return True
+    populated_lines = [
+        line for line in (message_text or "").splitlines()
+        if line.strip()
+    ]
+    return bool(missing_fields and (len(updates) >= 4 or len(populated_lines) >= 4))
+
+
+async def repair_checkout_data_with_openai(
+    *,
+    message_text: str,
+    updates: dict[str, Any],
+    missing_fields: list[str],
+    field_errors: dict[str, str],
+) -> dict[str, Any]:
+    """Re-extract only unresolved fields; deterministic validators remain authoritative."""
+    settings = get_settings()
+    repairable = set(missing_fields) | set(field_errors)
+    if not settings.openai_api_key or not repairable:
+        return dict(updates)
+    try:
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        response = await client.chat.completions.parse(
+            model=settings.openai_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Extraia e normalize dados de checkout explicitamente presentes "
+                        "na mensagem. Nunca invente dados ausentes. Converta nomes de "
+                        "estados brasileiros para a UF de duas letras, remova apenas a "
+                        "formatação de CPF, telefone e CEP, e preserve nomes e endereços. "
+                        "Retorne null para qualquer campo não informado."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "message": message_text,
+                            "first_extraction": updates,
+                            "unresolved_fields": sorted(repairable),
+                            "validation_errors": field_errors,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=0,
+            response_format=CheckoutDataInput,
+        )
+        parsed_message = response.choices[0].message if response.choices else None
+        parsed = getattr(parsed_message, "parsed", None)
+        if not isinstance(parsed, CheckoutDataInput):
+            raise ValueError("checkout_repair_schema_missing")
+        repaired = parsed.model_dump(mode="json", exclude_none=True)
+        accepted_repairs = {
+            field: value
+            for field, value in repaired.items()
+            if field in repairable
+        }
+        print("[sales.checkout.repair]", {
+            "attempted": True,
+            "repairable_fields": sorted(repairable),
+            "repaired_fields": sorted(accepted_repairs),
+        })
+        return {**updates, **accepted_repairs}
+    except (APIError, ValidationError, ValueError, TypeError) as exc:
+        print("[sales.checkout.repair] failed", {
+            "error_type": type(exc).__name__,
+            "repairable_fields": sorted(repairable),
+        })
+        return dict(updates)
 
 
 def update_checkout_data(
@@ -93,11 +266,11 @@ def update_checkout_data(
             else:
                 normalized[canonical] = parsed
         elif canonical == "state":
-            parsed = _clean_text(value)
-            if parsed is None or not re.fullmatch(r"[A-Za-z]{2}", parsed):
+            parsed = normalize_brazilian_state(value)
+            if parsed is None:
                 errors[canonical] = "invalid_state"
             else:
-                normalized[canonical] = parsed.upper()
+                normalized[canonical] = parsed
         else:
             parsed = _clean_text(value)
             if parsed is None and canonical != "complement":
@@ -131,8 +304,9 @@ def update_checkout_data(
         "missing_count": len(missing),
         "missing_fields": missing,
     })
+    template = checkout_data_template(missing, errors)
     return AgentResult(
-        reply_text="Dados de checkout atualizados.",
+        reply_text=template or "Dados de checkout atualizados.",
         intent="commerce",
         commercial_data={
             "success": not errors,
@@ -140,6 +314,7 @@ def update_checkout_data(
             "required_fields": list(CHECKOUT_REQUIRED_FIELDS),
             "missing_fields": missing,
             "field_errors": errors,
+            "input_template": template or None,
             "shipping_quote_required": shipping_zipcode_changed,
         },
         response_metadata={

@@ -74,5 +74,7 @@ def test_whatsapp_choice_enables_order_but_not_payment_execution():
     assert result.commercial_data["checkout"]["requires_channel_choice"] is False
     assert "cart_url" not in result.commercial_data["checkout"]
     assert updated.checkout_channel_preference == "whatsapp"
-    assert updated.purchase_stage == "shipping"
-    assert updated.pending_action == "awaiting_shipping_zipcode"
+    assert updated.purchase_stage == "checkout_data"
+    assert updated.pending_action == "awaiting_checkout_data"
+    assert "Nome completo:" in result.reply_text
+    assert "Estado/UF:" in result.reply_text

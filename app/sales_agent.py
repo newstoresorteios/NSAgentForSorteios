@@ -17,7 +17,11 @@ from .commerce_router import (
 )
 from .category_resolver import CategoryResolver
 from .checkout_service import checkout_capabilities, select_checkout_channel
-from .checkout_data_service import update_checkout_data
+from .checkout_data_service import (
+    repair_checkout_data_with_openai,
+    should_repair_checkout_data,
+    update_checkout_data,
+)
 from .cart_service import (
     CartItemRequest,
     create_cart_checkout,
@@ -294,7 +298,8 @@ FLUXO DE PEDIDO PELO WHATSAPP:
   nunca invente um campo ausente.
 - Uma unica mensagem pode conter checkout_data, payment_method_preference e uma
   correcao de endereco: extraia todos os fatos simultaneamente. Cidade pode aparecer
-  sozinha em uma linha; aceite UF brasileira com duas letras sem diferenciar maiusculas.
+  sozinha em uma linha. Normalize tanto a sigla quanto o nome completo de qualquer
+  estado brasileiro para a UF de duas letras, por exemplo Paraná=PR e São Paulo=SP.
 - Quando faltarem dados, a resposta deve solicitar somente required_fields que ainda
   aparecem em missing_fields, em uma unica pergunta. Nao inclua CEP se ele ja estiver
   preenchido no estado.
@@ -1175,6 +1180,8 @@ async def _sales_response_with_openai(
         "customer_orders_lookup_technical_failure",
     }:
         return None
+    if (tray_result.commercial_data or {}).get("input_template"):
+        return None
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.chat.completions.create(
@@ -1967,6 +1974,8 @@ async def _advance_whatsapp_checkout(
     cart_snapshot: dict[str, Any] | None = None
     if current.checkout_channel_preference != "whatsapp":
         return result
+    if checkout_missing_fields(current.checkout_draft):
+        return result
     zipcode = current.checkout_draft.address.zip_code
     if zipcode and not current.shipping_quotes:
         shipping_result = await quote_shipping(
@@ -2390,10 +2399,37 @@ async def handle_sales_message(
             state=evolve_commerce_state(confirmed_state, order_result),
         )
     if interpretation is not None and interpretation.checkout_data is not None:
+        checkout_updates = interpretation.checkout_data.model_dump(
+            mode="json",
+            exclude_none=True,
+        )
         checkout_result = update_checkout_data(
             state,
-            interpretation.checkout_data.model_dump(mode="json", exclude_none=True),
+            checkout_updates,
         )
+        field_errors = checkout_result.commercial_data.get("field_errors")
+        field_errors = field_errors if isinstance(field_errors, dict) else {}
+        missing_fields = checkout_result.commercial_data.get("missing_fields")
+        missing_fields = missing_fields if isinstance(missing_fields, list) else []
+        repair_attempted = should_repair_checkout_data(
+            message.text,
+            checkout_updates,
+            missing_fields,
+            field_errors,
+        )
+        if repair_attempted:
+            repaired_updates = await repair_checkout_data_with_openai(
+                message_text=message.text,
+                updates=checkout_updates,
+                missing_fields=missing_fields,
+                field_errors=field_errors,
+            )
+            if repaired_updates != checkout_updates:
+                checkout_result = update_checkout_data(state, repaired_updates)
+            checkout_result.response_metadata["checkout_data_repair_attempted"] = True
+            checkout_result.response_metadata["checkout_data_repair_applied"] = (
+                repaired_updates != checkout_updates
+            )
         payment_preference = (
             interpretation.payment_method_preference
             or state.payment_method_preference

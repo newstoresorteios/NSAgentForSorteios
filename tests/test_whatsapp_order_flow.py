@@ -282,7 +282,7 @@ def test_checkout_block_merges_valid_fields_when_cpf_is_absent():
     assert updated.checkout_draft.address.zip_code == "86480000"
 
 
-def test_invalid_field_does_not_discard_valid_checkout_updates_or_email():
+def test_full_state_name_is_normalized_without_discarding_checkout_data():
     state = _whatsapp_state()
     first = update_checkout_data(state, {
         "name": "Joao Pedro", "email": "jpfmatosfm@gmail.com",
@@ -291,9 +291,10 @@ def test_invalid_field_does_not_discard_valid_checkout_updates_or_email():
         "state": "Parana", "zipcode": "86480000",
     })
     state = evolve_commerce_state(state, first)
-    assert first.commercial_data["field_errors"] == {"state": "invalid_state"}
+    assert first.commercial_data["field_errors"] == {}
     assert state.checkout_draft.customer.email == "jpfmatosfm@gmail.com"
     assert state.checkout_draft.address.city == "Conselheiro Mairinck"
+    assert state.checkout_draft.address.state == "PR"
 
     second = update_checkout_data(state, {"state": "PR"})
     state = evolve_commerce_state(state, second)
