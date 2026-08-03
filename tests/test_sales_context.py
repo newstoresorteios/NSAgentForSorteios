@@ -215,11 +215,15 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
             return None
 
         def execute(self, query, params):
+            captured.setdefault("queries", []).append(query)
+            captured.setdefault("params_list", []).append(params)
             captured["query"] = query
             captured["params"] = params
 
         def fetchall(self):
-            return rows
+            if "conversation_id" in captured.get("params", {}):
+                return rows
+            return []
 
     class FakeConnection:
         def cursor(self):
@@ -231,12 +235,17 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
 
     monkeypatch.setattr(db, "get_settings", lambda: _settings())
     monkeypatch.setattr(db, "get_conn", fake_get_conn)
+    monkeypatch.setattr(
+        "app.customer_identity.resolve_linked_identity_candidates",
+        lambda **_kwargs: [],
+    )
 
     turns = db.load_recent_conversation_turns(
         conversation_id="conversation-1",
         sender_phone="5511999999999",
         before_inbound_id=20,
         limit=8,
+        sender_key="whatsapp:5511999999999",
     )
 
     assert turns == [
@@ -248,12 +257,18 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
         },
         {"role": "user", "content": "menos de 5 mil"},
     ]
-    assert captured["params"]["conversation_id"] == "conversation-1"
-    assert "sender_phone" not in captured["params"]
-    assert captured["params"]["before_inbound_id"] == 20
-    assert "provider_send_ok = true" in captured["query"]
-    assert "response.safety_reason" in captured["query"]
-    assert "inbound.id < %(before_inbound_id)s" in captured["query"]
+    assert any(
+        params.get("conversation_id") == "conversation-1"
+        for params in captured["params_list"]
+    )
+    assert any(
+        params.get("before_inbound_id") == 20 for params in captured["params_list"]
+    )
+    assert any("provider_send_ok = true" in query for query in captured["queries"])
+    assert any("response.safety_reason" in query for query in captured["queries"])
+    assert any(
+        "inbound.id < %(before_inbound_id)s" in query for query in captured["queries"]
+    )
 
 
 @pytest.mark.asyncio

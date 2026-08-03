@@ -33,6 +33,12 @@ from .handoff_service import build_human_handoff_result, should_request_human_ha
 from .models import IncomingMessage, AgentResult
 from .openai_runtime import execute_openai_call, execute_openai_call_sync
 from .turn_runtime import LLMCallBudgetExceeded
+from .context_resume import (
+    build_contextual_greeting,
+    has_resumable_commerce,
+    is_soft_greeting,
+    should_resume_pending_order,
+)
 from .order_service import (
     contains_tax_document_candidate,
     extract_order_reference,
@@ -42,12 +48,20 @@ from .order_service import (
     invalid_tax_document_result,
     is_order_lookup_request,
 )
+from .payment_service import inspect_order_payment
 from .repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
 from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
 from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
 from .user_preferences import detect_preferred_name_update
 from .tray_tools import TOOL_SCHEMAS, execute_tool
-from .sales_agent import GREETING_REPLY, OUT_OF_SCOPE_REPLY, deterministic_scope, handle_sales_message, interpret_message
+from .sales_agent import (
+    GREETING_REPLY,
+    OUT_OF_SCOPE_REPLY,
+    deterministic_scope,
+    handle_sales_message,
+    interpret_message,
+    _is_greeting,
+)
 
 
 SYSTEM_INSTRUCTIONS = f"""
@@ -383,9 +397,8 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         "sender_phone": message.sender_phone,
         "before_inbound_id": inbound_id,
         "limit": 8,
+        "sender_key": message.sender_key,
     }
-    if not message.conversation_id and message.sender_key:
-        history_lookup["sender_key"] = message.sender_key
     recent_turns = load_recent_conversation_turns(**history_lookup)
     context_source = (
         "conversation_id"
@@ -433,20 +446,81 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 used_tray=False,
             )
     order_reference = extract_order_reference(message.text)
-    if is_order_lookup_request(message.text) and (
+    resume_pending_order = should_resume_pending_order(
+        message.text,
+        commerce_state,
+        is_greeting=_is_greeting(message.text) or is_soft_greeting(message.text),
+    )
+    if (
+        is_order_lookup_request(message.text)
+        or resume_pending_order
+    ) and (
         order_reference
         or commerce_state.order_id
         or commerce_state.order_lookup_id
+        or commerce_state.order_session_id
+        or commerce_state.cart_session_id
+        or commerce_state.order_payment_url
     ):
         print("[sales.order.route]", {
-            "route": "deterministic_status_lookup",
+            "route": (
+                "context_resume_payment"
+                if resume_pending_order
+                and commerce_state.order_payment_url
+                and not is_order_lookup_request(message.text)
+                else "deterministic_status_lookup"
+            ),
             "order_reference_present": bool(order_reference),
+            "state_order_present": bool(commerce_state.order_id),
+            "resume_pending_order": resume_pending_order,
         })
-        result = await get_order_facts(
-            state=commerce_state,
-            execute=execute_tool,
-            order_id=order_reference,
-        )
+        if (
+            resume_pending_order
+            and commerce_state.order_id
+            and (
+                commerce_state.pending_action == "awaiting_payment"
+                or commerce_state.order_payment_url
+            )
+            and not is_order_lookup_request(message.text)
+        ):
+            result = await inspect_order_payment(
+                state=commerce_state,
+                execute=execute_tool,
+                order_id=commerce_state.order_id,
+            )
+            if not (result.commercial_data or {}).get("payment", {}).get("payment_url"):
+                if commerce_state.order_payment_url:
+                    result = AgentResult(
+                        reply_text=(
+                            f"Seu pedido {commerce_state.order_id} ainda está aguardando "
+                            f"pagamento. Segue o link: {commerce_state.order_payment_url}"
+                        ),
+                        intent="commerce",
+                        commercial_data={
+                            "order_id": commerce_state.order_id,
+                            "payment": {
+                                "payment_url": commerce_state.order_payment_url,
+                                "status": commerce_state.order_payment_status,
+                            },
+                        },
+                        response_metadata={
+                            "domain": "commerce",
+                            "pending_action": "awaiting_payment",
+                            "order_state": {"order_id": commerce_state.order_id},
+                            "payment_state": {
+                                "order_payment_url": commerce_state.order_payment_url,
+                                "order_payment_status": (
+                                    commerce_state.order_payment_status
+                                ),
+                            },
+                        },
+                    )
+        else:
+            result = await get_order_facts(
+                state=commerce_state,
+                execute=execute_tool,
+                order_id=order_reference,
+            )
         return _annotate_agent_result(
             result,
             domain="commerce",
@@ -495,7 +569,25 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             used_tray=False,
             fallback_reason=interpretation._fallback_reason,
         )
-    if scope_domain == "greeting":
+    if scope_domain == "greeting" or (
+        interpretation._source != "openai"
+        and is_soft_greeting(message.text)
+        and has_resumable_commerce(commerce_state)
+    ):
+        if has_resumable_commerce(commerce_state):
+            resume = build_contextual_greeting(commerce_state)
+            return _annotate_agent_result(
+                resume,
+                domain=resume.response_metadata.get("domain") or "commerce",
+                response_source=resume.response_metadata.get(
+                    "response_source",
+                    "context_resume",
+                ),
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=interpretation._fallback_reason,
+            )
         return _annotate_agent_result(
             AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False),
             domain="greeting",

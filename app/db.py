@@ -135,6 +135,24 @@ def ensure_tables() -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_sender_key_created_at
                 ON public.ai_agent_responses(sender_key, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS public.ai_customer_identity_links (
+                  id bigserial PRIMARY KEY,
+                  person_key text NOT NULL,
+                  identity_type text NOT NULL,
+                  identity_value text NOT NULL,
+                  channel text NULL,
+                  created_at timestamptz NOT NULL DEFAULT now(),
+                  updated_at timestamptz NOT NULL DEFAULT now(),
+                  CONSTRAINT uq_ai_customer_identity_type_value
+                    UNIQUE (identity_type, identity_value)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ai_customer_identity_person_key
+                ON public.ai_customer_identity_links(person_key);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_customer_identity_value
+                ON public.ai_customer_identity_links(identity_type, identity_value);
                 """
             )
 
@@ -370,6 +388,35 @@ def is_latest_inbound_message(
             return cur.fetchone() is None
 
 
+def _history_identity_candidates(
+    conversation_id: str | None,
+    sender_key: str | None,
+    sender_phone: str | None,
+) -> list[tuple[str | None, str | None, str | None]]:
+    candidates: list[tuple[str | None, str | None, str | None]] = [
+        (conversation_id, sender_key, sender_phone),
+    ]
+    if conversation_id and (sender_key or sender_phone):
+        candidates.append((None, sender_key, sender_phone))
+    if sender_key:
+        candidates.append((None, sender_key, None))
+    if sender_phone:
+        candidates.append((None, None, sender_phone))
+    try:
+        from .customer_identity import resolve_linked_identity_candidates
+
+        for linked_key, linked_phone in resolve_linked_identity_candidates(
+            sender_key=sender_key,
+            sender_phone=sender_phone,
+        ):
+            candidates.append((None, linked_key, linked_phone))
+    except Exception as exc:
+        print("[sales.context] identity_resolve_failed", {
+            "error_type": type(exc).__name__,
+        })
+    return candidates
+
+
 def load_recent_conversation_turns(
     *,
     conversation_id: str | None,
@@ -380,55 +427,72 @@ def load_recent_conversation_turns(
 ) -> list[dict[str, Any]]:
     """Load a small, chronological transcript containing only delivered replies."""
     settings = get_settings()
-    conversation_filter, identity_params = resolve_context_filter(
-        conversation_id,
-        sender_key,
-        sender_phone,
-    )
-    if not settings.database_url or not conversation_filter:
+    if not settings.database_url:
         return []
 
     safe_limit = max(1, min(int(limit), 8))
-    params: dict[str, Any] = {
-        "before_inbound_id": before_inbound_id,
-        "limit": safe_limit,
-    }
-    params.update(identity_params)
-
     before_filter = (
         "AND inbound.id < %(before_inbound_id)s"
         if before_inbound_id is not None
         else ""
     )
+    seen_filters: set[str] = set()
+    rows_by_id: dict[int, dict[str, Any]] = {}
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT inbound.id, inbound.text, delivered.reply_text, delivered.safety_reason
-                    FROM public.ai_inbound_messages AS inbound
-                    LEFT JOIN LATERAL (
-                        SELECT response.reply_text, response.safety_reason
-                        FROM public.ai_agent_responses AS response
-                        WHERE response.inbound_id = inbound.id
-                          AND response.provider_send_ok = true
-                        ORDER BY response.id DESC
-                        LIMIT 1
-                    ) AS delivered ON true
-                    WHERE {conversation_filter}
-                      {before_filter}
-                    ORDER BY inbound.id DESC
-                    LIMIT %(limit)s
-                    """,
-                    params,
-                )
-                rows = list(cur.fetchall() or [])
+        for conv, key, phone in _history_identity_candidates(
+            conversation_id,
+            sender_key,
+            sender_phone,
+        ):
+            conversation_filter, identity_params = resolve_context_filter(
+                conv,
+                key,
+                phone,
+            )
+            if not conversation_filter:
+                continue
+            filter_token = f"{conversation_filter}|{sorted(identity_params.items())}"
+            if filter_token in seen_filters:
+                continue
+            seen_filters.add(filter_token)
+            params: dict[str, Any] = {
+                "before_inbound_id": before_inbound_id,
+                "limit": safe_limit,
+            }
+            params.update(identity_params)
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT inbound.id, inbound.text, delivered.reply_text, delivered.safety_reason
+                        FROM public.ai_inbound_messages AS inbound
+                        LEFT JOIN LATERAL (
+                            SELECT response.reply_text, response.safety_reason
+                            FROM public.ai_agent_responses AS response
+                            WHERE response.inbound_id = inbound.id
+                              AND response.provider_send_ok = true
+                            ORDER BY response.id DESC
+                            LIMIT 1
+                        ) AS delivered ON true
+                        WHERE {conversation_filter}
+                          {before_filter}
+                        ORDER BY inbound.id DESC
+                        LIMIT %(limit)s
+                        """,
+                        params,
+                    )
+                    for row in cur.fetchall() or []:
+                        inbound_id = row.get("id")
+                        if inbound_id is None:
+                            continue
+                        rows_by_id[int(inbound_id)] = row
     except (psycopg.Error, RuntimeError) as exc:
         print("[sales.context] load_failed", {"error_type": type(exc).__name__})
         return []
 
+    rows = [rows_by_id[key] for key in sorted(rows_by_id)][-safe_limit:]
     turns: list[dict[str, Any]] = []
-    for row in reversed(rows):
+    for row in rows:
         inbound_text = str(row.get("text") or "").strip()
         reply_text = str(row.get("reply_text") or "").strip()
         if inbound_text:
@@ -441,54 +505,7 @@ def load_recent_conversation_turns(
     return turns[-safe_limit:]
 
 
-def load_commerce_conversation_state(
-    *,
-    conversation_id: str | None,
-    sender_phone: str | None,
-    before_inbound_id: int | None,
-    sender_key: str | None = None,
-) -> dict[str, Any]:
-    """Load the latest delivered compact commerce state from existing JSONB."""
-    settings = get_settings()
-    conversation_filter, identity_params = resolve_context_filter(
-        conversation_id,
-        sender_key,
-        sender_phone,
-    )
-    if not settings.database_url or not conversation_filter:
-        return {}
-
-    params: dict[str, Any] = {"before_inbound_id": before_inbound_id}
-    params.update(identity_params)
-    before_filter = (
-        "AND inbound.id < %(before_inbound_id)s"
-        if before_inbound_id is not None
-        else ""
-    )
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT response.provider_response
-                    FROM public.ai_agent_responses AS response
-                    JOIN public.ai_inbound_messages AS inbound
-                      ON inbound.id = response.inbound_id
-                    WHERE {conversation_filter}
-                      {before_filter}
-                      AND response.provider_send_ok = true
-                      AND response.provider_response ? '_agent_context'
-                    ORDER BY response.id DESC
-                    LIMIT 1
-                    """,
-                    params,
-                )
-                row = cur.fetchone()
-    except (psycopg.Error, RuntimeError) as exc:
-        print("[sales.context.state] load_failed", {"error_type": type(exc).__name__})
-        return {}
-
-    provider_response = row.get("provider_response") if isinstance(row, dict) else None
+def _commerce_state_from_provider_response(provider_response: Any) -> dict[str, Any]:
     agent_context = (
         provider_response.get("_agent_context")
         if isinstance(provider_response, dict)
@@ -496,6 +513,132 @@ def load_commerce_conversation_state(
     )
     state = agent_context.get("commerce_state") if isinstance(agent_context, dict) else None
     return state if isinstance(state, dict) else {}
+
+
+def _load_commerce_states_for_filter(
+    *,
+    conversation_filter: str,
+    identity_params: dict[str, Any],
+    before_inbound_id: int | None,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {
+        "before_inbound_id": before_inbound_id,
+        "limit": max(1, min(int(limit), 20)),
+    }
+    params.update(identity_params)
+    before_filter = (
+        "AND inbound.id < %(before_inbound_id)s"
+        if before_inbound_id is not None
+        else ""
+    )
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT response.provider_response
+                FROM public.ai_agent_responses AS response
+                JOIN public.ai_inbound_messages AS inbound
+                  ON inbound.id = response.inbound_id
+                WHERE {conversation_filter}
+                  {before_filter}
+                  AND response.provider_send_ok = true
+                  AND response.provider_response ? '_agent_context'
+                ORDER BY response.id DESC
+                LIMIT %(limit)s
+                """,
+                params,
+            )
+            rows = cur.fetchall() or []
+    states: list[dict[str, Any]] = []
+    for row in rows:
+        provider_response = row.get("provider_response") if isinstance(row, dict) else None
+        state = _commerce_state_from_provider_response(provider_response)
+        if state:
+            states.append(state)
+    return states
+
+
+def load_commerce_conversation_state(
+    *,
+    conversation_id: str | None,
+    sender_phone: str | None,
+    before_inbound_id: int | None,
+    sender_key: str | None = None,
+) -> dict[str, Any]:
+    """Load delivered commerce state, recovering order context across identities."""
+    from .context_resume import (
+        commerce_state_resumable_score,
+        merge_commerce_states,
+    )
+
+    settings = get_settings()
+    if not settings.database_url:
+        return {}
+
+    identity_candidates: list[tuple[str | None, str | None, str | None]] = [
+        (conversation_id, sender_key, sender_phone),
+    ]
+    # Fallback across channel identities when conversation_id is sparse/stale.
+    if conversation_id and (sender_key or sender_phone):
+        identity_candidates.append((None, sender_key, sender_phone))
+    if sender_key:
+        identity_candidates.append((None, sender_key, None))
+    if sender_phone:
+        identity_candidates.append((None, None, sender_phone))
+    try:
+        from .customer_identity import resolve_linked_identity_candidates
+
+        for linked_key, linked_phone in resolve_linked_identity_candidates(
+            sender_key=sender_key,
+            sender_phone=sender_phone,
+        ):
+            identity_candidates.append((None, linked_key, linked_phone))
+    except Exception as exc:
+        print("[sales.context.state] identity_resolve_failed", {
+            "error_type": type(exc).__name__,
+        })
+
+    seen_filters: set[str] = set()
+    collected: list[dict[str, Any]] = []
+    try:
+        for conv, key, phone in identity_candidates:
+            conversation_filter, identity_params = resolve_context_filter(
+                conv,
+                key,
+                phone,
+            )
+            if not conversation_filter:
+                continue
+            filter_token = f"{conversation_filter}|{sorted(identity_params.items())}"
+            if filter_token in seen_filters:
+                continue
+            seen_filters.add(filter_token)
+            collected.extend(
+                _load_commerce_states_for_filter(
+                    conversation_filter=conversation_filter,
+                    identity_params=identity_params,
+                    before_inbound_id=before_inbound_id,
+                )
+            )
+    except (psycopg.Error, RuntimeError) as exc:
+        print("[sales.context.state] load_failed", {"error_type": type(exc).__name__})
+        return {}
+
+    if not collected:
+        return {}
+
+    latest = collected[0]
+    richest = max(collected, key=commerce_state_resumable_score)
+    merged = merge_commerce_states(latest, richest)
+    print("[sales.context.state] loaded", {
+        "candidates": len(collected),
+        "latest_score": commerce_state_resumable_score(latest),
+        "richest_score": commerce_state_resumable_score(richest),
+        "merged_has_order": bool(merged.get("order_id")),
+        "merged_pending_action": merged.get("pending_action"),
+    })
+    return merged
 
 
 def has_successful_agent_response(inbound_id: int | None) -> bool:

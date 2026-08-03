@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.config import get_settings
 from app.agent_contracts import build_agent_decision, evaluate_policy
 from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.customer_identity import upsert_customer_identity_links
 from app.db import load_commerce_conversation_state
 from app.factual_validator import apply_factual_validation
 from app.handoff_service import enrich_handoff_metadata
@@ -97,9 +98,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "conversation_id": incoming.conversation_id,
         "sender_phone": incoming.sender_phone,
         "before_inbound_id": inbound_id,
+        "sender_key": incoming.sender_key,
     }
-    if not incoming.conversation_id and incoming.sender_key:
-        state_lookup["sender_key"] = incoming.sender_key
     with runtime_stage("load_context"):
         commerce_state = CommerceConversationState.from_payload(
             load_commerce_conversation_state(**state_lookup)
@@ -132,6 +132,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         result = await generate_agent_reply_async(incoming, customer_context)
     commerce_state = evolve_commerce_state(commerce_state, result)
     result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
+    upsert_customer_identity_links(incoming, commerce_state)
     decision = build_agent_decision(
         incoming,
         result,

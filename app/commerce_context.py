@@ -604,6 +604,10 @@ def evolve_commerce_state(
         and state.order_session_id
         and next_cart_session_id
         and str(next_cart_session_id) != str(state.order_session_id)
+        # Never wipe an unpaid order just because another cart mutation arrived.
+        and state.pending_action != "awaiting_payment"
+        and state.order_payment_status != "pending"
+        and not state.order_payment_url
     )
     if starts_new_checkout:
         state.order_id = None

@@ -249,17 +249,23 @@ def test_load_state_uses_existing_jsonb_and_only_delivered_responses(monkeypatch
             return None
 
         def execute(self, query, params):
+            captured.setdefault("queries", []).append(query)
+            captured.setdefault("params_list", []).append(params)
             captured["query"] = query
             captured["params"] = params
 
-        def fetchone(self):
-            return {
-                "provider_response": {
-                    "_agent_context": {
-                        "commerce_state": expected,
+        def fetchall(self):
+            if "conversation_id" in captured.get("params", {}):
+                return [
+                    {
+                        "provider_response": {
+                            "_agent_context": {
+                                "commerce_state": expected,
+                            }
+                        }
                     }
-                }
-            }
+                ]
+            return []
 
     class FakeConnection:
         def cursor(self):
@@ -275,15 +281,28 @@ def test_load_state_uses_existing_jsonb_and_only_delivered_responses(monkeypatch
         lambda: SimpleNamespace(database_url="postgresql://configured"),
     )
     monkeypatch.setattr(db, "get_conn", fake_get_conn)
+    monkeypatch.setattr(
+        "app.customer_identity.resolve_linked_identity_candidates",
+        lambda **_kwargs: [],
+    )
 
     loaded = db.load_commerce_conversation_state(
         conversation_id="conversation-1",
         sender_phone="5511999999999",
         before_inbound_id=50,
+        sender_key="whatsapp:5511999999999",
     )
 
     assert loaded == expected
-    assert "provider_send_ok = true" in captured["query"]
-    assert "inbound.id < %(before_inbound_id)s" in captured["query"]
-    assert captured["params"]["conversation_id"] == "conversation-1"
-    assert "sender_phone" not in captured["params"]
+    assert any("provider_send_ok = true" in query for query in captured["queries"])
+    assert any(
+        "inbound.id < %(before_inbound_id)s" in query for query in captured["queries"]
+    )
+    assert any(
+        params.get("conversation_id") == "conversation-1"
+        for params in captured["params_list"]
+    )
+    assert any(
+        params.get("sender_phone") == "5511999999999"
+        for params in captured["params_list"]
+    )
