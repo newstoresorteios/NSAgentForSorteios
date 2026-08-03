@@ -271,8 +271,9 @@ async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
 
     plan = ProductRetrievalCompiler.compile(interpretation)
     strategies = [request.strategy for request in plan.requests]
-    assert any(strategy.startswith("exact_color_name_") for strategy in strategies)
+    assert "exact_color_core" in strategies or "exact_color_automatic" in strategies
     assert "category_candidates" not in strategies
+    assert "brand_candidates" in strategies
     assert plan.discovery_max_pages >= 5
     assert any(
         request.name and "rosa" in request.name.casefold()
@@ -294,20 +295,19 @@ async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
         for request in plan.requests
         if request.name
     )
-    # Keep probe count bounded — probes run in parallel but still cost Tray time.
+    # Tier 1 must stay small — brand paging is Tier 2 only.
     probe_count = sum(
         1
         for request in plan.requests
         if request.strategy not in {"brand_candidates", "category_candidates"}
     )
-    assert probe_count <= 16
+    assert probe_count <= 6
 
 
 @pytest.mark.asyncio
 async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
     from app.product_retrieval import (
-        keyword_match_products,
-        known_family_model_codes,
+        score_catalog_candidates,
         match_specific_products,
         ProductRetrievalCompiler,
     )
@@ -317,9 +317,6 @@ async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
         brand="Christopher Ward",
         model="Sealander Automatic",
         preferences={"color": "rosa claro"},
-    )
-    assert known_family_model_codes("Christopher Ward", "Sealander Automatic") == (
-        "C63",
     )
     filler = [
         {
@@ -341,7 +338,11 @@ async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
         "reference": "C63-36ADA4-S00P0-B0",
     }
     products = [*filler, pink]
-    hits = keyword_match_products(products, interpretation, require_color=True)
+    hits = score_catalog_candidates(
+        products,
+        interpretation,
+        require_color=True,
+    )
     assert [product["id"] for product in hits] == ["pink"]
 
     resolution = await match_specific_products(products, interpretation)
@@ -349,11 +350,45 @@ async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
     assert [product["id"] for product in resolution.products] == ["pink"]
 
     plan = ProductRetrievalCompiler.compile(interpretation)
+    probe_count = sum(
+        1
+        for request in plan.requests
+        if request.strategy not in {"brand_candidates", "category_candidates"}
+    )
+    assert probe_count <= 6
+    # Without C63 in the Vision model, probes stay generic; matching is local.
     assert any(
-        request.name and "C63 Sealander Automático Rosa" in request.name
+        request.name and "Sealander" in request.name and "Rosa" in request.name
         for request in plan.requests
         if request.name
     )
+
+
+@pytest.mark.asyncio
+async def test_score_rejects_single_token_accessory_match():
+    from app.product_retrieval import score_catalog_candidates
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Rolex",
+        model="Explorer",
+    )
+    products = [
+        {
+            "id": "strap",
+            "brand": "Rolex",
+            "model": "",
+            "name": "Pulseira Explorer Strap Couro",
+        },
+        {
+            "id": "watch",
+            "brand": "Rolex",
+            "model": "Explorer",
+            "name": "Relógio Rolex Explorer 36 mm",
+        },
+    ]
+    hits = score_catalog_candidates(products, interpretation, require_color=False)
+    assert [product["id"] for product in hits] == ["watch"]
 
 
 @pytest.mark.asyncio

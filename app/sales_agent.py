@@ -85,13 +85,13 @@ from .product_retrieval import (
     exact_progress_matches,
     exact_specific_product_matches,
     hard_filter_products,
-    keyword_match_products,
     match_specific_products,
     preference_color_tokens,
     prefilter_specific_candidates,
     product_availability_state,
     revalidate_products,
     rerank_products,
+    score_catalog_candidates,
     semantic_preferences,
     soft_confirm_candidates,
     specific_product_search_terms,
@@ -1776,49 +1776,28 @@ async def _execute_compiled_product_retrieval(
         _refresh_hard_filtered()
 
     if retrieval_plan.mode == "exact" and candidates:
-        # Score the full discovered pool — never drop later brand pages by
-        # truncating to the first 20 raw rows before keyword matching.
+        # Score the full discovered pool (Tier 1 probes, then Tier 2 pages).
         require_color = bool(preference_color_tokens(interpretation))
-        keyword_hits = keyword_match_products(
+        scored_hits = score_catalog_candidates(
             candidates,
             interpretation,
             require_color=require_color,
+            allow_movement_mismatch=False,
+            limit=retrieval_plan.candidate_limit,
         )
-        matcher_candidates = prefilter_specific_candidates(
+        matcher_candidates = scored_hits or prefilter_specific_candidates(
             candidates,
             interpretation,
             limit=retrieval_plan.candidate_limit,
         )
-        if keyword_hits:
-            seen = {
-                str(product.get("id"))
-                for product in keyword_hits
-                if product.get("id") is not None
-            }
-            merged = list(keyword_hits)
-            for product in matcher_candidates:
-                product_id = (
-                    str(product.get("id"))
-                    if product.get("id") is not None
-                    else None
-                )
-                if product_id and product_id in seen:
-                    continue
-                merged.append(product)
-                if product_id:
-                    seen.add(product_id)
-            matcher_candidates = merged[: max(
-                retrieval_plan.candidate_limit,
-                len(keyword_hits),
-            )]
         print("[sales.catalog.prefilter]", {
             "discovered_count": len(candidates),
             "shortlisted_count": len(matcher_candidates),
-            "keyword_hit_count": len(keyword_hits),
+            "keyword_hit_count": len(scored_hits),
         })
         try:
             specific_resolution = await match_specific_products(
-                matcher_candidates,
+                matcher_candidates if scored_hits else candidates,
                 interpretation,
             )
             hard_filtered = list(specific_resolution.products)
@@ -1830,7 +1809,7 @@ async def _execute_compiled_product_retrieval(
                 safety_reason="product_match_failed",
             )
         print("[sales.product.disambiguation]", {
-            "candidate_pool_count": len(matcher_candidates),
+            "candidate_pool_count": len(candidates),
             "plausible_count": len(hard_filtered),
             "match_status": specific_resolution.status,
             "used_brand_candidates": used_brand_candidates,
