@@ -88,7 +88,7 @@ class Settings(BaseSettings):
         default=2,
         alias="AGENT_CRITIQUE_MAX_RETRIES",
         ge=0,
-        le=4,
+        le=10,
     )
     # Max conversation turns loaded for LLM + critique (hard capped).
     agent_history_limit: int = Field(
