@@ -36,9 +36,15 @@ from .turn_runtime import LLMCallBudgetExceeded
 from .context_resume import (
     build_contextual_greeting,
     has_resumable_commerce,
+    is_payment_link_request,
     is_soft_greeting,
     is_unpaid_order_resume_request,
     should_resume_pending_order,
+)
+from .order_context_recovery import (
+    extract_handles_from_conversation,
+    hydrate_state_from_handles,
+    recover_order_id_from_customer,
 )
 from .order_service import (
     contains_tax_document_candidate,
@@ -456,12 +462,20 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             )
     order_reference = extract_order_reference(message.text)
     soft_greeting = _is_greeting(message.text) or is_soft_greeting(message.text)
+    context_handles = extract_handles_from_conversation(
+        state=commerce_state,
+        recent_turns=recent_turns,
+        message_text=message.text,
+    )
+    commerce_state = hydrate_state_from_handles(commerce_state, context_handles)
+    customer_context["_commerce_state"] = commerce_state.model_dump(mode="json")
     # Keep memory loaded on soft greetings without dumping order/payment unsolicited.
     if (
         soft_greeting
         and has_resumable_commerce(commerce_state)
         and not is_order_lookup_request(message.text)
         and not is_unpaid_order_resume_request(message.text)
+        and not is_payment_link_request(message.text)
     ):
         resume = build_contextual_greeting(commerce_state)
         return _annotate_agent_result(
@@ -475,14 +489,44 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             used_openai_responder=False,
             used_tray=False,
         )
+    wants_order_context = (
+        is_order_lookup_request(message.text)
+        or is_payment_link_request(message.text)
+        or is_unpaid_order_resume_request(message.text)
+    )
+    if wants_order_context and not (
+        order_reference
+        or commerce_state.order_id
+        or commerce_state.order_lookup_id
+        or commerce_state.order_session_id
+        or commerce_state.cart_session_id
+        or commerce_state.order_payment_url
+    ):
+        recovered_order_id = await recover_order_id_from_customer(
+            execute=execute_tool,
+            handles=context_handles,
+        )
+        if recovered_order_id:
+            commerce_state.order_id = recovered_order_id
+            commerce_state.order_lookup_id = (
+                commerce_state.order_lookup_id or recovered_order_id
+            )
+            if commerce_state.pending_action is None:
+                commerce_state.pending_action = "awaiting_payment"
     resume_pending_order = should_resume_pending_order(
         message.text,
         commerce_state,
         is_greeting=soft_greeting,
+        allow_without_state=bool(
+            context_handles.get("order_ids")
+            or context_handles.get("documents")
+            or context_handles.get("emails")
+        ),
     )
     if (
         is_order_lookup_request(message.text)
         or resume_pending_order
+        or is_payment_link_request(message.text)
     ) and (
         order_reference
         or commerce_state.order_id
@@ -494,21 +538,32 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         print("[sales.order.route]", {
             "route": (
                 "context_resume_payment"
-                if resume_pending_order
-                and commerce_state.order_payment_url
+                if (
+                    resume_pending_order or is_payment_link_request(message.text)
+                )
                 and not is_order_lookup_request(message.text)
                 else "deterministic_status_lookup"
             ),
             "order_reference_present": bool(order_reference),
             "state_order_present": bool(commerce_state.order_id),
             "resume_pending_order": resume_pending_order,
+            "recovered_from_transcript": bool(context_handles.get("order_ids")),
+            "customer_handles": {
+                "emails": len(context_handles.get("emails") or []),
+                "documents": len(context_handles.get("documents") or []),
+            },
         })
         if (
-            resume_pending_order
+            (
+                resume_pending_order
+                or is_payment_link_request(message.text)
+            )
             and commerce_state.order_id
             and (
                 commerce_state.pending_action == "awaiting_payment"
                 or commerce_state.order_payment_url
+                or is_payment_link_request(message.text)
+                or is_unpaid_order_resume_request(message.text)
             )
             and not is_order_lookup_request(message.text)
         ):
@@ -550,6 +605,19 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 execute=execute_tool,
                 order_id=order_reference,
             )
+            # Status lookup with no payment facts: still try payment when customer asks.
+            if (
+                is_unpaid_order_resume_request(message.text)
+                and commerce_state.order_id
+                and not (result.commercial_data or {}).get("payment")
+            ):
+                payment_result = await inspect_order_payment(
+                    state=commerce_state,
+                    execute=execute_tool,
+                    order_id=commerce_state.order_id,
+                )
+                if (payment_result.commercial_data or {}).get("payment"):
+                    result = payment_result
         return _annotate_agent_result(
             result,
             domain="commerce",

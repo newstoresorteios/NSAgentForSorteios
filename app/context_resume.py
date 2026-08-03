@@ -123,6 +123,8 @@ def is_soft_greeting(text: str | None) -> bool:
         "bom dia",
         "boa tarde",
         "boa noite",
+        "noite",
+        "tarde",
         "oi tudo bem",
         "ola tudo bem",
         "olá tudo bem",
@@ -141,8 +143,31 @@ def is_soft_greeting(text: str | None) -> bool:
     )
 
 
+def is_payment_link_request(text: str | None) -> bool:
+    folded = _fold(text)
+    signals = (
+        "me da o pix",
+        "me dá o pix",
+        "manda o pix",
+        "manda o link",
+        "envia o pix",
+        "envia o link",
+        "link de pagamento",
+        "link do pagamento",
+        "pix para pagamento",
+        "quero o pix",
+        "gerar o pix",
+        "gera o pix",
+        "codigo pix",
+        "código pix",
+    )
+    return any(signal in folded for signal in signals)
+
+
 def is_unpaid_order_resume_request(text: str | None) -> bool:
     folded = _fold(text)
+    if is_payment_link_request(text):
+        return True
     unpaid_signals = (
         "nao paguei",
         "não paguei",
@@ -155,6 +180,10 @@ def is_unpaid_order_resume_request(text: str | None) -> bool:
         "link do pagamento",
         "quero pagar",
         "vou pagar",
+        "pagamento caiu",
+        "pagamento pendente",
+        "confirmar se o pagamento",
+        "confirma se o pagamento",
         "pagamento",
     )
     conversation_signals = (
@@ -165,6 +194,7 @@ def is_unpaid_order_resume_request(text: str | None) -> bool:
         "já conversamos",
         "continuamos",
         "continuar",
+        "mais acima",
     )
     return any(signal in folded for signal in unpaid_signals) or (
         "pedido" in folded and any(signal in folded for signal in conversation_signals)
@@ -176,15 +206,21 @@ def should_resume_pending_order(
     state: CommerceConversationState,
     *,
     is_greeting: bool = False,
+    allow_without_state: bool = False,
 ) -> bool:
     """Resume payment/order only when the customer asks — not on bare greetings."""
-    if not (state.order_id or state.order_lookup_id or state.order_payment_url):
-        if not (state.cart_session_id and state.pending_action == "awaiting_payment"):
-            return False
+    has_order_handle = bool(
+        state.order_id
+        or state.order_lookup_id
+        or state.order_payment_url
+        or (state.cart_session_id and state.pending_action == "awaiting_payment")
+    )
+    if not has_order_handle and not allow_without_state:
+        return False
     # Soft greetings keep memory loaded but must not dump payment links.
     if is_greeting or is_soft_greeting(text):
         return False
-    if is_unpaid_order_resume_request(text):
+    if is_payment_link_request(text) or is_unpaid_order_resume_request(text):
         return True
     if (
         state.pending_action == "awaiting_payment"

@@ -115,13 +115,23 @@ def extract_order_reference(text: str | None) -> str | None:
 
 def is_order_lookup_request(text: str | None) -> bool:
     folded = _fold_text(text)
-    if "pedido" not in folded:
-        return False
     if extract_order_reference(text):
         return True
+    # Short follow-ups after an order was discussed in the same thread.
+    followup_signals = (
+        "como ficou",
+        "como que ficou",
+        "e ai ficou",
+        "e ai como ficou",
+    )
+    if any(signal in folded for signal in followup_signals):
+        return True
+    if "pedido" not in folded:
+        return False
     lookup_signals = (
         "status",
         "como esta",
+        "como ficou",
         "acompanhar",
         "acompanhamento",
         "rastre",
