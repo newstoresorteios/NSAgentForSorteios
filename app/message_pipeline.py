@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from app.config import get_settings
+from app.agent_contracts import build_agent_decision, evaluate_policy
 from app.commerce_context import CommerceConversationState, evolve_commerce_state
 from app.db import load_commerce_conversation_state
+from app.factual_validator import apply_factual_validation
+from app.handoff_service import enrich_handoff_metadata
 from app.models import AgentResult, IncomingMessage
 from app.openai_agent import generate_agent_reply_async
+from app.quality_judge import attach_judge_report, run_quality_judge
+from app.response_composer import compose_outbound_reply
+from app.runtime_context import get_current_turn, runtime_stage
 from app.user_preferences import enrich_customer_context, learn_from_incoming_message, record_interaction_memory
 from app.audio_service import should_transcribe_incoming
 
@@ -68,8 +74,20 @@ async def enrich_agent_result(incoming: IncomingMessage, result: AgentResult) ->
 
 
 async def process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
+    settings = get_settings()
+    runtime = get_current_turn()
+    if runtime is not None:
+        runtime.channel = incoming.channel
+        runtime.conversation_key = (
+            incoming.conversation_id
+            or incoming.sender_key
+            or incoming.visitor_id
+            or incoming.sender_phone
+            or runtime.conversation_key
+        )
     customer_context = enrich_customer_context(customer_context)
-    incoming = await prepare_incoming_message(incoming)
+    with runtime_stage("prepare_incoming"):
+        incoming = await prepare_incoming_message(incoming)
     raw_inbound_id = (incoming.raw or {}).get("inbound_id")
     try:
         inbound_id = int(raw_inbound_id) if raw_inbound_id is not None else None
@@ -82,9 +100,10 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     }
     if not incoming.conversation_id and incoming.sender_key:
         state_lookup["sender_key"] = incoming.sender_key
-    commerce_state = CommerceConversationState.from_payload(
-        load_commerce_conversation_state(**state_lookup)
-    )
+    with runtime_stage("load_context"):
+        commerce_state = CommerceConversationState.from_payload(
+            load_commerce_conversation_state(**state_lookup)
+        )
     customer_context = {
         **customer_context,
         "_commerce_state": commerce_state.model_dump(mode="json"),
@@ -109,9 +128,66 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         )
         customer_context = enrich_customer_context(customer_context)
 
-    result = await generate_agent_reply_async(incoming, customer_context)
+    with runtime_stage("agent_decision"):
+        result = await generate_agent_reply_async(incoming, customer_context)
     commerce_state = evolve_commerce_state(commerce_state, result)
     result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
+    decision = build_agent_decision(
+        incoming,
+        result,
+        openai_call_count=runtime.openai_call_count if runtime else 0,
+    )
+    policy_snapshot = evaluate_policy(
+        decision,
+        mode=getattr(settings, "agent_policy_mode", "shadow"),
+    )
+    result.response_metadata["decision_snapshot"] = (
+        policy_snapshot.model_dump(mode="json")
+    )
+    trusted_fact_domains = {
+        domain.strip().lower()
+        for domain in getattr(
+            settings,
+            "agent_trusted_fact_domains",
+            "sorteionewstore.com.br,newstoresorteios.com.br",
+        ).split(",")
+        if domain.strip()
+    }
+    result = apply_factual_validation(
+        result,
+        decision=decision,
+        mode=getattr(
+            settings,
+            "agent_factual_validation_mode",
+            "shadow",
+        ),
+        trusted_domains=trusted_fact_domains,
+    )
+    result = enrich_handoff_metadata(incoming, result)
+    validation = result.response_metadata.get("factual_validation") or {}
+    with runtime_stage("quality_judge"):
+        judge_report = await run_quality_judge(
+            incoming,
+            result,
+            mode=getattr(settings, "agent_quality_judge_mode", "off"),
+            risk_score=decision.risk.score,
+            factual_valid=bool(validation.get("valid", True)),
+            openai_call_count=runtime.openai_call_count if runtime else 0,
+        )
+    result = attach_judge_report(result, judge_report)
+    max_reply_chars = getattr(settings, "max_reply_chars", 900)
+    result = compose_outbound_reply(
+        incoming,
+        result,
+        max_reply_chars=max_reply_chars,
+    )
+    if runtime is not None:
+        runtime.execution_path = decision.execution_path
+        runtime.risk_score = decision.risk.score
+        if validation.get("fallback_applied"):
+            runtime.register_fallback("factual_validation_failed")
+        if judge_report.applied:
+            runtime.register_fallback("quality_judge_failed")
 
     response_metadata = result.response_metadata or {}
     print("[agent.response]", {
@@ -123,9 +199,19 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "used_tray": bool(response_metadata.get("used_tray")),
         "fallback_reason": response_metadata.get("fallback_reason"),
         "safety_reason": result.safety_reason,
+        "handoff_required": result.handoff_required,
+        "judge_triggered": bool(
+            (response_metadata.get("quality_judge") or {}).get("triggered")
+        ),
     })
 
     if customer_context.get("found") and user_id:
         record_interaction_memory(int(user_id), result.intent, incoming.text)
 
-    return await enrich_agent_result(incoming, result)
+    with runtime_stage("enrich_result"):
+        enriched = await enrich_agent_result(incoming, result)
+        return compose_outbound_reply(
+            incoming,
+            enriched,
+            max_reply_chars=max_reply_chars,
+        )

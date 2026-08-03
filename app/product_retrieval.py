@@ -13,6 +13,8 @@ from pydantic import BaseModel
 
 from .config import get_settings
 from .models import SalesInterpretation
+from .openai_runtime import execute_openai_call
+from .turn_runtime import LLMCallBudgetExceeded
 
 
 PRODUCT_PAGE_LIMIT = 20
@@ -673,38 +675,41 @@ async def match_specific_products(
     }
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.parse(
-            model=settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Resolva o produto ou modelo pedido usando somente produtos reais de "
-                        "CANDIDATES. O nome informado pode ser parcial, aproximado, uma coleção ou "
-                        "uma descrição informal. Use match_status=exact somente quando um único "
-                        "produto estiver identificado com segurança; use ambiguous quando dois ou "
-                        "mais candidatos tiverem relação semântica relevante e não for seguro "
-                        "escolher apenas um; use none quando não houver relação suficiente. Marca "
-                        "igual, sozinha, não é correspondência. candidate_ids e best_candidate_id "
-                        "devem conter exclusivamente IDs presentes em CANDIDATES. Não sugira "
-                        "alternativas sem relação com o pedido."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "SUBJECT": interpretation.subject.model_dump(
-                                mode="json",
-                                exclude_none=True,
-                            ),
-                            "CANDIDATES": compact_candidates(compatible),
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            response_format=ProductMatchSelection,
+        response = await execute_openai_call(
+            call_type="product_selection",
+            operation=lambda: client.chat.completions.parse(
+                model=settings.openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Resolva o produto ou modelo pedido usando somente produtos reais de "
+                            "CANDIDATES. O nome informado pode ser parcial, aproximado, uma coleção ou "
+                            "uma descrição informal. Use match_status=exact somente quando um único "
+                            "produto estiver identificado com segurança; use ambiguous quando dois ou "
+                            "mais candidatos tiverem relação semântica relevante e não for seguro "
+                            "escolher apenas um; use none quando não houver relação suficiente. Marca "
+                            "igual, sozinha, não é correspondência. candidate_ids e best_candidate_id "
+                            "devem conter exclusivamente IDs presentes em CANDIDATES. Não sugira "
+                            "alternativas sem relação com o pedido."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "SUBJECT": interpretation.subject.model_dump(
+                                    mode="json",
+                                    exclude_none=True,
+                                ),
+                                "CANDIDATES": compact_candidates(compatible),
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                response_format=ProductMatchSelection,
+            ),
         )
         parsed = response.choices[0].message.parsed if response.choices else None
         if not isinstance(parsed, ProductMatchSelection):
@@ -763,7 +768,7 @@ async def match_specific_products(
             match_source="openai",
             invalid_ids_count=invalid_ids,
         )
-    except (APIError, ValueError, TypeError) as exc:
+    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.product.match]", {
             "candidate_count": len(compatible),
             "selected_count": 0,
@@ -947,26 +952,29 @@ async def rerank_products(
     candidate_by_id = {str(product["id"]): product for product in available_products if product.get("id") is not None}
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.parse(
-            model=settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Classifique produtos reais da NewStore conforme as preferências estruturadas. "
-                        "Retorne no máximo cinco IDs presentes em CANDIDATES, em ordem de relevância. "
-                        "Não invente IDs, produtos nem atributos e use somente evidências dos candidatos."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps({
-                        "PREFERENCES": semantic_preferences(interpretation),
-                        "CANDIDATES": compact_candidates(available_products),
-                    }, ensure_ascii=False),
-                },
-            ],
-            response_format=ProductRerankSelection,
+        response = await execute_openai_call(
+            call_type="product_selection",
+            operation=lambda: client.chat.completions.parse(
+                model=settings.openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Classifique produtos reais da NewStore conforme as preferências estruturadas. "
+                            "Retorne no máximo cinco IDs presentes em CANDIDATES, em ordem de relevância. "
+                            "Não invente IDs, produtos nem atributos e use somente evidências dos candidatos."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps({
+                            "PREFERENCES": semantic_preferences(interpretation),
+                            "CANDIDATES": compact_candidates(available_products),
+                        }, ensure_ascii=False),
+                    },
+                ],
+                response_format=ProductRerankSelection,
+            ),
         )
         parsed = response.choices[0].message.parsed if response.choices else None
         if not isinstance(parsed, ProductRerankSelection):
@@ -993,7 +1001,7 @@ async def rerank_products(
             "invalid_ids_count": invalid_ids,
         })
         return selected
-    except (APIError, ValueError, TypeError) as exc:
+    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.reranker]", {
             "source": "deterministic_fallback",
             "candidate_count": len(available_products),

@@ -8,6 +8,8 @@ from typing import Any
 import httpx
 
 from .config import get_settings
+from .http_resilience import DEFAULT_BACKOFF_SECONDS, is_transient_status
+from .runtime_context import register_integration_failure, register_tray_call
 
 
 class TrayAdapterError(RuntimeError):
@@ -189,7 +191,7 @@ def _tray_error_diagnostics(payload: Any) -> dict[str, Any]:
 class TrayAdapterClient:
     timeout_seconds = 75.0
     max_get_attempts = 2
-    retry_backoff_seconds = 0.15
+    retry_backoff_seconds = DEFAULT_BACKOFF_SECONDS
     transient_status_codes = frozenset({502, 503, 504})
 
     def __init__(self, base_url: str | None = None, token: str | None = None,
@@ -253,6 +255,7 @@ class TrayAdapterClient:
     ) -> Any:
         if not self.base_url or not self.token:
             raise TrayAdapterError("tray_adapter_not_configured")
+        register_tray_call()
         clean_params = {key: value for key, value in (params or {}).items() if value is not None}
         own_client = self._http_client is None
         client = self._http_client or httpx.AsyncClient(timeout=self.timeout_seconds)
@@ -330,7 +333,10 @@ class TrayAdapterClient:
                         print("[sales.cart.http.response]", response_log)
                     if response.status_code >= 400:
                         if (
-                            response.status_code in self.transient_status_codes
+                            (
+                                response.status_code in self.transient_status_codes
+                                or is_transient_status(response.status_code)
+                            )
                             and attempt < max_attempts
                         ):
                             print("[sales.tray.retry]", {
@@ -373,6 +379,7 @@ class TrayAdapterClient:
                     raise TrayAdapterError("tray_adapter_unavailable") from exc
             raise TrayAdapterError("tray_adapter_unavailable")
         except TrayAdapterError as exc:
+            register_integration_failure("tray")
             print("[tray.client] request_failed", {
                 "error_type": type(exc).__name__,
                 "status_code": exc.status_code,
@@ -381,6 +388,7 @@ class TrayAdapterClient:
             })
             raise
         except ValueError as exc:
+            register_integration_failure("tray")
             print("[tray.client] request_failed", {
                 "error_type": type(exc).__name__,
                 "status_code": None,

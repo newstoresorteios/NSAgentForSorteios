@@ -17,6 +17,8 @@ from .commerce_context import (
 )
 from .config import get_settings
 from .models import AgentResult, CheckoutDataInput
+from .openai_runtime import execute_openai_call
+from .turn_runtime import LLMCallBudgetExceeded
 
 
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -243,37 +245,40 @@ async def repair_checkout_data_with_openai(
         return dict(updates)
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.parse(
-            model=settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Extraia e normalize dados de checkout explicitamente presentes "
-                        "na mensagem. Nunca invente dados ausentes. Converta nomes de "
-                        "estados brasileiros para a UF de duas letras, remova apenas a "
-                        "formatação de CPF, telefone e CEP, e preserve nomes e endereços. "
-                        "Retorne null para qualquer campo não informado."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "message": message_text,
-                            "first_extraction": updates,
-                            "unresolved_fields": sorted(repairable),
-                            "validation_errors": field_errors,
-                            "available_resolution_capabilities": list(
-                                CHECKOUT_RESOLUTION_CAPABILITIES
-                            ),
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            temperature=0,
-            response_format=CheckoutDataInput,
+        response = await execute_openai_call(
+            call_type="checkout_repair",
+            operation=lambda: client.chat.completions.parse(
+                model=settings.openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Extraia e normalize dados de checkout explicitamente presentes "
+                            "na mensagem. Nunca invente dados ausentes. Converta nomes de "
+                            "estados brasileiros para a UF de duas letras, remova apenas a "
+                            "formatação de CPF, telefone e CEP, e preserve nomes e endereços. "
+                            "Retorne null para qualquer campo não informado."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "message": message_text,
+                                "first_extraction": updates,
+                                "unresolved_fields": sorted(repairable),
+                                "validation_errors": field_errors,
+                                "available_resolution_capabilities": list(
+                                    CHECKOUT_RESOLUTION_CAPABILITIES
+                                ),
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                temperature=0,
+                response_format=CheckoutDataInput,
+            ),
         )
         parsed_message = response.choices[0].message if response.choices else None
         parsed = getattr(parsed_message, "parsed", None)
@@ -291,7 +296,13 @@ async def repair_checkout_data_with_openai(
             "repaired_fields": sorted(accepted_repairs),
         })
         return {**updates, **accepted_repairs}
-    except (APIError, ValidationError, ValueError, TypeError) as exc:
+    except (
+        APIError,
+        LLMCallBudgetExceeded,
+        ValidationError,
+        ValueError,
+        TypeError,
+    ) as exc:
         print("[sales.checkout.repair] failed", {
             "error_type": type(exc).__name__,
             "repairable_fields": sorted(repairable),

@@ -1,4 +1,6 @@
 from functools import lru_cache
+from typing import Literal
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,6 +32,56 @@ class Settings(BaseSettings):
     openai_tts_model: str = Field(default="gpt-4o-mini-tts", alias="OPENAI_TTS_MODEL")
     openai_tts_voice: str = Field(default="nova", alias="OPENAI_TTS_VOICE")
     openai_tts_format: str = Field(default="opus", alias="OPENAI_TTS_FORMAT")
+    agent_runtime_enabled: bool = Field(default=True, alias="AGENT_RUNTIME_ENABLED")
+    agent_llm_budget_enabled: bool = Field(
+        default=False,
+        alias="AGENT_LLM_BUDGET_ENABLED",
+    )
+    agent_max_llm_calls_per_turn: int = Field(
+        default=2,
+        alias="AGENT_MAX_LLM_CALLS_PER_TURN",
+        ge=0,
+    )
+    agent_policy_mode: Literal["off", "shadow", "enforce"] = Field(
+        default="shadow",
+        alias="AGENT_POLICY_MODE",
+    )
+    agent_factual_validation_mode: Literal[
+        "off",
+        "shadow",
+        "enforce",
+    ] = Field(
+        default="shadow",
+        alias="AGENT_FACTUAL_VALIDATION_MODE",
+    )
+    agent_trusted_fact_domains: str = Field(
+        default="sorteionewstore.com.br,newstoresorteios.com.br",
+        alias="AGENT_TRUSTED_FACT_DOMAINS",
+    )
+    agent_conversation_lock_enabled: bool = Field(
+        default=True,
+        alias="AGENT_CONVERSATION_LOCK_ENABLED",
+    )
+    agent_conversation_lock_timeout_seconds: float = Field(
+        default=15.0,
+        alias="AGENT_CONVERSATION_LOCK_TIMEOUT_SECONDS",
+        gt=0,
+        le=60,
+    )
+    agent_quality_judge_mode: Literal["off", "shadow", "enforce"] = Field(
+        default="shadow",
+        alias="AGENT_QUALITY_JUDGE_MODE",
+    )
+    agent_quality_judge_risk_threshold: int = Field(
+        default=70,
+        alias="AGENT_QUALITY_JUDGE_RISK_THRESHOLD",
+        ge=0,
+        le=100,
+    )
+    agent_send_idempotency_enabled: bool = Field(
+        default=True,
+        alias="AGENT_SEND_IDEMPOTENCY_ENABLED",
+    )
 
     tray_adapter_url: str = Field(default="", alias="TRAY_ADAPTER_URL")
     tray_adapter_token: str = Field(default="", alias="TRAY_ADAPTER_TOKEN")

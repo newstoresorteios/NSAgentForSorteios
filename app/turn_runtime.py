@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+import time
+from typing import Literal
+
+from pydantic import BaseModel, Field, PrivateAttr
+
+
+LLMCallType = Literal[
+    "decision",
+    "clarification",
+    "product_selection",
+    "response_composition",
+    "checkout_repair",
+    "judge",
+    "audio_transcription",
+    "audio_tts",
+    "legacy",
+]
+ExecutionPath = Literal["fast", "normal", "complex", "critical"]
+
+
+class LLMCallBudgetExceeded(RuntimeError):
+    pass
+
+
+class LLMCallBudget(BaseModel):
+    max_calls: int = Field(default=2, ge=0)
+    used_calls: int = Field(default=0, ge=0)
+    enforce: bool = False
+    allowed_call_types: set[str] = Field(default_factory=set)
+
+    def reserve(self, call_type: str) -> None:
+        blocked_type = bool(
+            self.allowed_call_types
+            and call_type not in self.allowed_call_types
+        )
+        exhausted = self.used_calls >= self.max_calls
+        if self.enforce and (blocked_type or exhausted):
+            raise LLMCallBudgetExceeded(
+                f"llm_call_budget_exceeded:{call_type}"
+            )
+        self.used_calls += 1
+
+
+class TurnRuntimeContext(BaseModel):
+    trace_id: str
+    inbound_id: int | None = None
+    conversation_key: str = "unresolved"
+    channel: str = "unknown"
+    started_at: float = Field(default_factory=time.perf_counter)
+
+    openai_call_count: int = 0
+    tray_call_count: int = 0
+    database_call_count: int = 0
+    openai_input_tokens: int = 0
+    openai_output_tokens: int = 0
+
+    execution_path: ExecutionPath = "fast"
+    judge_triggered: bool = False
+    judge_mode: str = "disabled"
+    risk_score: int = Field(default=0, ge=0, le=100)
+    fallback_reasons: list[str] = Field(default_factory=list)
+    stage_durations_ms: dict[str, float] = Field(default_factory=dict)
+    llm_calls_by_type: dict[str, int] = Field(default_factory=dict)
+    integration_failures: dict[str, int] = Field(default_factory=dict)
+    llm_budget: LLMCallBudget = Field(default_factory=LLMCallBudget)
+
+    _stage_started_at: dict[str, float] = PrivateAttr(default_factory=dict)
+
+    def start_stage(self, name: str) -> None:
+        self._stage_started_at[name] = time.perf_counter()
+
+    def finish_stage(self, name: str) -> None:
+        started_at = self._stage_started_at.pop(name, None)
+        if started_at is None:
+            return
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        self.stage_durations_ms[name] = round(
+            self.stage_durations_ms.get(name, 0.0) + elapsed_ms,
+            2,
+        )
+
+    def register_openai_call(self, call_type: str) -> None:
+        self.llm_budget.reserve(call_type)
+        self.openai_call_count += 1
+        self.llm_calls_by_type[call_type] = (
+            self.llm_calls_by_type.get(call_type, 0) + 1
+        )
+        if self.openai_call_count == 1 and self.execution_path == "fast":
+            self.execution_path = "normal"
+        elif self.openai_call_count >= 2 and self.execution_path != "critical":
+            self.execution_path = "complex"
+
+    def register_openai_usage(
+        self,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        self.openai_input_tokens += max(0, int(input_tokens or 0))
+        self.openai_output_tokens += max(0, int(output_tokens or 0))
+
+    def register_integration_failure(self, provider: str) -> None:
+        self.integration_failures[provider] = (
+            self.integration_failures.get(provider, 0) + 1
+        )
+
+    def register_fallback(self, reason: str | None) -> None:
+        if reason and reason not in self.fallback_reasons:
+            self.fallback_reasons.append(reason)
+
+    def mark_critical(self, risk_score: int | None = None) -> None:
+        self.execution_path = "critical"
+        if risk_score is not None:
+            self.risk_score = max(0, min(100, int(risk_score)))
+
+    def safe_summary(self) -> dict[str, object]:
+        return {
+            "trace_id": self.trace_id,
+            "inbound_id": self.inbound_id,
+            "channel": self.channel,
+            "conversation_key_present": self.conversation_key != "unresolved",
+            "execution_path": self.execution_path,
+            "openai_call_count": self.openai_call_count,
+            "tray_call_count": self.tray_call_count,
+            "database_call_count": self.database_call_count,
+            "openai_input_tokens": self.openai_input_tokens,
+            "openai_output_tokens": self.openai_output_tokens,
+            "judge_triggered": self.judge_triggered,
+            "judge_mode": self.judge_mode,
+            "risk_score": self.risk_score,
+            "fallback_reasons": list(self.fallback_reasons),
+            "stage_durations_ms": dict(self.stage_durations_ms),
+            "llm_calls_by_type": dict(self.llm_calls_by_type),
+            "integration_failures": dict(self.integration_failures),
+            "processing_total_ms": round(
+                (time.perf_counter() - self.started_at) * 1000,
+                2,
+            ),
+        }

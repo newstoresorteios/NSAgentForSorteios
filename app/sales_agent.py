@@ -42,6 +42,7 @@ from .commerce_context import (
     resolve_commerce_reference,
     resolve_purchase_item_reference,
 )
+from .channel_profiles import channel_system_hint
 from .config import get_settings
 from .guardrails import (
     detect_commerce_inquiry,
@@ -52,6 +53,8 @@ from .guardrails import (
     detect_coupon_code_inquiry,
 )
 from .models import AgentResult, IncomingMessage, SalesInterpretation
+from .openai_runtime import execute_openai_call
+from .turn_runtime import LLMCallBudgetExceeded
 from .payment_service import (
     inspect_current_cart,
     inspect_order_payment,
@@ -728,11 +731,14 @@ async def interpret_message(
     })
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.parse(
-            model=settings.openai_model,
-            messages=messages,
-            temperature=0,
-            response_format=SalesInterpretation,
+        response = await execute_openai_call(
+            call_type="decision",
+            operation=lambda: client.chat.completions.parse(
+                model=settings.openai_model,
+                messages=messages,
+                temperature=0,
+                response_format=SalesInterpretation,
+            ),
         )
         parsed_message = response.choices[0].message if response.choices else None
         if parsed_message is None or getattr(parsed_message, "refusal", None):
@@ -749,7 +755,13 @@ async def interpret_message(
         fallback._fallback_reason = "openai_bad_request"
         _log_interpretation(fallback, settings.openai_model, fallback_reason="openai_bad_request")
         return fallback
-    except (APIError, ValidationError, ValueError, TypeError) as exc:
+    except (
+        APIError,
+        LLMCallBudgetExceeded,
+        ValidationError,
+        ValueError,
+        TypeError,
+    ) as exc:
         print("[sales.interpreter] failed", {"error_type": type(exc).__name__})
         fallback = _fallback_interpretation(message.text)
         fallback_reason = "openai_request_failed" if isinstance(exc, APIError) else "openai_invalid_response"
@@ -1121,14 +1133,17 @@ async def generate_clarification_reply(
     }
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": SALES_CLARIFICATION_INSTRUCTIONS},
-                *normalized_history,
-                {"role": "user", "content": json.dumps(request_context, ensure_ascii=False)},
-            ],
-            temperature=0.3,
+        response = await execute_openai_call(
+            call_type="clarification",
+            operation=lambda: client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": SALES_CLARIFICATION_INSTRUCTIONS},
+                    *normalized_history,
+                    {"role": "user", "content": json.dumps(request_context, ensure_ascii=False)},
+                ],
+                temperature=0.3,
+            ),
         )
         content = response.choices[0].message.content if response.choices else None
         if not content or not content.strip():
@@ -1146,7 +1161,7 @@ async def generate_clarification_reply(
             used_openai_responder=True,
             used_tray=used_tray,
         )
-    except (APIError, ValueError, TypeError) as exc:
+    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.clarification] failed", {"error_type": type(exc).__name__})
         return _mark_sales_result(
             AgentResult(
@@ -1185,27 +1200,34 @@ async def _sales_response_with_openai(
         return None
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": SALES_RESPONDER_INSTRUCTIONS},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "original_message": message.text,
-                            "plan": plan,
-                            "STATE_FACTS": (
-                                state.interpreter_payload() if state else {}
-                            ),
-                            "RESPONSE_CONTRACT": _responder_contract(state),
-                            "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            temperature=0.3,
+        responder_instructions = (
+            f"{SALES_RESPONDER_INSTRUCTIONS}\n\n"
+            f"{channel_system_hint(message.channel)}"
+        )
+        response = await execute_openai_call(
+            call_type="response_composition",
+            operation=lambda: client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": responder_instructions},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "original_message": message.text,
+                                "plan": plan,
+                                "STATE_FACTS": (
+                                    state.interpreter_payload() if state else {}
+                                ),
+                                "RESPONSE_CONTRACT": _responder_contract(state),
+                                "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                temperature=0.3,
+            ),
         )
         content = response.choices[0].message.content if response.choices else None
         if not content or not content.strip():
@@ -1218,6 +1240,10 @@ async def _sales_response_with_openai(
             commercial_data=tray_result.commercial_data,
             response_metadata=dict(tray_result.response_metadata),
         )
+        final_result.response_metadata.setdefault(
+            "factual_fallback_text",
+            tray_result.reply_text,
+        )
         return _mark_sales_result(
             final_result,
             interpretation=interpretation,
@@ -1226,7 +1252,7 @@ async def _sales_response_with_openai(
             used_openai_responder=True,
             used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
         )
-    except (APIError, ValueError, TypeError) as exc:
+    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.responder] failed", {"error_type": type(exc).__name__})
         return None
 

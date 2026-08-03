@@ -29,7 +29,10 @@ from .guardrails import (
     detect_blocked_request,
     default_safe_handoff,
 )
+from .handoff_service import build_human_handoff_result, should_request_human_handoff
 from .models import IncomingMessage, AgentResult
+from .openai_runtime import execute_openai_call, execute_openai_call_sync
+from .turn_runtime import LLMCallBudgetExceeded
 from .order_service import (
     contains_tax_document_candidate,
     extract_order_reference,
@@ -195,15 +198,18 @@ def generate_openai_reply(
     client = OpenAI(api_key=settings.openai_api_key)
     user_input = build_agent_input(message, customer_context, facts)
     try:
-        response = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_INSTRUCTIONS},
-                {"role": "user", "content": user_input},
-            ],
-            temperature=0.3,
+        response = execute_openai_call_sync(
+            call_type="legacy",
+            operation=lambda: client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                    {"role": "user", "content": user_input},
+                ],
+                temperature=0.3,
+            ),
         )
-    except APIError as exc:
+    except (APIError, LLMCallBudgetExceeded) as exc:
         status_code = getattr(exc, "status_code", None)
         print("[openai.agent] request_failed", {
             "status_code": status_code,
@@ -309,11 +315,16 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
         else None
     )
     try:
-        for _ in range(3):
+        for call_index in range(3):
             kwargs = {"model": settings.openai_model, "messages": messages, "temperature": 0.3}
             if tools:
                 kwargs.update({"tools": tools, "tool_choice": "auto"})
-            response = await client.chat.completions.create(**kwargs)
+            response = await execute_openai_call(
+                call_type=(
+                    "decision" if call_index == 0 else "response_composition"
+                ),
+                operation=lambda: client.chat.completions.create(**kwargs),
+            )
             choice = response.choices[0] if response.choices else None
             assistant = choice.message if choice else None
             tool_calls = getattr(assistant, "tool_calls", None) if assistant else None
@@ -330,7 +341,12 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
                     return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tray_adapter_unavailable")
                 messages.append({"role": "tool", "tool_call_id": call.id, "name": call.function.name, "content": json.dumps(result, ensure_ascii=False)})
         return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tool_loop_limit")
-    except (APIError, json.JSONDecodeError, ValueError) as exc:
+    except (
+        APIError,
+        LLMCallBudgetExceeded,
+        json.JSONDecodeError,
+        ValueError,
+    ) as exc:
         print("[openai.agent] tools_request_failed", {"error_type": type(exc).__name__, "message": _sanitize_log_message(str(exc))})
         return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tools_request_failed")
 
@@ -339,9 +355,19 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     blocked_reason = detect_blocked_request(message.text)
     if blocked_reason:
         return _annotate_agent_result(
-            AgentResult(reply_text=default_safe_handoff(), intent="handoff", handoff_required=True, safety_reason=blocked_reason),
+            build_human_handoff_result(reason=blocked_reason),
             domain="guardrail",
             response_source="guardrail",
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+        )
+    human_reason = should_request_human_handoff(message)
+    if human_reason:
+        return _annotate_agent_result(
+            build_human_handoff_result(reason=human_reason),
+            domain="guardrail",
+            response_source="handoff",
             used_openai_interpreter=False,
             used_openai_responder=False,
             used_tray=False,

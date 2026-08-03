@@ -11,6 +11,8 @@ from openai import APIError, AsyncOpenAI
 from pydantic import BaseModel
 
 from .config import get_settings
+from .openai_runtime import execute_openai_call
+from .turn_runtime import LLMCallBudgetExceeded
 
 
 CATEGORY_PAGE_LIMIT = 50
@@ -210,25 +212,28 @@ class CategoryResolver:
         ]
         try:
             client = AsyncOpenAI(api_key=settings.openai_api_key)
-            response = await client.chat.completions.parse(
-                model=settings.openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Selecione no máximo duas categorias reais compatíveis com o tipo de produto. "
-                            "Retorne somente IDs presentes em CATEGORIES e não invente IDs."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {"product_type": product_type, "CATEGORIES": compact},
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-                response_format=CategorySelection,
+            response = await execute_openai_call(
+                call_type="product_selection",
+                operation=lambda: client.chat.completions.parse(
+                    model=settings.openai_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Selecione no máximo duas categorias reais compatíveis com o tipo de produto. "
+                                "Retorne somente IDs presentes em CATEGORIES e não invente IDs."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                {"product_type": product_type, "CATEGORIES": compact},
+                                ensure_ascii=False,
+                            ),
+                        },
+                    ],
+                    response_format=CategorySelection,
+                ),
             )
             parsed = response.choices[0].message.parsed if response.choices else None
             if not isinstance(parsed, CategorySelection):
@@ -239,7 +244,7 @@ class CategoryResolver:
                 if str(category_id) in valid_ids
             ]
             return list(dict.fromkeys(selected))[:MAX_SELECTED_CATEGORIES], "openai"
-        except (APIError, ValueError, TypeError):
+        except (APIError, LLMCallBudgetExceeded, ValueError, TypeError):
             return valid_id_list[:MAX_SELECTED_CATEGORIES], "normalized"
 
     async def _load_descendants(self, selected_ids: list[str]) -> list[str]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 from json import JSONDecodeError
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -18,12 +19,73 @@ from app.webhook_parser import (
 from app.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
-from app.db import claim_inbound_message, inbound_message_exists, insert_agent_response, insert_inbound_message, is_latest_inbound_message
+from app.db import (
+    claim_inbound_message,
+    has_successful_agent_response,
+    inbound_message_exists,
+    insert_agent_response,
+    insert_inbound_message,
+    is_latest_inbound_message,
+)
 from app.config import get_allowed_channels, get_settings
+from app.conversation_lock import (
+    ConversationLockUnavailable,
+    acquire_conversation_lock,
+    conversation_lock_key,
+    release_conversation_lock,
+)
+from app.handoff_service import handoff_provider_payload
 from app.remarketing import run_remarketing_batch, sync_remarketing_interaction
+from app.runtime_context import (
+    get_current_turn,
+    reset_current_turn,
+    runtime_stage,
+    set_current_turn,
+)
 from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
+from app.turn_runtime import LLMCallBudget, TurnRuntimeContext
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
+
+
+def _request_trace_id(request: Request) -> str:
+    supplied = (request.headers.get("x-request-id") or "").strip()
+    if supplied and len(supplied) <= 64 and all(
+        char.isalnum() or char in {"-", "_"} for char in supplied
+    ):
+        return supplied
+    return uuid4().hex
+
+
+@app.middleware("http")
+async def turn_runtime_middleware(request: Request, call_next):
+    settings = get_settings()
+    monitored_path = request.url.path.startswith(
+        ("/api/webhooks/", "/api/test/agent")
+    )
+    if not getattr(settings, "agent_runtime_enabled", True) or not monitored_path:
+        return await call_next(request)
+
+    context = TurnRuntimeContext(
+        trace_id=_request_trace_id(request),
+        llm_budget=LLMCallBudget(
+            max_calls=getattr(settings, "agent_max_llm_calls_per_turn", 2),
+            enforce=getattr(settings, "agent_llm_budget_enabled", False),
+        ),
+    )
+    context.start_stage("request")
+    token = set_current_turn(context)
+    try:
+        response = await call_next(request)
+        response.headers["X-Trace-ID"] = context.trace_id
+        return response
+    finally:
+        await release_conversation_lock(
+            getattr(request.state, "conversation_lock_handle", None)
+        )
+        context.finish_stage("request")
+        print("[agent.runtime]", context.safe_summary())
+        reset_current_turn(token)
 
 
 def _webhook_event_name(payload: dict | None) -> str | None:
@@ -129,7 +191,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-remarketing-v4"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v6"
 
 
 @app.get("/api/health")
@@ -151,6 +213,38 @@ async def health():
         "openai_key_format_ok": openai_key.startswith(("sk-", "sk-proj-")),
         "openai_key_length": len(openai_key),
         "openai_model": settings.openai_model,
+        "agent_runtime_enabled": getattr(settings, "agent_runtime_enabled", True),
+        "agent_llm_budget_enabled": getattr(
+            settings,
+            "agent_llm_budget_enabled",
+            False,
+        ),
+        "agent_max_llm_calls_per_turn": getattr(
+            settings,
+            "agent_max_llm_calls_per_turn",
+            2,
+        ),
+        "agent_policy_mode": getattr(settings, "agent_policy_mode", "shadow"),
+        "agent_factual_validation_mode": getattr(
+            settings,
+            "agent_factual_validation_mode",
+            "shadow",
+        ),
+        "agent_conversation_lock_enabled": getattr(
+            settings,
+            "agent_conversation_lock_enabled",
+            True,
+        ),
+        "agent_quality_judge_mode": getattr(
+            settings,
+            "agent_quality_judge_mode",
+            "shadow",
+        ),
+        "agent_send_idempotency_enabled": getattr(
+            settings,
+            "agent_send_idempotency_enabled",
+            True,
+        ),
         "database_configured": bool(settings.database_url),
         "brevo_send_configured": bool(
             settings.brevo_api_key
@@ -274,6 +368,17 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             error_type=type(exc).__name__,
         )
 
+    runtime = get_current_turn()
+    if runtime is not None:
+        runtime.channel = incoming.channel
+        runtime.conversation_key = (
+            incoming.conversation_id
+            or incoming.sender_key
+            or incoming.visitor_id
+            or incoming.sender_phone
+            or "unresolved"
+        )
+
     print("[brevo.webhook] parsed", {
         "parsed": True,
         "event_name": incoming.event_type,
@@ -337,6 +442,45 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             reason="no_text",
         )
 
+    if getattr(settings, "agent_conversation_lock_enabled", True):
+        lock_key = conversation_lock_key(
+            conversation_id=incoming.conversation_id,
+            sender_key=incoming.sender_key,
+            sender_phone=incoming.sender_phone,
+            visitor_id=incoming.visitor_id,
+        )
+        if lock_key:
+            try:
+                with runtime_stage("conversation_lock_wait"):
+                    request.state.conversation_lock_handle = (
+                        await acquire_conversation_lock(
+                            lock_key,
+                            database_url=getattr(
+                                settings,
+                                "database_url",
+                                "",
+                            ),
+                            timeout_seconds=getattr(
+                                settings,
+                                "agent_conversation_lock_timeout_seconds",
+                                15.0,
+                            ),
+                        )
+                    )
+            except ConversationLockUnavailable as exc:
+                print("[agent.lock] unavailable", {
+                    "error": str(exc),
+                    "channel": incoming.channel,
+                    "conversation_id_present": bool(
+                        incoming.conversation_id
+                    ),
+                    "sender_key_present": bool(incoming.sender_key),
+                })
+                raise HTTPException(
+                    status_code=503,
+                    detail={"error": "conversation_busy"},
+                ) from exc
+
     # Fast path for already-seen IDs; claim_inbound_message remains the
     # authoritative atomic check for concurrent requests.
     if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
@@ -367,6 +511,8 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             reason="duplicate_message",
         )
 
+    if runtime is not None:
+        runtime.inbound_id = inbound_id
     if isinstance(incoming.raw, dict):
         incoming.raw["inbound_id"] = inbound_id
     if incoming.sender_phone:
@@ -418,15 +564,54 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         send_result = None
         provider_send_ok = False
         provider_response = {"skipped": True, "reason": "stale_inbound"}
+    elif (
+        getattr(settings, "agent_send_idempotency_enabled", True)
+        and has_successful_agent_response(inbound_id)
+    ):
+        print("[brevo.webhook] skipped_reply", {
+            "reason": "already_sent",
+            "inbound_id": inbound_id,
+        })
+        send_result = None
+        provider_send_ok = True
+        provider_response = {"skipped": True, "reason": "already_sent"}
     else:
         send_result = await send_brevo_reply(incoming, agent_result)
         provider_send_ok = send_result.ok
         provider_response = send_result.model_dump()
     commerce_state = (agent_result.response_metadata or {}).get("commerce_state")
-    if isinstance(provider_response, dict) and isinstance(commerce_state, dict):
-        provider_response["_agent_context"] = {
-            "commerce_state": commerce_state,
-        }
+    decision_snapshot = (agent_result.response_metadata or {}).get(
+        "decision_snapshot"
+    )
+    factual_validation = (agent_result.response_metadata or {}).get(
+        "factual_validation"
+    )
+    quality_judge = (agent_result.response_metadata or {}).get("quality_judge")
+    handoff_payload = handoff_provider_payload(agent_result)
+    runtime_summary = None
+    if runtime is not None:
+        runtime.register_fallback(
+            (agent_result.response_metadata or {}).get("fallback_reason")
+            or agent_result.safety_reason
+        )
+        runtime_summary = runtime.safe_summary()
+        agent_result.response_metadata["turn_runtime"] = runtime_summary
+    if isinstance(provider_response, dict):
+        agent_context: dict[str, object] = {}
+        if isinstance(commerce_state, dict):
+            agent_context["commerce_state"] = commerce_state
+        if isinstance(decision_snapshot, dict):
+            agent_context["decision_snapshot"] = decision_snapshot
+        if isinstance(factual_validation, dict):
+            agent_context["factual_validation"] = factual_validation
+        if isinstance(quality_judge, dict):
+            agent_context["quality_judge"] = quality_judge
+        if isinstance(handoff_payload, dict):
+            agent_context["handoff"] = handoff_payload
+        if agent_context:
+            provider_response["_agent_context"] = agent_context
+    if isinstance(provider_response, dict) and isinstance(runtime_summary, dict):
+        provider_response["_agent_runtime"] = runtime_summary
 
     try:
         insert_agent_response(

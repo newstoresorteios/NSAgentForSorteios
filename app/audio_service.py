@@ -8,6 +8,7 @@ import httpx
 from openai import APIStatusError, OpenAI
 
 from .config import get_settings
+from .openai_runtime import execute_openai_call_sync
 
 AUDIO_MIME_PREFIXES = ("audio/",)
 AUDIO_MIME_TYPES = {
@@ -125,13 +126,16 @@ async def transcribe_audio_url(url: str, filename: str | None = None) -> str:
 
     try:
         with open(tmp_path, "rb") as audio_file:
-            response = client.audio.transcriptions.create(
-                model=settings.openai_transcribe_model,
-                file=audio_file,
-                language="pt",
-                prompt=(
-                    "Transcrição de mensagem de WhatsApp em português do Brasil sobre "
-                    "sorteios New Store, saldo, cartão presente, relógios e simulação de compra."
+            response = execute_openai_call_sync(
+                call_type="audio_transcription",
+                operation=lambda: client.audio.transcriptions.create(
+                    model=settings.openai_transcribe_model,
+                    file=audio_file,
+                    language="pt",
+                    prompt=(
+                        "Transcrição de mensagem de WhatsApp em português do Brasil sobre "
+                        "sorteios New Store, saldo, cartão presente, relógios e simulação de compra."
+                    ),
                 ),
             )
     except APIStatusError as exc:
@@ -157,11 +161,14 @@ def synthesize_reply_audio(text: str) -> tuple[bytes, str, str]:
     response_format = settings.openai_tts_format
     client = OpenAI(api_key=settings.openai_api_key)
     try:
-        response = client.audio.speech.create(
-            model=settings.openai_tts_model,
-            voice=settings.openai_tts_voice,
-            input=trimmed[:4096],
-            response_format=response_format,
+        response = execute_openai_call_sync(
+            call_type="audio_tts",
+            operation=lambda: client.audio.speech.create(
+                model=settings.openai_tts_model,
+                voice=settings.openai_tts_voice,
+                input=trimmed[:4096],
+                response_format=response_format,
+            ),
         )
     except APIStatusError as exc:
         raise RuntimeError(f"openai_tts_failed_{exc.status_code}") from exc

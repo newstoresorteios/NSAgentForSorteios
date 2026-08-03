@@ -5,6 +5,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from .config import get_settings
+from .runtime_context import register_database_call
 
 
 def to_jsonb(value: Any, default: Any = None) -> Jsonb:
@@ -29,6 +30,7 @@ def get_conn() -> Iterator[psycopg.Connection]:
     settings = get_settings()
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
+    register_database_call()
     conn = psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=10)
     try:
         yield conn
@@ -494,6 +496,28 @@ def load_commerce_conversation_state(
     )
     state = agent_context.get("commerce_state") if isinstance(agent_context, dict) else None
     return state if isinstance(state, dict) else {}
+
+
+def has_successful_agent_response(inbound_id: int | None) -> bool:
+    """Return True when a successful outbound reply already exists for inbound_id."""
+    settings = get_settings()
+    if not settings.database_url or inbound_id is None:
+        return False
+
+    ensure_tables()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM public.ai_agent_responses
+                WHERE inbound_id = %(inbound_id)s
+                  AND provider_send_ok = true
+                LIMIT 1
+                """,
+                {"inbound_id": inbound_id},
+            )
+            return cur.fetchone() is not None
 
 
 def insert_agent_response(data: dict[str, Any]) -> int | None:
