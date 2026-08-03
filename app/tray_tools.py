@@ -584,20 +584,45 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             )
         return result
 async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
+    from .observability import record_tray_observation
+
     started = time.perf_counter()
     try:
         result = await _execute_tool(name, arguments, client)
         ok = "error" not in result
-        print("[tray.tool] executed", {"tool": name, "ok": ok, "elapsed_ms": round((time.perf_counter() - started) * 1000)})
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        record_tray_observation(
+            tool=name,
+            arguments=arguments,
+            result=result,
+            elapsed_ms=elapsed_ms,
+        )
+        print("[tray.tool] executed", {
+            "tool": name,
+            "ok": ok,
+            "elapsed_ms": round(elapsed_ms),
+            "status_code": result.get("status_code") if isinstance(result, dict) else None,
+        })
         print("[sales.tool]", {"tool": name, "success": ok})
-        if not ok:
-            return result
         return result
     except Exception as exc:
-        print("[tray.tool] executed", {"tool": name, "ok": False, "elapsed_ms": round((time.perf_counter() - started) * 1000), "error_type": type(exc).__name__})
-        print("[sales.tool]", {"tool": name, "success": False})
-        return {
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        result = {
             "error": "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes.",
             "error_type": type(exc).__name__,
             "status_code": getattr(exc, "status_code", None),
         }
+        record_tray_observation(
+            tool=name,
+            arguments=arguments,
+            result=result,
+            elapsed_ms=elapsed_ms,
+        )
+        print("[tray.tool] executed", {
+            "tool": name,
+            "ok": False,
+            "elapsed_ms": round(elapsed_ms),
+            "error_type": type(exc).__name__,
+        })
+        print("[sales.tool]", {"tool": name, "success": False})
+        return result

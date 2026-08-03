@@ -65,6 +65,11 @@ class TurnRuntimeContext(BaseModel):
     llm_calls_by_type: dict[str, int] = Field(default_factory=dict)
     integration_failures: dict[str, int] = Field(default_factory=dict)
     llm_budget: LLMCallBudget = Field(default_factory=LLMCallBudget)
+    tray_calls: list[dict[str, object]] = Field(default_factory=list)
+    openai_calls: list[dict[str, object]] = Field(default_factory=list)
+    context_snapshot: dict[str, object] = Field(default_factory=dict)
+    inbound_snapshot: dict[str, object] = Field(default_factory=dict)
+    outbound_snapshot: dict[str, object] = Field(default_factory=dict)
 
     _stage_started_at: dict[str, float] = PrivateAttr(default_factory=dict)
 
@@ -134,6 +139,18 @@ class TurnRuntimeContext(BaseModel):
             "stage_durations_ms": dict(self.stage_durations_ms),
             "llm_calls_by_type": dict(self.llm_calls_by_type),
             "integration_failures": dict(self.integration_failures),
+            "tray_tools": [
+                {
+                    "tool": item.get("tool"),
+                    "ok": item.get("ok"),
+                    "elapsed_ms": item.get("elapsed_ms"),
+                }
+                for item in self.tray_calls[:20]
+            ],
+            "openai_calls": list(self.openai_calls[:12]),
+            "inbound": dict(self.inbound_snapshot),
+            "context": dict(self.context_snapshot),
+            "outbound": dict(self.outbound_snapshot),
             "processing_total_ms": round(
                 (time.perf_counter() - self.started_at) * 1000,
                 2,

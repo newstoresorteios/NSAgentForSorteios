@@ -745,6 +745,8 @@ async def interpret_message(
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         response = await execute_openai_call(
             call_type="decision",
+            model=settings.openai_model,
+            messages=messages,
             operation=lambda: client.chat.completions.parse(
                 model=settings.openai_model,
                 messages=messages,
@@ -1145,15 +1147,18 @@ async def generate_clarification_reply(
     }
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
+        clarification_messages = [
+            {"role": "system", "content": SALES_CLARIFICATION_INSTRUCTIONS},
+            *normalized_history,
+            {"role": "user", "content": json.dumps(request_context, ensure_ascii=False)},
+        ]
         response = await execute_openai_call(
             call_type="clarification",
+            model=settings.openai_model,
+            messages=clarification_messages,
             operation=lambda: client.chat.completions.create(
                 model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": SALES_CLARIFICATION_INSTRUCTIONS},
-                    *normalized_history,
-                    {"role": "user", "content": json.dumps(request_context, ensure_ascii=False)},
-                ],
+                messages=clarification_messages,
                 temperature=0.3,
             ),
         )
@@ -1216,31 +1221,34 @@ async def _sales_response_with_openai(
             f"{SALES_RESPONDER_INSTRUCTIONS}\n\n"
             f"{channel_system_hint(message.channel)}"
         )
+        responder_messages = [
+            {"role": "system", "content": responder_instructions},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "original_message": message.text,
+                        "plan": plan,
+                        "STATE_FACTS": (
+                            state.interpreter_payload() if state else {}
+                        ),
+                        "WORKING_MEMORY": (
+                            build_working_memory(state) if state else {}
+                        ),
+                        "RESPONSE_CONTRACT": _responder_contract(state),
+                        "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
         response = await execute_openai_call(
             call_type="response_composition",
+            model=settings.openai_model,
+            messages=responder_messages,
             operation=lambda: client.chat.completions.create(
                 model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": responder_instructions},
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "original_message": message.text,
-                                "plan": plan,
-                                "STATE_FACTS": (
-                                    state.interpreter_payload() if state else {}
-                                ),
-                                "WORKING_MEMORY": (
-                                    build_working_memory(state) if state else {}
-                                ),
-                                "RESPONSE_CONTRACT": _responder_contract(state),
-                                "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
+                messages=responder_messages,
                 temperature=0.3,
             ),
         )

@@ -226,15 +226,18 @@ def generate_openai_reply(
 
     client = OpenAI(api_key=settings.openai_api_key)
     user_input = build_agent_input(message, customer_context, facts)
+    legacy_messages = [
+        {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+        {"role": "user", "content": user_input},
+    ]
     try:
         response = execute_openai_call_sync(
             call_type="legacy",
+            model=settings.openai_model,
+            messages=legacy_messages,
             operation=lambda: client.chat.completions.create(
                 model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_INSTRUCTIONS},
-                    {"role": "user", "content": user_input},
-                ],
+                messages=legacy_messages,
                 temperature=0.3,
             ),
         )
@@ -352,6 +355,8 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
                 call_type=(
                     "decision" if call_index == 0 else "response_composition"
                 ),
+                model=settings.openai_model,
+                messages=messages,
                 operation=lambda: client.chat.completions.create(**kwargs),
             )
             choice = response.choices[0] if response.choices else None
@@ -420,6 +425,8 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         if message.conversation_id
         else ("sender_key" if message.sender_key else ("sender_phone" if message.sender_phone else "none"))
     )
+    from .observability import log_event, redact_text, summarize_commerce_state
+
     print("[sales.context]", {
         "history_turns": len(recent_turns),
         "history_user_turns": sum(1 for turn in recent_turns if turn.get("role") == "user"),
@@ -431,6 +438,21 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     })
     commerce_state = CommerceConversationState.from_payload(
         customer_context.get("_commerce_state")
+    )
+    log_event(
+        "history.loaded",
+        {
+            "context_source": context_source,
+            "history_turns": len(recent_turns),
+            "history_preview": [
+                {
+                    "role": turn.get("role"),
+                    "preview": redact_text(str(turn.get("content") or ""), max_chars=160),
+                }
+                for turn in recent_turns[-6:]
+            ],
+            "commerce_state": summarize_commerce_state(commerce_state),
+        },
     )
     if commerce_state.pending_action == "awaiting_order_customer_document":
         customer_document = extract_valid_tax_document(message.text)

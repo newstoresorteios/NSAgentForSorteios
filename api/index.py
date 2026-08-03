@@ -84,7 +84,21 @@ async def turn_runtime_middleware(request: Request, call_next):
             getattr(request.state, "conversation_lock_handle", None)
         )
         context.finish_stage("request")
-        print("[agent.runtime]", context.safe_summary())
+        summary = context.safe_summary()
+        print("[agent.runtime]", summary)
+        try:
+            import json as _json
+
+            print(
+                "[agent.obs]",
+                _json.dumps(
+                    {"event": "runtime.summary", **summary},
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            )
+        except Exception:
+            pass
         reset_current_turn(token)
 
 

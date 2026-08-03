@@ -5,6 +5,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+from .observability import record_openai_observation
 from .runtime_context import get_current_turn
 
 
@@ -28,6 +29,23 @@ def _usage_tokens(response: Any) -> tuple[int, int]:
     return int(input_tokens or 0), int(output_tokens or 0)
 
 
+def _response_preview(response: Any) -> str | None:
+    try:
+        choice = response.choices[0] if getattr(response, "choices", None) else None
+        message = getattr(choice, "message", None) if choice is not None else None
+        content = getattr(message, "content", None) if message is not None else None
+        if content:
+            return str(content)
+        parsed = getattr(message, "parsed", None) if message is not None else None
+        if parsed is not None:
+            if hasattr(parsed, "model_dump"):
+                return str(parsed.model_dump(mode="json"))
+            return str(parsed)
+    except Exception:
+        return None
+    return None
+
+
 def _start_call(call_type: str) -> tuple[Any, float]:
     context = get_current_turn()
     if context is not None:
@@ -35,18 +53,38 @@ def _start_call(call_type: str) -> tuple[Any, float]:
     return context, time.perf_counter()
 
 
-def _finish_call(context: Any, started_at: float, response: Any) -> None:
-    if context is None:
-        return
-    input_tokens, output_tokens = _usage_tokens(response)
-    context.register_openai_usage(
+def _finish_call(
+    context: Any,
+    started_at: float,
+    response: Any,
+    *,
+    call_type: str,
+    model: str | None,
+    messages: list[dict[str, Any]] | None,
+    ok: bool = True,
+    error_type: str | None = None,
+) -> None:
+    input_tokens, output_tokens = _usage_tokens(response) if ok else (0, 0)
+    if context is not None and ok:
+        context.register_openai_usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        stage_name = f"openai_{context.openai_call_count}"
+        context.stage_durations_ms[stage_name] = round(
+            (time.perf_counter() - started_at) * 1000,
+            2,
+        )
+    record_openai_observation(
+        call_type=call_type,
+        model=model,
+        messages=messages,
+        response_preview=_response_preview(response) if ok else None,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-    )
-    stage_name = f"openai_{context.openai_call_count}"
-    context.stage_durations_ms[stage_name] = round(
-        (time.perf_counter() - started_at) * 1000,
-        2,
+        elapsed_ms=round((time.perf_counter() - started_at) * 1000, 2),
+        ok=ok,
+        error_type=error_type,
     )
 
 
@@ -55,6 +93,8 @@ async def execute_openai_call(
     call_type: str,
     operation: Callable[[], Awaitable[T]],
     timeout_seconds: float | None = None,
+    model: str | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> T:
     context, started_at = _start_call(call_type)
     try:
@@ -64,11 +104,28 @@ async def execute_openai_call(
             if timeout_seconds and timeout_seconds > 0
             else await awaitable
         )
-    except Exception:
+    except Exception as exc:
         if context is not None:
             context.register_integration_failure("openai")
+        _finish_call(
+            context,
+            started_at,
+            None,
+            call_type=call_type,
+            model=model,
+            messages=messages,
+            ok=False,
+            error_type=type(exc).__name__,
+        )
         raise
-    _finish_call(context, started_at, response)
+    _finish_call(
+        context,
+        started_at,
+        response,
+        call_type=call_type,
+        model=model,
+        messages=messages,
+    )
     return response
 
 
@@ -76,13 +133,32 @@ def execute_openai_call_sync(
     *,
     call_type: str,
     operation: Callable[[], T],
+    model: str | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> T:
     context, started_at = _start_call(call_type)
     try:
         response = operation()
-    except Exception:
+    except Exception as exc:
         if context is not None:
             context.register_integration_failure("openai")
+        _finish_call(
+            context,
+            started_at,
+            None,
+            call_type=call_type,
+            model=model,
+            messages=messages,
+            ok=False,
+            error_type=type(exc).__name__,
+        )
         raise
-    _finish_call(context, started_at, response)
+    _finish_call(
+        context,
+        started_at,
+        response,
+        call_type=call_type,
+        model=model,
+        messages=messages,
+    )
     return response

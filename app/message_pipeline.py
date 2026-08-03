@@ -8,6 +8,11 @@ from app.customer_identity import (
     upsert_customer_identity_links,
 )
 from app.db import load_commerce_conversation_state, persist_customer_commerce_session
+from app.observability import (
+    log_event,
+    redact_text,
+    summarize_commerce_state,
+)
 from app.working_memory import build_working_memory
 from app.factual_validator import apply_factual_validation
 from app.handoff_service import enrich_handoff_metadata
@@ -82,7 +87,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     settings = get_settings()
     runtime = get_current_turn()
     if runtime is not None:
-        runtime.channel = incoming.channel
+        runtime.channel = incoming.channel or runtime.channel
         runtime.conversation_key = (
             incoming.conversation_id
             or incoming.sender_key
@@ -90,6 +95,10 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             or incoming.sender_phone
             or runtime.conversation_key
         )
+        try:
+            runtime.inbound_id = int((incoming.raw or {}).get("inbound_id"))
+        except (TypeError, ValueError):
+            pass
     customer_context = enrich_customer_context(customer_context)
     with runtime_stage("prepare_incoming"):
         incoming = await prepare_incoming_message(incoming)
@@ -98,6 +107,20 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         inbound_id = int(raw_inbound_id) if raw_inbound_id is not None else None
     except (TypeError, ValueError):
         inbound_id = None
+    inbound_snapshot = {
+        "channel": incoming.channel,
+        "conversation_id_present": bool(incoming.conversation_id),
+        "sender_key_present": bool(incoming.sender_key),
+        "sender_phone_present": bool(incoming.sender_phone),
+        "sender_name_present": bool(incoming.sender_name),
+        "input_modality": incoming.input_modality,
+        "text_chars": len(incoming.text or ""),
+        "text_preview": redact_text(incoming.text, max_chars=220),
+        "customer_found": bool(customer_context.get("found")),
+    }
+    if runtime is not None:
+        runtime.inbound_snapshot = inbound_snapshot
+    log_event("turn.start", inbound_snapshot)
     state_lookup = {
         "conversation_id": incoming.conversation_id,
         "sender_phone": incoming.sender_phone,
@@ -114,6 +137,21 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "_commerce_state": commerce_state.model_dump(mode="json"),
         "_working_memory": working_memory,
     }
+    context_snapshot = {
+        **summarize_commerce_state(commerce_state),
+        "working_memory_payment_pending": bool(working_memory.get("payment_pending")),
+        "working_memory_has_open_order": bool(working_memory.get("has_open_order")),
+        "person_key_aliases": len(
+            resolve_person_key_candidates(
+                sender_key=incoming.sender_key,
+                sender_phone=incoming.sender_phone,
+                state=commerce_state,
+            )
+        ),
+    }
+    if runtime is not None:
+        runtime.context_snapshot = context_snapshot
+    log_event("context.loaded", context_snapshot)
     print("[sales.context.state]", {
         "active_domain": commerce_state.active_domain,
         "has_active_product": commerce_state.active_product is not None,
@@ -212,9 +250,10 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             runtime.register_fallback("quality_judge_failed")
 
     response_metadata = result.response_metadata or {}
-    print("[agent.response]", {
+    outbound_snapshot = {
         "domain": response_metadata.get("domain"),
         "goal": response_metadata.get("goal"),
+        "intent": result.intent,
         "response_source": response_metadata.get("response_source"),
         "used_openai_interpreter": bool(response_metadata.get("used_openai_interpreter")),
         "used_openai_responder": bool(response_metadata.get("used_openai_responder")),
@@ -222,10 +261,38 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "fallback_reason": response_metadata.get("fallback_reason"),
         "safety_reason": result.safety_reason,
         "handoff_required": result.handoff_required,
+        "reply_chars": len(result.reply_text or ""),
+        "reply_preview": redact_text(result.reply_text, max_chars=280),
+        "final_order_id": (response_metadata.get("commerce_state") or {}).get("order_id"),
+        "final_pending_action": (response_metadata.get("commerce_state") or {}).get(
+            "pending_action"
+        ),
+        "tray_tools": [
+            item.get("tool")
+            for item in (runtime.tray_calls if runtime else [])
+        ],
+        "openai_call_types": [
+            item.get("call_type")
+            for item in (runtime.openai_calls if runtime else [])
+        ],
+    }
+    if runtime is not None:
+        runtime.outbound_snapshot = outbound_snapshot
+    print("[agent.response]", {
+        "domain": outbound_snapshot["domain"],
+        "goal": outbound_snapshot["goal"],
+        "response_source": outbound_snapshot["response_source"],
+        "used_openai_interpreter": outbound_snapshot["used_openai_interpreter"],
+        "used_openai_responder": outbound_snapshot["used_openai_responder"],
+        "used_tray": outbound_snapshot["used_tray"],
+        "fallback_reason": outbound_snapshot["fallback_reason"],
+        "safety_reason": outbound_snapshot["safety_reason"],
+        "handoff_required": outbound_snapshot["handoff_required"],
         "judge_triggered": bool(
             (response_metadata.get("quality_judge") or {}).get("triggered")
         ),
     })
+    log_event("turn.end", outbound_snapshot)
 
     if customer_context.get("found") and user_id:
         record_interaction_memory(int(user_id), result.intent, incoming.text)
