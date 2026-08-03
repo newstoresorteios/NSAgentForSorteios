@@ -192,6 +192,8 @@ class IncomingMessage(BaseModel):
     audio_url: str | None = None
     audio_mime_type: str | None = None
     audio_filename: str | None = None
+    image_url: str | None = None
+    image_mime_type: str | None = None
     transcription_failed: bool = False
     channel_metadata: dict[str, Any] = Field(default_factory=dict)
     raw: dict[str, Any] = Field(default_factory=dict)

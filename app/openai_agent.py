@@ -18,6 +18,7 @@ from .agent_replies import (
 from .config import get_settings
 from .commerce_context import CommerceConversationState, apply_commerce_domain_context
 from .db import load_recent_conversation_turns
+from .image_product_id import handle_image_product_search, image_search_eligible
 from .context_builder import (
     build_template_fallback,
     detect_primary_intent,
@@ -723,6 +724,33 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             used_openai_responder=False,
             used_tray=bool(result.response_metadata.get("used_tray")),
         )
+    if image_search_eligible(message):
+        image_result = await handle_image_product_search(message)
+        if image_result is not None:
+            return _annotate_agent_result(
+                image_result,
+                domain="commerce",
+                goal="find",
+                response_source=(
+                    "technical_fallback"
+                    if image_result.safety_reason
+                    in {
+                        "image_identify_failed",
+                        "tray_adapter_unavailable",
+                        "product_match_failed",
+                    }
+                    else image_result.response_metadata.get(
+                        "response_source",
+                        "image_vision",
+                    )
+                ),
+                used_openai_interpreter=False,
+                used_openai_responder=bool(
+                    image_result.response_metadata.get("used_openai_responder")
+                ),
+                used_tray=bool(image_result.response_metadata.get("used_tray")),
+                fallback_reason=image_result.safety_reason,
+            )
     interpretation = await interpret_message(
         message,
         recent_turns=recent_turns,

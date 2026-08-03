@@ -1,0 +1,256 @@
+from types import SimpleNamespace
+
+import pytest
+
+from app.image_product_id import (
+    ImageProductIdentification,
+    handle_image_product_search,
+    identify_product_from_image,
+    image_search_eligible,
+    interpretation_from_identification,
+)
+from app.models import AgentResult, IncomingMessage
+from app.webhook_parser import parse_brevo_conversations_payload
+
+
+def _image_payload(*, with_caption: bool = False) -> dict:
+    message = {
+        "id": "msg-image-001",
+        "type": "visitor",
+        "createdAt": 1785700000000,
+        "file": {
+            "link": "https://example.com/watches/certina.jpg",
+            "mimeType": "image/jpeg",
+            "name": "certina.jpg",
+            "type": "image",
+        },
+    }
+    if with_caption:
+        message["text"] = "tem esse?"
+    return {
+        "eventName": "conversationFragment",
+        "conversationId": "conv-image-001",
+        "messages": [message],
+        "visitor": {
+            "id": "visitor-wa",
+            "source": "whatsapp",
+            "attributes": {"WHATSAPP": "5521999999999"},
+        },
+    }
+
+
+def test_parser_persists_image_url_for_whatsapp_photo():
+    incoming = parse_brevo_conversations_payload(_image_payload())
+
+    assert incoming.attachment_type == "image"
+    assert incoming.input_modality == "image"
+    assert incoming.image_url == "https://example.com/watches/certina.jpg"
+    assert incoming.image_mime_type == "image/jpeg"
+    assert "Imagem recebida" in incoming.text
+
+
+def test_parser_keeps_caption_with_image():
+    incoming = parse_brevo_conversations_payload(_image_payload(with_caption=True))
+
+    assert incoming.input_modality == "text_with_image"
+    assert incoming.image_url == "https://example.com/watches/certina.jpg"
+    assert incoming.text == "tem esse?"
+
+
+def test_image_search_eligible_requires_flag_and_url(monkeypatch):
+    from app import image_product_id as module
+
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(agent_image_search_enabled=True),
+    )
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="[Imagem recebida via WhatsApp]",
+        input_modality="image",
+        attachment_type="image",
+        image_url="https://example.com/a.jpg",
+    )
+    assert image_search_eligible(message) is True
+
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(agent_image_search_enabled=False),
+    )
+    assert image_search_eligible(message) is False
+
+
+def test_interpretation_from_identification_builds_find_subject():
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Certina",
+        model="DS Super PH2000M Automático",
+        reference="C050.607.44.011.02",
+        color="Branco",
+        confidence=0.91,
+    )
+    interpretation = interpretation_from_identification(identified)
+
+    assert interpretation.domain == "commerce"
+    assert interpretation.goal == "find"
+    assert interpretation.ready_for_retrieval is True
+    assert interpretation.subject.brand == "Certina"
+    assert interpretation.subject.reference == "C050.607.44.011.02"
+    assert "PH2000M" in (interpretation.subject.model or "")
+    assert "Branco" in (interpretation.subject.model or "")
+
+
+@pytest.mark.asyncio
+async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
+    from app import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="[Imagem recebida via WhatsApp]",
+        input_modality="image",
+        attachment_type="image",
+        image_url="https://example.com/watch.jpg",
+        image_mime_type="image/jpeg",
+    )
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Christopher Ward",
+        model="C63 Sealander",
+        color="Rosa",
+        confidence=0.88,
+    )
+
+    async def fake_download(url, *, max_bytes=None):
+        return b"fake-image-bytes", "image/jpeg"
+
+    async def fake_execute(*, call_type, model, messages, operation):
+        assert call_type == "image_product_identify"
+        assert any(
+            isinstance(block, dict) and block.get("type") == "image_url"
+            for part in messages
+            for block in (
+                part.get("content") if isinstance(part.get("content"), list) else []
+            )
+        )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(parsed=identified, refusal=None)
+                )
+            ]
+        )
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        openai_api_key="sk-test",
+        openai_model="gpt-4.1-mini",
+        agent_image_search_model="",
+        agent_image_download_max_bytes=8_000_000,
+    ))
+    monkeypatch.setattr(module, "download_image_file", fake_download)
+    monkeypatch.setattr(module, "execute_openai_call", fake_execute)
+    monkeypatch.setattr(module, "AsyncOpenAI", lambda **kwargs: object())
+
+    result = await identify_product_from_image(message)
+    assert result.brand == "Christopher Ward"
+    assert result.confidence == 0.88
+
+
+@pytest.mark.asyncio
+async def test_handle_image_product_search_retrieves_catalog(monkeypatch):
+    from app import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="[Imagem recebida via WhatsApp]",
+        input_modality="image",
+        attachment_type="image",
+        image_url="https://example.com/watch.jpg",
+    )
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Certina",
+        model="DS Super PH2000M Automático Branco Titânio",
+        confidence=0.9,
+    )
+    tray_result = AgentResult(
+        reply_text="Encontrei o Certina DS Super PH2000M.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "9001",
+                    "name": "Relógio Certina DS Super PH2000M Automático Branco Titânio",
+                    "brand": "Certina",
+                }
+            ]
+        },
+        response_metadata={"used_tray": True},
+    )
+
+    async def fake_identify(msg):
+        return identified
+
+    async def fake_retrieval(interpretation):
+        assert interpretation.subject.brand == "Certina"
+        assert "PH2000M" in (interpretation.subject.model or "")
+        return tray_result
+
+    async def fake_responder(message, plan, result, interpretation):
+        return None
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        agent_image_search_enabled=True,
+        agent_image_search_min_confidence=0.55,
+    ))
+    monkeypatch.setattr(module, "identify_product_from_image", fake_identify)
+
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "_execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+    monkeypatch.setattr(sales_agent, "_sales_response_with_openai", fake_responder)
+
+    result = await handle_image_product_search(message)
+    assert result is not None
+    assert result.response_metadata.get("image_search") is True
+    assert "Certina" in result.reply_text
+    assert result.commercial_data["products"][0]["id"] == "9001"
+
+
+@pytest.mark.asyncio
+async def test_handle_image_product_search_asks_when_confidence_low(monkeypatch):
+    from app import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="[Imagem recebida via WhatsApp]",
+        input_modality="image",
+        attachment_type="image",
+        image_url="https://example.com/blur.jpg",
+    )
+
+    async def fake_identify(msg):
+        return ImageProductIdentification(
+            is_watch=True,
+            brand="Certina",
+            model=None,
+            confidence=0.2,
+        )
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        agent_image_search_enabled=True,
+        agent_image_search_min_confidence=0.55,
+        agent_visual_search_enabled=False,
+        database_url="",
+    ))
+    monkeypatch.setattr(module, "identify_product_from_image", fake_identify)
+
+    result = await handle_image_product_search(message)
+    assert result is not None
+    assert result.safety_reason == "image_identify_low_confidence"
+    assert "não consegui" in result.reply_text.casefold() or "confirma" in result.reply_text.casefold()

@@ -416,6 +416,8 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
     audio_url = None
     audio_mime_type = None
     audio_filename = None
+    image_url = None
+    image_mime_type = None
     if audio_file:
         input_modality = "audio"
         audio_url = audio_file.get("link")
@@ -430,6 +432,17 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
             attachment = attachments[0]
             attachment_type = _attachment_type(attachment)
             filename = _first_non_empty(attachment.get("name"), attachment.get("filename"))
+            if attachment_type == "image":
+                image_url = _first_non_empty(
+                    attachment.get("link"),
+                    attachment.get("url"),
+                    attachment.get("src"),
+                )
+                image_mime_type = _first_non_empty(
+                    attachment.get("mimeType"),
+                    attachment.get("mimetype"),
+                    attachment.get("contentType"),
+                )
             if not text.strip():
                 text = _attachment_placeholder(channel, attachment_type, filename)
                 input_modality = attachment_type
@@ -446,6 +459,8 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
     channel_metadata: dict[str, Any] = {}
     if attachment_type:
         channel_metadata["attachment_type"] = attachment_type
+    if image_url:
+        channel_metadata["image_url_present"] = True
     if source_channel_ref:
         channel_metadata["source_channel_ref_present"] = True
 
@@ -477,6 +492,8 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
         audio_url=audio_url,
         audio_mime_type=audio_mime_type,
         audio_filename=audio_filename,
+        image_url=image_url,
+        image_mime_type=image_mime_type,
         channel_metadata=channel_metadata,
         raw=payload,
     )

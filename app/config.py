@@ -115,6 +115,58 @@ class Settings(BaseSettings):
     audio_outbound_enabled: bool = Field(default=True, alias="AUDIO_OUTBOUND_ENABLED")
     brevo_send_audio_as_attachment: bool = Field(default=True, alias="BREVO_SEND_AUDIO_AS_ATTACHMENT")
     audio_public_base_url: str = Field(default="", alias="AUDIO_PUBLIC_BASE_URL")
+    # Vision → catalog search when customer sends a product photo.
+    agent_image_search_enabled: bool = Field(
+        default=True,
+        alias="AGENT_IMAGE_SEARCH_ENABLED",
+    )
+    agent_image_search_model: str = Field(
+        default="",
+        alias="AGENT_IMAGE_SEARCH_MODEL",
+    )
+    agent_image_search_min_confidence: float = Field(
+        default=0.55,
+        alias="AGENT_IMAGE_SEARCH_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+    agent_image_download_max_bytes: int = Field(
+        default=8_000_000,
+        alias="AGENT_IMAGE_DOWNLOAD_MAX_BYTES",
+        ge=100_000,
+        le=20_000_000,
+    )
+    # Phase 2: visual nearest-neighbor fallback over catalog image fingerprints.
+    agent_visual_search_enabled: bool = Field(
+        default=True,
+        alias="AGENT_VISUAL_SEARCH_ENABLED",
+    )
+    agent_product_image_index_enabled: bool = Field(
+        default=True,
+        alias="AGENT_PRODUCT_IMAGE_INDEX_ENABLED",
+    )
+    agent_visual_embedding_model: str = Field(
+        default="text-embedding-3-small",
+        alias="AGENT_VISUAL_EMBEDDING_MODEL",
+    )
+    agent_visual_top_k: int = Field(
+        default=3,
+        alias="AGENT_VISUAL_TOP_K",
+        ge=1,
+        le=10,
+    )
+    agent_visual_max_distance: float = Field(
+        default=0.45,
+        alias="AGENT_VISUAL_MAX_DISTANCE",
+        ge=0.0,
+        le=2.0,
+    )
+    agent_product_image_index_batch_size: int = Field(
+        default=40,
+        alias="AGENT_PRODUCT_IMAGE_INDEX_BATCH_SIZE",
+        ge=1,
+        le=200,
+    )
     checkout_cep_lookup_enabled: bool = Field(
         default=True,
         alias="CHECKOUT_CEP_LOOKUP_ENABLED",

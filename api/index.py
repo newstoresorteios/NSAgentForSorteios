@@ -36,6 +36,7 @@ from app.conversation_lock import (
 )
 from app.handoff_service import handoff_provider_payload
 from app.remarketing import run_remarketing_batch, sync_remarketing_interaction
+from app.product_image_index import run_product_image_index_batch
 from app.runtime_context import (
     get_current_turn,
     reset_current_turn,
@@ -709,6 +710,24 @@ async def remarketing_cron():
 )
 async def remarketing_cron_manual():
     return await remarketing_cron()
+
+
+@app.get(
+    "/api/cron/product-image-index",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def product_image_index_cron():
+    result = await run_product_image_index_batch()
+    print("[product_image_index.cron] completed", result)
+    return result
+
+
+@app.post(
+    "/api/cron/product-image-index",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def product_image_index_cron_manual():
+    return await product_image_index_cron()
 
 
 @app.post("/api/webhooks/brevo/conversations")
