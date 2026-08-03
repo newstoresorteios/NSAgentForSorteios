@@ -327,43 +327,29 @@ async def _token_search_polyfill(
             seen.add(product_id)
             matched.append(reduced)
 
+    # Name probes only — do NOT re-page the whole brand here (sales discovery
+    # already does that; duplicating 8 brand pages blows the Vercel budget).
     joined = " ".join(tokens)
     attempts: list[dict[str, Any]] = [{"name": joined, "page": 1}]
     if brand:
         attempts.append({"name": joined, "brand": brand, "page": 1})
-        # Shorter high-signal phrase (e.g. sealander rosa).
         if len(tokens) >= 2:
             attempts.append({
                 "name": " ".join(tokens[-2:]),
                 "brand": brand,
                 "page": 1,
             })
+        # Color-heavy token last (e.g. rosa) — Tray often indexes short hues.
+        hue = tokens[-1]
+        if hue and hue not in {"automatico", "quartz", "cronografo"}:
+            attempts.append({"name": hue, "brand": brand, "page": 1})
+            attempts.append({"name": hue, "brand": brand, "page": 2})
+            attempts.append({"name": hue, "brand": brand, "page": 3})
     for filters in attempts:
         payload = await client.search_products(**filters, limit=limit)
         _absorb(_items(payload))
         if len(matched) >= limit:
             return {"products": matched[:limit]}
-
-    if brand:
-        for page in range(1, 9):
-            payload = await client.search_products(
-                brand=brand,
-                limit=20,
-                page=page,
-            )
-            page_items = _items(payload)
-            _absorb(page_items)
-            if len(matched) >= limit:
-                break
-            if not page_items:
-                break
-            paging = _reduce_paging(payload) or {}
-            try:
-                total = int(paging["total"]) if paging.get("total") is not None else None
-            except (TypeError, ValueError):
-                total = None
-            if total is not None and page * 20 >= total:
-                break
 
     return {"products": matched[:limit]}
 

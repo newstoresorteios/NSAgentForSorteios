@@ -23,6 +23,7 @@ def _interpretation(
     model: str,
     product_type: str | None = None,
     reference_type: str | None = None,
+    preferences: dict | None = None,
 ) -> SalesInterpretation:
     return SalesInterpretation(
         domain="commerce",
@@ -32,7 +33,7 @@ def _interpretation(
             "brand": brand,
             "model": model,
         },
-        preferences={},
+        preferences=preferences or {},
         information_needed=["catalog"],
         references_previous_context=reference_type is not None,
         needs_clarification=False,
@@ -385,6 +386,88 @@ async def test_matcher_technical_failure_is_not_reported_as_not_found(monkeypatc
 
     assert result.safety_reason == "product_match_failed"
     assert result.safety_reason != "product_not_found"
+
+
+@pytest.mark.asyncio
+async def test_color_harvest_finds_rosa_outside_brand_first_pages(monkeypatch):
+    """Brand pages miss Rosa; name=Rosa&brand paging must still surface it."""
+    import app.sales_agent as sales_agent
+
+    rosa = {
+        "id": "rosa",
+        "name": (
+            "Relógio Christopher Ward C63 Sealander Automático Rosa "
+            "C63-36ADA4-S00P0-B0 36 mm"
+        ),
+        "brand": "Christopher Ward",
+        "reference": "C63-36ADA4-S00P0-B0",
+        "available": True,
+    }
+    brand_page = [
+        {
+            "id": f"cw-{index}",
+            "name": f"Relógio Christopher Ward C63 Sealander Automático Kingfisher {index}",
+            "brand": "Christopher Ward",
+        }
+        for index in range(20)
+    ]
+
+    async def execute(tool, arguments):
+        if tool == "search_products":
+            name = (arguments.get("name") or "")
+            if name.casefold() == "rosa" and arguments.get("brand"):
+                page = int(arguments.get("page") or 1)
+                if page == 1:
+                    return {
+                        "products": [
+                            {
+                                "id": "other-pink",
+                                "name": "Relógio Christopher Ward pulseira Rosa",
+                                "brand": "Christopher Ward",
+                            }
+                        ],
+                        "paging": {"total": 21, "page": 1, "limit": 20},
+                    }
+                if page == 2:
+                    return {
+                        "products": [rosa],
+                        "paging": {"total": 21, "page": 2, "limit": 20},
+                    }
+                return {"products": [], "paging": {"total": 21, "page": page, "limit": 20}}
+            if (
+                arguments.get("brand") == "Christopher Ward"
+                and not arguments.get("name")
+                and not arguments.get("tokens")
+                and not arguments.get("query")
+            ):
+                return {
+                    "products": brand_page,
+                    "paging": {"total": 20, "page": 1, "limit": 20},
+                }
+            return {"products": []}
+        if tool == "get_product":
+            return rosa
+        if tool == "list_product_variants":
+            return {"variants": []}
+        raise AssertionError((tool, arguments))
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        "app.product_retrieval.get_settings",
+        lambda: _settings(api_key=""),
+    )
+
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(
+            brand="Christopher Ward",
+            model="Sealander Automatic",
+            preferences={"color": "rosa claro"},
+        )
+    )
+
+    assert result is not None
+    assert result.safety_reason != "product_not_found"
+    assert result.commercial_data["products"][0]["id"] == "rosa"
 
 
 @pytest.mark.asyncio

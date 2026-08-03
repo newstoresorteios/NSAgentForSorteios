@@ -594,7 +594,8 @@ async def test_token_search_polyfills_when_adaptor_route_missing():
             raise TrayAdapterError("tray_adapter_http_404", status_code=404)
 
         async def search_products(self, **kwargs):
-            if kwargs.get("brand") and not kwargs.get("name"):
+            name = (kwargs.get("name") or "").casefold()
+            if "rosa" in name and kwargs.get("brand"):
                 return {
                     "products": [
                         {

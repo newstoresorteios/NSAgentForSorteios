@@ -90,6 +90,7 @@ from .product_retrieval import (
     match_specific_products,
     preference_color_tokens,
     prefilter_specific_candidates,
+    product_matches_color_tokens,
     product_availability_state,
     revalidate_products,
     rerank_products,
@@ -1593,16 +1594,35 @@ async def _execute_compiled_product_retrieval(
         raw_products: list[Any],
         *,
         catalog_discovery: bool = False,
+        prefer_color: bool = False,
     ) -> None:
         nonlocal catalog_discovered_count
+        color_tokens = preference_color_tokens(interpretation)
         for product in raw_products:
-            if len(candidates) >= _accumulation_limit():
-                return
             if not isinstance(product, dict) or product.get("id") is None:
                 continue
             product_id = str(product["id"])
             if product_id in seen_ids:
                 continue
+            is_color_hit = bool(
+                color_tokens
+                and product_matches_color_tokens(product, color_tokens)
+            )
+            # Color harvest must not be dropped because brand paging filled
+            # the pool with Kingfisher/Dagger siblings first.
+            at_limit = len(candidates) >= _accumulation_limit()
+            if at_limit and not (prefer_color and is_color_hit):
+                continue
+            if at_limit and prefer_color and is_color_hit:
+                # Evict a non-color sibling to make room.
+                for index, existing in enumerate(candidates):
+                    if not product_matches_color_tokens(existing, color_tokens):
+                        evicted_id = str(existing.get("id"))
+                        candidates.pop(index)
+                        seen_ids.discard(evicted_id)
+                        break
+                else:
+                    continue
             seen_ids.add(product_id)
             candidates.append(product)
             if catalog_discovery:
@@ -1834,17 +1854,6 @@ async def _execute_compiled_product_retrieval(
             {"name": name, "limit": 20, "page": 1}
             for name in enrich_names
         ]
-        # Brand + color-only cast: pulls every CW "Rosa" so local scoring can
-        # pick Sealander Rosa even when long name probes return empty.
-        if brand and color_hue:
-            enrich_calls.append(
-                {
-                    "name": color_hue,
-                    "brand": brand,
-                    "limit": 20,
-                    "page": 1,
-                }
-            )
         if enrich_calls:
             print("[sales.retrieval.family_enrich]", {
                 "family_codes": list(family_codes),
@@ -1865,8 +1874,61 @@ async def _execute_compiled_product_retrieval(
                     if isinstance(result.get("products"), list)
                     else []
                 )
-                _absorb_products(raw_products)
+                _absorb_products(raw_products, prefer_color=True)
             _refresh_hard_filtered()
+
+        # Tier 2.6 — page brand+color (Rosa) until the hue lands in the pool.
+        # Tray often keeps color variants outside the first brand pages.
+        if brand and color_hue and not hard_filtered:
+            color_pages_hits = 0
+            for page in range(1, 6):
+                print("[sales.retrieval.color_harvest]", {
+                    "color": color_hue,
+                    "page": page,
+                })
+                result = await execute_tool(
+                    "search_products",
+                    {
+                        "name": color_hue,
+                        "brand": brand,
+                        "limit": 20,
+                        "page": page,
+                    },
+                )
+                if "error" in result:
+                    product_lookup_failed = True
+                    break
+                raw_products = (
+                    result.get("products")
+                    if isinstance(result.get("products"), list)
+                    else []
+                )
+                before = len(candidates)
+                _absorb_products(raw_products, prefer_color=True)
+                color_pages_hits += max(0, len(candidates) - before)
+                _refresh_hard_filtered()
+                if hard_filtered or not raw_products:
+                    break
+                paging = (
+                    result.get("paging")
+                    if isinstance(result.get("paging"), dict)
+                    else {}
+                )
+                try:
+                    total = (
+                        int(paging["total"])
+                        if paging.get("total") is not None
+                        else None
+                    )
+                except (TypeError, ValueError):
+                    total = None
+                if total is not None and page * 20 >= total:
+                    break
+            print("[sales.retrieval.color_harvest.done]", {
+                "color": color_hue,
+                "absorbed_colorish": color_pages_hits,
+                "hard_filtered": len(hard_filtered),
+            })
 
     # Recommendation mode with only probe requests (no discovery strategies).
     if retrieval_plan.mode == "recommendation" and not discovery_requests:
