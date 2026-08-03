@@ -119,6 +119,19 @@ async def test_search_products_reduces_payload_and_uses_name():
 
 
 @pytest.mark.asyncio
+async def test_search_products_merges_query_with_explicit_brand():
+    client = FakeTray()
+    await execute_tool(
+        "search_products",
+        {"query": "C63 Sealander", "brand": "Christopher Ward", "limit": 5},
+        client,
+    )
+    # Digit+letter queries probe reference then name; brand must stay attached.
+    assert client.calls[0][1]["brand"] == "Christopher Ward"
+    assert "reference" in client.calls[0][1] or "name" in client.calls[0][1]
+
+
+@pytest.mark.asyncio
 async def test_search_products_preserves_compact_paging_metadata():
     class PagedTray(FakeTray):
         async def search_products(self, **kwargs):

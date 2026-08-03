@@ -66,6 +66,7 @@ class ProductRetrievalRequest:
     reference: str | None = None
     ean: str | None = None
     category_id: str | None = None
+    query: str | None = None
     available: bool | None = None
     available_in_store: bool | None = None
     limit: int = CANDIDATE_POOL_LIMIT
@@ -75,6 +76,7 @@ class ProductRetrievalRequest:
         return {
             key: value
             for key, value in {
+                "query": self.query,
                 "name": self.name,
                 "brand": self.brand,
                 "reference": self.reference,
@@ -107,6 +109,62 @@ def _fold(value: Any) -> str:
         for char in unicodedata.normalize("NFKD", text).lower()
         if not unicodedata.combining(char)
     ).strip()
+
+
+_MODEL_STOPWORDS = frozenset(
+    {
+        "relogio",
+        "watch",
+        "automatico",
+        "automatic",
+        "quartz",
+        "cronografo",
+        "chronograph",
+        "mm",
+        "com",
+        "para",
+        "the",
+        "and",
+    }
+)
+_ACCESSORY_NAME_TOKENS = frozenset(
+    {
+        "strap",
+        "pulseira",
+        "caixa",
+        "box",
+        "kit",
+        "tool",
+        "capa",
+        "case",
+        "fone",
+        "cabo",
+        "adapter",
+        "adaptador",
+    }
+)
+_REFERENCE_CODE_RE = re.compile(
+    r"\b([A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,})\b",
+    re.IGNORECASE,
+)
+
+
+def significant_model_tokens(model: str | None) -> tuple[str, ...]:
+    """Core tokens for exact matching — drops filler words like 'automático'."""
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", _fold(model))
+        if token and token not in _MODEL_STOPWORDS and len(token) >= 2
+    ]
+    if tokens:
+        return tuple(dict.fromkeys(tokens))
+    fallback = [token for token in re.findall(r"[a-z0-9]+", _fold(model)) if token]
+    return tuple(dict.fromkeys(fallback))
+
+
+def extract_reference_code(text: str | None) -> str | None:
+    match = _REFERENCE_CODE_RE.search(str(text or ""))
+    return match.group(1).strip() if match else None
 
 
 def _product_text(product: dict[str, Any]) -> str:
@@ -216,24 +274,85 @@ class ProductRetrievalCompiler:
         category_ids: tuple[str, ...] | list[str] = (),
     ) -> ProductRetrievalPlan:
         subject = interpretation.subject
-        exact = bool(subject.reference or subject.ean or subject.model)
+        inferred_reference = subject.reference or extract_reference_code(
+            " ".join(
+                part
+                for part in (subject.model, subject.brand, subject.product_type)
+                if part
+            )
+        )
+        exact = bool(inferred_reference or subject.ean or subject.model)
         requests: list[ProductRetrievalRequest] = []
 
         if subject.ean:
             requests.append(ProductRetrievalRequest(strategy="exact_ean", ean=subject.ean))
-        elif subject.reference:
-            requests.append(ProductRetrievalRequest(strategy="exact_reference", reference=subject.reference))
+        elif inferred_reference:
+            requests.append(
+                ProductRetrievalRequest(
+                    strategy="exact_reference",
+                    reference=inferred_reference,
+                )
+            )
+            if subject.model:
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy="exact_query_reference_context",
+                        query=" ".join(
+                            part
+                            for part in (subject.brand, subject.model)
+                            if part
+                        ).strip(),
+                    )
+                )
         elif subject.model:
+            core_tokens = significant_model_tokens(subject.model)
+            core_query = " ".join(core_tokens[:4]).strip()
+            full_query = " ".join(
+                part for part in (subject.brand, subject.model) if part
+            ).strip()
             requests.append(ProductRetrievalRequest(
                 strategy="exact_model_with_brand" if subject.brand else "exact_model",
                 name=subject.model,
                 brand=subject.brand,
             ))
+            if full_query:
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy="exact_query_full",
+                        query=full_query,
+                    )
+                )
+            if core_query and core_query.casefold() != _fold(subject.model):
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy="exact_query_core",
+                        query=core_query,
+                        brand=subject.brand,
+                    )
+                )
+                # Short name/reference probes — Tray name search often misses
+                # long titles when the customer omits "Relógio {Brand}".
+                if len(core_tokens) >= 2:
+                    short_core = " ".join(core_tokens[:2])
+                    requests.append(
+                        ProductRetrievalRequest(
+                            strategy="exact_query_short",
+                            query=short_core,
+                            brand=subject.brand,
+                        )
+                    )
             if subject.brand:
                 requests.append(ProductRetrievalRequest(
                     strategy="exact_model_broad",
                     name=subject.model,
                 ))
+                if core_query:
+                    requests.append(
+                        ProductRetrievalRequest(
+                            strategy="exact_query_core_broad",
+                            query=core_query,
+                        )
+                    )
                 requests.append(ProductRetrievalRequest(
                     strategy="brand_candidates",
                     brand=subject.brand,
@@ -471,7 +590,7 @@ def hard_filter_products(
         if expected_ean and _fold(product.get("ean")) != expected_ean:
             continue
         if mode == "exact" and expected_model:
-            model_tokens = [token for token in expected_model.split() if token]
+            model_tokens = list(significant_model_tokens(subject.model))
             if model_tokens and not all(token in text for token in model_tokens):
                 continue
         price = effective_price(product)
@@ -608,6 +727,29 @@ def exact_specific_product_matches(
                 expected_model,
                 expected_brand_model,
             }:
+                matches.append(product)
+                continue
+            # Tray often stores short model ("Sealander") while the customer
+            # asks with style/color words ("C63 Sealander Automático Rosa").
+            required = significant_model_tokens(subject.model)
+            text = _product_text(product)
+            if not required or not all(token in text for token in required):
+                continue
+            if len(required) >= 2:
+                matches.append(product)
+                continue
+            token = required[0]
+            if candidate_model in {token, expected_model}:
+                matches.append(product)
+                continue
+            if candidate_model and token not in candidate_model:
+                continue
+            name_tokens = set(re.findall(r"[a-z0-9]+", candidate_name))
+            # Single-token asks ("Explorer") must not match accessories
+            # like "Explorer Strap" when the model field is empty.
+            if not candidate_model and name_tokens & _ACCESSORY_NAME_TOKENS:
+                continue
+            if token in candidate_name:
                 matches.append(product)
     return matches
 

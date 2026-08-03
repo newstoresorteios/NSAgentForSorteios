@@ -83,14 +83,55 @@ def test_specific_query_keeps_brand_and_model_separate_without_combined_name():
     )
 
     assert plan.mode == "exact"
-    assert [request.strategy for request in plan.requests[:3]] == [
-        "exact_model_with_brand",
-        "exact_model_broad",
-        "brand_candidates",
-    ]
+    strategies = [request.strategy for request in plan.requests]
+    assert strategies[0] == "exact_model_with_brand"
+    assert "exact_query_full" in strategies
+    assert "brand_candidates" in strategies
     assert plan.requests[0].name == "Murph"
     assert plan.requests[0].brand == "Hamilton"
     assert all(request.name != "Hamilton Murph" for request in plan.requests)
+
+
+def test_long_model_title_matches_short_tray_model_field():
+    from app.product_retrieval import exact_specific_product_matches, significant_model_tokens
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="C63 Sealander Automático Rosa",
+    )
+    products = [
+        {
+            "id": "9991",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": (
+                "Relógio Christopher Ward C63 Sealander Automático Rosa "
+                "C63-36ADA4-S00P0-B0 36 mm"
+            ),
+            "reference": "C63-36ADA4-S00P0-B0",
+        },
+        {
+            "id": "9992",
+            "brand": "Christopher Ward",
+            "model": "C60",
+            "name": "Relógio Christopher Ward C60 Trident Pro 600",
+        },
+    ]
+
+    assert significant_model_tokens(interpretation.subject.model) == (
+        "c63",
+        "sealander",
+        "rosa",
+    )
+    matches = exact_specific_product_matches(products, interpretation)
+    assert [product["id"] for product in matches] == ["9991"]
+
+    plan = ProductRetrievalCompiler.compile(interpretation)
+    strategies = [request.strategy for request in plan.requests]
+    assert "exact_query_full" in strategies
+    assert "exact_query_core" in strategies
+    assert "exact_query_short" in strategies
 
 
 def test_budget_is_applied_after_retrieval_using_effective_price():

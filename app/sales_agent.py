@@ -1774,6 +1774,17 @@ async def _execute_compiled_product_retrieval(
                     handoff_required=False,
                     safety_reason="tray_adapter_unavailable",
                 )
+            brand = (interpretation.subject.brand or "").strip()
+            if used_brand_candidates and brand and candidates:
+                return AgentResult(
+                    reply_text=(
+                        f"Não confirmei essa referência exata agora, mas tenho peças {brand} no catálogo. "
+                        "Quer que eu mostre algumas opções próximas?"
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="exact_product_ambiguous_brand",
+                )
             return AgentResult(
                 reply_text="Não encontrei esse produto no catálogo agora.",
                 intent="commerce",

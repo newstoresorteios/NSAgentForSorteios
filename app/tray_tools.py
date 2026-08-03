@@ -255,7 +255,18 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
     query = (args.pop("query", None) or "").strip()
     supported = ("name", "reference", "ean", "brand", "category_id", "available", "available_in_store", "stock", "promotion", "page")
     explicit = {key: args.get(key) for key in supported if args.get(key) is not None}
-    attempts = [explicit or filters for filters in _query_filters(query)] if query else [explicit]
+    # Merge free-text query filters with explicit filters (e.g. brand + name from query).
+    # Previously `explicit or filters` dropped the query entirely whenever brand/name was set.
+    if query:
+        attempts = []
+        for filters in _query_filters(query):
+            merged = {**filters}
+            for key, value in explicit.items():
+                if key not in merged:
+                    merged[key] = value
+            attempts.append(merged)
+    else:
+        attempts = [explicit]
     limit = min(max(int(args.get("limit", 5)), 1), 20)
     for filters in attempts:
         if not filters:

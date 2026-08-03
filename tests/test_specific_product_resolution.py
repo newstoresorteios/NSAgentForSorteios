@@ -107,7 +107,11 @@ async def test_brand_candidates_resolve_partial_specific_model(monkeypatch):
     async def execute(tool, arguments):
         calls.append((tool, arguments))
         if tool == "search_products":
-            if arguments == {"brand": "Longines", "limit": 20, "page": 1}:
+            if (
+                arguments.get("brand") == "Longines"
+                and "name" not in arguments
+                and "query" not in arguments
+            ):
                 return {"products": candidates}
             return {"products": []}
         if tool == "get_product":
@@ -132,16 +136,12 @@ async def test_brand_candidates_resolve_partial_specific_model(monkeypatch):
         "limit": 20,
         "page": 1,
     }
-    assert search_calls[1] == {
-        "name": "Zulu",
-        "limit": 20,
-        "page": 1,
-    }
-    assert search_calls[2] == {
+    assert {"query": "Longines Zulu", "limit": 20, "page": 1} in search_calls
+    assert {
         "brand": "Longines",
         "limit": 20,
         "page": 1,
-    }
+    } in search_calls
     assert result.safety_reason != "product_not_found"
     assert [product["id"] for product in result.commercial_data["products"]] == ["2"]
 
@@ -222,7 +222,11 @@ async def test_brand_candidates_without_semantic_match_return_not_found(monkeypa
 
     async def execute(tool, arguments):
         if tool == "search_products":
-            if arguments.get("brand") and "name" not in arguments:
+            if (
+                arguments.get("brand")
+                and "name" not in arguments
+                and "query" not in arguments
+            ):
                 return {
                     "products": [
                         {"id": "1", "name": "Longines Conquest", "brand": "Longines"},
@@ -239,7 +243,8 @@ async def test_brand_candidates_without_semantic_match_return_not_found(monkeypa
         _interpretation(brand="Longines", model="ProdutoQueNaoExiste")
     )
 
-    assert result.safety_reason == "product_not_found"
+    assert result.safety_reason == "exact_product_ambiguous_brand"
+    assert "Longines" in result.reply_text
 
 
 @pytest.mark.asyncio
@@ -551,7 +556,7 @@ async def test_brand_discovery_finds_exact_product_on_second_page(monkeypatch):
     async def execute(tool, arguments):
         calls.append((tool, arguments))
         if tool == "search_products":
-            if arguments.get("name"):
+            if arguments.get("name") or arguments.get("query"):
                 return {"products": []}
             if arguments.get("brand") == "Hamilton":
                 if arguments["page"] == 1:
@@ -578,6 +583,7 @@ async def test_brand_discovery_finds_exact_product_on_second_page(monkeypatch):
         if tool == "search_products"
         and arguments.get("brand") == "Hamilton"
         and "name" not in arguments
+        and "query" not in arguments
     ]
     assert brand_pages == [1, 2]
     assert result.safety_reason != "product_not_found"
@@ -608,7 +614,7 @@ async def test_brand_discovery_reaches_third_page_and_disambiguates(monkeypatch)
     async def execute(tool, arguments):
         calls.append((tool, arguments))
         if tool == "search_products":
-            if arguments.get("name"):
+            if arguments.get("name") or arguments.get("query"):
                 return {"products": []}
             if arguments.get("brand") == "Longines":
                 page = arguments["page"]
@@ -639,6 +645,7 @@ async def test_brand_discovery_reaches_third_page_and_disambiguates(monkeypatch)
         if tool == "search_products"
         and arguments.get("brand") == "Longines"
         and "name" not in arguments
+        and "query" not in arguments
     ]
     assert brand_pages == [1, 2, 3]
     assert result.commercial_data["match_status"] == "ambiguous"
@@ -953,7 +960,7 @@ async def test_partial_literal_name_does_not_stop_before_objective_match(monkeyp
     async def execute(tool, arguments):
         calls.append((tool, arguments))
         if tool == "search_products":
-            if arguments.get("name"):
+            if arguments.get("name") or arguments.get("query"):
                 return {"products": []}
             if arguments["page"] == 1:
                 return {
@@ -986,7 +993,9 @@ async def test_partial_literal_name_does_not_stop_before_objective_match(monkeyp
     brand_pages = [
         arguments["page"]
         for tool, arguments in calls
-        if tool == "search_products" and "name" not in arguments
+        if tool == "search_products"
+        and "name" not in arguments
+        and "query" not in arguments
     ]
     assert brand_pages == [1, 2]
     assert result.commercial_data["products"][0]["id"] == "automatic"
