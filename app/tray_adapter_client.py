@@ -412,6 +412,35 @@ class TrayAdapterClient:
             "promotion": promotion, "limit": min(max(limit, 1), 20), "page": page,
         })
 
+    async def search_products_by_tokens(
+        self,
+        *,
+        tokens: list[str] | tuple[str, ...],
+        brand: str | None = None,
+        limit: int = 20,
+        page: int | None = 1,
+    ) -> Any:
+        """Token AND search (adaptor: ILIKE %token% for each significant token).
+
+        Expected adaptor route:
+          GET /internal/products/search?tokens=sealander,rosa&brand=Christopher+Ward
+        """
+        cleaned = [
+            str(token).strip()
+            for token in tokens
+            if str(token or "").strip()
+        ]
+        return await self._request(
+            "GET",
+            "/internal/products/search",
+            params={
+                "tokens": ",".join(cleaned),
+                "brand": brand,
+                "limit": min(max(limit, 1), 20),
+                "page": page,
+            },
+        )
+
     async def get_product(self, product_id: str | int) -> Any:
         return await self._request("GET", f"/internal/products/{product_id}")
 

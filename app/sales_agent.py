@@ -1630,6 +1630,7 @@ async def _execute_compiled_product_retrieval(
             "category_id_present": bool(request.category_id),
             "name_filter_present": bool(request.name),
             "has_brand_filter": bool(request.brand),
+            "token_count": len(getattr(request, "tokens", ()) or ()),
             "has_budget_filter": has_budget,
             "candidate_limit": request.limit,
         })
@@ -1801,7 +1802,11 @@ async def _execute_compiled_product_retrieval(
             interpretation,
         )
         enrich_names: list[str] = []
+        # Shortest probes first — Tray name search often misses long titles.
         for code in family_codes:
+            enrich_names.append(f"{code} {color_hue}".strip())
+            if core:
+                enrich_names.append(f"{code} {core} {color_hue}".strip())
             enrich_names.append(
                 " ".join(
                     part for part in (code, core, auto_bit, color_hue) if part
@@ -1821,19 +1826,34 @@ async def _execute_compiled_product_retrieval(
                     if part
                 )
             )
-        enrich_names = list(dict.fromkeys(n for n in enrich_names if n))[:4]
-        if enrich_names:
+        if core:
+            enrich_names.append(f"{core} {color_hue}".strip())
+        enrich_names = list(dict.fromkeys(n for n in enrich_names if n))[:6]
+        brand = (interpretation.subject.brand or "").strip()
+        enrich_calls: list[dict[str, Any]] = [
+            {"name": name, "limit": 20, "page": 1}
+            for name in enrich_names
+        ]
+        # Brand + color-only cast: pulls every CW "Rosa" so local scoring can
+        # pick Sealander Rosa even when long name probes return empty.
+        if brand and color_hue:
+            enrich_calls.append(
+                {
+                    "name": color_hue,
+                    "brand": brand,
+                    "limit": 20,
+                    "page": 1,
+                }
+            )
+        if enrich_calls:
             print("[sales.retrieval.family_enrich]", {
                 "family_codes": list(family_codes),
-                "probe_count": len(enrich_names),
+                "probe_count": len(enrich_calls),
             })
             enrich_results = await asyncio.gather(
                 *[
-                    execute_tool(
-                        "search_products",
-                        {"name": name, "limit": 20, "page": 1},
-                    )
-                    for name in enrich_names
+                    execute_tool("search_products", call)
+                    for call in enrich_calls
                 ]
             )
             for result in enrich_results:

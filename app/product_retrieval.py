@@ -22,6 +22,7 @@ CATALOG_DISCOVERY_MAX_PAGES = 5
 CATALOG_DISCOVERY_MAX_PRODUCTS = 100
 SEMANTIC_MATCH_POOL_LIMIT = 20
 CANDIDATE_POOL_LIMIT = SEMANTIC_MATCH_POOL_LIMIT
+GPT_MATCH_CANDIDATE_LIMIT = 80
 CUSTOMER_RESULT_LIMIT = 3
 RERANK_SELECTION_LIMIT = 5
 MAX_VARIANT_PRODUCT_QUERIES = 5
@@ -67,6 +68,7 @@ class ProductRetrievalRequest:
     ean: str | None = None
     category_id: str | None = None
     query: str | None = None
+    tokens: tuple[str, ...] = ()
     available: bool | None = None
     available_in_store: bool | None = None
     limit: int = CANDIDATE_POOL_LIMIT
@@ -82,6 +84,7 @@ class ProductRetrievalRequest:
                 "reference": self.reference,
                 "ean": self.ean,
                 "category_id": self.category_id,
+                "tokens": list(self.tokens) if self.tokens else None,
                 "available": self.available,
                 "available_in_store": self.available_in_store,
                 "limit": self.limit,
@@ -416,6 +419,33 @@ def preference_color_tokens(interpretation: SalesInterpretation) -> tuple[str, .
     return tuple(dict.fromkeys(tokens))
 
 
+def catalog_match_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
+    """Significant AND-search tokens for Tray token/ILIKE lookup."""
+    subject = interpretation.subject
+    tokens: list[str] = []
+    for part in (subject.brand or "").split():
+        folded = _fold(part)
+        if folded and len(folded) >= 2:
+            tokens.append(folded)
+    color_tokens = preference_color_tokens(interpretation)
+    core = identity_core_tokens(subject.model, color_tokens=color_tokens)
+    tokens.extend(core)
+    for code in extract_model_codes(subject.model):
+        tokens.append(_fold(code))
+    tokens.extend(color_tokens)
+    # Keep movement when Vision asked Automatic — helps avoid GMT substitutes.
+    if model_excludes_gmt(subject.model):
+        tokens.append("automatico")
+    # Drop ultra-generic fillers that drown AND matches.
+    drop = {"relogio", "watch", "mm"}
+    cleaned = [
+        token
+        for token in dict.fromkeys(tokens)
+        if token and token not in drop and token not in _DESCRIPTOR_MODEL_TOKENS
+    ]
+    return tuple(cleaned)
+
+
 def product_matches_color_tokens(
     product: dict[str, Any],
     color_tokens: tuple[str, ...],
@@ -611,7 +641,19 @@ class ProductRetrievalCompiler:
             auto_bit = "Automático" if wants_automatic else None
             color_hue = color_label.title() if color_label else None
             seen_probe_keys: set[str] = set()
-            tier1_budget = 6
+            # Extra slot when dial color is known so short family+color and the
+            # catalog-title probe can both run without dropping brand query.
+            tier1_budget = 7 if color_hue else 6
+            match_tokens = catalog_match_tokens(interpretation)
+            if match_tokens:
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy="token_and_search",
+                        brand=subject.brand,
+                        tokens=match_tokens,
+                        limit=PRODUCT_PAGE_LIMIT,
+                    )
+                )
 
             def _add_probe(
                 strategy: str,
@@ -685,6 +727,13 @@ class ProductRetrievalCompiler:
                         name=f"{core_label} {auto_bit} {color_hue}".strip(),
                         brand=subject.brand,
                     )
+            # Short family+color beats long titles on Tray's name filter.
+            if color_hue and model_codes:
+                _add_probe(
+                    "exact_color_family_code",
+                    name=f"{model_codes[0]} {color_hue}".strip(),
+                    brand=subject.brand,
+                )
             catalog_title = " ".join(
                 part
                 for part in (
@@ -1012,9 +1061,13 @@ def _compact_property_evidence(value: Any, *, depth: int = 0) -> Any:
     return str(value)[:160]
 
 
-def compact_candidates(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def compact_candidates(
+    products: list[dict[str, Any]],
+    *,
+    limit: int = CANDIDATE_POOL_LIMIT,
+) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
-    for product in products[:CANDIDATE_POOL_LIMIT]:
+    for product in products[: max(1, limit)]:
         compact.append({
             key: value
             for key, value in {
@@ -1083,11 +1136,13 @@ def infer_family_codes_from_candidates(
         if not all(token in text for token in identity_tokens):
             continue
         name = str(product.get("name") or "")
-        for code in extract_model_codes(name):
-            codes.append(code)
+        # Prefer short family prefixes (C63). Ignore reference fragments like
+        # 39AGM3 that pollute Tray name probes and burn the enrich budget.
         for match in re.findall(r"\b[Cc]\d{2}\b", name):
             codes.append(match.upper())
-    # Prefer codes that appear before the identity token in titles.
+        for code in extract_model_codes(name):
+            if re.fullmatch(r"[Cc]\d{2}", code):
+                codes.append(code.upper())
     return tuple(dict.fromkeys(codes))[:3]
 
 
@@ -1100,15 +1155,14 @@ def soft_confirm_candidates(
     """Best catalog near-matches to show for 'é esse da foto?' confirmation."""
     color_tokens = preference_color_tokens(interpretation)
     if color_tokens:
-        color_hits = score_catalog_candidates(
+        # Never substitute Kingfisher/Dagger when a dial color was requested.
+        return score_catalog_candidates(
             products,
             interpretation,
             require_color=True,
             allow_movement_mismatch=False,
             limit=limit,
         )
-        if color_hits:
-            return color_hits
     identity_hits = score_catalog_candidates(
         products,
         interpretation,
@@ -1243,22 +1297,6 @@ async def match_specific_products(
             match_source="exact",
         )
 
-    # Color asked but only other colors/identity available — do NOT substitute
-    # Kingfisher/Dagger for Rosa. Caller may soft-confirm explicitly later.
-    if color_tokens:
-        print("[sales.product.match]", {
-            "candidate_count": len(compatible),
-            "selected_count": 0,
-            "invalid_ids_count": 0,
-            "match_source": "exact",
-            "reason": "color_mismatch",
-        })
-        return SpecificProductResolution(
-            status="none",
-            products=(),
-            match_source="exact",
-        )
-
     exact_matches = exact_specific_product_matches(compatible, interpretation)
     if exact_matches and not color_tokens:
         selected = exact_matches[:RERANK_SELECTION_LIMIT]
@@ -1323,14 +1361,37 @@ async def match_specific_products(
             "invalid_ids_count": 0,
             "match_source": "exact",
             "error_type": "OpenAIUnavailable",
+            "reason": "color_mismatch" if color_tokens else "openai_unavailable",
         })
+        # Color asked but only other dials in pool — never soft-substitute.
+        if color_tokens:
+            return SpecificProductResolution(
+                status="none",
+                products=(),
+                match_source="exact",
+            )
         raise ProductMatchError("specific_product_match_unavailable")
 
+    # Local keyword miss (common when Vision says "rosa claro" and the catalog
+    # title only has "Rosa"): ask GPT to normalize against the full query list.
     candidate_by_id = {
         str(product["id"]): product
         for product in compatible
         if product.get("id") is not None
     }
+    gpt_pool = compact_candidates(
+        compatible,
+        limit=GPT_MATCH_CANDIDATE_LIMIT,
+    )
+    print("[sales.product.match]", {
+        "candidate_count": len(compatible),
+        "gpt_pool_count": len(gpt_pool),
+        "selected_count": 0,
+        "invalid_ids_count": 0,
+        "match_source": "openai",
+        "reason": "gpt_catalog_normalize",
+        "has_color": bool(color_tokens),
+    })
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         response = await execute_openai_call(
@@ -1341,15 +1402,16 @@ async def match_specific_products(
                     {
                         "role": "system",
                         "content": (
-                            "Resolva o produto ou modelo pedido usando somente produtos reais de "
-                            "CANDIDATES. O nome informado pode ser parcial, aproximado, uma coleção ou "
-                            "uma descrição informal. Use match_status=exact somente quando um único "
-                            "produto estiver identificado com segurança; use ambiguous quando dois ou "
-                            "mais candidatos tiverem relação semântica relevante e não for seguro "
-                            "escolher apenas um; use none quando não houver relação suficiente. Marca "
-                            "igual, sozinha, não é correspondência. candidate_ids e best_candidate_id "
-                            "devem conter exclusivamente IDs presentes em CANDIDATES. Não sugira "
-                            "alternativas sem relação com o pedido."
+                            "Resolva o produto pedido usando SOMENTE itens de CANDIDATES. "
+                            "Normalize nomes em inglês/PT (Automatic→Automático, pink→Rosa) e "
+                            "ignore descritores de tom (claro, escuro, mostrador). "
+                            "Se PREFERENCES.color existir (ex.: rosa), escolha o título que "
+                            "contenha essa cor; NÃO substitua por outra cor da mesma linha "
+                            "(Kingfisher/Dagger/Azul no lugar de Rosa). "
+                            "Use match_status=exact só com um único ID seguro; ambiguous se "
+                            "houver 2+ opções da cor/modelo pedidos; none se a cor/modelo "
+                            "não estiver na lista. candidate_ids e best_candidate_id devem "
+                            "ser IDs de CANDIDATES."
                         ),
                     },
                     {
@@ -1360,7 +1422,14 @@ async def match_specific_products(
                                     mode="json",
                                     exclude_none=True,
                                 ),
-                                "CANDIDATES": compact_candidates(compatible),
+                                "PREFERENCES": interpretation.preferences.model_dump(
+                                    mode="json",
+                                    exclude_none=True,
+                                ),
+                                "SEARCH_TOKENS": list(
+                                    catalog_match_tokens(interpretation)
+                                ),
+                                "CANDIDATES": gpt_pool,
                             },
                             ensure_ascii=False,
                         ),

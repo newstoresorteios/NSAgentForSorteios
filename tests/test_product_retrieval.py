@@ -84,11 +84,17 @@ def test_specific_query_keeps_brand_and_model_separate_without_combined_name():
 
     assert plan.mode == "exact"
     strategies = [request.strategy for request in plan.requests]
-    assert strategies[0] == "exact_model_with_brand"
+    assert strategies[0] == "token_and_search"
+    assert "exact_model_with_brand" in strategies
     assert "exact_query_full" in strategies
     assert "brand_candidates" in strategies
-    assert plan.requests[0].name == "Murph"
-    assert plan.requests[0].brand == "Hamilton"
+    model_probe = next(
+        request
+        for request in plan.requests
+        if request.strategy == "exact_model_with_brand"
+    )
+    assert model_probe.name == "Murph"
+    assert model_probe.brand == "Hamilton"
     assert all(request.name != "Hamilton Murph" for request in plan.requests)
 
 
@@ -234,9 +240,10 @@ async def test_color_preference_narrows_ambiguous_sealander_matches():
 
 
 @pytest.mark.asyncio
-async def test_color_mismatch_does_not_substitute_other_automatic_colors():
+async def test_color_mismatch_does_not_substitute_other_automatic_colors(monkeypatch):
     from app.product_retrieval import (
         ProductRetrievalCompiler,
+        catalog_match_tokens,
         exact_specific_product_matches,
         infer_family_codes_from_candidates,
         match_specific_products,
@@ -244,6 +251,10 @@ async def test_color_mismatch_does_not_substitute_other_automatic_colors():
     )
 
     assert "Automático" in normalize_pt_catalog_query("Sealander Automatic")
+    monkeypatch.setattr(
+        "app.product_retrieval.get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
 
     interpretation = _interpretation(
         goal="find",
@@ -276,13 +287,23 @@ async def test_color_mismatch_does_not_substitute_other_automatic_colors():
     assert resolution.status == "none"
     assert resolution.products == ()
     assert infer_family_codes_from_candidates(products, interpretation) == ("C63",)
+    tokens = catalog_match_tokens(interpretation)
+    assert "sealander" in tokens
+    assert "rosa" in tokens
+    assert "claro" not in tokens
 
     plan = ProductRetrievalCompiler.compile(interpretation)
     strategies = [request.strategy for request in plan.requests]
+    assert "token_and_search" in strategies
     assert "exact_color_core" in strategies or "exact_color_automatic" in strategies
     assert "category_candidates" not in strategies
     assert "brand_candidates" in strategies
     assert plan.discovery_max_pages >= 5
+    token_request = next(
+        request for request in plan.requests if request.strategy == "token_and_search"
+    )
+    assert "rosa" in token_request.tokens
+    assert "claro" not in token_request.tokens
     assert any(
         request.name and "rosa" in request.name.casefold()
         for request in plan.requests
@@ -308,11 +329,74 @@ async def test_color_mismatch_does_not_substitute_other_automatic_colors():
         for request in plan.requests
         if request.strategy not in {"brand_candidates", "category_candidates"}
     )
-    assert probe_count <= 6
+    assert probe_count <= 8
 
 
 @pytest.mark.asyncio
-async def test_color_mismatch_soft_confirms_automatic_not_gmt():
+async def test_gpt_normalizes_when_local_color_score_empty(monkeypatch):
+    """Local score misses 'Pink Dial' for color=rosa → GPT picks from full list."""
+    from app.product_retrieval import ProductMatchSelection, match_specific_products
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        preferences={"color": "rosa"},
+    )
+    products = [
+        {
+            "id": "12295",
+            "brand": "Christopher Ward",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Kingfisher",
+        },
+        {
+            "id": "pink-sku",
+            "brand": "Christopher Ward",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Pink Dial 36 mm",
+        },
+    ]
+
+    class _Parsed:
+        def __init__(self):
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        parsed=ProductMatchSelection(
+                            match_status="exact",
+                            candidate_ids=["pink-sku"],
+                            best_candidate_id="pink-sku",
+                            confidence=0.9,
+                        )
+                    )
+                )
+            ]
+
+    class _Client:
+        class chat:
+            class completions:
+                @staticmethod
+                async def parse(**_kwargs):
+                    return _Parsed()
+
+    monkeypatch.setattr(
+        "app.product_retrieval.get_settings",
+        lambda: SimpleNamespace(openai_api_key="sk-test", openai_model="gpt-4.1-mini"),
+    )
+    monkeypatch.setattr("app.product_retrieval.AsyncOpenAI", lambda **_k: _Client())
+
+    async def _run_op(**kwargs):
+        return await kwargs["operation"]()
+
+    monkeypatch.setattr("app.product_retrieval.execute_openai_call", _run_op)
+
+    resolution = await match_specific_products(products, interpretation)
+    assert resolution.status == "exact"
+    assert resolution.match_source == "openai"
+    assert resolution.products[0]["id"] == "pink-sku"
+
+
+@pytest.mark.asyncio
+async def test_color_mismatch_soft_confirm_does_not_list_wrong_colors():
     from app.product_retrieval import soft_confirm_candidates
 
     interpretation = _interpretation(
@@ -329,6 +413,15 @@ async def test_color_mismatch_soft_confirms_automatic_not_gmt():
             "name": "Relógio Christopher Ward C63 Sealander Automático Azul 36 mm",
         },
         {
+            "id": "kingfisher",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": (
+                "Relógio Christopher Ward C63 Sealander Automático Kingfisher "
+                "C63-39ADA3S00B10-B0"
+            ),
+        },
+        {
             "id": "8975",
             "brand": "Christopher Ward",
             "model": "Sealander",
@@ -336,7 +429,34 @@ async def test_color_mismatch_soft_confirms_automatic_not_gmt():
         },
     ]
     soft = soft_confirm_candidates(products, interpretation)
-    assert [product["id"] for product in soft] == ["auto-blue"]
+    assert soft == []
+
+
+def test_infer_family_codes_prefers_c63_not_reference_fragments():
+    from app.product_retrieval import infer_family_codes_from_candidates
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        preferences={"color": "rosa"},
+    )
+    products = [
+        {
+            "id": "1",
+            "brand": "Christopher Ward",
+            "name": (
+                "Relógio Christopher Ward C63 Sealander Automático Kingfisher "
+                "C63-39ADA3S00B10-B0"
+            ),
+        },
+        {
+            "id": "2",
+            "brand": "Christopher Ward",
+            "name": "Relógio Christopher Ward C63 Sealander GMT Automático Azul 39AGM3",
+        },
+    ]
+    assert infer_family_codes_from_candidates(products, interpretation) == ("C63",)
 
 
 def test_compact_product_lines_omit_long_payment_dump():
@@ -415,7 +535,8 @@ async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
         for request in plan.requests
         if request.strategy not in {"brand_candidates", "category_candidates"}
     )
-    assert probe_count <= 6
+    assert probe_count <= 8
+    assert "token_and_search" in [request.strategy for request in plan.requests]
     # Without C63 in the Vision model, probes stay generic; matching is local.
     assert any(
         request.name and "Sealander" in request.name and "Rosa" in request.name

@@ -13,7 +13,7 @@ from .tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 
 TOOL_SCHEMAS = [
-    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "tokens": {"type": "array", "items": {"type": "string"}, "description": "AND search tokens (ILIKE %token% each)"}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product", "description": "Consultar detalhes atuais de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product_link", "description": "Obter o link oficial de um produto real já identificado.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_inventory", "description": "Confirmar estoque e regras de disponibilidade de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
@@ -264,7 +264,181 @@ def _query_filters(query: str) -> list[dict[str, str]]:
     return [{"name": value}]
 
 
+def _fold_catalog_text(value: Any) -> str:
+    text = str(value or "")
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKD", text).lower()
+        if not unicodedata.combining(char)
+    ).strip()
+
+
+def _parse_search_tokens(value: Any) -> list[str]:
+    if isinstance(value, str):
+        parts = re.split(r"[,|]+", value)
+    elif isinstance(value, (list, tuple)):
+        parts = [str(item) for item in value]
+    else:
+        return []
+    tokens: list[str] = []
+    for part in parts:
+        for token in re.findall(r"[a-z0-9]+", _fold_catalog_text(part)):
+            if len(token) >= 2 and token not in tokens:
+                tokens.append(token)
+    return tokens
+
+
+def _product_matches_search_tokens(
+    product: dict[str, Any],
+    tokens: list[str],
+) -> bool:
+    if not tokens:
+        return True
+    text = _fold_catalog_text(
+        " ".join(
+            str(product.get(field) or "")
+            for field in ("name", "brand", "model", "reference", "description")
+        )
+    )
+    return all(token in text for token in tokens)
+
+
+async def _token_search_polyfill(
+    client: TrayAdapterClient,
+    *,
+    tokens: list[str],
+    brand: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    """Local AND/LIKE filter when adaptor /search is unavailable."""
+    matched: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _absorb(raw: list[Any]) -> None:
+        for item in raw:
+            if not isinstance(item, dict) or item.get("id") is None:
+                continue
+            product_id = str(item["id"])
+            if product_id in seen:
+                continue
+            reduced = _reduce(item, _PRODUCT_FIELDS)
+            if not _product_matches_search_tokens(reduced, tokens):
+                continue
+            seen.add(product_id)
+            matched.append(reduced)
+
+    joined = " ".join(tokens)
+    attempts: list[dict[str, Any]] = [{"name": joined, "page": 1}]
+    if brand:
+        attempts.append({"name": joined, "brand": brand, "page": 1})
+        # Shorter high-signal phrase (e.g. sealander rosa).
+        if len(tokens) >= 2:
+            attempts.append({
+                "name": " ".join(tokens[-2:]),
+                "brand": brand,
+                "page": 1,
+            })
+    for filters in attempts:
+        payload = await client.search_products(**filters, limit=limit)
+        _absorb(_items(payload))
+        if len(matched) >= limit:
+            return {"products": matched[:limit]}
+
+    if brand:
+        for page in range(1, 9):
+            payload = await client.search_products(
+                brand=brand,
+                limit=20,
+                page=page,
+            )
+            page_items = _items(payload)
+            _absorb(page_items)
+            if len(matched) >= limit:
+                break
+            if not page_items:
+                break
+            paging = _reduce_paging(payload) or {}
+            try:
+                total = int(paging["total"]) if paging.get("total") is not None else None
+            except (TypeError, ValueError):
+                total = None
+            if total is not None and page * 20 >= total:
+                break
+
+    return {"products": matched[:limit]}
+
+
+async def search_products_by_tokens(
+    client: TrayAdapterClient,
+    *,
+    tokens: list[str],
+    brand: str | None = None,
+    limit: int = 20,
+    page: int = 1,
+) -> dict[str, Any]:
+    safe_limit = min(max(int(limit), 1), 20)
+    if not tokens:
+        return {"products": []}
+    try:
+        payload = await client.search_products_by_tokens(
+            tokens=tokens,
+            brand=brand,
+            limit=safe_limit,
+            page=page,
+        )
+        result = _reduce_products(payload, safe_limit)
+        # Adaptor may return a loose set — enforce AND locally.
+        result["products"] = [
+            product
+            for product in result["products"]
+            if _product_matches_search_tokens(product, tokens)
+        ]
+        print("[tray.search.tokens]", {
+            "source": "adaptor",
+            "token_count": len(tokens),
+            "result_count": len(result["products"]),
+            "has_brand": bool(brand),
+        })
+        return result
+    except TrayAdapterError as exc:
+        # 404 = route not deployed yet → polyfill. Other errors bubble as empty
+        # so the agent can still GPT-match against brand discovery results.
+        if exc.status_code not in {404, 405, 501}:
+            print("[tray.search.tokens]", {
+                "source": "adaptor_error",
+                "status_code": exc.status_code,
+                "token_count": len(tokens),
+            })
+            raise
+        result = await _token_search_polyfill(
+            client,
+            tokens=tokens,
+            brand=brand,
+            limit=safe_limit,
+        )
+        print("[tray.search.tokens]", {
+            "source": "polyfill",
+            "token_count": len(tokens),
+            "result_count": len(result.get("products") or []),
+            "has_brand": bool(brand),
+        })
+        return result
+
+
 async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, Any]:
+    tokens = _parse_search_tokens(args.pop("tokens", None))
+    brand = args.get("brand")
+    limit = min(max(int(args.get("limit", 5)), 1), 20)
+    page = int(args.get("page") or 1)
+    if tokens:
+        return await search_products_by_tokens(
+            client,
+            tokens=tokens,
+            brand=str(brand).strip() if brand else None,
+            limit=limit,
+            page=page,
+        )
+
     query = (args.pop("query", None) or "").strip()
     supported = ("name", "reference", "ean", "brand", "category_id", "available", "available_in_store", "stock", "promotion", "page")
     explicit = {key: args.get(key) for key in supported if args.get(key) is not None}
@@ -280,7 +454,6 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
             attempts.append(merged)
     else:
         attempts = [explicit]
-    limit = min(max(int(args.get("limit", 5)), 1), 20)
     for filters in attempts:
         if not filters:
             continue

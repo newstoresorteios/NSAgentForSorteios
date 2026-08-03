@@ -544,3 +544,85 @@ async def test_list_orders_accepts_orders_envelope_for_session_reconciliation():
         "status": "AGUARDANDO PAGAMENTO",
         "status_group": "awaiting_payment",
     }]}
+
+
+@pytest.mark.asyncio
+async def test_token_search_uses_adaptor_endpoint_when_available():
+    class TokenTray:
+        def __init__(self):
+            self.calls = []
+
+        async def search_products_by_tokens(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "products": [
+                    {
+                        "id": "rosa",
+                        "name": (
+                            "Relógio Christopher Ward C63 Sealander "
+                            "Automático Rosa 36 mm"
+                        ),
+                        "brand": "Christopher Ward",
+                    },
+                    {
+                        "id": "blue",
+                        "name": "Relógio Christopher Ward C63 Sealander Automático Azul",
+                        "brand": "Christopher Ward",
+                    },
+                ]
+            }
+
+        async def search_products(self, **kwargs):
+            raise AssertionError("legacy search must not run when tokens work")
+
+    client = TokenTray()
+    result = await search_products(
+        client,
+        tokens=["sealander", "rosa", "automatico"],
+        brand="Christopher Ward",
+        limit=20,
+    )
+
+    assert [item["id"] for item in result["products"]] == ["rosa"]
+    assert client.calls[0]["tokens"] == ["sealander", "rosa", "automatico"]
+
+
+@pytest.mark.asyncio
+async def test_token_search_polyfills_when_adaptor_route_missing():
+    class LegacyTray:
+        async def search_products_by_tokens(self, **_kwargs):
+            raise TrayAdapterError("tray_adapter_http_404", status_code=404)
+
+        async def search_products(self, **kwargs):
+            if kwargs.get("brand") and not kwargs.get("name"):
+                return {
+                    "products": [
+                        {
+                            "id": "king",
+                            "name": (
+                                "Relógio Christopher Ward C63 Sealander "
+                                "Automático Kingfisher"
+                            ),
+                            "brand": "Christopher Ward",
+                        },
+                        {
+                            "id": "rosa",
+                            "name": (
+                                "Relógio Christopher Ward C63 Sealander "
+                                "Automático Rosa C63-36ADA4-S00P0-B0 36 mm"
+                            ),
+                            "brand": "Christopher Ward",
+                        },
+                    ],
+                    "paging": {"total": 2, "page": 1, "limit": 20},
+                }
+            return {"products": []}
+
+    result = await search_products(
+        LegacyTray(),
+        tokens=["sealander", "rosa"],
+        brand="Christopher Ward",
+        limit=20,
+    )
+
+    assert [item["id"] for item in result["products"]] == ["rosa"]
