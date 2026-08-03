@@ -142,6 +142,8 @@ _OPTIONAL_MODEL_TOKENS = frozenset(
         "amarelo",
         "laranja",
         "bege",
+        "claro",
+        "escuro",
         "titanio",
         "aco",
         "ouro",
@@ -152,6 +154,21 @@ _OPTIONAL_MODEL_TOKENS = frozenset(
         "ceramica",
         "nylon",
         "pulseira",
+        "mostrador",
+        "dial",
+        "bezel",
+    }
+)
+# Soft descriptors that must never block a match even for single-token models.
+_DESCRIPTOR_MODEL_TOKENS = frozenset(
+    {
+        "claro",
+        "escuro",
+        "mostrador",
+        "dial",
+        "bezel",
+        "face",
+        "caixa",
     }
 )
 _ACCESSORY_NAME_TOKENS = frozenset(
@@ -205,7 +222,44 @@ def required_model_tokens(model: str | None) -> tuple[str, ...]:
     )
     if len(identity) >= 2 or any(re.search(r"\d", token) for token in identity):
         return identity
-    return tokens
+    # For single-word models (Sealander), keep color tokens for ranking/disambiguation
+    # but never require dial descriptors invented by Vision ("claro", "mostrador").
+    tightened = tuple(
+        token for token in tokens if token not in _DESCRIPTOR_MODEL_TOKENS
+    )
+    return tightened or identity or tokens
+
+
+def is_plausible_product_reference(value: str | None) -> bool:
+    """True when value looks like a commercial SKU/ref, not a color description."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if extract_reference_code(text):
+        return True
+    folded = _fold(text)
+    tokens = [token for token in re.findall(r"[a-z0-9]+", folded) if token]
+    if not tokens:
+        return False
+    soft = _OPTIONAL_MODEL_TOKENS | _DESCRIPTOR_MODEL_TOKENS | _MODEL_STOPWORDS
+    if all(token in soft for token in tokens):
+        return False
+    # Real refs almost always mix letters/digits with separators.
+    if re.search(r"[A-Za-z].*\d|\d.*[A-Za-z]", text) and re.search(
+        r"[\.\-_/]",
+        text,
+    ):
+        return len(text) >= 6
+    return False
+
+
+def effective_product_reference(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if is_plausible_product_reference(text):
+        return extract_reference_code(text) or text
+    return None
 
 
 def extract_reference_code(text: str | None) -> str | None:
@@ -324,11 +378,13 @@ class ProductRetrievalCompiler:
         category_ids: tuple[str, ...] | list[str] = (),
     ) -> ProductRetrievalPlan:
         subject = interpretation.subject
-        inferred_reference = subject.reference or extract_reference_code(
-            " ".join(
-                part
-                for part in (subject.model, subject.brand, subject.product_type)
-                if part
+        inferred_reference = effective_product_reference(subject.reference) or (
+            extract_reference_code(
+                " ".join(
+                    part
+                    for part in (subject.model, subject.brand, subject.product_type)
+                    if part
+                )
             )
         )
         exact = bool(inferred_reference or subject.ean or subject.model)
@@ -655,7 +711,7 @@ def hard_filter_products(
     preferences = interpretation.preferences
     expected_brand = _fold(subject.brand)
     expected_model = _fold(subject.model)
-    expected_reference = _fold(subject.reference)
+    expected_reference = _fold(effective_product_reference(subject.reference))
     expected_ean = _fold(subject.ean)
     selected: list[dict[str, Any]] = []
 
@@ -784,7 +840,7 @@ def exact_specific_product_matches(
 ) -> list[dict[str, Any]]:
     subject = interpretation.subject
     candidates = _brand_compatible_candidates(products, interpretation)
-    expected_reference = _fold(subject.reference)
+    expected_reference = _fold(effective_product_reference(subject.reference))
     expected_ean = _fold(subject.ean)
     expected_model = _fold(subject.model)
     expected_brand_model = _fold(
@@ -845,6 +901,22 @@ async def match_specific_products(
 ) -> SpecificProductResolution:
     compatible = _brand_compatible_candidates(products, interpretation)
     exact_matches = exact_specific_product_matches(compatible, interpretation)
+    if len(exact_matches) > 1:
+        color = _fold(interpretation.preferences.color)
+        if color:
+            color_tokens = [
+                token
+                for token in re.findall(r"[a-z0-9]+", color)
+                if token and token not in _DESCRIPTOR_MODEL_TOKENS
+            ]
+            color_hits = [
+                product
+                for product in exact_matches
+                if color_tokens
+                and all(token in _product_text(product) for token in color_tokens)
+            ]
+            if len(color_hits) == 1:
+                exact_matches = color_hits
     if exact_matches:
         selected = exact_matches[:RERANK_SELECTION_LIMIT]
         status: Literal["exact", "ambiguous", "none"] = (

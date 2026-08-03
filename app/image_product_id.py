@@ -25,6 +25,9 @@ Extraia apenas o que estiver legível ou claramente visível na imagem:
 Regras:
 - is_watch=false se a imagem não for um relógio de pulso.
 - Não invente referência. Se não ler a ref, deixe reference=null.
+- reference só quando houver código comercial legível (ex.: C63-36ADA4-S00P0-B0,
+  C050.607.44.011.02). Nunca coloque cor/descrição do mostrador em reference
+  (ex.: "rosa claro", "mostrador preto") — use o campo color.
 - confidence entre 0 e 1 conforme legibilidade.
 - Preferir nomes comerciais usados em e-commerce BR (ex.: "DS Super PH2000M Automático Branco Titânio").
 - Se houver legenda do cliente, use-a só como dica complementar — a imagem manda.
@@ -170,6 +173,8 @@ async def identify_product_from_image(
 def interpretation_from_identification(
     identified: ImageProductIdentification,
 ) -> SalesInterpretation:
+    from .product_retrieval import effective_product_reference
+
     model_parts = [
         part.strip()
         for part in (identified.model, identified.color)
@@ -177,9 +182,19 @@ def interpretation_from_identification(
     ]
     # Avoid duplicating color if already in model string.
     model = identified.model
-    if identified.color and identified.model:
-        if identified.color.casefold() not in identified.model.casefold():
-            model = f"{identified.model} {identified.color}".strip()
+    color = (identified.color or "").strip() or None
+    raw_reference = (identified.reference or "").strip() or None
+    reference = effective_product_reference(raw_reference)
+    # Vision sometimes puts dial color phrases into reference.
+    if raw_reference and reference is None:
+        if not color:
+            color = raw_reference
+        elif color.casefold() not in raw_reference.casefold():
+            color = f"{color} {raw_reference}".strip()
+
+    if color and identified.model:
+        if color.casefold() not in identified.model.casefold():
+            model = f"{identified.model} {color}".strip()
     elif model_parts and not identified.model:
         model = " ".join(model_parts)
 
@@ -190,10 +205,10 @@ def interpretation_from_identification(
             "product_type": "relógio",
             "brand": (identified.brand or "").strip() or None,
             "model": (model or "").strip() or None,
-            "reference": (identified.reference or "").strip() or None,
+            "reference": reference,
         },
         preferences={
-            "color": (identified.color or "").strip() or None,
+            "color": color,
         },
         information_needed=["catalog"],
         references_previous_context=False,

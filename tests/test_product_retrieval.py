@@ -142,6 +142,91 @@ def test_long_model_title_matches_short_tray_model_field():
     assert "exact_model_code" in strategies
 
 
+def test_vision_color_phrase_is_not_treated_as_product_reference():
+    from app.product_retrieval import (
+        ProductRetrievalCompiler,
+        exact_specific_product_matches,
+        effective_product_reference,
+        hard_filter_products,
+        is_plausible_product_reference,
+        required_model_tokens,
+    )
+
+    assert is_plausible_product_reference("rosa claro (mostrador)") is False
+    assert effective_product_reference("rosa claro (mostrador)") is None
+    assert is_plausible_product_reference("C63-36ADA4-S00P0-B0") is True
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander Automatic rosa claro (mostrador)",
+        reference="rosa claro (mostrador)",
+        preferences={"color": "rosa claro (mostrador)"},
+    )
+    products = [
+        {
+            "id": "8975",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": (
+                "Relógio Christopher Ward C63 Sealander Automático Rosa "
+                "C63-36ADA4-S00P0-B0 36 mm"
+            ),
+            "reference": "C63-36ADA4-S00P0-B0",
+        },
+        {
+            "id": "8977",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Azul",
+            "reference": "C63-36ADA4-S00B0-B0",
+        },
+    ]
+
+    assert "mostrador" not in required_model_tokens(interpretation.subject.model)
+    assert "claro" not in required_model_tokens(interpretation.subject.model)
+    matches = exact_specific_product_matches(products, interpretation)
+    assert "8975" in [product["id"] for product in matches]
+    filtered = hard_filter_products(products, interpretation, mode="exact")
+    assert [product["id"] for product in filtered] == ["8975", "8977"] or "8975" in [
+        product["id"] for product in filtered
+    ]
+    plan = ProductRetrievalCompiler.compile(interpretation)
+    assert all(request.reference is None for request in plan.requests)
+
+
+@pytest.mark.asyncio
+async def test_color_preference_narrows_ambiguous_sealander_matches():
+    from app.product_retrieval import match_specific_products
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander",
+        preferences={"color": "rosa"},
+    )
+    products = [
+        {
+            "id": "8975",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Rosa",
+            "reference": "C63-36ADA4-S00P0-B0",
+        },
+        {
+            "id": "8977",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Azul",
+            "reference": "C63-36ADA4-S00B0-B0",
+        },
+    ]
+
+    resolution = await match_specific_products(products, interpretation)
+    assert resolution.status == "exact"
+    assert [product["id"] for product in resolution.products] == ["8975"]
+
+
 def test_certina_title_without_relogio_prefix_still_matches():
     from app.product_retrieval import (
         exact_specific_product_matches,

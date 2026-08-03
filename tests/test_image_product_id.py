@@ -82,6 +82,27 @@ def test_image_search_eligible_requires_flag_and_url(monkeypatch):
     assert image_search_eligible(message) is False
 
 
+def test_interpretation_ignores_vision_color_as_reference():
+    from app.image_product_id import (
+        ImageProductIdentification,
+        interpretation_from_identification,
+    )
+
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        reference="rosa claro (mostrador)",
+        color=None,
+        confidence=0.9,
+    )
+    interpretation = interpretation_from_identification(identified)
+    assert interpretation.subject.reference is None
+    assert interpretation.preferences.color
+    assert "rosa" in interpretation.preferences.color.casefold()
+    assert "Sealander" in (interpretation.subject.model or "")
+
+
 def test_interpretation_from_identification_builds_find_subject():
     identified = ImageProductIdentification(
         is_watch=True,
