@@ -532,6 +532,7 @@ def test_disambiguation_list_replaces_previous_list_and_resolves_choice():
 
     assert [item.product_id for item in updated.last_presented_products] == ["101", "202"]
     assert updated.active_product is None
+    assert updated.product_resolution_state == "plausible_matches"
     assert resolved.product_id == "202"
     assert resolved_by == "product_id"
 

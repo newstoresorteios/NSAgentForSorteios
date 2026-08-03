@@ -2896,6 +2896,103 @@ async def _handle_sales_message_inner(
             "resolved": resolved_product is not None,
             "resolved_by": resolved_by,
         })
+        # Inbound photo must re-identify — never answer price from a stale
+        # Kingfisher/sibling left in active/presented context.
+        from .image_product_id import (
+            handle_image_product_search,
+            image_search_eligible,
+        )
+
+        vague_refs = {
+            None,
+            "none",
+            "current_product",
+            "last_presented_product",
+            "previous_recommendation",
+        }
+        if (
+            image_search_eligible(message)
+            and interpretation.reference_type in vague_refs
+            and interpretation.goal in {
+                "find",
+                "inspect",
+                "recommend",
+                "discover",
+                "compare",
+            }
+        ):
+            image_result = await handle_image_product_search(message)
+            if image_result is not None:
+                return _mark_sales_result(
+                    image_result,
+                    interpretation=interpretation,
+                    goal="find",
+                    response_source=image_result.response_metadata.get(
+                        "response_source",
+                        "image_vision",
+                    ),
+                    used_openai_responder=bool(
+                        image_result.response_metadata.get("used_openai_responder")
+                    ),
+                    used_tray=bool(
+                        image_result.response_metadata.get("used_tray")
+                        or (image_result.commercial_data or {}).get("products")
+                    ),
+                    fallback_reason=image_result.safety_reason,
+                )
+        # Soft nearby siblings are not a confirmed product for "qual o preço?".
+        if (
+            state.product_resolution_state == "plausible_matches"
+            and interpretation.goal == "inspect"
+            and interpretation.reference_type in vague_refs
+            and state.last_presented_products
+        ):
+            from .commerce_router import _product_lines
+
+            numbered = [
+                f"{position}. {line}"
+                for position, line in enumerate(
+                    _product_lines(
+                        [
+                            item.model_dump(mode="json")
+                            for item in state.last_presented_products[:3]
+                        ],
+                        compact=True,
+                    ),
+                    start=1,
+                )
+            ]
+            return _mark_sales_result(
+                AgentResult(
+                    reply_text=(
+                        "Ainda não confirmei o modelo exato da foto. Destes "
+                        "próximos, qual você quer o preço?\n"
+                        + "\n".join(numbered)
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="exact_product_ambiguous_brand",
+                    commercial_data={
+                        "products": [
+                            item.model_dump(mode="json")
+                            for item in state.last_presented_products[:3]
+                        ],
+                        "match_status": "ambiguous",
+                    },
+                    response_metadata={
+                        "presented_products": True,
+                        "product_resolution_state": "plausible_matches",
+                        "clear_active_product": True,
+                        "domain": "commerce",
+                    },
+                ),
+                interpretation=interpretation,
+                goal=interpretation.goal,
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason="plausible_matches_price_blocked",
+            )
     purchase_action = interpretation.purchase_action if interpretation is not None else None
     if purchase_action == "remove_cart_item":
         if not state.cart_session_id:

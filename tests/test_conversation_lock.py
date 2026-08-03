@@ -78,3 +78,40 @@ async def test_lock_timeout_is_typed_and_does_not_release_owner():
     finally:
         await release_conversation_lock(first)
         await release_conversation_lock(first)
+
+
+@pytest.mark.asyncio
+async def test_database_lock_contention_is_busy_not_unavailable(monkeypatch):
+    from app import conversation_lock as lock_mod
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("canceling statement due to lock timeout")
+
+    monkeypatch.setattr(lock_mod, "_acquire_database_lock", boom)
+
+    with pytest.raises(ConversationLockUnavailable, match="database_lock_busy"):
+        await acquire_conversation_lock(
+            "conversation:db-busy",
+            database_url="postgresql://example/db",
+            timeout_seconds=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_database_infra_failure_is_unavailable(monkeypatch):
+    from app import conversation_lock as lock_mod
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("could not connect to server")
+
+    monkeypatch.setattr(lock_mod, "_acquire_database_lock", boom)
+
+    with pytest.raises(
+        ConversationLockUnavailable,
+        match="database_lock_unavailable",
+    ):
+        await acquire_conversation_lock(
+            "conversation:db-down",
+            database_url="postgresql://example/db",
+            timeout_seconds=1,
+        )

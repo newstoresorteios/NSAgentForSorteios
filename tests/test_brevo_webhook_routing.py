@@ -210,7 +210,7 @@ async def test_conversation_busy_returns_200_skip_not_503(monkeypatch):
     from app.conversation_lock import ConversationLockUnavailable
 
     async def busy_lock(*_args, **_kwargs):
-        raise ConversationLockUnavailable("database_lock_unavailable")
+        raise ConversationLockUnavailable("database_lock_busy")
 
     monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
     monkeypatch.setattr(index, "acquire_conversation_lock", busy_lock)
@@ -237,6 +237,72 @@ async def test_conversation_busy_returns_200_skip_not_503(monkeypatch):
         "skipped": True,
         "reason": "conversation_busy",
     }
+
+
+@pytest.mark.asyncio
+async def test_database_lock_unavailable_falls_back_to_local_lock(monkeypatch):
+    import api.index as index
+    from app.conversation_lock import ConversationLockUnavailable
+    from types import SimpleNamespace
+
+    calls: list[dict] = []
+    processed: list = []
+
+    async def lock_then_local(key, **kwargs):
+        calls.append({"key": key, **kwargs})
+        if kwargs.get("database_url"):
+            raise ConversationLockUnavailable("database_lock_unavailable")
+        return type("H", (), {"released": False})()
+
+    async def process(incoming, customer_context):
+        processed.append(incoming)
+        return AgentResult(reply_text="ok", intent="commerce")
+
+    async def send(*_args):
+        return BrevoSendResult(
+            ok=True,
+            dry_run=True,
+            provider_response={"accepted": True},
+        )
+
+    real_settings = index.get_settings()
+    monkeypatch.setattr(
+        index,
+        "get_settings",
+        lambda: SimpleNamespace(
+            **{
+                **real_settings.model_dump(),
+                "database_url": "postgresql://example/db",
+                "agent_conversation_lock_enabled": True,
+            }
+        ),
+    )
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
+    monkeypatch.setattr(index, "acquire_conversation_lock", lock_then_local)
+    monkeypatch.setattr(
+        index,
+        "claim_inbound_message",
+        lambda _message: (True, "inbound-db-fallback"),
+    )
+    monkeypatch.setattr(index, "find_customer_profile_by_phone", lambda *_a, **_k: {})
+    monkeypatch.setattr(index, "process_incoming_message", process)
+    monkeypatch.setattr(index, "send_brevo_reply", send)
+    monkeypatch.setattr(index, "insert_agent_response", lambda *_a, **_k: None)
+    monkeypatch.setattr(index, "is_latest_inbound_message", lambda *_a, **_k: True)
+    monkeypatch.setattr(index, "has_successful_agent_response", lambda *_a, **_k: False)
+
+    async def release_noop(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(index, "release_conversation_lock", release_noop)
+
+    response = await _post_webhook(index, _fragment_payload())
+
+    assert response.status_code == 200
+    assert len(calls) >= 2
+    assert bool(calls[0].get("database_url"))
+    assert calls[1].get("database_url") == ""
+    assert len(processed) == 1
 
 
 def test_event_skip_reason_only_blocks_transcript_event():

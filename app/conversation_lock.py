@@ -122,6 +122,20 @@ def _release_database_lock(connection: Any, lock_id: int) -> None:
         connection.close()
 
 
+def _is_database_lock_contention(exc: BaseException) -> bool:
+    """True when another worker likely holds the advisory lock."""
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return True
+    text = str(exc).casefold()
+    markers = (
+        "lock timeout",
+        "canceling statement due to lock timeout",
+        "could not obtain lock",
+        "deadlock detected",
+    )
+    return any(marker in text for marker in markers)
+
+
 async def acquire_conversation_lock(
     key: str,
     *,
@@ -149,6 +163,13 @@ async def acquire_conversation_lock(
         except Exception as exc:
             register_integration_failure("database_lock")
             await _release_local(key_hash, local_entry)
+            # Contention: another worker holds the conversation.
+            # Infra failure: caller may fall back to a local-only lock so
+            # photo turns are not silently dropped.
+            if _is_database_lock_contention(exc):
+                raise ConversationLockUnavailable(
+                    "database_lock_busy"
+                ) from exc
             raise ConversationLockUnavailable(
                 "database_lock_unavailable"
             ) from exc

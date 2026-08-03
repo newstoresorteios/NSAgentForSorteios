@@ -416,6 +416,124 @@ async def test_inbound_photo_with_image_request_identifies_product(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_price_on_plausible_matches_asks_which_not_kingfisher(monkeypatch):
+    """Soft nearby siblings must not be priced as the confirmed photo product."""
+    from app import sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    state = CommerceConversationState(
+        active_domain="commerce",
+        product_resolution_state="plausible_matches",
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "12295",
+                "name": "Christopher Ward C63 Sealander Kingfisher",
+                "brand": "Christopher Ward",
+            },
+            {
+                "position": 2,
+                "product_id": "12296",
+                "name": "Christopher Ward C63 Sealander Dagger",
+                "brand": "Christopher Ward",
+            },
+        ],
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="qual o preço?"),
+        {},
+        {},
+        _interpretation(
+            goal="inspect",
+            purchase_action=None,
+            reference_type="previous_recommendation",
+        ),
+        commerce_state=state,
+    )
+
+    assert result is not None
+    assert result.response_metadata.get("fallback_reason") == (
+        "plausible_matches_price_blocked"
+    ) or result.safety_reason == "exact_product_ambiguous_brand"
+    assert "Kingfisher" not in (result.reply_text or "") or "qual você quer" in (
+        result.reply_text or ""
+    ).casefold()
+    assert "qual você quer" in (result.reply_text or "").casefold()
+    assert "12295" not in (result.reply_text or "")
+
+
+@pytest.mark.asyncio
+async def test_inbound_image_ignores_stale_kingfisher_context(monkeypatch):
+    from app import sales_agent
+    from app.models import AgentResult
+
+    async def fake_image_search(message):
+        assert message.image_url
+        return AgentResult(
+            reply_text="Pela foto, o Rosa C63-36ADA4.",
+            intent="commerce",
+            commercial_data={
+                "products": [{"id": "rosa-1", "name": "Sealander Rosa"}],
+            },
+            response_metadata={
+                "used_tray": True,
+                "response_source": "image_vision",
+            },
+        )
+
+    monkeypatch.setattr(
+        "app.image_product_id.handle_image_product_search",
+        fake_image_search,
+    )
+    monkeypatch.setattr(
+        "app.image_product_id.image_search_eligible",
+        lambda message: True,
+    )
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    state = CommerceConversationState(
+        active_domain="commerce",
+        active_product={
+            "product_id": "12295",
+            "name": "Kingfisher",
+            "brand": "Christopher Ward",
+        },
+        product_resolution_state="found_available",
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(
+            text="qual o preço?",
+            input_modality="text_with_image",
+            attachment_type="image",
+            image_url="https://cdn.example.com/rosa.jpg",
+        ),
+        {},
+        {},
+        _interpretation(
+            goal="inspect",
+            purchase_action=None,
+            reference_type="current_product",
+        ),
+        commerce_state=state,
+    )
+
+    assert result is not None
+    assert "Rosa" in result.reply_text
+    assert "Kingfisher" not in result.reply_text
+
+
+@pytest.mark.asyncio
 async def test_image_request_without_product_asks_for_photo_not_name_first(monkeypatch):
     from app import sales_agent
 

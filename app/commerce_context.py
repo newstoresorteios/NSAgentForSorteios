@@ -143,6 +143,8 @@ class CommerceConversationState(BaseModel):
     active_topic: str | None = None
     active_product: CommerceProductReference | None = None
     last_presented_products: list[PresentedCommerceProduct] = Field(default_factory=list)
+    # found_available | found_unknown | found_unavailable | plausible_matches | None
+    product_resolution_state: str | None = None
     active_preferences: dict[str, Any] = Field(default_factory=dict)
     purchase_stage: str | None = None
     cart_id: str | None = None
@@ -814,5 +816,13 @@ def evolve_commerce_state(
     if metadata.get("activate_first_product") and compact_products:
         state.active_product = CommerceProductReference.model_validate(
             compact_products[0].model_dump(exclude={"position"})
+        )
+    resolution_state = metadata.get("product_resolution_state")
+    if isinstance(resolution_state, str) and resolution_state.strip():
+        state.product_resolution_state = resolution_state.strip()
+    elif metadata.get("clear_active_product") and metadata.get("presented_products"):
+        # Soft nearby / disambiguation: never treat siblings as confirmed.
+        state.product_resolution_state = (
+            state.product_resolution_state or "plausible_matches"
         )
     return state

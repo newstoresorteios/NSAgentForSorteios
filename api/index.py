@@ -511,8 +511,9 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                         )
                     )
             except ConversationLockUnavailable as exc:
+                lock_error = str(exc)
                 print("[agent.lock] unavailable", {
-                    "error": str(exc),
+                    "error": lock_error,
                     "channel": incoming.channel,
                     "conversation_id_present": bool(
                         incoming.conversation_id
@@ -521,12 +522,34 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                     "inbound_image": bool((incoming.image_url or "").strip()),
                     "lock_timeout_seconds": lock_timeout,
                 })
-                # Acknowledge to Brevo so it stops retrying; the lock holder is
-                # already processing this conversation.
-                return _skip_webhook_event(
-                    event_name=event_name,
-                    reason="conversation_busy",
-                )
+                # Contention: another worker holds the conversation — acknowledge
+                # and stop Brevo retries. DB lock failure is different: dropping
+                # the event loses photo turns, so fall back to a local-only lock.
+                if lock_error == "database_lock_unavailable":
+                    try:
+                        request.state.conversation_lock_handle = (
+                            await acquire_conversation_lock(
+                                lock_key,
+                                database_url="",
+                                timeout_seconds=min(lock_timeout, 5.0),
+                            )
+                        )
+                        print("[agent.lock] local_fallback", {
+                            "channel": incoming.channel,
+                            "inbound_image": bool(
+                                (incoming.image_url or "").strip()
+                            ),
+                        })
+                    except ConversationLockUnavailable:
+                        return _skip_webhook_event(
+                            event_name=event_name,
+                            reason="conversation_busy",
+                        )
+                else:
+                    return _skip_webhook_event(
+                        event_name=event_name,
+                        reason="conversation_busy",
+                    )
 
     try:
         claimed, inbound_id = claim_inbound_message(incoming.model_dump())
