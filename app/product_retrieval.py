@@ -230,6 +230,18 @@ def required_model_tokens(model: str | None) -> tuple[str, ...]:
     return tightened or identity or tokens
 
 
+def known_family_model_codes(brand: str | None, model: str | None) -> tuple[str, ...]:
+    """Catalog family codes Vision often misses (e.g. C63 on Sealander dials)."""
+    brand_fold = _fold(brand)
+    model_fold = _fold(model)
+    if not brand_fold or not model_fold:
+        return ()
+    codes: list[str] = []
+    if "christopher ward" in brand_fold and "sealander" in model_fold:
+        codes.append("C63")
+    return tuple(codes)
+
+
 def identity_core_tokens(
     model: str | None,
     *,
@@ -248,6 +260,42 @@ def identity_core_tokens(
         if token not in drop
     )
     return identity or required
+
+
+def keyword_match_products(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    *,
+    require_color: bool = False,
+) -> list[dict[str, Any]]:
+    """Match catalog rows by keyword overlap (brand/model/color tokens in title)."""
+    color_tokens = preference_color_tokens(interpretation)
+    identity_tokens = identity_core_tokens(
+        interpretation.subject.model,
+        color_tokens=color_tokens,
+    )
+    brand_fold = _fold(interpretation.subject.brand)
+    matches: list[dict[str, Any]] = []
+    for product in products:
+        text = _product_text(product)
+        candidate_brand = _fold(product.get("brand"))
+        if brand_fold:
+            if candidate_brand and candidate_brand != brand_fold:
+                continue
+            if not candidate_brand and brand_fold not in text:
+                continue
+        if identity_tokens and not all(token in text for token in identity_tokens):
+            continue
+        if not product_compatible_with_requested_movement(
+            product,
+            interpretation.subject.model,
+        ):
+            continue
+        if require_color and color_tokens:
+            if not product_matches_color_tokens(product, color_tokens):
+                continue
+        matches.append(product)
+    return matches
 
 
 def is_plausible_product_reference(value: str | None) -> bool:
@@ -509,7 +557,14 @@ class ProductRetrievalCompiler:
                 color_tokens=color_tokens,
             )
             core_query = " ".join(core_tokens[:4]).strip()
-            model_codes = extract_model_codes(pt_model or subject.model)
+            model_codes = tuple(
+                dict.fromkeys(
+                    (
+                        *extract_model_codes(pt_model or subject.model),
+                        *known_family_model_codes(subject.brand, pt_model or subject.model),
+                    )
+                )
+            )
             wants_automatic = bool(
                 re.search(r"\b(automatic|automatico)\b", _fold(subject.model))
             )
@@ -553,6 +608,8 @@ class ProductRetrievalCompiler:
                         for part in (code_bit, core_label, auto_bit, color_hue)
                         if part
                     ),
+                    # Storefront titles insert family code between brand and model:
+                    # "Relógio Christopher Ward C63 Sealander Automático Rosa …"
                     " ".join(
                         part
                         for part in (
@@ -566,6 +623,16 @@ class ProductRetrievalCompiler:
                         if part
                     ),
                 ]
+                # Bare family+model phrase that appears contiguously in titles.
+                if code_bit and core_label:
+                    color_names.insert(
+                        0,
+                        " ".join(
+                            part
+                            for part in (code_bit, core_label, auto_bit, color_hue)
+                            if part
+                        ),
+                    )
                 for index, name in enumerate(color_names):
                     # Prefer name-only (no brand filter): Tray often fails AND(name, brand).
                     _add_name_probe(f"exact_color_name_{index}", name)
@@ -979,9 +1046,9 @@ def _brand_compatible_candidates(
 ) -> list[dict[str, Any]]:
     expected_brand = _fold(interpretation.subject.brand)
     if not expected_brand:
-        return products[:CANDIDATE_POOL_LIMIT]
+        return list(products)
     compatible: list[dict[str, Any]] = []
-    for product in products[:CANDIDATE_POOL_LIMIT]:
+    for product in products:
         candidate_brand = _fold(product.get("brand"))
         if candidate_brand and candidate_brand == expected_brand:
             compatible.append(product)
@@ -998,6 +1065,21 @@ def soft_confirm_candidates(
     limit: int = CUSTOMER_RESULT_LIMIT,
 ) -> list[dict[str, Any]]:
     """Best catalog near-matches to show for 'é esse da foto?' confirmation."""
+    color_hits = keyword_match_products(
+        products,
+        interpretation,
+        require_color=True,
+    )
+    if color_hits:
+        return color_hits[: max(1, limit)]
+    identity_hits = keyword_match_products(
+        products,
+        interpretation,
+        require_color=False,
+    )
+    if identity_hits:
+        return identity_hits[: max(1, limit)]
+    # Last resort: identity token overlap without movement filter.
     compatible = _brand_compatible_candidates(products, interpretation)
     color_tokens = preference_color_tokens(interpretation)
     identity_tokens = identity_core_tokens(
@@ -1016,7 +1098,6 @@ def soft_confirm_candidates(
         ):
             score += 10
         elif model_excludes_gmt(interpretation.subject.model) and "gmt" in text:
-            # Keep GMT only as a last-resort near match, never preferred.
             score -= 5
         if color_tokens and product_matches_color_tokens(product, color_tokens):
             score += 20
@@ -1032,8 +1113,16 @@ def exact_progress_matches(
     interpretation: SalesInterpretation,
 ) -> list[dict[str, Any]]:
     """Matches good enough to stop searching — honors color when the customer asked for one."""
-    matches = exact_specific_product_matches(products, interpretation)
     color_tokens = preference_color_tokens(interpretation)
+    if color_tokens:
+        keyword_hits = keyword_match_products(
+            products,
+            interpretation,
+            require_color=True,
+        )
+        if keyword_hits:
+            return keyword_hits
+    matches = exact_specific_product_matches(products, interpretation)
     if not color_tokens:
         return matches
     return [
@@ -1111,8 +1200,35 @@ async def match_specific_products(
     interpretation: SalesInterpretation,
 ) -> SpecificProductResolution:
     compatible = _brand_compatible_candidates(products, interpretation)
-    exact_matches = exact_specific_product_matches(compatible, interpretation)
     color_tokens = preference_color_tokens(interpretation)
+    # Keyword overlap first — titles like
+    # "Relógio Christopher Ward C63 Sealander Automático Rosa …" should match
+    # Vision output "Christopher Ward Sealander Automatic rosa".
+    if color_tokens:
+        keyword_color = keyword_match_products(
+            compatible,
+            interpretation,
+            require_color=True,
+        )
+        if keyword_color:
+            selected = keyword_color[:RERANK_SELECTION_LIMIT]
+            status: Literal["exact", "ambiguous", "none"] = (
+                "exact" if len(selected) == 1 else "ambiguous"
+            )
+            print("[sales.product.match]", {
+                "candidate_count": len(compatible),
+                "selected_count": len(selected),
+                "invalid_ids_count": 0,
+                "match_source": "exact",
+                "reason": "keyword_color",
+            })
+            return SpecificProductResolution(
+                status=status,
+                products=tuple(selected),
+                match_source="exact",
+            )
+
+    exact_matches = exact_specific_product_matches(compatible, interpretation)
     identity_matches = list(exact_matches)
     if color_tokens:
         exact_matches = [
@@ -1122,7 +1238,7 @@ async def match_specific_products(
         ]
     if exact_matches:
         selected = exact_matches[:RERANK_SELECTION_LIMIT]
-        status: Literal["exact", "ambiguous", "none"] = (
+        status = (
             "exact" if len(selected) == 1 else "ambiguous"
         )
         print("[sales.product.match]", {
@@ -1156,6 +1272,25 @@ async def match_specific_products(
         })
         return SpecificProductResolution(
             status="ambiguous",
+            products=tuple(selected),
+            match_source="exact",
+        )
+    keyword_identity = keyword_match_products(
+        compatible,
+        interpretation,
+        require_color=False,
+    )
+    if keyword_identity:
+        selected = keyword_identity[:RERANK_SELECTION_LIMIT]
+        print("[sales.product.match]", {
+            "candidate_count": len(compatible),
+            "selected_count": len(selected),
+            "invalid_ids_count": 0,
+            "match_source": "exact",
+            "reason": "keyword_identity",
+        })
+        return SpecificProductResolution(
+            status="ambiguous" if color_tokens or len(selected) > 1 else "exact",
             products=tuple(selected),
             match_source="exact",
         )

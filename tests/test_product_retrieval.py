@@ -304,6 +304,59 @@ async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
 
 
 @pytest.mark.asyncio
+async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
+    from app.product_retrieval import (
+        keyword_match_products,
+        known_family_model_codes,
+        match_specific_products,
+        ProductRetrievalCompiler,
+    )
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        preferences={"color": "rosa claro"},
+    )
+    assert known_family_model_codes("Christopher Ward", "Sealander Automatic") == (
+        "C63",
+    )
+    filler = [
+        {
+            "id": str(index),
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": f"Relógio Christopher Ward C63 Sealander GMT Automático Azul {index}",
+        }
+        for index in range(30)
+    ]
+    pink = {
+        "id": "pink",
+        "brand": "Christopher Ward",
+        "model": "Sealander",
+        "name": (
+            "Relógio Christopher Ward C63 Sealander Automático Rosa "
+            "C63-36ADA4-S00P0-B0 36 mm"
+        ),
+        "reference": "C63-36ADA4-S00P0-B0",
+    }
+    products = [*filler, pink]
+    hits = keyword_match_products(products, interpretation, require_color=True)
+    assert [product["id"] for product in hits] == ["pink"]
+
+    resolution = await match_specific_products(products, interpretation)
+    assert resolution.status == "exact"
+    assert [product["id"] for product in resolution.products] == ["pink"]
+
+    plan = ProductRetrievalCompiler.compile(interpretation)
+    assert any(
+        request.name and "C63 Sealander Automático Rosa" in request.name
+        for request in plan.requests
+        if request.name
+    )
+
+
+@pytest.mark.asyncio
 async def test_color_mismatch_soft_confirms_automatic_not_gmt():
     from app.product_retrieval import match_specific_products
 
