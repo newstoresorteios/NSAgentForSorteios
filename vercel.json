@@ -19,7 +19,7 @@
     },
     {
       "path": "/api/cron/product-image-index",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 4 * * *"
     }
   ]
 }
