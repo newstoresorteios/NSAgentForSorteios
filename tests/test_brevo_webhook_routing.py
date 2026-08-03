@@ -150,6 +150,60 @@ async def test_conversation_started_without_message_preserves_no_text_skip(
     assert "'reason': 'no_text'" in output
 
 
+@pytest.mark.asyncio
+async def test_image_only_fragment_is_not_skipped_as_no_text(monkeypatch):
+    import api.index as index
+
+    processed = []
+
+    async def process(incoming, customer_context):
+        processed.append(incoming)
+        return AgentResult(reply_text="ok", intent="commerce")
+
+    async def send(*_args):
+        return BrevoSendResult(
+            ok=True,
+            dry_run=True,
+            provider_response={"accepted": True},
+        )
+
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
+    monkeypatch.setattr(index, "claim_inbound_message", lambda _message: (True, 202))
+    monkeypatch.setattr(index, "is_latest_inbound_message", lambda *_args: True)
+    monkeypatch.setattr(index, "find_customer_profile_by_phone", lambda _phone: {})
+    monkeypatch.setattr(index, "process_incoming_message", process)
+    monkeypatch.setattr(index, "send_brevo_reply", send)
+    monkeypatch.setattr(index, "insert_agent_response", lambda _data: None)
+
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conversation-img",
+        "messages": [
+            {
+                "type": "visitor",
+                "id": "message-img-1",
+                "file": {
+                    "link": "https://cdn.example.com/watch.jpg",
+                    "mimeType": "image/jpeg",
+                    "type": "image",
+                    "name": "watch.jpg",
+                },
+            }
+        ],
+        "visitor": {
+            "id": "visitor-1",
+            "attributes": {"WHATSAPP": "5511999999999"},
+        },
+    }
+
+    response = await _post_webhook(index, payload)
+
+    assert response.status_code == 200
+    assert len(processed) == 1
+    assert processed[0].image_url == "https://cdn.example.com/watch.jpg"
+    assert processed[0].attachment_type == "image"
+
+
 def test_event_skip_reason_only_blocks_transcript_event():
     assert webhook_event_skip_reason({
         "eventName": "conversationTranscript",

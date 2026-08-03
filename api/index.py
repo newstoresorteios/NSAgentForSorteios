@@ -458,7 +458,11 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             reason="missing_sender_identity",
         )
 
-    if not incoming.text.strip() and not incoming.audio_url:
+    if (
+        not incoming.text.strip()
+        and not incoming.audio_url
+        and not (incoming.image_url or "").strip()
+    ):
         return _skip_webhook_event(
             event_name=event_name,
             reason="no_text",
@@ -472,6 +476,19 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             visitor_id=incoming.visitor_id,
         )
         if lock_key:
+            lock_timeout = float(
+                getattr(
+                    settings,
+                    "agent_conversation_lock_timeout_seconds",
+                    15.0,
+                )
+            )
+            # Image turns hold the lock longer (download + Vision + catalog).
+            # Concurrent Brevo fragments should wait instead of 503'ing early.
+            if (incoming.image_url or "").strip() or (
+                (incoming.attachment_type or "").lower() == "image"
+            ):
+                lock_timeout = max(lock_timeout, 55.0)
             try:
                 with runtime_stage("conversation_lock_wait"):
                     request.state.conversation_lock_handle = (
@@ -482,11 +499,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                                 "database_url",
                                 "",
                             ),
-                            timeout_seconds=getattr(
-                                settings,
-                                "agent_conversation_lock_timeout_seconds",
-                                15.0,
-                            ),
+                            timeout_seconds=lock_timeout,
                         )
                     )
             except ConversationLockUnavailable as exc:
@@ -497,6 +510,8 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                         incoming.conversation_id
                     ),
                     "sender_key_present": bool(incoming.sender_key),
+                    "inbound_image": bool((incoming.image_url or "").strip()),
+                    "lock_timeout_seconds": lock_timeout,
                 })
                 raise HTTPException(
                     status_code=503,

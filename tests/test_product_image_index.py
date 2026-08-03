@@ -299,9 +299,6 @@ async def test_handle_image_visual_fallback_when_text_not_found(monkeypatch):
             response_metadata={"visual_search": True},
         )
 
-    async def fake_responder(*args, **kwargs):
-        return None
-
     monkeypatch.setattr(
         module,
         "get_settings",
@@ -323,7 +320,6 @@ async def test_handle_image_visual_fallback_when_text_not_found(monkeypatch):
         "_execute_compiled_product_retrieval",
         fake_retrieval,
     )
-    monkeypatch.setattr(sales_agent, "_sales_response_with_openai", fake_responder)
 
     result = await handle_image_product_search(message)
     assert result is not None

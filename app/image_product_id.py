@@ -413,8 +413,6 @@ async def handle_image_product_search(
     from .sales_agent import (
         _execute_compiled_product_retrieval,
         _mark_sales_result,
-        _sales_response_with_openai,
-        interpretation_to_plan,
     )
 
     tray_result = await _execute_compiled_product_retrieval(interpretation)
@@ -468,25 +466,14 @@ async def handle_image_product_search(
         "image_search": True,
         "image_identify": identified.model_dump(mode="json"),
         "domain": "commerce",
+        "used_tray": True,
     })
-    plan = interpretation_to_plan(interpretation, message.text)
-    final = await _sales_response_with_openai(
-        message,
-        plan,
-        tray_result,
-        interpretation,
-    )
-    if final:
-        final.response_metadata.update({
-            "image_search": True,
-            "image_identify": identified.model_dump(mode="json"),
-        })
-        return final
+    # Skip OpenAI responder here: Vision already spent the critical latency budget.
     return _mark_sales_result(
         tray_result,
         interpretation=interpretation,
         goal="find",
-        response_source="deterministic_fallback",
+        response_source="image_vision",
         used_openai_responder=False,
         used_tray=True,
         fallback_reason=tray_result.safety_reason,

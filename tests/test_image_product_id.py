@@ -197,9 +197,6 @@ async def test_handle_image_product_search_retrieves_catalog(monkeypatch):
         assert "PH2000M" in (interpretation.subject.model or "")
         return tray_result
 
-    async def fake_responder(message, plan, result, interpretation):
-        return None
-
     monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
         agent_image_search_enabled=True,
         agent_image_search_min_confidence=0.55,
@@ -213,7 +210,6 @@ async def test_handle_image_product_search_retrieves_catalog(monkeypatch):
         "_execute_compiled_product_retrieval",
         fake_retrieval,
     )
-    monkeypatch.setattr(sales_agent, "_sales_response_with_openai", fake_responder)
 
     result = await handle_image_product_search(message)
     assert result is not None
