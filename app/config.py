@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     audio_outbound_enabled: bool = Field(default=True, alias="AUDIO_OUTBOUND_ENABLED")
     brevo_send_audio_as_attachment: bool = Field(default=True, alias="BREVO_SEND_AUDIO_AS_ATTACHMENT")
     audio_public_base_url: str = Field(default="", alias="AUDIO_PUBLIC_BASE_URL")
+    checkout_cep_lookup_enabled: bool = Field(
+        default=True,
+        alias="CHECKOUT_CEP_LOOKUP_ENABLED",
+    )
+    checkout_cep_lookup_url: str = Field(
+        default="https://viacep.com.br/ws",
+        alias="CHECKOUT_CEP_LOOKUP_URL",
+    )
 
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
     supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")

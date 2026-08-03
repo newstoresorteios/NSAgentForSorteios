@@ -18,6 +18,7 @@ from .commerce_router import (
 from .category_resolver import CategoryResolver
 from .checkout_service import checkout_capabilities, select_checkout_channel
 from .checkout_data_service import (
+    enrich_checkout_data_from_cep,
     repair_checkout_data_with_openai,
     should_repair_checkout_data,
     update_checkout_data,
@@ -2411,6 +2412,20 @@ async def handle_sales_message(
         field_errors = field_errors if isinstance(field_errors, dict) else {}
         missing_fields = checkout_result.commercial_data.get("missing_fields")
         missing_fields = missing_fields if isinstance(missing_fields, list) else []
+        enriched_updates = await enrich_checkout_data_from_cep(
+            checkout_updates,
+            known_zipcode=state.checkout_draft.address.zip_code,
+            missing_fields=missing_fields,
+            field_errors=field_errors,
+        )
+        cep_resolution_applied = enriched_updates != checkout_updates
+        if cep_resolution_applied:
+            checkout_updates = enriched_updates
+            checkout_result = update_checkout_data(state, checkout_updates)
+            field_errors = checkout_result.commercial_data.get("field_errors")
+            field_errors = field_errors if isinstance(field_errors, dict) else {}
+            missing_fields = checkout_result.commercial_data.get("missing_fields")
+            missing_fields = missing_fields if isinstance(missing_fields, list) else []
         repair_attempted = should_repair_checkout_data(
             message.text,
             checkout_updates,
@@ -2430,6 +2445,9 @@ async def handle_sales_message(
             checkout_result.response_metadata["checkout_data_repair_applied"] = (
                 repaired_updates != checkout_updates
             )
+        checkout_result.response_metadata["checkout_cep_resolution_applied"] = (
+            cep_resolution_applied
+        )
         payment_preference = (
             interpretation.payment_method_preference
             or state.payment_method_preference

@@ -5,6 +5,7 @@ import json
 import unicodedata
 from typing import Any
 
+import httpx
 from openai import APIError, AsyncOpenAI
 from pydantic import ValidationError
 
@@ -65,6 +66,11 @@ _FIELD_LABELS = {
     "city": ("Cidade", "<sua cidade>"),
     "state": ("Estado/UF", "<nome do estado ou sigla>"),
 }
+CHECKOUT_RESOLUTION_CAPABILITIES = (
+    "normalize_brazilian_state",
+    "lookup_address_by_cep",
+    "repair_explicit_fields_with_openai",
+)
 
 
 def normalize_zipcode(value: Any) -> str | None:
@@ -160,6 +166,69 @@ def should_repair_checkout_data(
     return bool(missing_fields and (len(updates) >= 4 or len(populated_lines) >= 4))
 
 
+async def lookup_address_by_zipcode(zipcode: Any) -> dict[str, str]:
+    settings = get_settings()
+    normalized = normalize_zipcode(zipcode)
+    if not normalized or not settings.checkout_cep_lookup_enabled:
+        return {}
+    base_url = settings.checkout_cep_lookup_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=6) as client:
+            response = await client.get(f"{base_url}/{normalized}/json/")
+            response.raise_for_status()
+            payload = response.json()
+    except (
+        httpx.HTTPError,
+        ValueError,
+        TypeError,
+    ) as exc:
+        print("[sales.checkout.cep_lookup] failed", {
+            "error_type": type(exc).__name__,
+            "zipcode_prefix": normalized[:3],
+        })
+        return {}
+    if not isinstance(payload, dict) or payload.get("erro") is True:
+        return {}
+    state = normalize_brazilian_state(payload.get("uf") or payload.get("estado"))
+    resolved = {
+        field: value
+        for field, value in {
+            "address": _clean_text(payload.get("logradouro")),
+            "neighborhood": _clean_text(payload.get("bairro")),
+            "city": _clean_text(payload.get("localidade")),
+            "state": state,
+            "zipcode": normalized,
+        }.items()
+        if value
+    }
+    print("[sales.checkout.cep_lookup]", {
+        "success": bool(resolved),
+        "resolved_fields": sorted(resolved),
+        "zipcode_prefix": normalized[:3],
+    })
+    return resolved
+
+
+async def enrich_checkout_data_from_cep(
+    updates: dict[str, Any],
+    *,
+    known_zipcode: Any = None,
+    missing_fields: list[str] | None = None,
+    field_errors: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    address_fields = {"address", "zipcode", "zip_code", "neighborhood", "city", "state"}
+    unresolved = set(missing_fields or []) | set(field_errors or {})
+    if not address_fields.intersection(unresolved):
+        return dict(updates)
+    zipcode = updates.get("zipcode") or updates.get("zip_code") or known_zipcode
+    resolved = await lookup_address_by_zipcode(zipcode)
+    if not resolved:
+        return dict(updates)
+    # A CEP exato é a fonte factual para localidade/UF. Rua e bairro são usados
+    # somente quando o serviço os retorna; número e complemento sempre vêm do cliente.
+    return {**updates, **resolved}
+
+
 async def repair_checkout_data_with_openai(
     *,
     message_text: str,
@@ -195,6 +264,9 @@ async def repair_checkout_data_with_openai(
                             "first_extraction": updates,
                             "unresolved_fields": sorted(repairable),
                             "validation_errors": field_errors,
+                            "available_resolution_capabilities": list(
+                                CHECKOUT_RESOLUTION_CAPABILITIES
+                            ),
                         },
                         ensure_ascii=False,
                     ),

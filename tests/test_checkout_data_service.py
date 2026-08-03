@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from app.checkout_data_service import (
     _normalize_phone,
     checkout_data_template,
+    enrich_checkout_data_from_cep,
+    lookup_address_by_zipcode,
     normalize_brazilian_state,
     repair_checkout_data_with_openai,
     should_repair_checkout_data,
@@ -190,3 +192,85 @@ async def test_incomplete_checkout_is_validated_before_any_tray_call(monkeypatch
     assert calls == []
     assert advanced.commercial_data["missing_fields"] == ["email"]
     assert "E-mail: <seu e-mail>" in advanced.reply_text
+
+
+@pytest.mark.asyncio
+async def test_cep_lookup_returns_only_validated_checkout_fields(monkeypatch):
+    import app.checkout_data_service as service
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "cep": "86480-000",
+                "logradouro": "Rua Principal",
+                "bairro": "Centro",
+                "localidade": "Conselheiro Mairinck",
+                "uf": "PR",
+                "ibge": "ignored",
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url):
+            return Response()
+
+    monkeypatch.setattr(service.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            checkout_cep_lookup_enabled=True,
+            checkout_cep_lookup_url="https://viacep.test/ws",
+        ),
+    )
+
+    resolved = await lookup_address_by_zipcode("86480-000")
+
+    assert resolved == {
+        "address": "Rua Principal",
+        "neighborhood": "Centro",
+        "city": "Conselheiro Mairinck",
+        "state": "PR",
+        "zipcode": "86480000",
+    }
+    assert "ibge" not in resolved
+
+
+@pytest.mark.asyncio
+async def test_cep_enrichment_fills_address_without_inventing_customer_fields(
+    monkeypatch,
+):
+    import app.checkout_data_service as service
+
+    async def lookup(_zipcode):
+        return {
+            "address": "Rua Principal",
+            "neighborhood": "Centro",
+            "city": "Conselheiro Mairinck",
+            "state": "PR",
+            "zipcode": "86480000",
+        }
+
+    monkeypatch.setattr(service, "lookup_address_by_zipcode", lookup)
+    enriched = await enrich_checkout_data_from_cep(
+        {"zipcode": "86480000", "number": "81", "name": "Paulo"},
+        missing_fields=["address", "neighborhood", "city", "state", "email"],
+        field_errors={},
+    )
+
+    assert enriched["address"] == "Rua Principal"
+    assert enriched["state"] == "PR"
+    assert enriched["number"] == "81"
+    assert enriched["name"] == "Paulo"
+    assert "email" not in enriched
