@@ -202,7 +202,7 @@ async def test_color_preference_narrows_ambiguous_sealander_matches():
     interpretation = _interpretation(
         goal="find",
         brand="Christopher Ward",
-        model="Sealander",
+        model="Sealander Automatic",
         preferences={"color": "rosa"},
     )
     products = [
@@ -217,14 +217,65 @@ async def test_color_preference_narrows_ambiguous_sealander_matches():
             "id": "8977",
             "brand": "Christopher Ward",
             "model": "Sealander",
-            "name": "Relógio Christopher Ward C63 Sealander Automático Azul",
-            "reference": "C63-36ADA4-S00B0-B0",
+            "name": "Relógio Christopher Ward C63 Sealander GMT Automático Azul 39 mm",
+            "reference": "C63-39AGM3-S00B4-B1",
         },
     ]
 
     resolution = await match_specific_products(products, interpretation)
     assert resolution.status == "exact"
     assert [product["id"] for product in resolution.products] == ["8975"]
+
+
+@pytest.mark.asyncio
+async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
+    from app.product_retrieval import (
+        ProductRetrievalCompiler,
+        exact_specific_product_matches,
+        match_specific_products,
+        normalize_pt_catalog_query,
+    )
+
+    assert "Automático" in normalize_pt_catalog_query("Sealander Automatic")
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander Automatic rosa claro",
+        preferences={"color": "rosa claro"},
+    )
+    products = [
+        {
+            "id": "8975",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander GMT Automático Azul 39 mm",
+        },
+        {
+            "id": "8977",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander GMT Automático Verde 39 mm",
+        },
+    ]
+    assert exact_specific_product_matches(products, interpretation) == []
+    resolution = await match_specific_products(products, interpretation)
+    assert resolution.status == "none"
+    assert resolution.products == ()
+
+    plan = ProductRetrievalCompiler.compile(interpretation)
+    strategies = [request.strategy for request in plan.requests]
+    assert any(strategy.startswith("exact_color_query_") for strategy in strategies)
+    assert any(
+        request.name and "rosa" in request.name.casefold()
+        for request in plan.requests
+        if request.name
+    )
+    assert any(
+        request.name and "Automático" in request.name
+        for request in plan.requests
+        if request.name
+    )
 
 
 def test_certina_title_without_relogio_prefix_still_matches():

@@ -262,6 +262,75 @@ def effective_product_reference(value: str | None) -> str | None:
     return None
 
 
+def normalize_pt_catalog_query(text: str | None) -> str:
+    """Map common English vision terms to Tray catalog Portuguese."""
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    replacements = (
+        (r"\bautomatic\b", "Automático"),
+        (r"\bchronograph\b", "Cronógrafo"),
+        (r"\bquartz\b", "Quartz"),
+        (r"\bpink\b", "Rosa"),
+        (r"\bblue\b", "Azul"),
+        (r"\bgreen\b", "Verde"),
+        (r"\bblack\b", "Preto"),
+        (r"\bwhite\b", "Branco"),
+    )
+    updated = value
+    for pattern, replacement in replacements:
+        updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
+    return updated
+
+
+def preference_color_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
+    color = _fold(interpretation.preferences.color)
+    if not color:
+        # Recover color adjectives embedded in the model string from Vision.
+        color = " ".join(
+            token
+            for token in significant_model_tokens(interpretation.subject.model)
+            if token in _OPTIONAL_MODEL_TOKENS
+            and token not in _DESCRIPTOR_MODEL_TOKENS
+        )
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", color)
+        if token and token not in _DESCRIPTOR_MODEL_TOKENS
+    ]
+    return tuple(dict.fromkeys(tokens))
+
+
+def product_matches_color_tokens(
+    product: dict[str, Any],
+    color_tokens: tuple[str, ...],
+) -> bool:
+    if not color_tokens:
+        return True
+    text = _product_text(product)
+    return all(token in text for token in color_tokens)
+
+
+def model_excludes_gmt(model: str | None) -> bool:
+    folded = _fold(model)
+    if not folded:
+        return False
+    if "gmt" in folded:
+        return False
+    return "automatic" in folded or "automatico" in folded
+
+
+def product_compatible_with_requested_movement(
+    product: dict[str, Any],
+    model: str | None,
+) -> bool:
+    if not model_excludes_gmt(model):
+        return True
+    text = _product_text(product)
+    # Customer/Vision asked Automatic without GMT — don't substitute GMT siblings.
+    return "gmt" not in text
+
+
 def extract_reference_code(text: str | None) -> str | None:
     match = _REFERENCE_CODE_RE.search(str(text or ""))
     return match.group(1).strip() if match else None
@@ -411,21 +480,55 @@ class ProductRetrievalCompiler:
                     )
                 )
         elif subject.model:
-            core_tokens = required_model_tokens(subject.model)
+            pt_model = normalize_pt_catalog_query(subject.model)
+            color_tokens = preference_color_tokens(interpretation)
+            color_label = " ".join(color_tokens).strip()
+            core_tokens = required_model_tokens(pt_model or subject.model)
             core_query = " ".join(core_tokens[:4]).strip()
             full_query = " ".join(
-                part for part in (subject.brand, subject.model) if part
+                part for part in (subject.brand, pt_model or subject.model) if part
             ).strip()
             # Tray catalog titles usually start with "Relógio {Brand} …".
             catalog_title = " ".join(
                 part
-                for part in ("Relógio", subject.brand, subject.model)
+                for part in ("Relógio", subject.brand, pt_model or subject.model)
                 if part
             ).strip()
-            model_codes = extract_model_codes(subject.model)
+            model_codes = extract_model_codes(pt_model or subject.model)
+            # Color-first probes so "Sealander rosa" beats GMT azul/verde siblings.
+            if color_label and core_query:
+                color_queries = [
+                    f"{core_query} {color_label}".strip(),
+                    f"{core_query} Automático {color_label}".strip(),
+                    " ".join(
+                        part
+                        for part in (subject.brand, core_query, "Automático", color_label)
+                        if part
+                    ).strip(),
+                    " ".join(
+                        part
+                        for part in (
+                            "Relógio",
+                            subject.brand,
+                            core_query,
+                            "Automático",
+                            color_label,
+                        )
+                        if part
+                    ).strip(),
+                ]
+                for index, query in enumerate(dict.fromkeys(q for q in color_queries if q)):
+                    requests.append(
+                        ProductRetrievalRequest(
+                            strategy=f"exact_color_query_{index}",
+                            name=query if index < 2 else None,
+                            query=query if index >= 2 else None,
+                            brand=subject.brand if index < 2 else None,
+                        )
+                    )
             requests.append(ProductRetrievalRequest(
                 strategy="exact_model_with_brand" if subject.brand else "exact_model",
-                name=subject.model,
+                name=pt_model or subject.model,
                 brand=subject.brand,
             ))
             if catalog_title:
@@ -462,7 +565,7 @@ class ProductRetrievalCompiler:
                         query=full_query,
                     )
                 )
-            if core_query and core_query.casefold() != _fold(subject.model):
+            if core_query and core_query.casefold() != _fold(pt_model or subject.model):
                 requests.append(
                     ProductRetrievalRequest(
                         strategy="exact_query_core",
@@ -484,7 +587,7 @@ class ProductRetrievalCompiler:
             if subject.brand:
                 requests.append(ProductRetrievalRequest(
                     strategy="exact_model_broad",
-                    name=subject.model,
+                    name=pt_model or subject.model,
                 ))
                 if core_query:
                     requests.append(
@@ -729,6 +832,11 @@ def hard_filter_products(
             continue
         if expected_ean and _fold(product.get("ean")) != expected_ean:
             continue
+        if not product_compatible_with_requested_movement(product, subject.model):
+            continue
+        color_tokens = preference_color_tokens(interpretation)
+        if color_tokens and not product_matches_color_tokens(product, color_tokens):
+            continue
         if mode == "exact" and expected_model:
             model_tokens = list(required_model_tokens(subject.model))
             if model_tokens and not all(token in text for token in model_tokens):
@@ -852,6 +960,8 @@ def exact_specific_product_matches(
     )
     matches: list[dict[str, Any]] = []
     for product in candidates:
+        if not product_compatible_with_requested_movement(product, subject.model):
+            continue
         if expected_reference:
             if _fold(product.get("reference")) == expected_reference:
                 matches.append(product)
@@ -901,22 +1011,14 @@ async def match_specific_products(
 ) -> SpecificProductResolution:
     compatible = _brand_compatible_candidates(products, interpretation)
     exact_matches = exact_specific_product_matches(compatible, interpretation)
-    if len(exact_matches) > 1:
-        color = _fold(interpretation.preferences.color)
-        if color:
-            color_tokens = [
-                token
-                for token in re.findall(r"[a-z0-9]+", color)
-                if token and token not in _DESCRIPTOR_MODEL_TOKENS
-            ]
-            color_hits = [
-                product
-                for product in exact_matches
-                if color_tokens
-                and all(token in _product_text(product) for token in color_tokens)
-            ]
-            if len(color_hits) == 1:
-                exact_matches = color_hits
+    color_tokens = preference_color_tokens(interpretation)
+    identity_matches = list(exact_matches)
+    if color_tokens:
+        exact_matches = [
+            product
+            for product in exact_matches
+            if product_matches_color_tokens(product, color_tokens)
+        ]
     if exact_matches:
         selected = exact_matches[:RERANK_SELECTION_LIMIT]
         status: Literal["exact", "ambiguous", "none"] = (
@@ -936,6 +1038,45 @@ async def match_specific_products(
         return SpecificProductResolution(
             status=status,
             products=tuple(selected),
+            match_source="exact",
+        )
+
+    # Identity matched (e.g. Sealander) but not the requested color — do not let the
+    # LLM substitute GMT azul/verde for the pink Automatic the customer sent.
+    if color_tokens and identity_matches:
+        print("[sales.product.match]", {
+            "candidate_count": len(compatible),
+            "selected_count": 0,
+            "invalid_ids_count": 0,
+            "match_source": "exact",
+            "reason": "color_mismatch",
+        })
+        return SpecificProductResolution(
+            status="none",
+            products=(),
+            match_source="exact",
+        )
+    if (
+        model_excludes_gmt(interpretation.subject.model)
+        and compatible
+        and not any(
+            product_compatible_with_requested_movement(
+                product,
+                interpretation.subject.model,
+            )
+            for product in compatible
+        )
+    ):
+        print("[sales.product.match]", {
+            "candidate_count": len(compatible),
+            "selected_count": 0,
+            "invalid_ids_count": 0,
+            "match_source": "exact",
+            "reason": "movement_mismatch",
+        })
+        return SpecificProductResolution(
+            status="none",
+            products=(),
             match_source="exact",
         )
 

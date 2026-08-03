@@ -463,18 +463,13 @@ async def handle_image_product_search(
         )
         if visual is not None:
             return visual
-        brand = interpretation.subject.brand or "dessa marca"
+        color_hint = (identified.color or "").strip()
         tray_result.reply_text = (
-            f"Pela foto, identifiquei {label or 'esse modelo'}, "
-            f"mas não confirmei a referência exata no catálogo agora. "
-            f"Quer que eu mostre opções {brand}?"
-            if tray_result.safety_reason == "exact_product_ambiguous_brand"
-            or interpretation.subject.brand
-            else (
-                f"Pela foto, identifiquei {label or 'esse modelo'}, "
-                "mas não encontrei no catálogo agora. "
-                "Pode confirmar a referência ou a marca?"
-            )
+            f"Pela foto, identifiquei {label or 'esse modelo'}"
+            f"{f' ({color_hint})' if color_hint else ''}, "
+            "mas ainda não localizei essa combinação exata no catálogo. "
+            "Pode confirmar se é o C63 Sealander Automático (não GMT), "
+            "ou me passar a referência do mostrador/caixa?"
         )
 
     tray_result.response_metadata.update({
