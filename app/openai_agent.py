@@ -37,6 +37,7 @@ from .context_resume import (
     build_contextual_greeting,
     has_resumable_commerce,
     is_soft_greeting,
+    is_unpaid_order_resume_request,
     should_resume_pending_order,
 )
 from .order_service import (
@@ -164,6 +165,8 @@ def _local_raffle_reply(message: IncomingMessage, facts: dict) -> AgentResult | 
 
 
 def build_agent_input(message: IncomingMessage, customer_context: dict, facts: dict) -> str:
+    from .working_memory import format_working_memory_block
+
     vip_block = ""
     vip = get_vip_profile(message.sender_phone)
     if vip:
@@ -182,16 +185,22 @@ def build_agent_input(message: IncomingMessage, customer_context: dict, facts: d
         "whatsapp": "WhatsApp",
         "widget": "chat do site",
     }.get(message.channel, message.channel or "canal não identificado")
+    working_memory_block = format_working_memory_block(
+        customer_context.get("_commerce_state")
+    )
+    memory_section = f"\n\n{working_memory_block}" if working_memory_block else ""
     return f"""
 Mensagem recebida via {channel_label}:
 - Nome para tratamento: {display_label}
 - Telefone presente: {'sim' if message.sender_phone else 'não'}{modality_note}
 - Texto do cliente: {message.text}
 - Intenção detectada: {facts.get('primary_intent')}
+{memory_section}
 
 {format_facts_for_prompt(facts)}
 {vip_block}
 Responda de forma natural, objetiva e correta.
+Use WORKING_MEMORY só internamente; não ofereça pedido/link/dados sem o cliente pedir.
 """.strip()
 
 
@@ -446,10 +455,30 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 used_tray=False,
             )
     order_reference = extract_order_reference(message.text)
+    soft_greeting = _is_greeting(message.text) or is_soft_greeting(message.text)
+    # Keep memory loaded on soft greetings without dumping order/payment unsolicited.
+    if (
+        soft_greeting
+        and has_resumable_commerce(commerce_state)
+        and not is_order_lookup_request(message.text)
+        and not is_unpaid_order_resume_request(message.text)
+    ):
+        resume = build_contextual_greeting(commerce_state)
+        return _annotate_agent_result(
+            resume,
+            domain=resume.response_metadata.get("domain") or "greeting",
+            response_source=resume.response_metadata.get(
+                "response_source",
+                "context_resume_soft",
+            ),
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+        )
     resume_pending_order = should_resume_pending_order(
         message.text,
         commerce_state,
-        is_greeting=_is_greeting(message.text) or is_soft_greeting(message.text),
+        is_greeting=soft_greeting,
     )
     if (
         is_order_lookup_request(message.text)

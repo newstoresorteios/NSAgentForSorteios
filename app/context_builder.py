@@ -216,6 +216,13 @@ def gather_customer_facts(message: IncomingMessage, customer_context: dict[str, 
 
     if customer_context.get("memory_context"):
         facts["memory_context"] = customer_context["memory_context"]
+    working_memory = customer_context.get("_working_memory")
+    if not working_memory and customer_context.get("_commerce_state"):
+        from .working_memory import build_working_memory
+
+        working_memory = build_working_memory(customer_context.get("_commerce_state"))
+    if working_memory:
+        facts["working_memory"] = working_memory
 
     return facts
 
@@ -232,6 +239,8 @@ def format_facts_for_prompt(facts: dict[str, Any]) -> str:
         "- Se simulation.can_apply_full_balance for false, deixe claro que NÃO dá para abater todo o saldo "
         "e use max_applicable_brl, applied_brl e final_brl.\n"
         "- Não repita saldo/última participação se o cliente não pediu isso.\n"
+        "- working_memory é memória interna: use para continuidade, sem despejar pedido/link/PII "
+        "se o cliente não pediu.\n"
         "- Nunca pergunte como prefere ser chamado.\n"
         "- Resposta curta para WhatsApp, em português do Brasil."
     )

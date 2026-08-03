@@ -22,6 +22,7 @@ def person_key_from_parts(
     cpf: str | None = None,
     phone: str | None = None,
     email: str | None = None,
+    sender_key: str | None = None,
 ) -> str | None:
     cpf_digits = normalize_digits(cpf)
     if cpf_digits and len(cpf_digits) in {11, 14}:
@@ -32,7 +33,134 @@ def person_key_from_parts(
     email_norm = normalize_email(email)
     if email_norm:
         return f"email:{email_norm}"
+    key = (sender_key or "").strip()
+    if key:
+        return f"sender:{key}"
     return None
+
+
+def _identity_map_from_state(
+    state: CommerceConversationState | dict[str, Any] | None,
+) -> dict[str, str]:
+    payload = (
+        state.model_dump(mode="json")
+        if isinstance(state, CommerceConversationState)
+        else (state if isinstance(state, dict) else {})
+    )
+    draft = payload.get("checkout_draft") if isinstance(payload, dict) else {}
+    customer = draft.get("customer") if isinstance(draft, dict) else {}
+    if not isinstance(customer, dict):
+        customer = {}
+    mapping: dict[str, str] = {}
+    phone = normalize_digits(customer.get("phone"))
+    cpf = normalize_digits(customer.get("cpf"))
+    email = normalize_email(customer.get("email"))
+    if phone:
+        mapping["phone"] = phone
+    if cpf:
+        mapping["cpf"] = cpf
+    if email:
+        mapping["email"] = email
+    return mapping
+
+
+def resolve_person_key_candidates(
+    *,
+    sender_key: str | None = None,
+    sender_phone: str | None = None,
+    cpf: str | None = None,
+    email: str | None = None,
+    state: CommerceConversationState | dict[str, Any] | None = None,
+) -> list[str]:
+    """Return durable person_key aliases worth loading/saving commerce sessions for."""
+    by_type = _identity_map_from_state(state)
+    phone = normalize_digits(sender_phone) or by_type.get("phone")
+    cpf_digits = normalize_digits(cpf) or by_type.get("cpf")
+    email_norm = normalize_email(email) or by_type.get("email")
+    key = (sender_key or "").strip() or None
+    if phone:
+        by_type["phone"] = phone
+    if cpf_digits:
+        by_type["cpf"] = cpf_digits
+    if email_norm:
+        by_type["email"] = email_norm
+    if key:
+        by_type["sender_key"] = key
+
+    candidates: list[str] = []
+    primary = person_key_from_parts(
+        cpf=by_type.get("cpf"),
+        phone=by_type.get("phone"),
+        email=by_type.get("email"),
+        sender_key=by_type.get("sender_key"),
+    )
+    if primary:
+        candidates.append(primary)
+
+    for kind, prefix in (("cpf", "cpf"), ("phone", "phone"), ("email", "email")):
+        value = by_type.get(kind)
+        if value:
+            token = f"{prefix}:{value}"
+            if token not in candidates:
+                candidates.append(token)
+    if key:
+        token = f"sender:{key}"
+        if token not in candidates:
+            candidates.append(token)
+
+    try:
+        from .db import ensure_tables, get_conn, get_settings
+
+        settings = get_settings()
+        probes = [
+            (kind, value)
+            for kind, value in (
+                ("cpf", by_type.get("cpf")),
+                ("phone", by_type.get("phone")),
+                ("email", by_type.get("email")),
+                ("sender_key", by_type.get("sender_key")),
+            )
+            if value
+        ]
+        if settings.database_url and probes:
+            ensure_tables()
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT DISTINCT person_key
+                        FROM public.ai_customer_identity_links
+                        WHERE (identity_type, identity_value) IN (
+                          SELECT * FROM unnest(%(types)s::text[], %(values)s::text[])
+                            AS t(identity_type, identity_value)
+                        )
+                        """,
+                        {
+                            "types": [item[0] for item in probes],
+                            "values": [item[1] for item in probes],
+                        },
+                    )
+                    for row in cur.fetchall() or []:
+                        person_key = str(row.get("person_key") or "").strip()
+                        if person_key and person_key not in candidates:
+                            candidates.append(person_key)
+    except Exception as exc:
+        print("[sales.identity] person_key_resolve_failed", {
+            "error_type": type(exc).__name__,
+        })
+    return candidates
+
+
+def resolve_person_key_for_message(
+    message: IncomingMessage | None,
+    state: CommerceConversationState | dict[str, Any] | None = None,
+) -> str | None:
+    keys = resolve_person_key_candidates(
+        sender_key=getattr(message, "sender_key", None) if message else None,
+        sender_phone=getattr(message, "sender_phone", None) if message else None,
+        state=state,
+    )
+    return keys[0] if keys else None
 
 
 def identities_from_message_and_state(

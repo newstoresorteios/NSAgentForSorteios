@@ -44,7 +44,7 @@ def get_conn() -> Iterator[psycopg.Connection]:
 
 def ensure_tables() -> None:
     settings = get_settings()
-    if not settings.database_url or not settings.auto_create_tables:
+    if not settings.database_url or not getattr(settings, "auto_create_tables", False):
         return
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -153,6 +153,27 @@ def ensure_tables() -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_ai_customer_identity_value
                 ON public.ai_customer_identity_links(identity_type, identity_value);
+
+                CREATE TABLE IF NOT EXISTS public.ai_customer_commerce_sessions (
+                  person_key text PRIMARY KEY,
+                  commerce_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+                  channel text NULL,
+                  conversation_id text NULL,
+                  sender_key text NULL,
+                  sender_phone text NULL,
+                  resumable_score integer NOT NULL DEFAULT 0,
+                  created_at timestamptz NOT NULL DEFAULT now(),
+                  updated_at timestamptz NOT NULL DEFAULT now()
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ai_customer_commerce_sessions_updated_at
+                ON public.ai_customer_commerce_sessions(updated_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_customer_commerce_sessions_sender_key
+                ON public.ai_customer_commerce_sessions(sender_key);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_customer_commerce_sessions_sender_phone
+                ON public.ai_customer_commerce_sessions(sender_phone);
                 """
             )
 
@@ -559,6 +580,139 @@ def _load_commerce_states_for_filter(
     return states
 
 
+def load_customer_commerce_sessions(
+    person_keys: list[str],
+) -> list[dict[str, Any]]:
+    """Load durable commerce sessions for one or more person_key aliases."""
+    settings = get_settings()
+    keys = [str(key).strip() for key in person_keys if str(key or "").strip()]
+    if not settings.database_url or not keys:
+        return []
+    ensure_tables()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT person_key, commerce_state, resumable_score, updated_at
+                    FROM public.ai_customer_commerce_sessions
+                    WHERE person_key = ANY(%(keys)s)
+                    ORDER BY resumable_score DESC, updated_at DESC
+                    """,
+                    {"keys": keys},
+                )
+                rows = cur.fetchall() or []
+    except (psycopg.Error, RuntimeError) as exc:
+        print("[sales.session] load_failed", {"error_type": type(exc).__name__})
+        return []
+
+    sessions: list[dict[str, Any]] = []
+    for row in rows:
+        state = row.get("commerce_state") if isinstance(row, dict) else None
+        if isinstance(state, dict) and state:
+            sessions.append(state)
+    return sessions
+
+
+def persist_customer_commerce_session(
+    *,
+    person_keys: list[str],
+    commerce_state: dict[str, Any],
+    channel: str | None = None,
+    conversation_id: str | None = None,
+    sender_key: str | None = None,
+    sender_phone: str | None = None,
+) -> None:
+    """Persist durable working memory under all known person_key aliases."""
+    from .context_resume import (
+        commerce_state_resumable_score,
+        merge_commerce_states,
+    )
+
+    settings = get_settings()
+    keys = [str(key).strip() for key in person_keys if str(key or "").strip()]
+    if not settings.database_url or not keys or not isinstance(commerce_state, dict):
+        return
+
+    ensure_tables()
+    try:
+        existing_sessions = load_customer_commerce_sessions(keys)
+        donor = (
+            max(existing_sessions, key=commerce_state_resumable_score)
+            if existing_sessions
+            else {}
+        )
+        merged = merge_commerce_states(commerce_state, donor)
+        score = commerce_state_resumable_score(merged)
+        if score <= 0:
+            return
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for key in keys:
+                    cur.execute(
+                        """
+                        INSERT INTO public.ai_customer_commerce_sessions (
+                          person_key,
+                          commerce_state,
+                          channel,
+                          conversation_id,
+                          sender_key,
+                          sender_phone,
+                          resumable_score,
+                          updated_at
+                        )
+                        VALUES (
+                          %(person_key)s,
+                          %(commerce_state)s,
+                          %(channel)s,
+                          %(conversation_id)s,
+                          %(sender_key)s,
+                          %(sender_phone)s,
+                          %(resumable_score)s,
+                          now()
+                        )
+                        ON CONFLICT (person_key) DO UPDATE
+                        SET
+                          commerce_state = EXCLUDED.commerce_state,
+                          channel = COALESCE(
+                            EXCLUDED.channel,
+                            public.ai_customer_commerce_sessions.channel
+                          ),
+                          conversation_id = COALESCE(
+                            EXCLUDED.conversation_id,
+                            public.ai_customer_commerce_sessions.conversation_id
+                          ),
+                          sender_key = COALESCE(
+                            EXCLUDED.sender_key,
+                            public.ai_customer_commerce_sessions.sender_key
+                          ),
+                          sender_phone = COALESCE(
+                            EXCLUDED.sender_phone,
+                            public.ai_customer_commerce_sessions.sender_phone
+                          ),
+                          resumable_score = EXCLUDED.resumable_score,
+                          updated_at = now()
+                        """,
+                        {
+                            "person_key": key,
+                            "commerce_state": to_jsonb(merged),
+                            "channel": channel,
+                            "conversation_id": conversation_id,
+                            "sender_key": sender_key,
+                            "sender_phone": sender_phone,
+                            "resumable_score": score,
+                        },
+                    )
+        print("[sales.session] upserted", {
+            "aliases": len(keys),
+            "person_key_prefix": keys[0].split(":", 1)[0],
+            "resumable_score": score,
+            "has_order": bool(merged.get("order_id")),
+        })
+    except (psycopg.Error, RuntimeError) as exc:
+        print("[sales.session] upsert_failed", {"error_type": type(exc).__name__})
+
+
 def load_commerce_conversation_state(
     *,
     conversation_id: str | None,
@@ -571,6 +725,7 @@ def load_commerce_conversation_state(
         commerce_state_resumable_score,
         merge_commerce_states,
     )
+    from .customer_identity import resolve_person_key_candidates
 
     settings = get_settings()
     if not settings.database_url:
@@ -623,20 +778,34 @@ def load_commerce_conversation_state(
             )
     except (psycopg.Error, RuntimeError) as exc:
         print("[sales.context.state] load_failed", {"error_type": type(exc).__name__})
-        return {}
+        collected = []
 
-    if not collected:
-        return {}
+    merged: dict[str, Any] = {}
+    if collected:
+        latest = collected[0]
+        richest = max(collected, key=commerce_state_resumable_score)
+        merged = merge_commerce_states(latest, richest)
 
-    latest = collected[0]
-    richest = max(collected, key=commerce_state_resumable_score)
-    merged = merge_commerce_states(latest, richest)
+    person_keys = resolve_person_key_candidates(
+        sender_key=sender_key,
+        sender_phone=sender_phone,
+        state=merged or None,
+    )
+    durable_sessions = load_customer_commerce_sessions(person_keys)
+    durable = (
+        max(durable_sessions, key=commerce_state_resumable_score)
+        if durable_sessions
+        else {}
+    )
+    if durable:
+        merged = merge_commerce_states(merged, durable)
+
     print("[sales.context.state] loaded", {
         "candidates": len(collected),
-        "latest_score": commerce_state_resumable_score(latest),
-        "richest_score": commerce_state_resumable_score(richest),
+        "durable_sessions": len(durable_sessions),
         "merged_has_order": bool(merged.get("order_id")),
         "merged_pending_action": merged.get("pending_action"),
+        "merged_score": commerce_state_resumable_score(merged),
     })
     return merged
 

@@ -3,8 +3,12 @@ from __future__ import annotations
 from app.config import get_settings
 from app.agent_contracts import build_agent_decision, evaluate_policy
 from app.commerce_context import CommerceConversationState, evolve_commerce_state
-from app.customer_identity import upsert_customer_identity_links
-from app.db import load_commerce_conversation_state
+from app.customer_identity import (
+    resolve_person_key_candidates,
+    upsert_customer_identity_links,
+)
+from app.db import load_commerce_conversation_state, persist_customer_commerce_session
+from app.working_memory import build_working_memory
 from app.factual_validator import apply_factual_validation
 from app.handoff_service import enrich_handoff_metadata
 from app.models import AgentResult, IncomingMessage
@@ -104,9 +108,11 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         commerce_state = CommerceConversationState.from_payload(
             load_commerce_conversation_state(**state_lookup)
         )
+    working_memory = build_working_memory(commerce_state)
     customer_context = {
         **customer_context,
         "_commerce_state": commerce_state.model_dump(mode="json"),
+        "_working_memory": working_memory,
     }
     print("[sales.context.state]", {
         "active_domain": commerce_state.active_domain,
@@ -117,6 +123,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "has_cart_session": bool(commerce_state.cart_session_id),
         "pending_action": commerce_state.pending_action,
         "pending_action_has_product": bool(commerce_state.pending_action_product_ids),
+        "has_open_order": bool(working_memory.get("has_open_order")),
+        "payment_pending": bool(working_memory.get("payment_pending")),
     })
 
     user_id = customer_context.get("user_id")
@@ -132,7 +140,20 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         result = await generate_agent_reply_async(incoming, customer_context)
     commerce_state = evolve_commerce_state(commerce_state, result)
     result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
+    result.response_metadata["working_memory"] = build_working_memory(commerce_state)
     upsert_customer_identity_links(incoming, commerce_state)
+    persist_customer_commerce_session(
+        person_keys=resolve_person_key_candidates(
+            sender_key=incoming.sender_key,
+            sender_phone=incoming.sender_phone,
+            state=commerce_state,
+        ),
+        commerce_state=commerce_state.model_dump(mode="json"),
+        channel=incoming.channel,
+        conversation_id=incoming.conversation_id,
+        sender_key=incoming.sender_key,
+        sender_phone=incoming.sender_phone,
+    )
     decision = build_agent_decision(
         incoming,
         result,

@@ -177,12 +177,13 @@ def should_resume_pending_order(
     *,
     is_greeting: bool = False,
 ) -> bool:
+    """Resume payment/order only when the customer asks — not on bare greetings."""
     if not (state.order_id or state.order_lookup_id or state.order_payment_url):
         if not (state.cart_session_id and state.pending_action == "awaiting_payment"):
             return False
-    greeting = is_greeting or is_soft_greeting(text)
-    if greeting and has_resumable_commerce(state):
-        return True
+    # Soft greetings keep memory loaded but must not dump payment links.
+    if is_greeting or is_soft_greeting(text):
+        return False
     if is_unpaid_order_resume_request(text):
         return True
     if (
@@ -194,65 +195,13 @@ def should_resume_pending_order(
 
 
 def build_contextual_greeting(state: CommerceConversationState) -> AgentResult:
-    product_name = None
-    if state.active_product and state.active_product.name:
-        product_name = state.active_product.name
-    if state.order_id and (
-        state.pending_action == "awaiting_payment"
-        or state.order_payment_status in {"pending", "not_available", "unknown"}
-        or state.order_payment_url
-    ):
-        parts = [
-            "Olá! Vi que ainda temos o pedido",
-            f"{state.order_id}",
-        ]
-        if product_name:
-            parts.append(f"({product_name})")
-        parts.append("em aberto.")
-        if state.order_payment_url:
-            parts.append(f"Segue novamente o link de pagamento: {state.order_payment_url}")
-        else:
-            parts.append("Quer que eu consulte o status ou reenvie o pagamento?")
-        reply = " ".join(parts)
-        return AgentResult(
-            reply_text=reply,
-            intent="commerce",
-            response_metadata={
-                "domain": "commerce",
-                "response_source": "context_resume",
-                "purchase_stage": state.purchase_stage or "awaiting_payment",
-                "pending_action": "awaiting_payment",
-                "order_state": {
-                    "order_id": state.order_id,
-                    "order_status": state.order_status,
-                    "order_status_group": state.order_status_group,
-                },
-                "payment_state": {
-                    "order_payment_url": state.order_payment_url,
-                    "order_payment_status": state.order_payment_status,
-                },
-            },
-        )
-    if state.cart_session_id or state.pending_action:
-        reply = (
-            "Olá! Podemos continuar de onde paramos na sua compra. "
-            "Quer retomar o carrinho ou consultar o pedido?"
-        )
-        return AgentResult(
-            reply_text=reply,
-            intent="commerce",
-            response_metadata={
-                "domain": "commerce",
-                "response_source": "context_resume",
-                "purchase_stage": state.purchase_stage,
-                "pending_action": state.pending_action,
-            },
-        )
+    """Soft greeting: keep commerce memory silently; never volunteer order/payment."""
+    _ = state  # Memory stays in pipeline state; reply remains non-intrusive.
     return AgentResult(
-        reply_text="Olá! Como posso ajudar?",
+        reply_text="Olá! Em que posso ajudar?",
         intent="general",
         response_metadata={
             "domain": "greeting",
-            "response_source": "local_greeting",
+            "response_source": "context_resume_soft",
         },
     )

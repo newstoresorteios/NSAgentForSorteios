@@ -42,12 +42,17 @@ def test_soft_greeting_and_unpaid_resume_detection():
         order_payment_url="https://pay.example/1",
         pending_action="awaiting_payment",
     )
-    assert should_resume_pending_order("Opa, boa noite", state) is True
+    # Greeting keeps memory loaded but must not auto-dump payment.
+    assert should_resume_pending_order("Opa, boa noite", state) is False
     assert should_resume_pending_order("como esta meu pedido?", state) is False
+    assert should_resume_pending_order(
+        "acabamos de conversar, eu nao fiz o pagamento ainda",
+        state,
+    ) is True
     assert should_resume_pending_order("sim", state) is True
 
 
-def test_contextual_greeting_mentions_pending_order():
+def test_contextual_greeting_is_soft_and_non_intrusive():
     state = CommerceConversationState(
         order_id="0CC131B51070AEF",
         order_payment_url="https://pay.example/1",
@@ -55,13 +60,14 @@ def test_contextual_greeting_mentions_pending_order():
         active_product={"product_id": "1", "name": "Seiko SRPD79K1"},
     )
     result = build_contextual_greeting(state)
-    assert "0CC131B51070AEF" in result.reply_text
-    assert "https://pay.example/1" in result.reply_text
-    assert result.response_metadata["domain"] == "commerce"
+    assert "0CC131B51070AEF" not in result.reply_text
+    assert "https://pay.example/1" not in result.reply_text
+    assert "Seiko" not in result.reply_text
+    assert result.response_metadata["response_source"] == "context_resume_soft"
 
 
 @pytest.mark.asyncio
-async def test_pipeline_greeting_resumes_pending_order(monkeypatch):
+async def test_pipeline_greeting_keeps_memory_without_dumping_order(monkeypatch):
     import app.message_pipeline as pipeline
     import app.openai_agent as openai_agent
 
@@ -95,29 +101,19 @@ async def test_pipeline_greeting_resumes_pending_order(monkeypatch):
         "load_commerce_conversation_state",
         lambda **_kwargs: state,
     )
+    monkeypatch.setattr(pipeline, "persist_customer_commerce_session", lambda **_kwargs: None)
+    monkeypatch.setattr(pipeline, "upsert_customer_identity_links", lambda *a, **k: None)
     monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_kwargs: [])
     monkeypatch.setattr(
         openai_agent,
         "interpret_message",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should resume before interpret")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("soft greeting before interpret")),
     )
-
-    async def fake_payment(*, state, execute, order_id=None):
-        return AgentResult(
-            reply_text=f"Pedido {order_id} aguardando pagamento: {state.order_payment_url}",
-            intent="commerce",
-            commercial_data={
-                "order_id": order_id,
-                "payment": {"payment_url": state.order_payment_url, "status": "pending"},
-            },
-            response_metadata={
-                "domain": "commerce",
-                "used_tray": True,
-                "pending_action": "awaiting_payment",
-            },
-        )
-
-    monkeypatch.setattr(openai_agent, "inspect_order_payment", fake_payment)
+    monkeypatch.setattr(
+        openai_agent,
+        "inspect_order_payment",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no payment dump on greeting")),
+    )
 
     incoming = IncomingMessage(
         channel="whatsapp",
@@ -128,9 +124,10 @@ async def test_pipeline_greeting_resumes_pending_order(monkeypatch):
         raw={"inbound_id": 10},
     )
     result = await pipeline.process_incoming_message(incoming, {"found": False})
-    assert "0CC131B51070AEF" in result.reply_text
-    assert "https://pay.example/pedido" in result.reply_text
+    assert "0CC131B51070AEF" not in result.reply_text
+    assert "https://pay.example/pedido" not in result.reply_text
     assert result.response_metadata["commerce_state"]["order_id"] == "0CC131B51070AEF"
+    assert result.response_metadata["working_memory"]["payment_pending"] is True
 
 
 @pytest.mark.asyncio
@@ -165,6 +162,8 @@ async def test_order_status_uses_recovered_state_order_id(monkeypatch):
         "load_commerce_conversation_state",
         lambda **_kwargs: state,
     )
+    monkeypatch.setattr(pipeline, "persist_customer_commerce_session", lambda **_kwargs: None)
+    monkeypatch.setattr(pipeline, "upsert_customer_identity_links", lambda *a, **k: None)
     monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_kwargs: [])
 
     async def fake_facts(*, state, execute, order_id=None, allow_customer_recovery=True):
@@ -204,6 +203,33 @@ def test_identity_person_key_prefers_cpf():
 
     assert person_key_from_parts(cpf="12345678901", phone="5543999999999") == "cpf:12345678901"
     assert person_key_from_parts(phone="5543999999999") == "phone:5543999999999"
+    assert person_key_from_parts(sender_key="instagram:abc") == "sender:instagram:abc"
+
+
+def test_working_memory_is_compact_and_policy_aware():
+    from app.working_memory import WORKING_MEMORY_USAGE_POLICY, build_working_memory
+
+    memory = build_working_memory(
+        CommerceConversationState(
+            order_id="0CC131B51070AEF",
+            order_payment_url="https://pay.example/1",
+            pending_action="awaiting_payment",
+            active_product={"product_id": "1", "name": "Seiko"},
+            checkout_draft={
+                "customer": {
+                    "name": "Paulo",
+                    "cpf": "07281035918",
+                    "email": "a@b.com",
+                    "phone": "85999498149",
+                }
+            },
+        )
+    )
+    assert memory["has_open_order"] is True
+    assert memory["payment_pending"] is True
+    assert memory["known_checkout_fields"]["cpf"] is True
+    assert "07281035918" not in str(memory["known_checkout_fields"])
+    assert memory["usage_policy"] == WORKING_MEMORY_USAGE_POLICY
 
 
 @pytest.mark.asyncio
@@ -240,6 +266,7 @@ async def test_pipeline_always_passes_sender_key_with_conversation_id(monkeypatc
     monkeypatch.setattr(pipeline, "load_commerce_conversation_state", load_state)
     monkeypatch.setattr(pipeline, "generate_agent_reply_async", generate)
     monkeypatch.setattr(pipeline, "upsert_customer_identity_links", lambda *a, **k: None)
+    monkeypatch.setattr(pipeline, "persist_customer_commerce_session", lambda **_kwargs: None)
 
     await pipeline.process_incoming_message(
         IncomingMessage(

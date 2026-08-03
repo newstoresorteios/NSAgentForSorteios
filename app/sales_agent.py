@@ -44,6 +44,7 @@ from .commerce_context import (
 )
 from .channel_profiles import channel_system_hint
 from .config import get_settings
+from .working_memory import WORKING_MEMORY_USAGE_POLICY, build_working_memory
 from .guardrails import (
     detect_commerce_inquiry,
     detect_current_raffle_inquiry,
@@ -126,6 +127,9 @@ RESPONSE_CONTRACT é uma restrição factual: só peça confirmação final quan
 customer_confirmation_required=true; se payment_link_state não for available, não prometa
 nem afirme que um link de pagamento já existe. Nunca chame um método de indisponível quando
 payment_method_state=available.
+WORKING_MEMORY/STATE_FACTS são memória interna de continuidade: use para não pedir de novo
+dados já conhecidos e para retomar pedido/pagamento só quando o cliente perguntar. Em saudação
+ou papo genérico, não despeje pedido, link, CPF ou endereço sem solicitação.
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
@@ -147,8 +151,11 @@ SALES_INTERPRETER_INSTRUCTIONS = """
 Você interpreta mensagens do atendimento da NewStore.
 
 NÃO responda ao cliente. Analise a mensagem atual considerando o histórico
-imediatamente anterior e extraia o estado comercial evidente. Mensagens curtas
+imediatamente anterior e o bloco COMMERCE_STATE/WORKING_MEMORY. Mensagens curtas
 frequentemente complementam uma conversa anterior. Nunca invente fatos comerciais.
+Se COMMERCE_STATE indicar pedido/pagamento pendente e o cliente perguntar pelo pedido
+ou pagamento, mantenha domain=commerce com continuidade. Em saudação pura, use
+domain=greeting mesmo com pedido em memória.
 
 Use domain=commerce para produtos, compras e continuações de uma descoberta de
 produto; raffle para sorteios da NewStore; store_general para assuntos da loja sem
@@ -707,11 +714,16 @@ async def interpret_message(
         return fallback
 
     normalized_history = _normalize_interpreter_history(recent_turns)
+    state_obj = commerce_state or CommerceConversationState()
     state_message = {
         "role": "system",
-        "content": "COMMERCE_STATE:\n" + json.dumps(
-            (commerce_state or CommerceConversationState()).interpreter_payload(),
-            ensure_ascii=False,
+        "content": (
+            "COMMERCE_STATE:\n"
+            + json.dumps(state_obj.interpreter_payload(), ensure_ascii=False)
+            + "\n\nWORKING_MEMORY:\n"
+            + json.dumps(build_working_memory(state_obj), ensure_ascii=False)
+            + "\n"
+            + WORKING_MEMORY_USAGE_POLICY
         ),
     }
     messages = [
@@ -1218,6 +1230,9 @@ async def _sales_response_with_openai(
                                 "plan": plan,
                                 "STATE_FACTS": (
                                     state.interpreter_payload() if state else {}
+                                ),
+                                "WORKING_MEMORY": (
+                                    build_working_memory(state) if state else {}
                                 ),
                                 "RESPONSE_CONTRACT": _responder_contract(state),
                                 "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},

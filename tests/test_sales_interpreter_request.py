@@ -110,16 +110,21 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
     assert "tools" not in captured
     assert "tool_choice" not in captured
     assert "parallel_tool_calls" not in captured
+    empty_state = CommerceConversationState()
     assert captured["messages"] == [
         {"role": "system", "content": sales_agent.SALES_INTERPRETER_INSTRUCTIONS},
         {
             "role": "system",
             "content": (
                 "COMMERCE_STATE:\n"
+                + json.dumps(empty_state.interpreter_payload(), ensure_ascii=False)
+                + "\n\nWORKING_MEMORY:\n"
                 + json.dumps(
-                    CommerceConversationState().interpreter_payload(),
+                    sales_agent.build_working_memory(empty_state),
                     ensure_ascii=False,
                 )
+                + "\n"
+                + sales_agent.WORKING_MEMORY_USAGE_POLICY
             ),
         },
         {"role": "user", "content": "quero comprar um relógio"},
