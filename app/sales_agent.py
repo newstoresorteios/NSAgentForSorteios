@@ -85,6 +85,8 @@ from .product_retrieval import (
     exact_progress_matches,
     exact_specific_product_matches,
     hard_filter_products,
+    identity_core_tokens,
+    infer_family_codes_from_candidates,
     match_specific_products,
     preference_color_tokens,
     prefilter_specific_candidates,
@@ -1771,6 +1773,81 @@ async def _execute_compiled_product_retrieval(
             if retrieval_plan.mode == "exact" and hard_filtered:
                 break
 
+    # Tier 2.5 — if color still missing, reuse family codes seen on siblings
+    # (e.g. C63 from other Sealander titles) to probe the exact color title.
+    if (
+        retrieval_plan.mode == "exact"
+        and not hard_filtered
+        and candidates
+        and preference_color_tokens(interpretation)
+    ):
+        color_hue = " ".join(preference_color_tokens(interpretation)).title()
+        core = " ".join(
+            identity_core_tokens(
+                interpretation.subject.model,
+                color_tokens=preference_color_tokens(interpretation),
+            )[:4]
+        ).title()
+        auto_bit = (
+            "Automático"
+            if re.search(
+                r"\b(automatic|automatico)\b",
+                (interpretation.subject.model or "").casefold(),
+            )
+            else None
+        )
+        family_codes = infer_family_codes_from_candidates(
+            candidates,
+            interpretation,
+        )
+        enrich_names: list[str] = []
+        for code in family_codes:
+            enrich_names.append(
+                " ".join(
+                    part for part in (code, core, auto_bit, color_hue) if part
+                )
+            )
+            enrich_names.append(
+                " ".join(
+                    part
+                    for part in (
+                        "Relógio",
+                        interpretation.subject.brand,
+                        code,
+                        core,
+                        auto_bit,
+                        color_hue,
+                    )
+                    if part
+                )
+            )
+        enrich_names = list(dict.fromkeys(n for n in enrich_names if n))[:4]
+        if enrich_names:
+            print("[sales.retrieval.family_enrich]", {
+                "family_codes": list(family_codes),
+                "probe_count": len(enrich_names),
+            })
+            enrich_results = await asyncio.gather(
+                *[
+                    execute_tool(
+                        "search_products",
+                        {"name": name, "limit": 20, "page": 1},
+                    )
+                    for name in enrich_names
+                ]
+            )
+            for result in enrich_results:
+                if "error" in result:
+                    product_lookup_failed = True
+                    continue
+                raw_products = (
+                    result.get("products")
+                    if isinstance(result.get("products"), list)
+                    else []
+                )
+                _absorb_products(raw_products)
+            _refresh_hard_filtered()
+
     # Recommendation mode with only probe requests (no discovery strategies).
     if retrieval_plan.mode == "recommendation" and not discovery_requests:
         _refresh_hard_filtered()
@@ -1882,16 +1959,16 @@ async def _execute_compiled_product_retrieval(
                         numbered_lines = [
                             f"{position}. {line}"
                             for position, line in enumerate(
-                                _product_lines(final_products),
+                                _product_lines(final_products, compact=True),
                                 start=1,
                             )
                         ]
                         return AgentResult(
                             reply_text=(
                                 f"Não achei a combinação exata da foto, mas estes "
-                                f"{brand} parecem os mais próximos no catálogo:\n"
-                                + "\n".join(numbered_lines)
-                                + "\n\nÉ algum desses?"
+                                f"{brand} da mesma linha são os mais próximos:\n"
+                                + "\n".join(numbered_lines[:2])
+                                + "\n\nQuer ver algum desses, ou prefere outra cor/modelo?"
                             ),
                             intent="commerce",
                             handoff_required=False,

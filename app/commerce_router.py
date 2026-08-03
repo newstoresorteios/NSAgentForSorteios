@@ -106,11 +106,11 @@ def _price_label(value: Any) -> str | None:
     return str(value)
 
 
-def _payment_label(value: Any) -> str | None:
+def _payment_label(value: Any, *, compact: bool = False) -> str | None:
     if not value:
         return None
     if isinstance(value, str):
-        return value
+        return value[:120] if compact else value
     if not isinstance(value, dict):
         return None
     parts: list[str] = []
@@ -119,7 +119,8 @@ def _payment_label(value: Any) -> str | None:
         parts.append(f"Pix: {_price_label(pix['value'])}")
     installments = value.get("installments")
     if isinstance(installments, list):
-        for item in installments[:3]:
+        limit = 1 if compact else 3
+        for item in installments[:limit]:
             if not isinstance(item, dict):
                 continue
             count = item.get("count") or "?"
@@ -129,7 +130,12 @@ def _payment_label(value: Any) -> str | None:
     return ", ".join(parts) or None
 
 
-def _product_lines(products: list[dict[str, Any]], inventory: dict[str, Any] | None = None) -> list[str]:
+def _product_lines(
+    products: list[dict[str, Any]],
+    inventory: dict[str, Any] | None = None,
+    *,
+    compact: bool = False,
+) -> list[str]:
     lines: list[str] = []
     for product in products:
         name = product.get("name") or "Produto encontrado"
@@ -146,9 +152,12 @@ def _product_lines(products: list[dict[str, Any]], inventory: dict[str, Any] | N
         )
         if isinstance(product_url, str) and product_url.strip():
             parts.append(f"Link: {product_url.strip()}")
-        payment = _payment_label(product.get("payment_option_details")) or _payment_label(product.get("payment_option"))
-        if payment:
-            parts.append(f"Condi\u00e7\u00f5es comerciais: {payment}")
+        if not compact:
+            payment = _payment_label(
+                product.get("payment_option_details")
+            ) or _payment_label(product.get("payment_option"))
+            if payment:
+                parts.append(f"Condi\u00e7\u00f5es comerciais: {payment}")
         if inventory:
             if inventory.get("stock") is not None:
                 parts.append(f"Estoque: {inventory['stock']}")
@@ -172,7 +181,7 @@ def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
         prefix = "Sim, encontrei:" if action != "product_price" else "Encontrei:"
     numbered_lines = [
         f"{position}. {line}"
-        for position, line in enumerate(_product_lines(products), start=1)
+        for position, line in enumerate(_product_lines(products, compact=True), start=1)
     ]
     suffix = "\n\nÉ algum desses?" if action == "product_disambiguation" else ""
     return AgentResult(

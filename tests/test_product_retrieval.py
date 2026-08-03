@@ -234,10 +234,11 @@ async def test_color_preference_narrows_ambiguous_sealander_matches():
 
 
 @pytest.mark.asyncio
-async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
+async def test_color_mismatch_does_not_substitute_other_automatic_colors():
     from app.product_retrieval import (
         ProductRetrievalCompiler,
         exact_specific_product_matches,
+        infer_family_codes_from_candidates,
         match_specific_products,
         normalize_pt_catalog_query,
     )
@@ -263,11 +264,18 @@ async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
             "model": "Sealander",
             "name": "Relógio Christopher Ward C63 Sealander GMT Automático Verde 39 mm",
         },
+        {
+            "id": "auto-blue",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Azul 36 mm",
+        },
     ]
     assert exact_specific_product_matches(products, interpretation) == []
     resolution = await match_specific_products(products, interpretation)
     assert resolution.status == "none"
     assert resolution.products == ()
+    assert infer_family_codes_from_candidates(products, interpretation) == ("C63",)
 
     plan = ProductRetrievalCompiler.compile(interpretation)
     strategies = [request.strategy for request in plan.requests]
@@ -295,13 +303,65 @@ async def test_does_not_offer_gmt_siblings_when_customer_wants_pink_automatic():
         for request in plan.requests
         if request.name
     )
-    # Tier 1 must stay small — brand paging is Tier 2 only.
     probe_count = sum(
         1
         for request in plan.requests
         if request.strategy not in {"brand_candidates", "category_candidates"}
     )
     assert probe_count <= 6
+
+
+@pytest.mark.asyncio
+async def test_color_mismatch_soft_confirms_automatic_not_gmt():
+    from app.product_retrieval import soft_confirm_candidates
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        preferences={"color": "rosa"},
+    )
+    products = [
+        {
+            "id": "auto-blue",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Azul 36 mm",
+        },
+        {
+            "id": "8975",
+            "brand": "Christopher Ward",
+            "model": "Sealander",
+            "name": "Relógio Christopher Ward C63 Sealander GMT Automático Azul 39 mm",
+        },
+    ]
+    soft = soft_confirm_candidates(products, interpretation)
+    assert [product["id"] for product in soft] == ["auto-blue"]
+
+
+def test_compact_product_lines_omit_long_payment_dump():
+    from app.commerce_router import _product_lines
+
+    products = [
+        {
+            "id": "1",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Rosa",
+            "reference": "C63-36ADA4-S00P0-B0",
+            "current_price": 13004.99,
+            "payment_option_details": {
+                "pix": {"value": 13004.99},
+                "installments": [
+                    {"count": 12, "value": 1275, "interest": False},
+                    {"count": 21, "value": 829.84, "interest": True},
+                ],
+            },
+        }
+    ]
+    compact = _product_lines(products, compact=True)[0]
+    full = _product_lines(products, compact=False)[0]
+    assert "Preço:" in compact
+    assert "Condições comerciais" not in compact
+    assert "Condições comerciais" in full
 
 
 @pytest.mark.asyncio
@@ -389,35 +449,6 @@ async def test_score_rejects_single_token_accessory_match():
     ]
     hits = score_catalog_candidates(products, interpretation, require_color=False)
     assert [product["id"] for product in hits] == ["watch"]
-
-
-@pytest.mark.asyncio
-async def test_color_mismatch_soft_confirms_automatic_not_gmt():
-    from app.product_retrieval import match_specific_products
-
-    interpretation = _interpretation(
-        goal="find",
-        brand="Christopher Ward",
-        model="Sealander Automatic",
-        preferences={"color": "rosa"},
-    )
-    products = [
-        {
-            "id": "auto-blue",
-            "brand": "Christopher Ward",
-            "model": "Sealander",
-            "name": "Relógio Christopher Ward C63 Sealander Automático Azul 36 mm",
-        },
-        {
-            "id": "8975",
-            "brand": "Christopher Ward",
-            "model": "Sealander",
-            "name": "Relógio Christopher Ward C63 Sealander GMT Automático Azul 39 mm",
-        },
-    ]
-    resolution = await match_specific_products(products, interpretation)
-    assert resolution.status == "ambiguous"
-    assert [product["id"] for product in resolution.products] == ["auto-blue"]
 
 
 def test_exact_progress_matches_requires_requested_color():

@@ -1065,6 +1065,32 @@ def _brand_compatible_candidates(
     return compatible
 
 
+def infer_family_codes_from_candidates(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+) -> tuple[str, ...]:
+    """Pull shared family codes (C63, C60…) from sibling titles already in the pool."""
+    color_tokens = preference_color_tokens(interpretation)
+    identity_tokens = identity_core_tokens(
+        interpretation.subject.model,
+        color_tokens=color_tokens,
+    )
+    if not identity_tokens:
+        return ()
+    codes: list[str] = []
+    for product in products:
+        text = _product_text(product)
+        if not all(token in text for token in identity_tokens):
+            continue
+        name = str(product.get("name") or "")
+        for code in extract_model_codes(name):
+            codes.append(code)
+        for match in re.findall(r"\b[Cc]\d{2}\b", name):
+            codes.append(match.upper())
+    # Prefer codes that appear before the identity token in titles.
+    return tuple(dict.fromkeys(codes))[:3]
+
+
 def soft_confirm_candidates(
     products: list[dict[str, Any]],
     interpretation: SalesInterpretation,
@@ -1217,28 +1243,21 @@ async def match_specific_products(
             match_source="exact",
         )
 
-    # Color asked but only identity (other colors) available — soft confirm.
+    # Color asked but only other colors/identity available — do NOT substitute
+    # Kingfisher/Dagger for Rosa. Caller may soft-confirm explicitly later.
     if color_tokens:
-        identity_only = score_catalog_candidates(
-            compatible,
-            interpretation,
-            require_color=False,
-            allow_movement_mismatch=False,
-            limit=RERANK_SELECTION_LIMIT,
+        print("[sales.product.match]", {
+            "candidate_count": len(compatible),
+            "selected_count": 0,
+            "invalid_ids_count": 0,
+            "match_source": "exact",
+            "reason": "color_mismatch",
+        })
+        return SpecificProductResolution(
+            status="none",
+            products=(),
+            match_source="exact",
         )
-        if identity_only:
-            print("[sales.product.match]", {
-                "candidate_count": len(compatible),
-                "selected_count": len(identity_only),
-                "invalid_ids_count": 0,
-                "match_source": "exact",
-                "reason": "color_mismatch_soft_confirm",
-            })
-            return SpecificProductResolution(
-                status="ambiguous",
-                products=tuple(identity_only),
-                match_source="exact",
-            )
 
     exact_matches = exact_specific_product_matches(compatible, interpretation)
     if exact_matches and not color_tokens:

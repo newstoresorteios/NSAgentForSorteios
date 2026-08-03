@@ -276,11 +276,11 @@ def _visual_candidates_result(
 
     numbered_lines = [
         f"{position}. {line}"
-        for position, line in enumerate(_product_lines(products), start=1)
+        for position, line in enumerate(_product_lines(products, compact=True), start=1)
     ]
     reply = (
         "Pela foto, estes parecem os mais próximos no catálogo:\n"
-        + "\n".join(numbered_lines)
+        + "\n".join(numbered_lines[:2])
         + "\n\nÉ algum desses?"
     )
     return AgentResult(
@@ -471,15 +471,19 @@ async def handle_image_product_search(
         if isinstance(products, list) and products:
             from .commerce_router import _product_lines
 
+            shown = products[:2]
             numbered_lines = [
                 f"{position}. {line}"
-                for position, line in enumerate(_product_lines(products), start=1)
+                for position, line in enumerate(
+                    _product_lines(shown, compact=True),
+                    start=1,
+                )
             ]
             tray_result.reply_text = (
-                f"Pela foto, identifiquei {label or 'esse modelo'}. "
-                "Encontrei no catálogo:\n"
+                f"Pela foto, identifiquei {label or 'esse modelo'}, "
+                "mas não confirmei a combinação exata. Opções próximas:\n"
                 + "\n".join(numbered_lines)
-                + "\n\nÉ esse da foto?"
+                + "\n\nQuer ver alguma dessas?"
             )
         else:
             color_hint = (identified.color or "").strip()
@@ -496,12 +500,32 @@ async def handle_image_product_search(
         # Exact/ambiguous catalog hit after Vision — confirm with the customer.
         from .commerce_router import _product_lines
 
-        products = tray_result.commercial_data["products"]
+        products = tray_result.commercial_data["products"][:2]
+        match_status = tray_result.commercial_data.get("match_status")
+        color_tokens = (
+            (identified.color or "").strip().casefold()
+        )
+        color_matched = True
+        if color_tokens:
+            color_matched = any(
+                color_tokens.split()[0] in str(product.get("name") or "").casefold()
+                for product in products
+            )
         numbered_lines = [
             f"{position}. {line}"
-            for position, line in enumerate(_product_lines(products), start=1)
+            for position, line in enumerate(
+                _product_lines(products, compact=True),
+                start=1,
+            )
         ]
-        if tray_result.safety_reason is None or not tray_result.reply_text.startswith(
+        if match_status == "ambiguous" or not color_matched:
+            tray_result.reply_text = (
+                f"Pela foto, parece {label or 'este modelo'}. "
+                "Encontrei estas opções próximas:\n"
+                + "\n".join(numbered_lines)
+                + "\n\nÉ algum desses?"
+            )
+        elif tray_result.safety_reason is None or not tray_result.reply_text.startswith(
             "Pela foto"
         ):
             tray_result.reply_text = (
