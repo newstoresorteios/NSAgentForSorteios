@@ -126,9 +126,24 @@ async def test_search_products_merges_query_with_explicit_brand():
         {"query": "C63 Sealander", "brand": "Christopher Ward", "limit": 5},
         client,
     )
-    # Digit+letter queries probe reference then name; brand must stay attached.
+    # Multi-word queries search by name; brand must stay attached.
     assert client.calls[0][1]["brand"] == "Christopher Ward"
-    assert "reference" in client.calls[0][1] or "name" in client.calls[0][1]
+    assert client.calls[0][1]["name"] == "C63 Sealander"
+
+
+@pytest.mark.asyncio
+async def test_search_products_compact_model_code_prefers_name():
+    client = FakeTray()
+    await execute_tool(
+        "search_products",
+        {"query": "PH2000M", "brand": "Certina", "limit": 5},
+        client,
+    )
+    assert client.calls[0][1] == {
+        "name": "PH2000M",
+        "brand": "Certina",
+        "limit": 5,
+    }
 
 
 @pytest.mark.asyncio

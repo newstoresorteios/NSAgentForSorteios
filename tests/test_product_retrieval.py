@@ -93,7 +93,11 @@ def test_specific_query_keeps_brand_and_model_separate_without_combined_name():
 
 
 def test_long_model_title_matches_short_tray_model_field():
-    from app.product_retrieval import exact_specific_product_matches, significant_model_tokens
+    from app.product_retrieval import (
+        exact_specific_product_matches,
+        required_model_tokens,
+        significant_model_tokens,
+    )
 
     interpretation = _interpretation(
         goal="find",
@@ -124,14 +128,60 @@ def test_long_model_title_matches_short_tray_model_field():
         "sealander",
         "rosa",
     )
+    assert required_model_tokens(interpretation.subject.model) == (
+        "c63",
+        "sealander",
+    )
     matches = exact_specific_product_matches(products, interpretation)
     assert [product["id"] for product in matches] == ["9991"]
 
     plan = ProductRetrievalCompiler.compile(interpretation)
     strategies = [request.strategy for request in plan.requests]
     assert "exact_query_full" in strategies
-    assert "exact_query_core" in strategies
-    assert "exact_query_short" in strategies
+    assert "exact_catalog_title" in strategies
+    assert "exact_model_code" in strategies
+
+
+def test_certina_title_without_relogio_prefix_still_matches():
+    from app.product_retrieval import (
+        exact_specific_product_matches,
+        extract_model_codes,
+        required_model_tokens,
+    )
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Certina",
+        model="DS Super PH2000M Automático Branco Titânio",
+    )
+    products = [
+        {
+            "id": "certina-1",
+            "brand": "Certina",
+            "model": "DS Super PH2000M",
+            "name": (
+                "Relógio Certina DS Super PH2000M Automático Branco Titânio "
+                "C050.607.44.011.02"
+            ),
+            "reference": "C050.607.44.011.02",
+        }
+    ]
+
+    assert "PH2000M" in extract_model_codes(interpretation.subject.model)
+    assert required_model_tokens(interpretation.subject.model) == (
+        "ds",
+        "super",
+        "ph2000m",
+    )
+    matches = exact_specific_product_matches(products, interpretation)
+    assert [product["id"] for product in matches] == ["certina-1"]
+
+    plan = ProductRetrievalCompiler.compile(interpretation)
+    names = [request.name for request in plan.requests if request.name]
+    assert any(
+        name and name.startswith("Relógio Certina") for name in names
+    )
+    assert "PH2000M" in names
 
 
 def test_budget_is_applied_after_retrieval_using_effective_price():

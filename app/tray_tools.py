@@ -239,6 +239,16 @@ def _reduce_products(payload: Any, limit: int = 5) -> dict[str, Any]:
     return result
 
 
+def _looks_like_reference_code(value: str) -> bool:
+    """Compact Tray refs like C050.607.44.011.02 or C63-36ADA4-S00P0-B0."""
+    text = value.strip()
+    if " " in text:
+        return False
+    if not re.search(r"\d", text) or not re.search(r"[A-Za-z]", text):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9]+(?:[./_-][A-Za-z0-9]+)+", text))
+
+
 def _query_filters(query: str) -> list[dict[str, str]]:
     value = query.strip()
     ean_match = re.fullmatch(r"ean\s+(\d{8,14})", value, flags=re.IGNORECASE)
@@ -246,8 +256,11 @@ def _query_filters(query: str) -> list[dict[str, str]]:
         return [{"ean": ean_match.group(1)}]
     if re.fullmatch(r"\d{8,14}", value):
         return [{"ean": value}, {"reference": value}]
-    if re.search(r"[./_-]", value) or (re.search(r"\d", value) and re.search(r"[A-Za-z]", value)):
+    if _looks_like_reference_code(value):
         return [{"reference": value}, {"name": value}]
+    # Compact model codes (PH2000M, C63): try name first, then reference.
+    if " " not in value and re.search(r"\d", value) and re.search(r"[A-Za-z]", value):
+        return [{"name": value}, {"reference": value}]
     return [{"name": value}]
 
 

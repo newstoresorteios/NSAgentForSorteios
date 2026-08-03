@@ -127,6 +127,33 @@ _MODEL_STOPWORDS = frozenset(
         "and",
     }
 )
+# Color/material adjectives are useful but must not block identity matches.
+_OPTIONAL_MODEL_TOKENS = frozenset(
+    {
+        "branco",
+        "preto",
+        "rosa",
+        "azul",
+        "verde",
+        "dourado",
+        "prata",
+        "cinza",
+        "vermelho",
+        "amarelo",
+        "laranja",
+        "bege",
+        "titanio",
+        "aco",
+        "ouro",
+        "couro",
+        "borracha",
+        "carbon",
+        "carbono",
+        "ceramica",
+        "nylon",
+        "pulseira",
+    }
+)
 _ACCESSORY_NAME_TOKENS = frozenset(
     {
         "strap",
@@ -144,8 +171,16 @@ _ACCESSORY_NAME_TOKENS = frozenset(
     }
 )
 _REFERENCE_CODE_RE = re.compile(
-    r"\b([A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,})\b",
+    r"\b("
+    r"[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,}"
+    r"|"
+    r"[A-Z0-9]{2,}(?:\.[A-Z0-9]{2,}){2,}"
+    r")\b",
     re.IGNORECASE,
+)
+# Alphanumeric model codes with digits: PH2000M, C63, SUB300, etc.
+_MODEL_CODE_RE = re.compile(
+    r"\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{3,}\b"
 )
 
 
@@ -162,9 +197,24 @@ def significant_model_tokens(model: str | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(fallback))
 
 
+def required_model_tokens(model: str | None) -> tuple[str, ...]:
+    """Identity tokens for matching; color/material are optional when possible."""
+    tokens = significant_model_tokens(model)
+    identity = tuple(
+        token for token in tokens if token not in _OPTIONAL_MODEL_TOKENS
+    )
+    if len(identity) >= 2 or any(re.search(r"\d", token) for token in identity):
+        return identity
+    return tokens
+
+
 def extract_reference_code(text: str | None) -> str | None:
     match = _REFERENCE_CODE_RE.search(str(text or ""))
     return match.group(1).strip() if match else None
+
+
+def extract_model_codes(text: str | None) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(_MODEL_CODE_RE.findall(str(text or ""))))
 
 
 def _product_text(product: dict[str, Any]) -> str:
@@ -305,16 +355,50 @@ class ProductRetrievalCompiler:
                     )
                 )
         elif subject.model:
-            core_tokens = significant_model_tokens(subject.model)
+            core_tokens = required_model_tokens(subject.model)
             core_query = " ".join(core_tokens[:4]).strip()
             full_query = " ".join(
                 part for part in (subject.brand, subject.model) if part
             ).strip()
+            # Tray catalog titles usually start with "Relógio {Brand} …".
+            catalog_title = " ".join(
+                part
+                for part in ("Relógio", subject.brand, subject.model)
+                if part
+            ).strip()
+            model_codes = extract_model_codes(subject.model)
             requests.append(ProductRetrievalRequest(
                 strategy="exact_model_with_brand" if subject.brand else "exact_model",
                 name=subject.model,
                 brand=subject.brand,
             ))
+            if catalog_title:
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy="exact_catalog_title",
+                        name=catalog_title,
+                    )
+                )
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy="exact_catalog_title_query",
+                        query=catalog_title,
+                    )
+                )
+            for code in model_codes[:3]:
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy="exact_model_code",
+                        name=code,
+                        brand=subject.brand,
+                    )
+                )
+                requests.append(
+                    ProductRetrievalRequest(
+                        strategy="exact_model_code_broad",
+                        name=code,
+                    )
+                )
             if full_query:
                 requests.append(
                     ProductRetrievalRequest(
@@ -590,7 +674,7 @@ def hard_filter_products(
         if expected_ean and _fold(product.get("ean")) != expected_ean:
             continue
         if mode == "exact" and expected_model:
-            model_tokens = list(significant_model_tokens(subject.model))
+            model_tokens = list(required_model_tokens(subject.model))
             if model_tokens and not all(token in text for token in model_tokens):
                 continue
         price = effective_price(product)
@@ -731,7 +815,8 @@ def exact_specific_product_matches(
                 continue
             # Tray often stores short model ("Sealander") while the customer
             # asks with style/color words ("C63 Sealander Automático Rosa").
-            required = significant_model_tokens(subject.model)
+            # Color/material tokens are optional when identity tokens suffice.
+            required = required_model_tokens(subject.model)
             text = _product_text(product)
             if not required or not all(token in text for token in required):
                 continue
