@@ -1,6 +1,6 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState
+from app.commerce_context import CommerceConversationState, CommerceProductReference
 from app.models import AgentResult, IncomingMessage
 from app.response_critique import (
     CritiqueVerdict,
@@ -29,6 +29,20 @@ def test_fill_api_arguments_uses_order_seed():
         seeds,
     )
     assert args == {"order_id": "25400"}
+
+
+def test_seed_args_from_active_product_reference():
+    seeds = _seed_args_from_context(
+        state=CommerceConversationState(
+            active_product=CommerceProductReference(
+                product_id="9991",
+                name="Relógio Christopher Ward C63 Sealander Automático Rosa",
+            )
+        ),
+        result=AgentResult(reply_text="x", intent="commerce"),
+    )
+    assert seeds["product_id"] == "9991"
+    assert "Sealander" in (seeds["query"] or "")
 
 
 @pytest.mark.asyncio

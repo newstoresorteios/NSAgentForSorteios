@@ -86,7 +86,16 @@ def _seed_args_from_context(
         or (state.order_session_id if state else None)
     )
     customer = state.checkout_draft.customer if state else None
-    product = state.active_product if state and state.active_product else {}
+    product = state.active_product if state and state.active_product else None
+    if isinstance(product, dict):
+        product_id = product.get("product_id") or product.get("id")
+        product_name = product.get("name")
+    elif product is not None:
+        product_id = getattr(product, "product_id", None) or getattr(product, "id", None)
+        product_name = getattr(product, "name", None)
+    else:
+        product_id = None
+        product_name = None
     return {
         "order_id": str(order_id).strip() if order_id else None,
         "session_id": str(session_id).strip() if session_id else None,
@@ -97,12 +106,8 @@ def _seed_args_from_context(
         ),
         "cpf": (customer.cpf if customer else None),
         "email": (customer.email if customer else None),
-        "product_id": (
-            commerce.get("product_id")
-            or product.get("product_id")
-            or product.get("id")
-        ),
-        "query": commerce.get("query") or product.get("name"),
+        "product_id": commerce.get("product_id") or product_id,
+        "query": commerce.get("query") or product_name,
     }
 
 
@@ -422,6 +427,42 @@ async def apply_response_critique_loop(
     if critique_mode == "off":
         return result, report
 
+    try:
+        return await _run_response_critique_loop(
+            incoming=incoming,
+            result=result,
+            recent_turns=recent_turns,
+            commerce_state=commerce_state,
+            critique_mode=critique_mode,
+            retries=retries,
+            report=report,
+            execute=execute,
+        )
+    except Exception as exc:
+        # Critique must never take down the WhatsApp reply path.
+        print("[agent.critique.error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
+        result.response_metadata["response_critique"] = {
+            **report.model_dump(mode="json"),
+            "error_type": type(exc).__name__,
+            "skipped": True,
+        }
+        return result, report
+
+
+async def _run_response_critique_loop(
+    *,
+    incoming: IncomingMessage,
+    result: AgentResult,
+    recent_turns: list[dict[str, Any]] | None,
+    commerce_state: CommerceConversationState | None,
+    critique_mode: Literal["off", "shadow", "enforce"],
+    retries: int,
+    report: CritiqueLoopReport,
+    execute: ToolExecutor | None,
+) -> tuple[AgentResult, CritiqueLoopReport]:
     executor = execute or execute_tool
     current = result
     seeds = _seed_args_from_context(state=commerce_state, result=current)
