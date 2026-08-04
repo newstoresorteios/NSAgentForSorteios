@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS public.ai_user_preferences (
   id bigserial PRIMARY KEY,
-  user_id bigint NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  -- Soft reference to sorteio public.users(id); no FK (cross-database).
+  user_id bigint NOT NULL,
   preferred_name text NULL,
   ask_preferred_name boolean NOT NULL DEFAULT false,
   last_preferred_name_prompt_at timestamptz NULL,

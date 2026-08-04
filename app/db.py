@@ -67,6 +67,13 @@ def ensure_tables() -> None:
         return
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Dedicated agent DB must not require sorteio public.users.
+            cur.execute(
+                """
+                ALTER TABLE IF EXISTS public.ai_user_preferences
+                  DROP CONSTRAINT IF EXISTS ai_user_preferences_user_id_fkey
+                """
+            )
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS public.ai_inbound_messages (

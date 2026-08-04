@@ -151,56 +151,77 @@ def get_user_preferences(user_id: int) -> dict[str, Any]:
 
 
 def save_preferred_name(user_id: int, preferred_name: str) -> None:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO public.ai_user_preferences
-                  (user_id, preferred_name, ask_preferred_name, updated_at)
-                VALUES
-                  (%(user_id)s, %(preferred_name)s, false, now())
-                ON CONFLICT (user_id) DO UPDATE SET
-                  preferred_name = EXCLUDED.preferred_name,
-                  ask_preferred_name = false,
-                  updated_at = now()
-                """,
-                {"user_id": user_id, "preferred_name": preferred_name},
-            )
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.ai_user_preferences
+                      (user_id, preferred_name, ask_preferred_name, updated_at)
+                    VALUES
+                      (%(user_id)s, %(preferred_name)s, false, now())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                      preferred_name = EXCLUDED.preferred_name,
+                      ask_preferred_name = false,
+                      updated_at = now()
+                    """,
+                    {"user_id": user_id, "preferred_name": preferred_name},
+                )
+    except Exception as exc:
+        print("[user_preferences.save_preferred_name.error]", {
+            "user_id": user_id,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
 
 
 def mark_preferred_name_prompted(user_id: int) -> None:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO public.ai_user_preferences
-                  (user_id, ask_preferred_name, last_preferred_name_prompt_at, updated_at)
-                VALUES
-                  (%(user_id)s, false, now(), now())
-                ON CONFLICT (user_id) DO UPDATE SET
-                  ask_preferred_name = false,
-                  last_preferred_name_prompt_at = now(),
-                  updated_at = now()
-                """,
-                {"user_id": user_id},
-            )
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.ai_user_preferences
+                      (user_id, ask_preferred_name, last_preferred_name_prompt_at, updated_at)
+                    VALUES
+                      (%(user_id)s, false, now(), now())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                      ask_preferred_name = false,
+                      last_preferred_name_prompt_at = now(),
+                      updated_at = now()
+                    """,
+                    {"user_id": user_id},
+                )
+    except Exception as exc:
+        print("[user_preferences.mark_preferred_name_prompted.error]", {
+            "user_id": user_id,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
 
 
 def save_speaking_style(user_id: int, speaking_style: str) -> None:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO public.ai_user_preferences
-                  (user_id, speaking_style, updated_at)
-                VALUES
-                  (%(user_id)s, %(speaking_style)s, now())
-                ON CONFLICT (user_id) DO UPDATE SET
-                  speaking_style = EXCLUDED.speaking_style,
-                  updated_at = now()
-                """,
-                {"user_id": user_id, "speaking_style": speaking_style[:40]},
-            )
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.ai_user_preferences
+                      (user_id, speaking_style, updated_at)
+                    VALUES
+                      (%(user_id)s, %(speaking_style)s, now())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                      speaking_style = EXCLUDED.speaking_style,
+                      updated_at = now()
+                    """,
+                    {"user_id": user_id, "speaking_style": speaking_style[:40]},
+                )
+    except Exception as exc:
+        print("[user_preferences.save_speaking_style.error]", {
+            "user_id": user_id,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
 
 
 def append_memory_note(user_id: int, note: str) -> None:
@@ -213,20 +234,27 @@ def append_memory_note(user_id: int, note: str) -> None:
     notes.append(cleaned)
     notes = notes[-MAX_MEMORY_NOTES:]
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO public.ai_user_preferences
-                  (user_id, memory_notes, updated_at)
-                VALUES
-                  (%(user_id)s, %(memory_notes)s::jsonb, now())
-                ON CONFLICT (user_id) DO UPDATE SET
-                  memory_notes = EXCLUDED.memory_notes,
-                  updated_at = now()
-                """,
-                {"user_id": user_id, "memory_notes": json.dumps(notes, ensure_ascii=False)},
-            )
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.ai_user_preferences
+                      (user_id, memory_notes, updated_at)
+                    VALUES
+                      (%(user_id)s, %(memory_notes)s::jsonb, now())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                      memory_notes = EXCLUDED.memory_notes,
+                      updated_at = now()
+                    """,
+                    {"user_id": user_id, "memory_notes": json.dumps(notes, ensure_ascii=False)},
+                )
+    except Exception as exc:
+        print("[user_preferences.append_memory_note.error]", {
+            "user_id": user_id,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
 
 
 def append_recent_topic(user_id: int, topic: str) -> None:
@@ -239,20 +267,27 @@ def append_recent_topic(user_id: int, topic: str) -> None:
     topics.append(cleaned)
     topics = topics[-MAX_RECENT_TOPICS:]
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO public.ai_user_preferences
-                  (user_id, recent_topics, updated_at)
-                VALUES
-                  (%(user_id)s, %(recent_topics)s::jsonb, now())
-                ON CONFLICT (user_id) DO UPDATE SET
-                  recent_topics = EXCLUDED.recent_topics,
-                  updated_at = now()
-                """,
-                {"user_id": user_id, "recent_topics": json.dumps(topics, ensure_ascii=False)},
-            )
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.ai_user_preferences
+                      (user_id, recent_topics, updated_at)
+                    VALUES
+                      (%(user_id)s, %(recent_topics)s::jsonb, now())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                      recent_topics = EXCLUDED.recent_topics,
+                      updated_at = now()
+                    """,
+                    {"user_id": user_id, "recent_topics": json.dumps(topics, ensure_ascii=False)},
+                )
+    except Exception as exc:
+        print("[user_preferences.append_recent_topic.error]", {
+            "user_id": user_id,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
 
 
 def ensure_display_name_saved(user_id: int, account_name: str | None) -> None:
