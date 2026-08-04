@@ -86,9 +86,9 @@ class Settings(BaseSettings):
         default=True,
         alias="OPENAI_CHAT_COMPLETIONS_PRIMARY_ALLOWED",
     )
-    # Persona / memory rollout (disabled until later phases).
+    # Phase 5: DB persona for tone/identity; falls back to in-code contract.
     agent_db_persona_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="AGENT_DB_PERSONA_ENABLED",
     )
     agent_persona_tenant_id: str = Field(
@@ -135,8 +135,9 @@ class Settings(BaseSettings):
         ge=200,
         le=20000,
     )
+    # Phase 7: audit proposals on; never auto-apply unless allowlist is set.
     agent_memory_proposals_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="AGENT_MEMORY_PROPOSALS_ENABLED",
     )
     agent_memory_auto_apply_enabled: bool = Field(
@@ -162,7 +163,7 @@ class Settings(BaseSettings):
     )
     # Inject active contact memories into system instructions (even without DB persona).
     agent_contact_memory_in_prompt_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="AGENT_CONTACT_MEMORY_IN_PROMPT_ENABLED",
     )
     agent_instruction_extension_proposals_enabled: bool = Field(

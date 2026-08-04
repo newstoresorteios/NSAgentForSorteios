@@ -17,6 +17,9 @@ def _enable_persona(monkeypatch, enabled: bool = True):
             agent_prompt_compilation_audit_enabled=True,
             agent_debug_store_compiled_prompt=False,
             agent_max_recent_turns=8,
+            agent_legacy_prompt_compat_enabled=False,
+            agent_contact_memory_in_prompt_enabled=False,
+            agent_memory_auto_apply_enabled=False,
             openai_api_mode="chat_completions",
             agent_persona_tenant_id="newstore",
             agent_persona_key="newstore_commercial",
@@ -158,6 +161,46 @@ def test_current_message_not_duplicated_in_input_items(monkeypatch):
         if item.get("role") == "user"
     ]
     assert user_contents.count("mensagem atual") == 1
+
+
+def test_db_persona_keeps_operational_contract_without_duplicating_persona(monkeypatch):
+    InMemoryPersonaStore().install(monkeypatch)
+    _enable_persona(monkeypatch, enabled=True)
+    created = repo.create_persona_version(
+        instructions="TOM_E_IDENTIDADE_NEWSTORE\n",
+        name="NS",
+    )
+    repo.activate_persona_version(created.id)
+
+    operational = "CONTRATO_OPERACIONAL_SALES_E_TOOLS_XYZ"
+    compiled = compiler.compile_agent_prompt(
+        incoming=IncomingMessage(channel="whatsapp", text="oi"),
+        fallback_instructions=operational,
+        extra_system_blocks=[
+            f"<sales_responder_contract>\n{operational}\n</sales_responder_contract>"
+        ],
+        audit=False,
+    )
+    assert compiled.used_db_persona is True
+    assert "TOM_E_IDENTIDADE_NEWSTORE" in compiled.instructions
+    assert "<operational_contract>" in compiled.instructions
+    assert operational in compiled.instructions
+    assert compiler.count_contract_occurrences(compiled.instructions, operational) == 1
+    assert "<sales_responder_contract>" not in compiled.instructions
+
+
+def test_persona_missing_falls_back_to_code_contract(monkeypatch):
+    InMemoryPersonaStore().install(monkeypatch)
+    _enable_persona(monkeypatch, enabled=True)
+    compiled = compiler.compile_agent_prompt(
+        incoming=IncomingMessage(channel="whatsapp", text="oi"),
+        fallback_instructions="FALLBACK_CODE_CONTRACT",
+        audit=False,
+    )
+    assert compiled.used_db_persona is False
+    assert compiled.fallback_reason == "persona_active_missing"
+    assert "FALLBACK_CODE_CONTRACT" in compiled.instructions
+    assert "<operational_contract>" not in compiled.instructions
 
 
 def test_tenant_isolation(monkeypatch):

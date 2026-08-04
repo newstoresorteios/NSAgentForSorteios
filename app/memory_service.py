@@ -346,52 +346,69 @@ def process_agent_memory_proposals(
         and envelope.conversation_summary_delta is not None
         and conversation_key
     ):
+        from .conversation_summary_policy import should_apply_summary_delta
+        from .conversation_summary_repository import get_conversation_summary
+
         result.proposals_seen += 1
         delta = envelope.conversation_summary_delta
-        key = _idempotency_key(
+        existing_summary = get_conversation_summary(
             tenant_id=tenant_id,
             conversation_key=conversation_key,
-            inbound_id=inbound_id,
-            proposal_type="summary_delta",
-            normalized_key="summary",
-            normalized_value=delta.model_dump(mode="json"),
         )
-        try:
-            proposal_id = insert_memory_proposal(
+        if not should_apply_summary_delta(delta, existing=existing_summary):
+            print("[memory.service.summary_skipped]", {
+                "reason": "criteria_not_met",
+                "conversation_key_present": True,
+            })
+        else:
+            key = _idempotency_key(
                 tenant_id=tenant_id,
                 conversation_key=conversation_key,
-                sender_key=sender_key,
                 inbound_id=inbound_id,
-                response_id=response_id,
                 proposal_type="summary_delta",
-                target_scope="conversation",
-                proposal_key="summary",
-                proposed_value=delta.model_dump(mode="json"),
-                importance=0.5,
-                confidence=0.5,
-                reason_code="conversation_commitment",
-                status="pending",
-                idempotency_key=key,
+                normalized_key="summary",
+                normalized_value=delta.model_dump(mode="json"),
             )
-            if proposal_id is not None:
-                result.proposal_ids.append(proposal_id)
-                result.proposals_persisted += 1
-                apply_summary_delta(
+            try:
+                proposal_id = insert_memory_proposal(
                     tenant_id=tenant_id,
                     conversation_key=conversation_key,
-                    delta=delta,
+                    sender_key=sender_key,
                     inbound_id=inbound_id,
                     response_id=response_id,
-                    max_chars=int(
-                        getattr(settings, "agent_max_conversation_summary_chars", 2500)
-                    ),
+                    proposal_type="summary_delta",
+                    target_scope="conversation",
+                    proposal_key="summary",
+                    proposed_value=delta.model_dump(mode="json"),
+                    importance=0.5,
+                    confidence=0.5,
+                    reason_code="conversation_commitment",
+                    status="pending",
+                    idempotency_key=key,
                 )
-                mark_proposal_applied(proposal_id)
-                result.proposals_applied += 1
-        except Exception as exc:
-            print("[memory.service.summary_error]", {
-                "error_type": type(exc).__name__,
-                "error": str(exc)[:160],
-            })
+                if proposal_id is not None:
+                    result.proposal_ids.append(proposal_id)
+                    result.proposals_persisted += 1
+                    apply_summary_delta(
+                        tenant_id=tenant_id,
+                        conversation_key=conversation_key,
+                        delta=delta,
+                        inbound_id=inbound_id,
+                        response_id=response_id,
+                        max_chars=int(
+                            getattr(
+                                settings,
+                                "agent_max_conversation_summary_chars",
+                                2500,
+                            )
+                        ),
+                    )
+                    mark_proposal_applied(proposal_id)
+                    result.proposals_applied += 1
+            except Exception as exc:
+                print("[memory.service.summary_error]", {
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:160],
+                })
 
     return result

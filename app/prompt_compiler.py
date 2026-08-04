@@ -143,7 +143,13 @@ def compile_agent_prompt(
     extensions_block = "<approved_instruction_extensions>\n</approved_instruction_extensions>"
     memory_block = "<customer_memory>\n</customer_memory>"
 
-    if bool(getattr(settings, "agent_db_persona_enabled", False)):
+    load_extensions = bool(getattr(settings, "agent_db_persona_enabled", False))
+    load_contact_memory = bool(
+        getattr(settings, "agent_db_persona_enabled", False)
+        or getattr(settings, "agent_contact_memory_in_prompt_enabled", False)
+        or getattr(settings, "agent_memory_auto_apply_enabled", False)
+    )
+    if load_extensions:
         try:
             from .instruction_extension_repository import (
                 format_approved_extensions_block,
@@ -167,30 +173,30 @@ def compile_agent_prompt(
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:160],
             })
-        if sender_key:
-            try:
-                from .contact_memory_repository import (
-                    format_customer_memory_block,
-                    select_relevant_memories,
-                )
+    if load_contact_memory and sender_key:
+        try:
+            from .contact_memory_repository import (
+                format_customer_memory_block,
+                select_relevant_memories,
+            )
 
-                domain = None
-                if conversation_state is not None:
-                    domain = getattr(conversation_state, "active_domain", None)
-                memories = select_relevant_memories(
-                    tenant_id=tenant_id,
-                    sender_key=str(sender_key),
-                    domain=domain,
-                    limit=int(getattr(settings, "agent_max_active_contact_memories", 20)),
-                    max_chars=int(getattr(settings, "agent_max_contact_memory_chars", 3000)),
-                )
-                memory_ids = [int(item.id) for item in memories if item.id is not None]
-                memory_block = format_customer_memory_block(memories)
-            except Exception as exc:
-                print("[prompt.compiler.memory.error]", {
-                    "error_type": type(exc).__name__,
-                    "error": str(exc)[:160],
-                })
+            domain = None
+            if conversation_state is not None:
+                domain = getattr(conversation_state, "active_domain", None)
+            memories = select_relevant_memories(
+                tenant_id=tenant_id,
+                sender_key=str(sender_key),
+                domain=domain,
+                limit=int(getattr(settings, "agent_max_active_contact_memories", 20)),
+                max_chars=int(getattr(settings, "agent_max_contact_memory_chars", 3000)),
+            )
+            memory_ids = [int(item.id) for item in memories if item.id is not None]
+            memory_block = format_customer_memory_block(memories)
+        except Exception as exc:
+            print("[prompt.compiler.memory.error]", {
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:160],
+            })
 
     blocks = [
         FIXED_SAFETY_POLICY.strip(),
@@ -199,6 +205,18 @@ def compile_agent_prompt(
         channel_overlay_block(channel),
         memory_block,
     ]
+    # Phase 5: DB persona owns tone/identity. Keep code sales/tool contract as a
+    # separate operational layer — never as a second copy of the same persona body.
+    if used_db_persona:
+        operational = (fallback_instructions or "").strip()
+        if operational and not _is_redundant_contract_block(
+            operational, persona_text
+        ):
+            blocks.append(
+                "<operational_contract>\n"
+                f"{operational}\n"
+                "</operational_contract>"
+            )
     if extra_system_blocks:
         compat = bool(getattr(settings, "agent_legacy_prompt_compat_enabled", False))
         for block in extra_system_blocks:
@@ -209,6 +227,13 @@ def compile_agent_prompt(
             # Compat flag restores the old duplicate wrap for rollback only.
             if (not compat) and _is_redundant_contract_block(cleaned, persona_text):
                 print("[prompt.compiler] skipped_redundant_extra_block", {
+                    "chars": len(cleaned),
+                })
+                continue
+            if (not compat) and used_db_persona and _is_redundant_contract_block(
+                cleaned, (fallback_instructions or "")
+            ):
+                print("[prompt.compiler] skipped_redundant_operational_extra", {
                     "chars": len(cleaned),
                 })
                 continue

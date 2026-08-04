@@ -109,6 +109,9 @@ def create_persona_version(
     status: str = "draft",
     metadata: dict[str, Any] | None = None,
 ) -> PersonaVersion:
+    from .persona_policy import assert_persona_instructions_safe
+
+    assert_persona_instructions_safe(instructions)
     instructions_hash = hash_instructions(instructions)
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -148,6 +151,13 @@ def activate_persona_version(
     tenant_id: str = DEFAULT_TENANT_ID,
     activated_by: str | None = None,
 ) -> PersonaVersion:
+    from .persona_policy import assert_persona_instructions_safe
+
+    existing = get_persona_version(persona_id, tenant_id=tenant_id)
+    if existing is None:
+        raise ValueError("persona_not_found")
+    assert_persona_instructions_safe(existing.instructions)
+
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
         with conn.cursor() as cur:

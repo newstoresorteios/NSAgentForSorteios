@@ -26,3 +26,11 @@ def test_llm_budget_defaults_enforce_three_calls():
     assert Settings.model_fields["agent_critique_max_retries"].default == 1
     assert Settings.model_fields["agent_quality_judge_mode"].default == "shadow"
     assert Settings.model_fields["agent_quality_judge_risk_threshold"].default == 70
+
+
+def test_persona_and_memory_rollout_defaults():
+    assert Settings.model_fields["agent_db_persona_enabled"].default is True
+    assert Settings.model_fields["agent_memory_proposals_enabled"].default is True
+    assert Settings.model_fields["agent_memory_auto_apply_enabled"].default is False
+    assert Settings.model_fields["agent_contact_memory_in_prompt_enabled"].default is True
+    assert Settings.model_fields["agent_conversation_summary_enabled"].default is False

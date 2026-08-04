@@ -270,3 +270,53 @@ async def test_canary_chat_bucket_never_calls_responses(monkeypatch):
     )
     assert writes == ["chat"]
     assert result.api_mode == "canary_chat"
+
+
+@pytest.mark.asyncio
+async def test_canary_tool_loop_never_falls_back_to_chat(monkeypatch):
+    writes: list[str] = []
+    monkeypatch.setattr(
+        "app.openai_routing.get_settings",
+        lambda: SimpleNamespace(
+            openai_responses_traffic_percent=1.0,
+            openai_canary_sticky_routing=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.openai_gateway.get_settings",
+        lambda: SimpleNamespace(
+            openai_responses_fallback_to_chat=True,
+            openai_responses_tool_loop_enabled=True,
+            openai_store_responses=False,
+        ),
+    )
+
+    class _ChatLoop:
+        async def run_tool_loop(self, **kwargs):
+            writes.append("chat")
+            raise AssertionError("chat tool loop must not run as fallback")
+
+    class _RespLoop:
+        async def run_tool_loop(self, **kwargs):
+            writes.append("responses")
+            raise OpenAIGatewayError("tool_loop_down", code="responses_down")
+
+    gateway = CanaryOpenAIGateway(
+        chat=_ChatLoop(),  # type: ignore[arg-type]
+        responses=_RespLoop(),  # type: ignore[arg-type]
+    )
+    context = TurnRuntimeContext(trace_id="canary-tool-loop")
+    token = set_current_turn(context)
+    try:
+        with pytest.raises(OpenAIGatewayError, match="tool_loop_down"):
+            await gateway.run_tool_loop(
+                model="gpt-4.1-mini",
+                tools=[],
+                execute_tool=lambda *_a, **_k: {},
+                messages=[{"role": "user", "content": "x"}],
+            )
+    finally:
+        reset_current_turn(token)
+
+    assert writes == ["responses"]
+    assert context.openai_api_fallback is False
