@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -249,11 +249,12 @@ class Settings(BaseSettings):
     )
     # Model prompt window (interpreter/responder/critique). Operational recovery
     # still loads up to AGENT_HISTORY_HARD_CAP from the database.
+    # Accept legacy Vercel values up to 200, then normalize in model_validator.
     agent_history_limit: int = Field(
         default=12,
         alias="AGENT_HISTORY_LIMIT",
         ge=4,
-        le=80,
+        le=200,
     )
     agent_history_hard_cap: int = Field(
         default=80,
@@ -452,6 +453,35 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.strip().rstrip("/")
         return value
+
+    @model_validator(mode="after")
+    def normalize_history_windows(self) -> "Settings":
+        """Keep boot resilient when Vercel still has legacy HISTORY_LIMIT=200.
+
+        - hard_cap remains the DB recovery bound
+        - values above 40 are treated as legacy "load size" and coerced to the
+          intended model window (12)
+        """
+        hard_cap = int(self.agent_history_hard_cap)
+        limit = int(self.agent_history_limit)
+        if limit > hard_cap:
+            print(
+                "[config.history]",
+                {"event": "clamp_limit_to_hard_cap", "from": limit, "to": hard_cap},
+            )
+            limit = hard_cap
+        if limit > 40:
+            print(
+                "[config.history]",
+                {
+                    "event": "coerce_legacy_history_limit_to_model_window",
+                    "from": limit,
+                    "to": 12,
+                },
+            )
+            limit = 12
+        object.__setattr__(self, "agent_history_limit", limit)
+        return self
 
     def resolved_mp_access_token(self) -> str:
         return self.mp_access_token or self.mercadopago_access_token or ""

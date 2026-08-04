@@ -1,4 +1,4 @@
-from app.config import Settings
+from app.config import Settings, get_settings
 
 
 def test_openai_model_fallback_is_gpt_4_1_mini():
@@ -17,6 +17,19 @@ def test_history_window_defaults_separate_model_and_recovery():
     assert Settings.model_fields["agent_history_limit"].default == 12
     assert Settings.model_fields["agent_history_hard_cap"].default == 80
     assert Settings.model_fields["agent_max_recent_turns"].default == 8
+
+
+def test_legacy_history_limit_200_does_not_crash_and_coerces_to_model_window(monkeypatch):
+    """Production Vercel still had AGENT_HISTORY_LIMIT=200 from the old setup."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("AGENT_HISTORY_LIMIT", "200")
+    monkeypatch.setenv("AGENT_HISTORY_HARD_CAP", "80")
+    try:
+        settings = Settings()
+    finally:
+        get_settings.cache_clear()
+    assert settings.agent_history_limit == 12
+    assert settings.agent_history_hard_cap == 80
 
 
 def test_llm_budget_defaults_enforce_three_calls():
