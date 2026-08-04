@@ -5,9 +5,11 @@ import pytest
 from app.image_product_id import (
     ImageProductIdentification,
     handle_image_product_search,
+    identification_has_catalog_identity,
     identify_product_from_image,
     image_search_eligible,
     interpretation_from_identification,
+    products_match_required_features,
 )
 from app.models import AgentResult, IncomingMessage
 from app.webhook_parser import parse_brevo_conversations_payload
@@ -121,6 +123,298 @@ def test_interpretation_from_identification_builds_find_subject():
     assert interpretation.subject.reference == "C050.607.44.011.02"
     assert "PH2000M" in (interpretation.subject.model or "")
     assert "Branco" in (interpretation.subject.model or "")
+
+
+def test_interpretation_never_uses_color_as_model_alone():
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Hamilton",
+        model=None,
+        color="Preto",
+        confidence=0.9,
+    )
+    interpretation = interpretation_from_identification(identified)
+    assert interpretation.subject.model is None
+    assert interpretation.preferences.color == "Preto"
+
+
+def test_interpretation_maps_chrono_and_case_finish():
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Hamilton",
+        model="Intra-Matic",
+        color="Preto",
+        case_finish="aço",
+        features=["chronograph", "automatic"],
+        confidence=0.93,
+    )
+    interpretation = interpretation_from_identification(identified)
+    assert "Intra-Matic" in (interpretation.subject.model or "")
+    assert "Cronógrafo" in (interpretation.subject.model or "")
+    assert "Cronógrafo" in interpretation.preferences.attributes
+    assert interpretation.preferences.material == "aço"
+    assert identification_has_catalog_identity(identified) is True
+
+
+def test_identification_brand_color_only_is_weak():
+    weak = ImageProductIdentification(
+        is_watch=True,
+        brand="Hamilton",
+        model=None,
+        color="Preto",
+        confidence=0.9,
+    )
+    assert identification_has_catalog_identity(weak) is False
+    weak_color_model = ImageProductIdentification(
+        is_watch=True,
+        brand="Hamilton",
+        model="Preto",
+        color="Preto",
+        confidence=0.9,
+    )
+    assert identification_has_catalog_identity(weak_color_model) is False
+
+
+def test_products_match_required_features_rejects_khaki_for_chrono():
+    products = [
+        {"id": "1", "name": "Relógio Hamilton Khaki Field Preto H70455733"},
+        {"id": "2", "name": "Relógio Hamilton Khaki Navy Scuba Automático Preto"},
+    ]
+    assert products_match_required_features(products, ["Cronógrafo"]) is False
+    chrono = [
+        {
+            "id": "3",
+            "name": "Relógio Hamilton American Classic Intra-Matic Chrono Automático Preto",
+        }
+    ]
+    assert products_match_required_features(chrono, ["chronograph"]) is True
+
+
+def test_score_prefers_samurai_steel_over_black_case_sibling():
+    from app.models import SalesInterpretation
+    from app.product_retrieval import score_catalog_candidates
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        subject={
+            "product_type": "relógio",
+            "brand": "Seiko",
+            "model": "Prospex Sea Samurai Preto",
+        },
+        preferences={"color": "Preto", "material": "aço"},
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    products = [
+        {
+            "id": "3891",
+            "name": "Relógio Seiko Prospex Automático Preto SRPB55K1",
+            "brand": "Seiko",
+            "price": 6399.99,
+        },
+        {
+            "id": "1945",
+            "name": "Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1",
+            "brand": "Seiko",
+            "price": 6099.99,
+        },
+    ]
+    ranked = score_catalog_candidates(products, interpretation, require_color=True)
+    assert ranked
+    assert ranked[0]["id"] == "1945"
+
+
+def test_score_requires_chrono_feature_for_hamilton():
+    from app.models import SalesInterpretation
+    from app.product_retrieval import score_catalog_candidates
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        subject={
+            "product_type": "relógio",
+            "brand": "Hamilton",
+            "model": "Intra-Matic Cronógrafo Preto",
+        },
+        preferences={
+            "color": "Preto",
+            "attributes": ["Cronógrafo"],
+        },
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    products = [
+        {
+            "id": "1031",
+            "name": "Relógio Hamilton Khaki Navy Scuba Automático Preto H82335331",
+            "brand": "Hamilton",
+            "price": 7599.99,
+        },
+        {
+            "id": "900",
+            "name": "Relógio Hamilton American Classic Intra-Matic Chrono Automático Preto H38446732",
+            "brand": "Hamilton",
+            "price": 19999.99,
+        },
+    ]
+    ranked = score_catalog_candidates(products, interpretation, require_color=True)
+    assert [item["id"] for item in ranked] == ["900"]
+
+
+@pytest.mark.asyncio
+async def test_weak_hamilton_identity_prefers_visual_fallback(monkeypatch):
+    from app import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="[Imagem recebida via WhatsApp]",
+        input_modality="image",
+        attachment_type="image",
+        image_url="https://example.com/hamilton.jpg",
+    )
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Hamilton",
+        model=None,
+        color="Preto",
+        confidence=0.9,
+    )
+    visual_result = AgentResult(
+        reply_text="Pela foto, estes parecem os mais próximos no catálogo:\n1. Intra-Matic",
+        intent="commerce",
+        safety_reason="visual_nearest_neighbor",
+        commercial_data={
+            "products": [
+                {
+                    "id": "900",
+                    "name": "Relógio Hamilton Intra-Matic Chrono Automático Preto",
+                }
+            ],
+            "match_status": "ambiguous",
+        },
+        response_metadata={"visual_trigger": "image_identify_weak_identity"},
+    )
+    calls = {"tray": 0}
+
+    async def fake_identify(msg):
+        return identified
+
+    async def fake_visual(message, **kwargs):
+        assert kwargs["trigger"] == "image_identify_weak_identity"
+        return visual_result
+
+    async def fake_retrieval(_interpretation):
+        calls["tray"] += 1
+        raise AssertionError("Tray keyword search must not run before visual on weak ID")
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        agent_image_search_enabled=True,
+        agent_image_search_min_confidence=0.55,
+        agent_visual_search_enabled=True,
+        database_url="postgresql://test",
+        agent_visual_top_k=3,
+    ))
+    monkeypatch.setattr(module, "identify_product_from_image", fake_identify)
+    monkeypatch.setattr(module, "_try_visual_fallback", fake_visual)
+
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "_execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+
+    result = await handle_image_product_search(message)
+    assert result is not None
+    assert result.safety_reason == "visual_nearest_neighbor"
+    assert calls["tray"] == 0
+    assert result.commercial_data["products"][0]["id"] == "900"
+
+
+@pytest.mark.asyncio
+async def test_chrono_feature_mismatch_falls_back_to_visual(monkeypatch):
+    from app import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="[Imagem recebida via WhatsApp]",
+        input_modality="image",
+        attachment_type="image",
+        image_url="https://example.com/hamilton-chrono.jpg",
+    )
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Hamilton",
+        model="Intra-Matic",
+        color="Preto",
+        features=["chronograph"],
+        confidence=0.92,
+    )
+    tray_result = AgentResult(
+        reply_text="Encontrei opções.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "1031",
+                    "name": "Relógio Hamilton Khaki Field Preto H70455733",
+                    "brand": "Hamilton",
+                }
+            ]
+        },
+        response_metadata={"used_tray": True},
+    )
+    visual_result = AgentResult(
+        reply_text="visual hit",
+        intent="commerce",
+        safety_reason="visual_nearest_neighbor",
+        commercial_data={
+            "products": [
+                {
+                    "id": "900",
+                    "name": "Relógio Hamilton Intra-Matic Chrono Automático Preto",
+                }
+            ]
+        },
+        response_metadata={"visual_trigger": "image_feature_mismatch"},
+    )
+
+    async def fake_identify(msg):
+        return identified
+
+    async def fake_retrieval(interpretation):
+        assert "Cronógrafo" in (interpretation.subject.model or "")
+        return tray_result
+
+    async def fake_visual(message, **kwargs):
+        assert kwargs["trigger"] == "image_feature_mismatch"
+        return visual_result
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        agent_image_search_enabled=True,
+        agent_image_search_min_confidence=0.55,
+        agent_visual_search_enabled=True,
+        database_url="postgresql://test",
+        agent_visual_top_k=3,
+    ))
+    monkeypatch.setattr(module, "identify_product_from_image", fake_identify)
+    monkeypatch.setattr(module, "_try_visual_fallback", fake_visual)
+
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "_execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+
+    result = await handle_image_product_search(message)
+    assert result.commercial_data["products"][0]["id"] == "900"
+    assert result.safety_reason == "visual_nearest_neighbor"
 
 
 @pytest.mark.asyncio

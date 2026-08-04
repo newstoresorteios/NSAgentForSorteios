@@ -322,6 +322,8 @@ def score_catalog_candidates(
 ) -> list[dict[str, Any]]:
     """Rank catalog rows by brand/model/color keyword overlap in the title."""
     color_tokens = preference_color_tokens(interpretation)
+    feature_tokens = preference_feature_tokens(interpretation)
+    case_tokens = preference_case_finish_tokens(interpretation)
     identity_tokens = identity_core_tokens(
         interpretation.subject.model,
         color_tokens=color_tokens,
@@ -344,6 +346,8 @@ def score_catalog_candidates(
             continue
         if _rejects_as_accessory(product, identity_tokens):
             continue
+        if feature_tokens and not product_matches_feature_tokens(product, feature_tokens):
+            continue
         movement_ok = product_compatible_with_requested_movement(
             product,
             interpretation.subject.model,
@@ -362,6 +366,17 @@ def score_catalog_candidates(
             score += 50
         if color_ok and color_tokens:
             score += 30
+        if feature_tokens and product_matches_feature_tokens(product, feature_tokens):
+            score += 40
+        if case_tokens:
+            # Soft: silver/steel case should outrank all-black-case siblings when
+            # dial color alone collides on "preto".
+            if any(token in text for token in case_tokens):
+                score += 15
+            elif {"prata", "aco", "steel"} & set(case_tokens) and "preto" in text:
+                # Title says Preto (often dial) but finish asked for steel —
+                # mild penalty vs Samurai/steel-titled siblings.
+                score -= 10
         if movement_ok:
             score += 10
         elif model_excludes_gmt(interpretation.subject.model) and "gmt" in text:
@@ -504,6 +519,67 @@ def catalog_match_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]
         if token and token not in drop and token not in _DESCRIPTOR_MODEL_TOKENS
     ]
     return tuple(cleaned)
+
+
+_FEATURE_SEARCH_ALIASES: dict[str, tuple[str, ...]] = {
+    "cronografo": ("cronografo", "chronograph", "chrono"),
+    "mergulho": ("mergulho", "diver", "divers", "200m"),
+    "gmt": ("gmt",),
+}
+
+
+def preference_feature_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
+    """Distinctive function tokens from preferences.attributes (photo Vision)."""
+    tokens: list[str] = []
+    for item in interpretation.preferences.attributes or []:
+        folded = _fold(item)
+        if not folded:
+            continue
+        if "crono" in folded or "chrono" in folded:
+            tokens.append("cronografo")
+        elif "diver" in folded or "mergulho" in folded or "200m" in folded:
+            tokens.append("mergulho")
+        elif folded == "gmt":
+            tokens.append("gmt")
+    return tuple(dict.fromkeys(tokens))
+
+
+def product_matches_feature_tokens(
+    product: dict[str, Any],
+    feature_tokens: tuple[str, ...],
+) -> bool:
+    if not feature_tokens:
+        return True
+    text = _product_text(product)
+    for token in feature_tokens:
+        aliases = _FEATURE_SEARCH_ALIASES.get(token, (token,))
+        if not any(alias in text for alias in aliases):
+            return False
+    return True
+
+
+def preference_case_finish_tokens(
+    interpretation: SalesInterpretation,
+) -> tuple[str, ...]:
+    """Soft case/bracelet finish cues (never AND-required alone)."""
+    material = _fold(interpretation.preferences.material)
+    if not material:
+        return ()
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", material)
+        if token and token not in _DESCRIPTOR_MODEL_TOKENS
+    ]
+    # Map common Vision finishes to catalog-ish tokens.
+    expanded: list[str] = []
+    for token in tokens:
+        if token in {"prata", "silver", "aco", "steel", "inox"}:
+            expanded.extend(["prata", "aco", "steel"])
+        elif token in {"preto", "black", "ion", "pvd"}:
+            expanded.extend(["preto", "black"])
+        else:
+            expanded.append(token)
+    return tuple(dict.fromkeys(expanded))
 
 
 def product_matches_color_tokens(

@@ -300,11 +300,15 @@ async def fingerprint_image_url(
 
 
 def caption_from_identification(identified: Any) -> str:
+    features = getattr(identified, "features", None) or []
+    feature_text = " ".join(str(item).strip() for item in features if item)
     parts = [
         getattr(identified, "brand", None),
         getattr(identified, "model", None),
         getattr(identified, "reference", None),
         getattr(identified, "color", None),
+        getattr(identified, "case_finish", None),
+        feature_text or None,
         getattr(identified, "notes", None),
     ]
     return " ".join(str(part).strip() for part in parts if part).strip()
