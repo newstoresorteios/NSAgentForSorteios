@@ -224,15 +224,16 @@ def generate_openai_reply(
             safety_reason="openai_api_key_missing",
         )
 
-    from .prompt_compiler import resolve_system_instructions
+    from .prompt_compiler import legacy_contract_extra_blocks, resolve_system_instructions
 
     user_input = build_agent_input(message, customer_context, facts)
     system_instructions = resolve_system_instructions(
         fallback_instructions=SYSTEM_INSTRUCTIONS,
         incoming=message,
-        extra_system_blocks=[
-            f"<legacy_agent_contract>\n{SYSTEM_INSTRUCTIONS}\n</legacy_agent_contract>"
-        ],
+        extra_system_blocks=legacy_contract_extra_blocks(
+            SYSTEM_INSTRUCTIONS,
+            tag="legacy_agent_contract",
+        ),
     )
     legacy_messages = [
         {"role": "system", "content": system_instructions},
@@ -343,14 +344,15 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
     if not settings.openai_api_key:
         return generate_openai_reply(message, customer_context, facts)
 
-    from .prompt_compiler import resolve_system_instructions
+    from .prompt_compiler import legacy_contract_extra_blocks, resolve_system_instructions
 
     system_instructions = resolve_system_instructions(
         fallback_instructions=SYSTEM_INSTRUCTIONS,
         incoming=message,
-        extra_system_blocks=[
-            f"<legacy_agent_contract>\n{SYSTEM_INSTRUCTIONS}\n</legacy_agent_contract>"
-        ],
+        extra_system_blocks=legacy_contract_extra_blocks(
+            SYSTEM_INSTRUCTIONS,
+            tag="legacy_agent_contract",
+        ),
     )
     messages: list[dict] = [
         {"role": "system", "content": system_instructions},

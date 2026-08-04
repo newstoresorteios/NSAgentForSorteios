@@ -181,6 +181,12 @@ class Settings(BaseSettings):
         default=False,
         alias="AGENT_DEBUG_STORE_COMPILED_PROMPT",
     )
+    # Temporary rollback: re-embed fallback contract inside <legacy_*> tags
+    # (duplicates main instructions). Keep false — Phase 2 default.
+    agent_legacy_prompt_compat_enabled: bool = Field(
+        default=False,
+        alias="AGENT_LEGACY_PROMPT_COMPAT_ENABLED",
+    )
     agent_runtime_enabled: bool = Field(default=True, alias="AGENT_RUNTIME_ENABLED")
     agent_llm_budget_enabled: bool = Field(
         default=False,

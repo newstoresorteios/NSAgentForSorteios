@@ -200,7 +200,19 @@ def compile_agent_prompt(
         memory_block,
     ]
     if extra_system_blocks:
-        blocks.extend(block.strip() for block in extra_system_blocks if block and block.strip())
+        compat = bool(getattr(settings, "agent_legacy_prompt_compat_enabled", False))
+        for block in extra_system_blocks:
+            cleaned = (block or "").strip()
+            if not cleaned:
+                continue
+            # Default: never re-embed the same contract under another tag.
+            # Compat flag restores the old duplicate wrap for rollback only.
+            if (not compat) and _is_redundant_contract_block(cleaned, persona_text):
+                print("[prompt.compiler] skipped_redundant_extra_block", {
+                    "chars": len(cleaned),
+                })
+                continue
+            blocks.append(cleaned)
 
     instructions = "\n\n".join(blocks)
     input_items: list[dict[str, Any]] = []
@@ -219,7 +231,10 @@ def compile_agent_prompt(
             }
         )
 
-    for turn in (recent_turns or [])[- int(getattr(settings, "agent_max_recent_turns", 8) or 8) :]:
+    recent_window = (recent_turns or [])[
+        - int(getattr(settings, "agent_max_recent_turns", 8) or 8) :
+    ]
+    for turn in recent_window:
         if not isinstance(turn, dict):
             continue
         role = str(turn.get("role") or "").strip().lower()
@@ -227,8 +242,21 @@ def compile_agent_prompt(
         if role in {"user", "assistant"} and content:
             input_items.append({"role": role, "content": str(content)})
 
-    if incoming is not None and (incoming.text or "").strip():
-        input_items.append({"role": "user", "content": str(incoming.text).strip()})
+    # Authority order places the current user message once at the end.
+    current_text = (
+        str(incoming.text).strip()
+        if incoming is not None and (incoming.text or "").strip()
+        else ""
+    )
+    if current_text:
+        last = input_items[-1] if input_items else None
+        already_present = bool(
+            last
+            and last.get("role") == "user"
+            and str(last.get("content") or "").strip() == current_text
+        )
+        if not already_present:
+            input_items.append({"role": "user", "content": current_text})
 
     input_char_count = sum(len(str(item.get("content") or "")) for item in input_items)
     compiled = CompiledPrompt(
@@ -252,9 +280,27 @@ def compile_agent_prompt(
             meta: dict[str, Any] = {
                 "used_db_persona": used_db_persona,
                 "fallback_reason": fallback_reason,
+                "persona_version_id": persona_version_id,
+                "instruction_extension_ids": extension_ids,
+                "contact_memory_ids": memory_ids,
+                "instruction_char_count": compiled.instruction_char_count,
+                "input_char_count": compiled.input_char_count,
+                "approximate_input_tokens": compiled.approximate_input_tokens,
+                "input_item_count": len(input_items),
             }
             if bool(getattr(settings, "agent_debug_store_compiled_prompt", False)):
                 meta["compiled_instructions_preview"] = instructions[:2000]
+            print("[prompt.compiler.audit]", {
+                "hash": compiled.instructions_hash,
+                "instruction_chars": compiled.instruction_char_count,
+                "input_chars": compiled.input_char_count,
+                "approx_tokens": compiled.approximate_input_tokens,
+                "persona_version_id": persona_version_id,
+                "extension_ids_count": len(extension_ids),
+                "memory_ids_count": len(memory_ids),
+                "used_db_persona": used_db_persona,
+                "fallback_reason": fallback_reason,
+            })
             insert_prompt_compilation(
                 tenant_id=tenant_id,
                 compiled_instructions_hash=compiled.instructions_hash,
@@ -329,6 +375,66 @@ def _append_contact_memory_block(
             "error": str(exc)[:160],
         })
         return instructions
+
+
+def _normalize_prompt_fingerprint(text: str) -> str:
+    return " ".join((text or "").casefold().split())
+
+
+def _is_redundant_contract_block(block: str, persona_text: str) -> bool:
+    """Detect extra blocks that only re-wrap the same persona/fallback contract."""
+    cleaned = (block or "").strip()
+    persona = (persona_text or "").strip()
+    if not cleaned or not persona:
+        return False
+    for tag in (
+        "legacy_agent_contract",
+        "sales_responder_contract",
+        "legacy_contract",
+    ):
+        open_tag = f"<{tag}>"
+        close_tag = f"</{tag}>"
+        if open_tag in cleaned.casefold() and close_tag in cleaned.casefold():
+            inner = cleaned
+            # Strip wrapping tags (case-insensitive simple replace of known forms).
+            for candidate in (open_tag, open_tag.upper(), f"<{tag.upper()}>"):
+                inner = inner.replace(candidate, "")
+            for candidate in (close_tag, close_tag.upper(), f"</{tag.upper()}>"):
+                inner = inner.replace(candidate, "")
+            return _normalize_prompt_fingerprint(inner) == _normalize_prompt_fingerprint(
+                persona
+            )
+    return _normalize_prompt_fingerprint(cleaned) == _normalize_prompt_fingerprint(
+        persona
+    )
+
+
+def legacy_contract_extra_blocks(contract: str, *, tag: str) -> list[str]:
+    """Optional duplicate contract wrap for rollback only."""
+    settings = get_settings()
+    if not bool(getattr(settings, "agent_legacy_prompt_compat_enabled", False)):
+        return []
+    text = (contract or "").strip()
+    if not text:
+        return []
+    return [f"<{tag}>\n{text}\n</{tag}>"]
+
+
+def count_contract_occurrences(instructions: str, contract: str) -> int:
+    """Count non-overlapping occurrences of a contract body in compiled instructions."""
+    haystack = _normalize_prompt_fingerprint(instructions)
+    needle = _normalize_prompt_fingerprint(contract)
+    if not needle:
+        return 0
+    count = 0
+    start = 0
+    while True:
+        idx = haystack.find(needle, start)
+        if idx < 0:
+            break
+        count += 1
+        start = idx + max(len(needle), 1)
+    return count
 
 
 def resolve_system_instructions(

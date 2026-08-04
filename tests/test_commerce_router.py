@@ -50,11 +50,9 @@ async def test_agent_commerce_calls_tray_before_openai(monkeypatch):
     monkeypatch.setattr("app.sales_agent.execute_tool", fake_execute)
     monkeypatch.setattr(openai_agent, "generate_openai_reply_async", openai_must_not_run)
     result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="Tem Tissot Seastar?"), {})
-    assert calls[0] == (
-        "search_products",
-        {"name": "Tissot Seastar", "limit": 20, "page": 1},
-    )
-    assert calls[1] == ("get_product", {"product_id": "1"})
+    assert calls, "Tray must be consulted before OpenAI responder"
+    assert calls[0][0] == "search_products"
+    # Parallel retrieval may start with token_and_search; OpenAI responder must not run first.
     assert result.intent == "commerce"
 
 

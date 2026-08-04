@@ -302,7 +302,16 @@ async def health():
         "tray_adapter_configured": bool(settings.tray_adapter_url and settings.tray_adapter_token),
         "tray_tools_enabled": bool(settings.tray_adapter_url and settings.tray_adapter_token),
         "pix_direct_enabled": bool(getattr(settings, "pix_direct_enabled", False)),
-        "pix_mp_configured": bool(settings.resolved_mp_access_token()),
+        "pix_mp_configured": bool(
+            (
+                getattr(settings, "resolved_mp_access_token", None)()
+                if callable(getattr(settings, "resolved_mp_access_token", None))
+                else (
+                    getattr(settings, "mp_access_token", "")
+                    or getattr(settings, "mercadopago_access_token", "")
+                )
+            )
+        ),
         "pix_public_url_configured": bool(getattr(settings, "public_url", "")),
         "pix_webhook_path": "/api/payments/webhook",
         "remarketing_enabled": getattr(settings, "remarketing_enabled", False),

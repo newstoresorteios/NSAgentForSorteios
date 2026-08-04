@@ -111,6 +111,8 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
     assert "tools" not in captured
     assert "tool_choice" not in captured
     assert "parallel_tool_calls" not in captured
+    from app.capability_catalog import format_capability_catalog_for_prompt
+
     empty_state = CommerceConversationState()
     assert captured["messages"] == [
         {"role": "system", "content": sales_agent.SALES_INTERPRETER_INSTRUCTIONS},
@@ -126,6 +128,8 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
                 )
                 + "\n"
                 + sales_agent.WORKING_MEMORY_USAGE_POLICY
+                + "\n\n"
+                + format_capability_catalog_for_prompt()
             ),
         },
         {"role": "user", "content": "quero comprar um relógio"},

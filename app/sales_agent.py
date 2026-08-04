@@ -1262,7 +1262,10 @@ async def _sales_response_with_openai(
         from .openai_errors import OpenAIGatewayError
         from .openai_gateway import generate_text_output
 
-        from .prompt_compiler import resolve_system_instructions
+        from .prompt_compiler import (
+            legacy_contract_extra_blocks,
+            resolve_system_instructions,
+        )
 
         responder_contract = (
             f"{SALES_RESPONDER_INSTRUCTIONS}\n\n"
@@ -1280,9 +1283,10 @@ async def _sales_response_with_openai(
             incoming=message,
             conversation_state=state,
             recent_turns=history_turns,
-            extra_system_blocks=[
-                f"<sales_responder_contract>\n{responder_contract}\n</sales_responder_contract>"
-            ],
+            extra_system_blocks=legacy_contract_extra_blocks(
+                responder_contract,
+                tag="sales_responder_contract",
+            ),
         )
         memory_sidechannel = bool(
             getattr(settings, "agent_memory_proposals_enabled", False)
