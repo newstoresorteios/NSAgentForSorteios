@@ -245,12 +245,13 @@ class Settings(BaseSettings):
         ge=0,
         le=10,
     )
-    # Max conversation turns loaded for LLM + critique (hard capped).
+    # Model prompt window (interpreter/responder/critique). Operational recovery
+    # still loads up to AGENT_HISTORY_HARD_CAP from the database.
     agent_history_limit: int = Field(
-        default=80,
+        default=12,
         alias="AGENT_HISTORY_LIMIT",
-        ge=8,
-        le=200,
+        ge=4,
+        le=80,
     )
     agent_history_hard_cap: int = Field(
         default=80,

@@ -1299,9 +1299,10 @@ async def _sales_response_with_openai(
                 f"{responder_instructions}\n\n{MEMORY_POLICY_PROMPT}"
             )
 
+        model_history_limit = int(getattr(settings, "agent_history_limit", 12) or 12)
         responder_messages = [
             {"role": "system", "content": responder_instructions},
-            *history[-40:],
+            *history[-model_history_limit:],
             {
                 "role": "user",
                 "content": json.dumps(

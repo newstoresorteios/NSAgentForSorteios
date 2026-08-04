@@ -239,15 +239,23 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
     critique_mode = getattr(settings, "agent_critique_mode", "off")
-    conversation_turns = customer_context.get("_conversation_turns")
-    if not conversation_turns:
-        conversation_turns = load_recent_conversation_turns(
-            conversation_id=incoming.conversation_id,
-            sender_phone=incoming.sender_phone,
-            before_inbound_id=inbound_id,
-            limit=int(getattr(settings, "agent_history_limit", 80)),
-            sender_key=incoming.sender_key,
-            hard_cap=int(getattr(settings, "agent_history_hard_cap", 80)),
+    from .history_window import select_model_history_turns
+
+    model_turns = customer_context.get("_model_conversation_turns")
+    if not model_turns:
+        operational_turns = customer_context.get("_conversation_turns")
+        if not operational_turns:
+            operational_turns = load_recent_conversation_turns(
+                conversation_id=incoming.conversation_id,
+                sender_phone=incoming.sender_phone,
+                before_inbound_id=inbound_id,
+                limit=int(getattr(settings, "agent_history_hard_cap", 80)),
+                sender_key=incoming.sender_key,
+                hard_cap=int(getattr(settings, "agent_history_hard_cap", 80)),
+            )
+        model_turns = select_model_history_turns(
+            operational_turns,
+            limit=int(getattr(settings, "agent_history_limit", 12)),
         )
     # Dual-agent critique runs before outbound compose/send: judge + optional API retry.
     with runtime_stage("response_critique"):
@@ -255,7 +263,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             result, critique_report = await apply_response_critique_loop(
                 incoming=incoming,
                 result=result,
-                recent_turns=conversation_turns,
+                recent_turns=model_turns,
                 commerce_state=commerce_state,
                 mode=critique_mode,
                 max_retries=int(getattr(settings, "agent_critique_max_retries", 2)),

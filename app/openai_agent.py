@@ -461,19 +461,22 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     except (TypeError, ValueError):
         inbound_id = None
     settings = get_settings()
-    history_limit = int(getattr(settings, "agent_history_limit", 80))
+    from .history_window import count_user_assistant_turns, select_model_history_turns
+
+    history_limit = int(getattr(settings, "agent_history_limit", 12))
     history_hard_cap = int(getattr(settings, "agent_history_hard_cap", 80))
     history_lookup = {
         "conversation_id": message.conversation_id,
         "sender_phone": message.sender_phone,
         "before_inbound_id": inbound_id,
-        "limit": history_limit,
+        # Load operational window for deterministic recovery (orders/payment URLs).
+        "limit": history_hard_cap,
         "sender_key": message.sender_key,
         "hard_cap": history_hard_cap,
     }
-    # Full conversation window for LLM + commerce recovery (config-capped).
-    recent_turns = load_recent_conversation_turns(**history_lookup)
-    recovery_turns = recent_turns
+    recovery_turns = load_recent_conversation_turns(**history_lookup)
+    model_turns = select_model_history_turns(recovery_turns, limit=history_limit)
+    recent_turns = model_turns
     context_source = (
         "conversation_id"
         if message.conversation_id
@@ -481,18 +484,22 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
     )
     from .observability import log_event, redact_text, summarize_commerce_state
 
+    recovery_counts = count_user_assistant_turns(recovery_turns)
+    model_counts = count_user_assistant_turns(model_turns)
     print("[sales.context]", {
-        "history_turns": len(recent_turns),
-        "recovery_turns": len(recovery_turns),
+        "history_turns": model_counts["total"],
+        "recovery_turns": recovery_counts["total"],
         "history_limit": history_limit,
-        "history_user_turns": sum(1 for turn in recent_turns if turn.get("role") == "user"),
-        "history_assistant_turns": sum(1 for turn in recent_turns if turn.get("role") == "assistant"),
+        "history_hard_cap": history_hard_cap,
+        "history_user_turns": model_counts["user"],
+        "history_assistant_turns": model_counts["assistant"],
         "conversation_id_present": bool(message.conversation_id),
         "sender_key_present": bool(message.sender_key),
         "before_inbound_id_present": inbound_id is not None,
         "context_source": context_source,
     })
-    customer_context["_conversation_turns"] = recent_turns
+    customer_context["_conversation_turns"] = recovery_turns
+    customer_context["_model_conversation_turns"] = model_turns
     commerce_state = CommerceConversationState.from_payload(
         customer_context.get("_commerce_state")
     )
@@ -500,14 +507,16 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         "history.loaded",
         {
             "context_source": context_source,
-            "history_turns": len(recent_turns),
-            "recovery_turns": len(recovery_turns),
+            "history_turns": model_counts["total"],
+            "recovery_turns": recovery_counts["total"],
+            "history_limit": history_limit,
+            "history_hard_cap": history_hard_cap,
             "history_preview": [
                 {
                     "role": turn.get("role"),
                     "preview": redact_text(str(turn.get("content") or ""), max_chars=160),
                 }
-                for turn in recent_turns[-6:]
+                for turn in model_turns[-6:]
             ],
             "commerce_state": summarize_commerce_state(commerce_state),
         },
@@ -800,7 +809,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             )
     interpretation = await interpret_message(
         message,
-        recent_turns=recent_turns,
+        recent_turns=model_turns,
         commerce_state=commerce_state,
     )
     used_openai_interpreter = interpretation._source == "openai"
@@ -932,7 +941,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             facts,
             customer_context,
             interpretation,
-            recent_turns=recent_turns,
+            recent_turns=model_turns,
             commerce_state=commerce_state,
         )
         if commerce_result is not None:

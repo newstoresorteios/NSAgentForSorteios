@@ -11,3 +11,9 @@ def test_pix_direct_defaults_are_safe_off():
     assert (
         Settings.model_fields["mp_base_url"].default == "https://api.mercadopago.com"
     )
+
+
+def test_history_window_defaults_separate_model_and_recovery():
+    assert Settings.model_fields["agent_history_limit"].default == 12
+    assert Settings.model_fields["agent_history_hard_cap"].default == 80
+    assert Settings.model_fields["agent_max_recent_turns"].default == 8
