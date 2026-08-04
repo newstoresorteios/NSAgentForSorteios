@@ -906,83 +906,13 @@ async def plan_sales_request(message: IncomingMessage) -> dict[str, Any] | None:
     return interpretation_to_plan(interpretation, message.text)
 
 
-def _fold(value: Any) -> str:
-    import unicodedata
-
-    text = str(value or "")
-    return "".join(char for char in unicodedata.normalize("NFKD", text).lower() if not unicodedata.combining(char))
-
-
-def _candidate_text(candidate: dict[str, Any]) -> str:
-    fields = ("name", "brand", "model", "reference", "ean", "description", "category", "attributes", "color", "style")
-    return _fold(" ".join(str(candidate.get(field) or "") for field in fields))
-
-
-def _candidate_price(candidate: dict[str, Any]) -> float | None:
-    for key in ("current_price", "promotional_price", "price"):
-        value = candidate.get(key)
-        try:
-            if value is not None:
-                if isinstance(value, str):
-                    text = value.replace("R$", "").strip()
-                    text = text.replace(".", "").replace(",", ".") if "," in text else text
-                    return float(text)
-                return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def score_candidate(candidate: dict[str, Any], plan: dict[str, Any]) -> float:
-    subject = plan.get("subject") or {}
-    constraints = plan.get("constraints") or {}
-    text = _candidate_text(candidate)
-    score = 0.0
-    brand = _fold(subject.get("brand") or (plan.get("filters") or {}).get("brand"))
-    model = _fold(subject.get("model") or (plan.get("filters") or {}).get("model"))
-    reference = _fold(subject.get("reference") or (plan.get("filters") or {}).get("reference"))
-    ean = _fold(subject.get("ean") or (plan.get("filters") or {}).get("ean"))
-    query = _fold(subject.get("query") or plan.get("query"))
-    if brand:
-        if brand not in text:
-            return float("-inf")
-        score += 300
-    if model:
-        model_tokens = [token for token in model.split() if len(token) > 1]
-        if model_tokens and not all(token in text for token in model_tokens):
-            return float("-inf")
-        score += 500
-    if reference and reference not in text:
-        return float("-inf")
-    if reference:
-        score += 1000
-    if ean and ean not in text:
-        return float("-inf")
-    if ean:
-        score += 1200
-    query_tokens = [token for token in query.split() if len(token) > 2]
-    score += sum(50 for token in query_tokens if token in text)
-    attributes = constraints.get("attributes") or (plan.get("filters") or {}).get("attributes") or []
-    for attribute in attributes if isinstance(attributes, list) else [attributes]:
-        if _fold(attribute) in text:
-            score += 40
-    price = _candidate_price(candidate)
-    budget_max = constraints.get("budget_max") or plan.get("budget_max") or (plan.get("filters") or {}).get("budget_max")
-    if budget_max is not None and price is not None:
-        try:
-            if price > float(budget_max):
-                return float("-inf")
-            score += 80
-        except (TypeError, ValueError):
-            pass
-    return score
-
-
-def rank_candidates(candidates: list[dict[str, Any]], plan: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
-    ranked = [(score_candidate(candidate, plan), candidate) for candidate in candidates if isinstance(candidate, dict)]
-    ranked = [(score, candidate) for score, candidate in ranked if score != float("-inf")]
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    return [candidate for _, candidate in ranked[:limit]]
+from .sales.workflows.catalog_ranking import (  # noqa: E402
+    candidate_price as _candidate_price,
+    candidate_text as _candidate_text,
+    fold_text as _fold,
+    rank_candidates,
+    score_candidate,
+)
 
 
 def _ranked_result(result: AgentResult, plan: dict[str, Any]) -> AgentResult | None:
@@ -1413,35 +1343,9 @@ def _responder_contract(state: CommerceConversationState | None) -> dict[str, An
     }
 
 
-def _confirmation_text_kind(state: CommerceConversationState, text: str) -> str | None:
-    """Recognize a short final answer only for an already prepared order review."""
-    if not (
-        state.pending_action == "awaiting_order_confirmation"
-        and state.order_confirmation_status == "pending"
-        and state.order_review_version
-    ):
-        return None
-    folded = "".join(
-        char for char in unicodedata.normalize("NFKD", text.casefold())
-        if not unicodedata.combining(char)
-    )
-    normalized = " ".join(re.findall(r"[a-z0-9]+", folded))
-    if not normalized:
-        return None
-    explicit_change = any(term in normalized for term in (
-        "cartao", "pix", "boleto", "pagamento", "quantidade", "produto",
-        "endereco", "frete", "trocar", "alterar", "mudar",
-    ))
-    if explicit_change or " mas " in f" {normalized} ":
-        return "change"
-    if normalized in {"nao", "nao confirma", "cancela", "cancelar", "nao quero"}:
-        return "reject"
-    if normalized in {
-        "sim", "confirmo", "confirmado", "pode finalizar", "pode concluir",
-        "pode prosseguir", "finaliza", "pode fazer",
-    }:
-        return "confirm"
-    return None
+from .sales.policies.confirmation import (  # noqa: E402
+    confirmation_text_kind as _confirmation_text_kind,
+)
 
 
 async def _confirm_current_order_review(
@@ -2610,37 +2514,9 @@ async def _create_order_with_payment_lookup(
     return combined
 
 
-def _purchase_product_required_result(
-    state: CommerceConversationState,
-) -> AgentResult:
-    ambiguous = bool(state.last_presented_products)
-    return AgentResult(
-        reply_text=(
-            "Confirme qual produto você quer comprar antes de eu preparar o carrinho."
-            if ambiguous
-            else "Preciso saber qual produto você quer comprar antes de preparar o carrinho."
-        ),
-        intent="commerce",
-        handoff_required=False,
-        safety_reason="product_ambiguous" if ambiguous else "no_cart_no_product",
-        commercial_data={
-            "products": [
-                item.model_dump(mode="json")
-                for item in state.last_presented_products[:3]
-            ],
-            "cart": {"status": "product_required"},
-            "action_guard": {
-                "action": "create_cart",
-                "allowed": False,
-                "blocking_reason": (
-                    "product_selection_required"
-                    if ambiguous
-                    else "product_target_missing"
-                ),
-            },
-        },
-        response_metadata={"domain": "commerce"},
-    )
+from .sales.policies.action_authority import (  # noqa: E402
+    purchase_product_required_result as _purchase_product_required_result,
+)
 
 
 def _pending_product_references(
