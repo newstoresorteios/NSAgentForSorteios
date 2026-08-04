@@ -55,6 +55,8 @@ class TurnRuntimeContext(BaseModel):
     database_call_count: int = 0
     openai_input_tokens: int = 0
     openai_output_tokens: int = 0
+    openai_api_route: str | None = None
+    openai_api_fallback: bool = False
 
     execution_path: ExecutionPath = "fast"
     judge_triggered: bool = False

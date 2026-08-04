@@ -8,6 +8,7 @@ from app.commerce_context import (
     evolve_commerce_state,
 )
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
+from openai_test_utils import install_fake_openai_client
 
 
 def _interpretation(**overrides) -> SalesInterpretation:
@@ -791,7 +792,7 @@ async def test_cart_success_uses_openai_sales_responder(monkeypatch):
             openai_model="gpt-4.1-mini",
         ),
     )
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeOpenAI)
+    install_fake_openai_client(monkeypatch, FakeOpenAI)
     tray_result = AgentResult(
         reply_text="fallback",
         intent="commerce",
@@ -850,7 +851,7 @@ async def test_cart_failure_gives_openai_only_safe_semantic_facts(monkeypatch):
             openai_model="gpt-4.1-mini",
         ),
     )
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeOpenAI)
+    install_fake_openai_client(monkeypatch, FakeOpenAI)
     technical = AgentResult(
         reply_text="Não consegui preparar o carrinho neste momento.",
         intent="commerce",

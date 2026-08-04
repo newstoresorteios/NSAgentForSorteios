@@ -91,47 +91,48 @@ async def run_quality_judge(
         return report
 
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await execute_openai_call(
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import parse_structured_output
+
+        parse_result = await parse_structured_output(
+            model=settings.openai_model,
+            text_format=JudgeVerdict,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Avalie a qualidade e segurança da resposta do agente. "
+                        "Não reescreva a resposta. Marque pass_check=false apenas "
+                        "se houver risco factual, inventado ou incoerente."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "channel": incoming.channel,
+                            "customer_message": incoming.text,
+                            "agent_reply": result.reply_text,
+                            "intent": result.intent,
+                            "safety_reason": result.safety_reason,
+                            "commercial_data_keys": sorted(
+                                (result.commercial_data or {}).keys()
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=0,
             call_type="judge",
-            operation=lambda: client.chat.completions.parse(
-                model=settings.openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Avalie a qualidade e segurança da resposta do agente. "
-                            "Não reescreva a resposta. Marque pass_check=false apenas "
-                            "se houver risco factual, inventado ou incoerente."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "channel": incoming.channel,
-                                "customer_message": incoming.text,
-                                "agent_reply": result.reply_text,
-                                "intent": result.intent,
-                                "safety_reason": result.safety_reason,
-                                "commercial_data_keys": sorted(
-                                    (result.commercial_data or {}).keys()
-                                ),
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-                temperature=0,
-                response_format=JudgeVerdict,
-            ),
         )
-        parsed = response.choices[0].message.parsed if response.choices else None
+        parsed = parse_result.parsed
         if not isinstance(parsed, JudgeVerdict):
             raise ValueError("judge_schema_missing")
         report.verdict = parsed
     except (
         APIError,
+        OpenAIGatewayError,
         LLMCallBudgetExceeded,
         ValueError,
         TypeError,

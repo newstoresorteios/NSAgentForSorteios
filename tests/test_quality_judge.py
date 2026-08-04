@@ -9,6 +9,7 @@ from app.quality_judge import (
 )
 from app.runtime_context import reset_current_turn, set_current_turn
 from app.turn_runtime import TurnRuntimeContext
+from openai_test_utils import install_fake_openai_client
 
 
 def test_judge_triggers_on_high_risk_only():
@@ -63,7 +64,7 @@ async def test_shadow_judge_does_not_rewrite_reply(monkeypatch):
                 {"completions": FakeCompletions()},
             )()
 
-    monkeypatch.setattr("app.quality_judge.AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
     monkeypatch.setattr(
         "app.quality_judge.get_settings",
         lambda: type(

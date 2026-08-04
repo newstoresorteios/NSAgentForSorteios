@@ -4,6 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.models import AgentResult, BrevoSendResult, IncomingMessage, SalesInterpretation
+from openai_test_utils import install_fake_openai_client
 
 
 def _settings(**overrides):
@@ -132,7 +133,7 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
     monkeypatch.setattr(openai_agent, "get_settings", lambda: _settings())
     monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", load_turns)
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings())
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeOpenAI)
+    install_fake_openai_client(monkeypatch, FakeOpenAI)
     async def fake_execute(name, arguments):
         return {"products": [{"id": "1", "name": "Relógio esportivo", "style": "esportivo"}]}
 
@@ -222,7 +223,7 @@ async def test_valid_commerce_interpretation_reaches_openai_sales_responder(monk
     monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **kwargs: [])
     monkeypatch.setattr(openai_agent, "interpret_message", fake_interpret)
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings())
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeOpenAI)
+    install_fake_openai_client(monkeypatch, FakeOpenAI)
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
         "app.commerce_router.resolve_commerce_action",

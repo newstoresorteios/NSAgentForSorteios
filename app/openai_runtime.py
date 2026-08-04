@@ -31,6 +31,16 @@ def _usage_tokens(response: Any) -> tuple[int, int]:
 
 def _response_preview(response: Any) -> str | None:
     try:
+        # Responses API
+        output_parsed = getattr(response, "output_parsed", None)
+        if output_parsed is not None:
+            if hasattr(output_parsed, "model_dump"):
+                return str(output_parsed.model_dump(mode="json"))
+            return str(output_parsed)
+        output_text = getattr(response, "output_text", None)
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text
+        # Chat Completions
         choice = response.choices[0] if getattr(response, "choices", None) else None
         message = getattr(choice, "message", None) if choice is not None else None
         content = getattr(message, "content", None) if message is not None else None

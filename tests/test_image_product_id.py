@@ -146,8 +146,9 @@ async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
     async def fake_download(url, *, max_bytes=None):
         return b"fake-image-bytes", "image/jpeg"
 
-    async def fake_execute(*, call_type, model, messages, operation):
+    async def fake_parse(*, model, text_format, messages, temperature=None, call_type="structured", **kwargs):
         assert call_type == "image_product_identify"
+        assert text_format is ImageProductIdentification
         assert any(
             isinstance(block, dict) and block.get("type") == "image_url"
             for part in messages
@@ -155,13 +156,7 @@ async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
                 part.get("content") if isinstance(part.get("content"), list) else []
             )
         )
-        return SimpleNamespace(
-            choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(parsed=identified, refusal=None)
-                )
-            ]
-        )
+        return SimpleNamespace(parsed=identified, api_mode="chat_completions")
 
     monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
         openai_api_key="sk-test",
@@ -170,8 +165,7 @@ async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
         agent_image_download_max_bytes=8_000_000,
     ))
     monkeypatch.setattr(module, "download_image_file", fake_download)
-    monkeypatch.setattr(module, "execute_openai_call", fake_execute)
-    monkeypatch.setattr(module, "AsyncOpenAI", lambda **kwargs: object())
+    monkeypatch.setattr("app.openai_gateway.parse_structured_output", fake_parse)
 
     result = await identify_product_from_image(message)
     assert result.brand == "Christopher Ward"
@@ -235,9 +229,91 @@ async def test_handle_image_product_search_retrieves_catalog(monkeypatch):
     result = await handle_image_product_search(message)
     assert result is not None
     assert result.response_metadata.get("image_search") is True
+    assert result.response_metadata.get("clear_active_product") is True
+    assert result.response_metadata.get("product_resolution_state") == (
+        "plausible_matches"
+    )
     assert "Certina" in result.reply_text
     assert "É esse que você procura?" in result.reply_text
     assert result.commercial_data["products"][0]["id"] == "9001"
+
+
+@pytest.mark.asyncio
+async def test_handle_image_ambiguous_siblings_does_not_activate(monkeypatch):
+    from app import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="qual o preço desse?",
+        input_modality="text_with_image",
+        attachment_type="image",
+        image_url="https://example.com/beaubleu.jpg",
+    )
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Beaubleu",
+        model="Ecce",
+        color="branco prata pulseira bege",
+        confidence=0.9,
+    )
+    tray_result = AgentResult(
+        reply_text="Encontrei opções.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "15522",
+                    "name": "Relógio Beaubleu Ecce Smalt Automático Prata 39 mm",
+                    "brand": "Beaubleu",
+                },
+                {
+                    "id": "15860",
+                    "name": "Relógio Beaubleu Ecce Lys Automático Branco",
+                    "brand": "Beaubleu",
+                },
+            ],
+            "match_status": "ambiguous",
+        },
+        response_metadata={
+            "used_tray": True,
+            "presented_products": True,
+            "product_resolution_state": "plausible_matches",
+            "clear_active_product": True,
+        },
+    )
+
+    async def fake_identify(msg):
+        return identified
+
+    async def fake_retrieval(interpretation):
+        from app.product_retrieval import catalog_match_tokens, preference_color_tokens
+
+        assert "pulseira" not in catalog_match_tokens(interpretation)
+        assert "bege" not in catalog_match_tokens(interpretation)
+        assert "prata" not in catalog_match_tokens(interpretation)
+        assert preference_color_tokens(interpretation) == ("branco",)
+        return tray_result
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        agent_image_search_enabled=True,
+        agent_image_search_min_confidence=0.55,
+    ))
+    monkeypatch.setattr(module, "identify_product_from_image", fake_identify)
+
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "_execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+
+    result = await handle_image_product_search(message)
+    assert result is not None
+    assert "É algum desses?" in result.reply_text
+    assert result.commercial_data.get("match_status") == "ambiguous"
+    assert result.response_metadata.get("clear_active_product") is True
+    assert "active_product" not in result.response_metadata
 
 
 @pytest.mark.asyncio

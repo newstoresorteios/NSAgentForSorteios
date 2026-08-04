@@ -136,6 +136,14 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         commerce_state = CommerceConversationState.from_payload(
             load_commerce_conversation_state(**state_lookup)
         )
+    # New product photo starts a fresh identification — never price the
+    # previous SKU (e.g. CW Rosa) while Vision runs on a Beaubleu.
+    if (incoming.image_url or "").strip():
+        if commerce_state.active_product is not None:
+            print("[sales.context.clear_active_for_image]", {
+                "had_active_product_id": commerce_state.active_product.product_id,
+            })
+        commerce_state.active_product = None
     working_memory = build_working_memory(commerce_state)
     customer_context = {
         **customer_context,
@@ -323,10 +331,52 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             (response_metadata.get("quality_judge") or {}).get("triggered")
         ),
     })
+    if runtime is not None:
+        outbound_snapshot["openai_api_route"] = runtime.openai_api_route
+        outbound_snapshot["openai_api_fallback"] = bool(runtime.openai_api_fallback)
     log_event("turn.end", outbound_snapshot)
+    if runtime is not None and runtime.openai_api_route:
+        print("[openai.canary.turn]", {
+            "route": runtime.openai_api_route,
+            "fallback": bool(runtime.openai_api_fallback),
+            "conversation_key": runtime.conversation_key,
+        })
 
     if customer_context.get("found") and user_id:
         record_interaction_memory(int(user_id), result.intent, incoming.text)
+
+    if getattr(settings, "agent_memory_proposals_enabled", False) or getattr(
+        settings, "agent_instruction_extension_proposals_enabled", False
+    ):
+        envelope_payload = (result.response_metadata or {}).get("agent_turn_envelope")
+        if isinstance(envelope_payload, dict):
+            try:
+                from app.memory_models import AgentTurnEnvelope
+                from app.memory_service import process_agent_memory_proposals
+
+                envelope = AgentTurnEnvelope.model_validate(envelope_payload)
+                memory_result = process_agent_memory_proposals(
+                    envelope=envelope,
+                    tenant_id=str(
+                        getattr(settings, "agent_persona_tenant_id", "newstore")
+                    ),
+                    conversation_key=(
+                        incoming.conversation_id
+                        or incoming.sender_key
+                        or incoming.sender_phone
+                    ),
+                    sender_key=incoming.sender_key,
+                    inbound=incoming,
+                    inbound_id=inbound_id,
+                )
+                result.response_metadata["memory_processing"] = memory_result.model_dump(
+                    mode="json"
+                )
+            except Exception as exc:
+                print("[memory.pipeline.error]", {
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:160],
+                })
 
     with runtime_stage("enrich_result"):
         enriched = await enrich_agent_result(incoming, result)

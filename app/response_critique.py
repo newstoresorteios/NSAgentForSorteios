@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Awaitable, Callable, Literal
 
-from openai import APIError, AsyncOpenAI
+from openai import APIError
 from pydantic import BaseModel, Field
 
 from .capability_catalog import (
@@ -14,7 +14,6 @@ from .capability_catalog import (
 from .commerce_context import CommerceConversationState
 from .config import get_settings
 from .models import AgentResult, IncomingMessage
-from .openai_runtime import execute_openai_call
 from .quality_judge import JudgeReport, JudgeVerdict, attach_judge_report
 from .runtime_context import get_current_turn
 from .tray_tools import execute_tool
@@ -206,41 +205,42 @@ async def run_critique_judge(
         "policy": catalog.get("policy"),
     }
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await execute_openai_call(
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import parse_structured_output
+
+        parse_result = await parse_structured_output(
+            model=settings.openai_model,
+            text_format=CritiqueVerdict,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Você é o JUÍZ redundante do agente NewStore. "
+                        "Valide se a resposta cumpre o pedido do cliente com o "
+                        "histórico completo e as capacidades/APIs disponíveis. "
+                        "pass_check=false se a resposta negar pedido/link/pagamento "
+                        "existentes no histórico, inventar fatos, ignorar contexto, "
+                        "ou deixar de consultar API necessária. "
+                        "Quando reprovar, liste recommended_apis (somente retryable) "
+                        "com arguments concretos e retry_instruction objetiva. "
+                        "Não reescreva a resposta final aqui."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(payload, ensure_ascii=False, default=str),
+                },
+            ],
+            temperature=0,
             call_type="judge",
-            operation=lambda: client.chat.completions.parse(
-                model=settings.openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Você é o JUÍZ redundante do agente NewStore. "
-                            "Valide se a resposta cumpre o pedido do cliente com o "
-                            "histórico completo e as capacidades/APIs disponíveis. "
-                            "pass_check=false se a resposta negar pedido/link/pagamento "
-                            "existentes no histórico, inventar fatos, ignorar contexto, "
-                            "ou deixar de consultar API necessária. "
-                            "Quando reprovar, liste recommended_apis (somente retryable) "
-                            "com arguments concretos e retry_instruction objetiva. "
-                            "Não reescreva a resposta final aqui."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(payload, ensure_ascii=False, default=str),
-                    },
-                ],
-                temperature=0,
-                response_format=CritiqueVerdict,
-            ),
         )
-        parsed = response.choices[0].message.parsed if response.choices else None
+        parsed = parse_result.parsed
         if not isinstance(parsed, CritiqueVerdict):
             raise ValueError("critique_schema_missing")
         return parsed
     except (
         APIError,
+        OpenAIGatewayError,
         LLMCallBudgetExceeded,
         ValueError,
         TypeError,
@@ -313,7 +313,9 @@ async def _regenerate_reply(
     if not settings.openai_api_key:
         return None
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import generate_text_output
+
         messages = [
             {
                 "role": "system",
@@ -348,17 +350,13 @@ async def _regenerate_reply(
                 ),
             },
         ]
-        response = await execute_openai_call(
-            call_type="response_composition",
+        text_result = await generate_text_output(
             model=settings.openai_model,
             messages=messages,
-            operation=lambda: client.chat.completions.create(
-                model=settings.openai_model,
-                messages=messages,
-                temperature=0.2,
-            ),
+            temperature=0.2,
+            call_type="response_composition",
         )
-        content = response.choices[0].message.content if response.choices else None
+        content = text_result.text
         if not content or not content.strip():
             return None
         regenerated = result.model_copy(deep=True)
@@ -397,7 +395,7 @@ async def _regenerate_reply(
         regenerated.response_metadata = dict(regenerated.response_metadata or {})
         regenerated.response_metadata["critique_regenerated"] = True
         return regenerated
-    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError):
+    except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError):
         return None
 
 

@@ -244,44 +244,43 @@ async def repair_checkout_data_with_openai(
     if not settings.openai_api_key or not repairable:
         return dict(updates)
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await execute_openai_call(
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import parse_structured_output
+
+        parse_result = await parse_structured_output(
+            model=settings.openai_model,
+            text_format=CheckoutDataInput,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Extraia e normalize dados de checkout explicitamente presentes "
+                        "na mensagem. Nunca invente dados ausentes. Converta nomes de "
+                        "estados brasileiros para a UF de duas letras, remova apenas a "
+                        "formatação de CPF, telefone e CEP, e preserve nomes e endereços. "
+                        "Retorne null para qualquer campo não informado."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "message": message_text,
+                            "first_extraction": updates,
+                            "unresolved_fields": sorted(repairable),
+                            "validation_errors": field_errors,
+                            "available_resolution_capabilities": list(
+                                CHECKOUT_RESOLUTION_CAPABILITIES
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=0,
             call_type="checkout_repair",
-            operation=lambda: client.chat.completions.parse(
-                model=settings.openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Extraia e normalize dados de checkout explicitamente presentes "
-                            "na mensagem. Nunca invente dados ausentes. Converta nomes de "
-                            "estados brasileiros para a UF de duas letras, remova apenas a "
-                            "formatação de CPF, telefone e CEP, e preserve nomes e endereços. "
-                            "Retorne null para qualquer campo não informado."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "message": message_text,
-                                "first_extraction": updates,
-                                "unresolved_fields": sorted(repairable),
-                                "validation_errors": field_errors,
-                                "available_resolution_capabilities": list(
-                                    CHECKOUT_RESOLUTION_CAPABILITIES
-                                ),
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-                temperature=0,
-                response_format=CheckoutDataInput,
-            ),
         )
-        parsed_message = response.choices[0].message if response.choices else None
-        parsed = getattr(parsed_message, "parsed", None)
+        parsed = parse_result.parsed
         if not isinstance(parsed, CheckoutDataInput):
             raise ValueError("checkout_repair_schema_missing")
         repaired = parsed.model_dump(mode="json", exclude_none=True)
@@ -298,6 +297,7 @@ async def repair_checkout_data_with_openai(
         return {**updates, **accepted_repairs}
     except (
         APIError,
+        OpenAIGatewayError,
         LLMCallBudgetExceeded,
         ValidationError,
         ValueError,

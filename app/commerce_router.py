@@ -67,6 +67,35 @@ def _is_follow_up_without_product(query: str) -> bool:
     } or normalized in {"estoque", "disponibilidade", "disponivel", "pix", "no pix", "e no pix", "quanto fica", "quanto fica no pix", "parcelamento", "parcelar", "promocao"}
 
 
+def is_deictic_product_price_request(text: str | None) -> bool:
+    """True for 'qual o preço desse/da foto' — must not reuse a stale SKU."""
+    normalized = (text or "").casefold()
+    if not normalized.strip():
+        return False
+    photo_markers = (
+        "da foto",
+        "na foto",
+        "dessa foto",
+        "nessa foto",
+        "do relogio da foto",
+        "do relógio da foto",
+        "da imagem",
+    )
+    this_markers = (
+        "desse",
+        "dessa",
+        "deste",
+        "desta",
+        "esse relogio",
+        "esse relógio",
+        "esse produto",
+        "este relogio",
+        "este relógio",
+        "este produto",
+    )
+    return any(marker in normalized for marker in photo_markers + this_markers)
+
+
 def resolve_commerce_action(text: str | None) -> str | None:
     normalized = (text or "").lower()
     if any(term in normalized for term in ("cupom comercial", "cupom disponível", "cupom disponivel", "algum cupom")):
@@ -75,7 +104,17 @@ def resolve_commerce_action(text: str | None) -> str | None:
         return "product_inventory"
     if any(term in normalized for term in ("pix", "parcelamento", "parcelar", "promocao", "promoção")):
         return "product_price"
-    if any(term in normalized for term in ("quanto custa", "qual o preço", "qual o preco", "preço", "preco", "valor")):
+    if any(
+        term in normalized
+        for term in (
+            "quanto custa",
+            "qual o preço",
+            "qual o preco",
+            "preço",
+            "preco",
+            "valor",
+        )
+    ):
         return "product_price"
     if any(term in normalized for term in ("tem ", "vocês têm", "voces tem", "vende", "produto", "relógio", "relogio", "marca", "modelo", "sku", "ean")):
         return "product_search"

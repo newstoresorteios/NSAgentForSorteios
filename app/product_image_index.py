@@ -266,22 +266,16 @@ async def fingerprint_image_bytes(
         },
     ]
     model = _vision_model()
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
-    response = await execute_openai_call(
-        call_type="visual_fingerprint",
+    from .openai_gateway import parse_structured_output
+
+    parse_result = await parse_structured_output(
         model=model,
+        text_format=VisualProductFingerprint,
         messages=messages,
-        operation=lambda: client.chat.completions.parse(
-            model=model,
-            messages=messages,
-            temperature=0,
-            response_format=VisualProductFingerprint,
-        ),
+        temperature=0,
+        call_type="visual_fingerprint",
     )
-    parsed_message = response.choices[0].message if response.choices else None
-    if parsed_message is None or getattr(parsed_message, "refusal", None):
-        raise ValueError("visual_fingerprint_refusal")
-    fingerprint = getattr(parsed_message, "parsed", None)
+    fingerprint = parse_result.parsed
     if not isinstance(fingerprint, VisualProductFingerprint):
         raise ValueError("visual_fingerprint_schema_missing")
     if not (fingerprint.caption or "").strip():

@@ -32,6 +32,155 @@ class Settings(BaseSettings):
     openai_tts_model: str = Field(default="gpt-4o-mini-tts", alias="OPENAI_TTS_MODEL")
     openai_tts_voice: str = Field(default="nova", alias="OPENAI_TTS_VOICE")
     openai_tts_format: str = Field(default="opus", alias="OPENAI_TTS_FORMAT")
+    # OpenAI API migration (Responses). Default keeps Chat Completions.
+    openai_api_mode: Literal[
+        "chat_completions",
+        "responses",
+        "shadow",
+        "canary",
+    ] = Field(default="chat_completions", alias="OPENAI_API_MODE")
+    openai_store_responses: bool = Field(
+        default=False,
+        alias="OPENAI_STORE_RESPONSES",
+    )
+    openai_use_previous_response_id: bool = Field(
+        default=False,
+        alias="OPENAI_USE_PREVIOUS_RESPONSE_ID",
+    )
+    openai_use_conversations_api: bool = Field(
+        default=False,
+        alias="OPENAI_USE_CONVERSATIONS_API",
+    )
+    openai_responses_structured_enabled: bool = Field(
+        default=True,
+        alias="OPENAI_RESPONSES_STRUCTURED_ENABLED",
+    )
+    openai_responses_tool_loop_enabled: bool = Field(
+        default=True,
+        alias="OPENAI_RESPONSES_TOOL_LOOP_ENABLED",
+    )
+    openai_shadow_sample_rate: float = Field(
+        default=0.10,
+        alias="OPENAI_SHADOW_SAMPLE_RATE",
+        ge=0.0,
+        le=1.0,
+    )
+    # Phase 7: percentage of traffic using Responses as primary (canary mode).
+    openai_responses_traffic_percent: float = Field(
+        default=0.0,
+        alias="OPENAI_RESPONSES_TRAFFIC_PERCENT",
+        ge=0.0,
+        le=1.0,
+    )
+    openai_responses_fallback_to_chat: bool = Field(
+        default=True,
+        alias="OPENAI_RESPONSES_FALLBACK_TO_CHAT",
+    )
+    openai_canary_sticky_routing: bool = Field(
+        default=True,
+        alias="OPENAI_CANARY_STICKY_ROUTING",
+    )
+    # Phase 8: when false, OPENAI_API_MODE=chat_completions is redirected to
+    # Responses (+ Chat fallback). Keep true until canary metrics are green.
+    openai_chat_completions_primary_allowed: bool = Field(
+        default=True,
+        alias="OPENAI_CHAT_COMPLETIONS_PRIMARY_ALLOWED",
+    )
+    # Persona / memory rollout (disabled until later phases).
+    agent_db_persona_enabled: bool = Field(
+        default=False,
+        alias="AGENT_DB_PERSONA_ENABLED",
+    )
+    agent_persona_tenant_id: str = Field(
+        default="newstore",
+        alias="AGENT_PERSONA_TENANT_ID",
+    )
+    agent_persona_key: str = Field(
+        default="newstore_commercial",
+        alias="AGENT_PERSONA_KEY",
+    )
+    agent_max_recent_turns: int = Field(
+        default=8,
+        alias="AGENT_MAX_RECENT_TURNS",
+        ge=1,
+        le=40,
+    )
+    agent_max_active_contact_memories: int = Field(
+        default=20,
+        alias="AGENT_MAX_ACTIVE_CONTACT_MEMORIES",
+        ge=1,
+        le=100,
+    )
+    agent_max_contact_memory_chars: int = Field(
+        default=3000,
+        alias="AGENT_MAX_CONTACT_MEMORY_CHARS",
+        ge=200,
+        le=20000,
+    )
+    agent_max_instruction_extensions: int = Field(
+        default=20,
+        alias="AGENT_MAX_INSTRUCTION_EXTENSIONS",
+        ge=1,
+        le=100,
+    )
+    agent_max_instruction_extension_chars: int = Field(
+        default=4000,
+        alias="AGENT_MAX_INSTRUCTION_EXTENSION_CHARS",
+        ge=200,
+        le=20000,
+    )
+    agent_max_conversation_summary_chars: int = Field(
+        default=2500,
+        alias="AGENT_MAX_CONVERSATION_SUMMARY_CHARS",
+        ge=200,
+        le=20000,
+    )
+    agent_memory_proposals_enabled: bool = Field(
+        default=False,
+        alias="AGENT_MEMORY_PROPOSALS_ENABLED",
+    )
+    agent_memory_auto_apply_enabled: bool = Field(
+        default=False,
+        alias="AGENT_MEMORY_AUTO_APPLY_ENABLED",
+    )
+    # Comma-separated sender_key allowlist. Empty = nobody. "*" = all senders.
+    agent_memory_auto_apply_sender_allowlist: str = Field(
+        default="",
+        alias="AGENT_MEMORY_AUTO_APPLY_SENDER_ALLOWLIST",
+    )
+    agent_memory_auto_apply_min_confidence: float = Field(
+        default=0.85,
+        alias="AGENT_MEMORY_AUTO_APPLY_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+    agent_memory_auto_apply_min_importance: float = Field(
+        default=0.70,
+        alias="AGENT_MEMORY_AUTO_APPLY_MIN_IMPORTANCE",
+        ge=0.0,
+        le=1.0,
+    )
+    # Inject active contact memories into system instructions (even without DB persona).
+    agent_contact_memory_in_prompt_enabled: bool = Field(
+        default=False,
+        alias="AGENT_CONTACT_MEMORY_IN_PROMPT_ENABLED",
+    )
+    agent_instruction_extension_proposals_enabled: bool = Field(
+        default=False,
+        alias="AGENT_INSTRUCTION_EXTENSION_PROPOSALS_ENABLED",
+    )
+    agent_conversation_summary_enabled: bool = Field(
+        default=False,
+        alias="AGENT_CONVERSATION_SUMMARY_ENABLED",
+    )
+    agent_prompt_compilation_audit_enabled: bool = Field(
+        default=True,
+        alias="AGENT_PROMPT_COMPILATION_AUDIT_ENABLED",
+    )
+    agent_debug_store_compiled_prompt: bool = Field(
+        default=False,
+        alias="AGENT_DEBUG_STORE_COMPILED_PROMPT",
+    )
     agent_runtime_enabled: bool = Field(default=True, alias="AGENT_RUNTIME_ENABLED")
     agent_llm_budget_enabled: bool = Field(
         default=False,

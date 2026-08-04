@@ -5,6 +5,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.context_builder import detect_customer_intents, gather_customer_facts, _primary_intent
+from openai_test_utils import install_fake_openai_client
 
 
 def _settings(**overrides):
@@ -180,7 +181,7 @@ async def test_purchase_intent_uses_product_entity_not_full_sentence(monkeypatch
         return {"products": [{"id": "1", "name": "Relógio esportivo", "current_price": 1000}]}
 
     monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="quero comprar um relógio"),
         {"primary_intent": "commerce"},
@@ -228,7 +229,7 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
         return {"products": [{"id": "2", "name": "Relógio esportivo preto", "current_price": 4500}]}
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="quero comprar um relógio por menos de 5 mil"),
         {"primary_intent": "commerce"},

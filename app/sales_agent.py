@@ -13,7 +13,7 @@ _sales_recent_turns: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     default=None,
 )
 
-from openai import APIError, AsyncOpenAI, BadRequestError
+from openai import APIError, BadRequestError
 from pydantic import ValidationError
 
 from .commerce_router import (
@@ -61,7 +61,6 @@ from .guardrails import (
     detect_coupon_code_inquiry,
 )
 from .models import AgentResult, IncomingMessage, SalesInterpretation
-from .openai_runtime import execute_openai_call
 from .turn_runtime import LLMCallBudgetExceeded
 from .payment_service import (
     inspect_current_cart,
@@ -767,22 +766,17 @@ async def interpret_message(
         "has_tools": False,
     })
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await execute_openai_call(
-            call_type="decision",
+        from .openai_errors import OpenAIGatewayError, OpenAIRefusalError
+        from .openai_gateway import parse_structured_output
+
+        parse_result = await parse_structured_output(
             model=settings.openai_model,
+            text_format=SalesInterpretation,
             messages=messages,
-            operation=lambda: client.chat.completions.parse(
-                model=settings.openai_model,
-                messages=messages,
-                temperature=0,
-                response_format=SalesInterpretation,
-            ),
+            temperature=0,
+            call_type="decision",
         )
-        parsed_message = response.choices[0].message if response.choices else None
-        if parsed_message is None or getattr(parsed_message, "refusal", None):
-            raise ValueError("interpreter_refusal_or_empty_response")
-        interpretation = getattr(parsed_message, "parsed", None)
+        interpretation = parse_result.parsed
         if not isinstance(interpretation, SalesInterpretation):
             raise ValueError("interpreter_schema_missing")
         interpretation._source = "openai"
@@ -794,8 +788,19 @@ async def interpret_message(
         fallback._fallback_reason = "openai_bad_request"
         _log_interpretation(fallback, settings.openai_model, fallback_reason="openai_bad_request")
         return fallback
+    except OpenAIRefusalError as exc:
+        print("[sales.interpreter] failed", {"error_type": type(exc).__name__})
+        fallback = _fallback_interpretation(message.text)
+        fallback._fallback_reason = "openai_invalid_response"
+        _log_interpretation(
+            fallback,
+            settings.openai_model,
+            fallback_reason="openai_invalid_response",
+        )
+        return fallback
     except (
         APIError,
+        OpenAIGatewayError,
         LLMCallBudgetExceeded,
         ValidationError,
         ValueError,
@@ -1171,23 +1176,21 @@ async def generate_clarification_reply(
         "DISCOVERY_STATE": discovery_state or _discovery_state(interpretation, recent_turns),
     }
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import generate_text_output
+
         clarification_messages = [
             {"role": "system", "content": SALES_CLARIFICATION_INSTRUCTIONS},
             *normalized_history,
             {"role": "user", "content": json.dumps(request_context, ensure_ascii=False)},
         ]
-        response = await execute_openai_call(
-            call_type="clarification",
+        text_result = await generate_text_output(
             model=settings.openai_model,
             messages=clarification_messages,
-            operation=lambda: client.chat.completions.create(
-                model=settings.openai_model,
-                messages=clarification_messages,
-                temperature=0.3,
-            ),
+            temperature=0.3,
+            call_type="clarification",
         )
-        content = response.choices[0].message.content if response.choices else None
+        content = text_result.text
         if not content or not content.strip():
             raise ValueError("clarification_response_empty")
         return _mark_sales_result(
@@ -1203,7 +1206,7 @@ async def generate_clarification_reply(
             used_openai_responder=True,
             used_tray=used_tray,
         )
-    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
+    except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.clarification] failed", {"error_type": type(exc).__name__})
         return _mark_sales_result(
             AgentResult(
@@ -1247,8 +1250,12 @@ async def _sales_response_with_openai(
     if (tray_result.commercial_data or {}).get("input_template"):
         return None
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        responder_instructions = (
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import generate_text_output
+
+        from .prompt_compiler import resolve_system_instructions
+
+        responder_contract = (
             f"{SALES_RESPONDER_INSTRUCTIONS}\n\n"
             f"{channel_system_hint(message.channel)}\n\n"
             f"{format_capability_catalog_for_prompt()}"
@@ -1259,6 +1266,26 @@ async def _sales_response_with_openai(
             else _sales_recent_turns.get()
         )
         history = _normalize_interpreter_history(history_turns)
+        responder_instructions = resolve_system_instructions(
+            fallback_instructions=responder_contract,
+            incoming=message,
+            conversation_state=state,
+            recent_turns=history_turns,
+            extra_system_blocks=[
+                f"<sales_responder_contract>\n{responder_contract}\n</sales_responder_contract>"
+            ],
+        )
+        memory_sidechannel = bool(
+            getattr(settings, "agent_memory_proposals_enabled", False)
+            or getattr(settings, "agent_instruction_extension_proposals_enabled", False)
+        )
+        if memory_sidechannel:
+            from .memory_policy import MEMORY_POLICY_PROMPT
+
+            responder_instructions = (
+                f"{responder_instructions}\n\n{MEMORY_POLICY_PROMPT}"
+            )
+
         responder_messages = [
             {"role": "system", "content": responder_instructions},
             *history[-40:],
@@ -1282,17 +1309,29 @@ async def _sales_response_with_openai(
                 ),
             },
         ]
-        response = await execute_openai_call(
-            call_type="response_composition",
-            model=settings.openai_model,
-            messages=responder_messages,
-            operation=lambda: client.chat.completions.create(
+
+        envelope = None
+        if memory_sidechannel:
+            from .memory_models import AgentTurnEnvelope
+            from .openai_gateway import parse_structured_output
+
+            parse_result = await parse_structured_output(
+                model=settings.openai_model,
+                text_format=AgentTurnEnvelope,
+                messages=responder_messages,
+                temperature=0.3,
+                call_type="response_composition_envelope",
+            )
+            envelope = parse_result.parsed
+            content = getattr(envelope, "reply", None) if envelope is not None else None
+        else:
+            text_result = await generate_text_output(
                 model=settings.openai_model,
                 messages=responder_messages,
                 temperature=0.3,
-            ),
-        )
-        content = response.choices[0].message.content if response.choices else None
+                call_type="response_composition",
+            )
+            content = text_result.text
         if not content or not content.strip():
             return None
         final_result = AgentResult(
@@ -1307,6 +1346,10 @@ async def _sales_response_with_openai(
             "factual_fallback_text",
             tray_result.reply_text,
         )
+        if envelope is not None:
+            final_result.response_metadata["agent_turn_envelope"] = envelope.model_dump(
+                mode="json"
+            )
         return _mark_sales_result(
             final_result,
             interpretation=interpretation,
@@ -1315,7 +1358,7 @@ async def _sales_response_with_openai(
             used_openai_responder=True,
             used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
         )
-    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
+    except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.responder] failed", {"error_type": type(exc).__name__})
         return None
 
@@ -2984,6 +3027,7 @@ async def _handle_sales_message_inner(
             handle_image_product_search,
             image_search_eligible,
         )
+        from .commerce_router import is_deictic_product_price_request
 
         vague_refs = {
             None,
@@ -2992,6 +3036,54 @@ async def _handle_sales_message_inner(
             "last_presented_product",
             "previous_recommendation",
         }
+        has_inbound_image = bool((message.image_url or "").strip())
+        # Brevo often splits photo+caption: text "qual o preço desse?" arrives
+        # without image_url and would price the previous SKU (CW Rosa → Beaubleu).
+        if (
+            not has_inbound_image
+            and is_deictic_product_price_request(message.text)
+            and interpretation.reference_type in vague_refs
+            and interpretation.goal in {"inspect", "find"}
+        ):
+            print("[sales.reference.ignore_stale_deictic]", {
+                "had_resolved": resolved_product is not None,
+                "reference_type": interpretation.reference_type,
+                "active_product_id": (
+                    state.active_product.product_id if state.active_product else None
+                ),
+            })
+            resolved_product = None
+            resolved_by = "none"
+            if state.active_product is not None:
+                state.active_product = None
+            # Caption-only fragment before the photo lands — wait for the image
+            # instead of quoting the previous watch.
+            if not (
+                state.product_resolution_state == "plausible_matches"
+                and state.last_presented_products
+            ):
+                return _mark_sales_result(
+                    AgentResult(
+                        reply_text=(
+                            "Recebi sua pergunta de preço. Se for o relógio da foto, "
+                            "me envia a imagem (ou a marca e o modelo) que eu confirmo "
+                            "no catálogo e te passo o valor certinho."
+                        ),
+                        intent="commerce",
+                        handoff_required=False,
+                        safety_reason="product_context_missing",
+                        response_metadata={
+                            "domain": "commerce",
+                            "clear_active_product": True,
+                        },
+                    ),
+                    interpretation=interpretation,
+                    goal=interpretation.goal,
+                    response_source="deterministic_fallback",
+                    used_openai_responder=False,
+                    used_tray=False,
+                    fallback_reason="deictic_price_without_image",
+                )
         if (
             image_search_eligible(message)
             and interpretation.reference_type in vague_refs

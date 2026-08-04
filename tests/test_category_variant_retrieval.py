@@ -12,6 +12,7 @@ from app.product_retrieval import (
     revalidate_products,
     semantic_preferences,
 )
+from openai_test_utils import install_fake_openai_client
 
 
 def _settings(api_key: str = "") -> SimpleNamespace:
@@ -366,7 +367,7 @@ async def test_category_selector_discards_invented_id(monkeypatch):
         return {"tree": {}}
 
     monkeypatch.setattr(resolver_module, "get_settings", lambda: _settings("key"))
-    monkeypatch.setattr(resolver_module, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
     resolution = await CategoryResolver(execute).resolve("relógio")
 
     assert resolution.selected_category_ids == ()

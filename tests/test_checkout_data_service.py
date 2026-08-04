@@ -12,6 +12,7 @@ from app.checkout_data_service import (
     update_checkout_data,
 )
 from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from openai_test_utils import install_fake_openai_client
 
 
 @pytest.mark.parametrize("value,expected", [
@@ -134,7 +135,7 @@ async def test_openai_repair_changes_only_unresolved_fields(monkeypatch):
         def __init__(self, **_kwargs):
             self.chat = SimpleNamespace(completions=Completions())
 
-    monkeypatch.setattr(service, "AsyncOpenAI", Client)
+    install_fake_openai_client(monkeypatch, Client)
     monkeypatch.setattr(
         service,
         "get_settings",

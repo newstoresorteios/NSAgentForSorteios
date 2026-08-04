@@ -1,0 +1,71 @@
+"""Sticky canary routing for Responses traffic percentage."""
+
+from __future__ import annotations
+
+import hashlib
+from typing import Literal
+
+from .config import get_settings
+from .runtime_context import get_current_turn
+
+
+ApiRoute = Literal["chat_completions", "responses"]
+
+
+def routing_key_from_turn() -> str | None:
+    runtime = get_current_turn()
+    if runtime is None:
+        return None
+    key = (runtime.conversation_key or "").strip()
+    if key and key != "unresolved":
+        return key
+    if runtime.inbound_id is not None:
+        return f"inbound:{runtime.inbound_id}"
+    return runtime.trace_id or None
+
+
+def bucket_for_key(routing_key: str) -> int:
+    digest = hashlib.sha256(routing_key.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % 10_000
+
+
+def select_api_route(
+    *,
+    routing_key: str | None = None,
+    traffic_percent: float | None = None,
+    sticky: bool | None = None,
+) -> ApiRoute:
+    """Return which API should serve this turn.
+
+    ``traffic_percent`` is 0..1. Sticky hashing keeps the same conversation
+    on the same API for the whole rollout window.
+    """
+    settings = get_settings()
+    percent = (
+        traffic_percent
+        if traffic_percent is not None
+        else float(getattr(settings, "openai_responses_traffic_percent", 0.0) or 0.0)
+    )
+    percent = max(0.0, min(1.0, percent))
+    if percent <= 0.0:
+        return "chat_completions"
+    if percent >= 1.0:
+        return "responses"
+
+    use_sticky = (
+        sticky
+        if sticky is not None
+        else bool(getattr(settings, "openai_canary_sticky_routing", True))
+    )
+    key = routing_key if use_sticky else None
+    if not key:
+        key = routing_key_from_turn() or "anonymous"
+    threshold = int(round(percent * 10_000))
+    return "responses" if bucket_for_key(key) < threshold else "chat_completions"
+
+
+def remember_route(route: ApiRoute) -> None:
+    runtime = get_current_turn()
+    if runtime is None:
+        return
+    runtime.openai_api_route = route

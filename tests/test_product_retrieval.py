@@ -10,6 +10,7 @@ from app.product_retrieval import (
     product_availability_state,
     rerank_products,
 )
+from openai_test_utils import install_fake_openai_client
 
 
 def _interpretation(
@@ -239,6 +240,42 @@ async def test_color_preference_narrows_ambiguous_sealander_matches():
     assert [product["id"] for product in resolution.products] == ["8975"]
 
 
+def test_catalog_match_tokens_drops_strap_accessories_for_beaubleu():
+    from app.product_retrieval import catalog_match_tokens, preference_color_tokens
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Beaubleu",
+        model="Branco Prata Pulseira Bege",
+        preferences={"color": "branco prata pulseira bege"},
+    )
+    colors = preference_color_tokens(interpretation)
+    tokens = catalog_match_tokens(interpretation)
+    assert colors == ("branco",)
+    assert "beaubleu" in tokens
+    assert "branco" in tokens
+    assert "pulseira" not in tokens
+    assert "bege" not in tokens
+    assert "prata" not in tokens
+
+
+def test_catalog_match_tokens_keeps_model_line_without_strap():
+    from app.product_retrieval import catalog_match_tokens, preference_color_tokens
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Beaubleu",
+        model="Ecce Lys Automático Branco Prata Pulseira Bege",
+        preferences={"color": "branco"},
+    )
+    assert preference_color_tokens(interpretation) == ("branco",)
+    tokens = catalog_match_tokens(interpretation)
+    assert "ecce" in tokens
+    assert "lys" in tokens
+    assert "bege" not in tokens
+    assert "pulseira" not in tokens
+
+
 @pytest.mark.asyncio
 async def test_color_mismatch_does_not_substitute_other_automatic_colors(monkeypatch):
     from app.product_retrieval import (
@@ -382,7 +419,7 @@ async def test_gpt_normalizes_when_local_color_score_empty(monkeypatch):
         "app.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="sk-test", openai_model="gpt-4.1-mini"),
     )
-    monkeypatch.setattr("app.product_retrieval.AsyncOpenAI", lambda **_k: _Client())
+    install_fake_openai_client(monkeypatch, _Client)
 
     async def _run_op(**kwargs):
         return await kwargs["operation"]()
@@ -714,7 +751,7 @@ async def test_reranker_discards_ids_outside_candidate_set(monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(openai_api_key="key", openai_model="gpt-4.1-mini"),
     )
-    monkeypatch.setattr(retrieval, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
 
     selected = await rerank_products(
         [{"id": "1", "name": "A"}, {"id": "2", "name": "B"}],
@@ -874,7 +911,7 @@ async def test_rerank_products_filters_out_upon_request_items(monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(openai_api_key="key", openai_model="gpt-4.1-mini"),
     )
-    monkeypatch.setattr(retrieval, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
 
     products = [
         {"id": "1", "name": "Disponível A", "available": 1},

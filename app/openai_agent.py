@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import json
 
-from openai import APIError, AsyncOpenAI, OpenAI
+from openai import APIError
 from .agent_replies import (
     build_available_numbers_reply,
     build_balance_reply,
@@ -32,7 +32,6 @@ from .guardrails import (
 )
 from .handoff_service import build_human_handoff_result, should_request_human_handoff
 from .models import IncomingMessage, AgentResult
-from .openai_runtime import execute_openai_call, execute_openai_call_sync
 from .turn_runtime import LLMCallBudgetExceeded
 from .context_resume import (
     build_contextual_greeting,
@@ -225,24 +224,32 @@ def generate_openai_reply(
             safety_reason="openai_api_key_missing",
         )
 
-    client = OpenAI(api_key=settings.openai_api_key)
+    from .prompt_compiler import resolve_system_instructions
+
     user_input = build_agent_input(message, customer_context, facts)
+    system_instructions = resolve_system_instructions(
+        fallback_instructions=SYSTEM_INSTRUCTIONS,
+        incoming=message,
+        extra_system_blocks=[
+            f"<legacy_agent_contract>\n{SYSTEM_INSTRUCTIONS}\n</legacy_agent_contract>"
+        ],
+    )
     legacy_messages = [
-        {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+        {"role": "system", "content": system_instructions},
         {"role": "user", "content": user_input},
     ]
     try:
-        response = execute_openai_call_sync(
-            call_type="legacy",
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import generate_text_sync
+
+        text_result = generate_text_sync(
             model=settings.openai_model,
             messages=legacy_messages,
-            operation=lambda: client.chat.completions.create(
-                model=settings.openai_model,
-                messages=legacy_messages,
-                temperature=0.3,
-            ),
+            temperature=0.3,
+            call_type="legacy",
         )
-    except (APIError, LLMCallBudgetExceeded) as exc:
+        content = text_result.text
+    except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded) as exc:
         status_code = getattr(exc, "status_code", None)
         print("[openai.agent] request_failed", {
             "status_code": status_code,
@@ -258,8 +265,7 @@ def generate_openai_reply(
         )
 
     reply = _truncate(
-        (response.choices[0].message.content if response.choices else None)
-        or _non_handoff_fallback(message, facts),
+        content or _non_handoff_fallback(message, facts),
         settings.max_reply_chars,
     )
     return AgentResult(
@@ -337,47 +343,86 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
     if not settings.openai_api_key:
         return generate_openai_reply(message, customer_context, facts)
 
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    from .prompt_compiler import resolve_system_instructions
+
+    system_instructions = resolve_system_instructions(
+        fallback_instructions=SYSTEM_INSTRUCTIONS,
+        incoming=message,
+        extra_system_blocks=[
+            f"<legacy_agent_contract>\n{SYSTEM_INSTRUCTIONS}\n</legacy_agent_contract>"
+        ],
+    )
     messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+        {"role": "system", "content": system_instructions},
         {"role": "user", "content": build_agent_input(message, customer_context, facts)},
     ]
     tools = (
         TOOL_SCHEMAS
-        if facts.get("primary_intent") == "commerce" and settings.tray_adapter_url and settings.tray_adapter_token
+        if facts.get("primary_intent") == "commerce"
+        and settings.tray_adapter_url
+        and settings.tray_adapter_token
         else None
     )
     try:
-        for call_index in range(3):
-            kwargs = {"model": settings.openai_model, "messages": messages, "temperature": 0.3}
-            if tools:
-                kwargs.update({"tools": tools, "tool_choice": "auto"})
-            response = await execute_openai_call(
-                call_type=(
-                    "decision" if call_index == 0 else "response_composition"
-                ),
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import generate_text_output, run_tool_loop_output
+
+        if not tools:
+            text_result = await generate_text_output(
                 model=settings.openai_model,
                 messages=messages,
-                operation=lambda: client.chat.completions.create(**kwargs),
+                temperature=0.3,
+                call_type="response_composition",
             )
-            choice = response.choices[0] if response.choices else None
-            assistant = choice.message if choice else None
-            tool_calls = getattr(assistant, "tool_calls", None) if assistant else None
-            if not tool_calls:
-                reply = _truncate(
-                    (getattr(assistant, "content", None) if assistant else None)
-                    or _non_handoff_fallback(message, facts), settings.max_reply_chars,
+            reply = _truncate(
+                text_result.text or _non_handoff_fallback(message, facts),
+                settings.max_reply_chars,
+            )
+            return AgentResult(
+                reply_text=reply,
+                intent=str(facts.get("primary_intent") or "general_support"),
+            )
+
+        async def _execute_allowed(name: str, arguments: dict) -> dict:
+            result = await execute_tool(name, arguments)
+            return result
+
+        loop_result = await run_tool_loop_output(
+            model=settings.openai_model,
+            tools=tools,
+            execute_tool=_execute_allowed,
+            messages=messages,
+            temperature=0.3,
+            parallel_tool_calls=True,
+            max_rounds=3,
+            call_type="tool_loop",
+        )
+        for item in loop_result.tool_results:
+            if isinstance(item.get("result"), dict) and "error" in item["result"]:
+                return AgentResult(
+                    reply_text=_non_handoff_fallback(message, facts),
+                    intent=str(facts.get("primary_intent") or "store_lookup"),
+                    handoff_required=False,
+                    safety_reason="tray_adapter_unavailable",
                 )
-                return AgentResult(reply_text=reply, intent=str(facts.get("primary_intent") or "general_support"))
-            messages.append({"role": "assistant", "content": getattr(assistant, "content", None), "tool_calls": [call.model_dump() for call in tool_calls]})
-            for call in tool_calls:
-                result = await execute_tool(call.function.name, json.loads(call.function.arguments or "{}"))
-                if "error" in result:
-                    return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tray_adapter_unavailable")
-                messages.append({"role": "tool", "tool_call_id": call.id, "name": call.function.name, "content": json.dumps(result, ensure_ascii=False)})
-        return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tool_loop_limit")
+        if loop_result.limit_reached and not loop_result.text:
+            return AgentResult(
+                reply_text=_non_handoff_fallback(message, facts),
+                intent=str(facts.get("primary_intent") or "store_lookup"),
+                handoff_required=False,
+                safety_reason="tool_loop_limit",
+            )
+        reply = _truncate(
+            loop_result.text or _non_handoff_fallback(message, facts),
+            settings.max_reply_chars,
+        )
+        return AgentResult(
+            reply_text=reply,
+            intent=str(facts.get("primary_intent") or "general_support"),
+        )
     except (
         APIError,
+        OpenAIGatewayError,
         LLMCallBudgetExceeded,
         json.JSONDecodeError,
         ValueError,

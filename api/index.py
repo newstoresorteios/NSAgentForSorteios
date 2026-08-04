@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token, verify_remarketing_cron
+from app.persona_admin_api import router as persona_admin_router
 from app.webhook_parser import (
     inbound_skip_reason,
     parse_brevo_conversations_payload,
@@ -47,6 +48,7 @@ from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 from app.turn_runtime import LLMCallBudget, TurnRuntimeContext
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
+app.include_router(persona_admin_router)
 
 
 def _request_trace_id(request: Request) -> str:

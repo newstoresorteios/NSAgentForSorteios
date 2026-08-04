@@ -174,6 +174,50 @@ _DESCRIPTOR_MODEL_TOKENS = frozenset(
         "caixa",
     }
 )
+# Strap/case materials from Vision — useful for ranking, never AND-required.
+# Catalog titles usually only carry dial color (Branco/Rosa), not "pulseira bege".
+_ACCESSORY_COLOR_TOKENS = frozenset(
+    {
+        "pulseira",
+        "strap",
+        "bracelet",
+        "bege",
+        "cream",
+        "creme",
+        "prata",
+        "silver",
+        "aco",
+        "titanio",
+        "couro",
+        "leather",
+        "borracha",
+        "nylon",
+        "ouro",
+        "gold",
+        "caixa",
+        "case",
+        "carcasa",
+    }
+)
+_DIAL_COLOR_TOKENS = frozenset(
+    {
+        "branco",
+        "preto",
+        "rosa",
+        "azul",
+        "verde",
+        "dourado",
+        "cinza",
+        "vermelho",
+        "amarelo",
+        "laranja",
+        "pink",
+        "blue",
+        "black",
+        "white",
+        "green",
+    }
+)
 _ACCESSORY_NAME_TOKENS = frozenset(
     {
         "strap",
@@ -402,6 +446,7 @@ def normalize_pt_catalog_query(text: str | None) -> str:
 
 
 def preference_color_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
+    """Dial-color tokens only — never strap/case materials from Vision dumps."""
     color = _fold(interpretation.preferences.color)
     if not color:
         # Recover color adjectives embedded in the model string from Vision.
@@ -410,13 +455,21 @@ def preference_color_tokens(interpretation: SalesInterpretation) -> tuple[str, .
             for token in significant_model_tokens(interpretation.subject.model)
             if token in _OPTIONAL_MODEL_TOKENS
             and token not in _DESCRIPTOR_MODEL_TOKENS
+            and token not in _ACCESSORY_COLOR_TOKENS
         )
-    tokens = [
+    raw = [
         token
         for token in re.findall(r"[a-z0-9]+", color)
-        if token and token not in _DESCRIPTOR_MODEL_TOKENS
+        if token
+        and token not in _DESCRIPTOR_MODEL_TOKENS
+        and token not in _ACCESSORY_COLOR_TOKENS
     ]
-    return tuple(dict.fromkeys(tokens))
+    # Prefer known dial hues; if Vision only sent accessories, require nothing.
+    dial = [token for token in raw if token in _DIAL_COLOR_TOKENS]
+    if dial:
+        # One dial hue is enough for AND/require_color (branco, not branco+bege).
+        return (dial[0],)
+    return ()
 
 
 def catalog_match_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
@@ -428,7 +481,14 @@ def catalog_match_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]
         if folded and len(folded) >= 2:
             tokens.append(folded)
     color_tokens = preference_color_tokens(interpretation)
-    core = identity_core_tokens(subject.model, color_tokens=color_tokens)
+    # Strip accessory words from model before core identity (Vision dumps).
+    model_for_core = " ".join(
+        token
+        for token in significant_model_tokens(subject.model)
+        if token not in _ACCESSORY_COLOR_TOKENS
+        and token not in _DESCRIPTOR_MODEL_TOKENS
+    ) or subject.model
+    core = identity_core_tokens(model_for_core, color_tokens=color_tokens)
     tokens.extend(core)
     for code in extract_model_codes(subject.model):
         tokens.append(_fold(code))
@@ -437,7 +497,7 @@ def catalog_match_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]
     if model_excludes_gmt(subject.model):
         tokens.append("automatico")
     # Drop ultra-generic fillers that drown AND matches.
-    drop = {"relogio", "watch", "mm"}
+    drop = {"relogio", "watch", "mm"} | _ACCESSORY_COLOR_TOKENS
     cleaned = [
         token
         for token in dict.fromkeys(tokens)
@@ -1393,52 +1453,52 @@ async def match_specific_products(
         "has_color": bool(color_tokens),
     })
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await execute_openai_call(
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import parse_structured_output
+
+        parse_result = await parse_structured_output(
+            model=settings.openai_model,
+            text_format=ProductMatchSelection,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Resolva o produto pedido usando SOMENTE itens de CANDIDATES. "
+                        "Normalize nomes em inglês/PT (Automatic→Automático, pink→Rosa) e "
+                        "ignore descritores de tom (claro, escuro, mostrador). "
+                        "Se PREFERENCES.color existir (ex.: rosa), escolha o título que "
+                        "contenha essa cor; NÃO substitua por outra cor da mesma linha "
+                        "(Kingfisher/Dagger/Azul no lugar de Rosa). "
+                        "Use match_status=exact só com um único ID seguro; ambiguous se "
+                        "houver 2+ opções da cor/modelo pedidos; none se a cor/modelo "
+                        "não estiver na lista. candidate_ids e best_candidate_id devem "
+                        "ser IDs de CANDIDATES."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "SUBJECT": interpretation.subject.model_dump(
+                                mode="json",
+                                exclude_none=True,
+                            ),
+                            "PREFERENCES": interpretation.preferences.model_dump(
+                                mode="json",
+                                exclude_none=True,
+                            ),
+                            "SEARCH_TOKENS": list(
+                                catalog_match_tokens(interpretation)
+                            ),
+                            "CANDIDATES": gpt_pool,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
             call_type="product_selection",
-            operation=lambda: client.chat.completions.parse(
-                model=settings.openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Resolva o produto pedido usando SOMENTE itens de CANDIDATES. "
-                            "Normalize nomes em inglês/PT (Automatic→Automático, pink→Rosa) e "
-                            "ignore descritores de tom (claro, escuro, mostrador). "
-                            "Se PREFERENCES.color existir (ex.: rosa), escolha o título que "
-                            "contenha essa cor; NÃO substitua por outra cor da mesma linha "
-                            "(Kingfisher/Dagger/Azul no lugar de Rosa). "
-                            "Use match_status=exact só com um único ID seguro; ambiguous se "
-                            "houver 2+ opções da cor/modelo pedidos; none se a cor/modelo "
-                            "não estiver na lista. candidate_ids e best_candidate_id devem "
-                            "ser IDs de CANDIDATES."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "SUBJECT": interpretation.subject.model_dump(
-                                    mode="json",
-                                    exclude_none=True,
-                                ),
-                                "PREFERENCES": interpretation.preferences.model_dump(
-                                    mode="json",
-                                    exclude_none=True,
-                                ),
-                                "SEARCH_TOKENS": list(
-                                    catalog_match_tokens(interpretation)
-                                ),
-                                "CANDIDATES": gpt_pool,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-                response_format=ProductMatchSelection,
-            ),
         )
-        parsed = response.choices[0].message.parsed if response.choices else None
+        parsed = parse_result.parsed
         if not isinstance(parsed, ProductMatchSelection):
             raise ValueError("product_match_schema_missing")
         selected: list[dict[str, Any]] = []
@@ -1495,7 +1555,7 @@ async def match_specific_products(
             match_source="openai",
             invalid_ids_count=invalid_ids,
         )
-    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
+    except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.product.match]", {
             "candidate_count": len(compatible),
             "selected_count": 0,
@@ -1678,32 +1738,32 @@ async def rerank_products(
 
     candidate_by_id = {str(product["id"]): product for product in available_products if product.get("id") is not None}
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await execute_openai_call(
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import parse_structured_output
+
+        parse_result = await parse_structured_output(
+            model=settings.openai_model,
+            text_format=ProductRerankSelection,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Classifique produtos reais da NewStore conforme as preferências estruturadas. "
+                        "Retorne no máximo cinco IDs presentes em CANDIDATES, em ordem de relevância. "
+                        "Não invente IDs, produtos nem atributos e use somente evidências dos candidatos."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps({
+                        "PREFERENCES": semantic_preferences(interpretation),
+                        "CANDIDATES": compact_candidates(available_products),
+                    }, ensure_ascii=False),
+                },
+            ],
             call_type="product_selection",
-            operation=lambda: client.chat.completions.parse(
-                model=settings.openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Classifique produtos reais da NewStore conforme as preferências estruturadas. "
-                            "Retorne no máximo cinco IDs presentes em CANDIDATES, em ordem de relevância. "
-                            "Não invente IDs, produtos nem atributos e use somente evidências dos candidatos."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps({
-                            "PREFERENCES": semantic_preferences(interpretation),
-                            "CANDIDATES": compact_candidates(available_products),
-                        }, ensure_ascii=False),
-                    },
-                ],
-                response_format=ProductRerankSelection,
-            ),
         )
-        parsed = response.choices[0].message.parsed if response.choices else None
+        parsed = parse_result.parsed
         if not isinstance(parsed, ProductRerankSelection):
             raise ValueError("reranker_schema_missing")
         selected: list[dict[str, Any]] = []
@@ -1728,7 +1788,7 @@ async def rerank_products(
             "invalid_ids_count": invalid_ids,
         })
         return selected
-    except (APIError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
+    except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.reranker]", {
             "source": "deterministic_fallback",
             "candidate_count": len(available_products),

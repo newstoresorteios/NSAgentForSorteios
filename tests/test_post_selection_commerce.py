@@ -469,6 +469,48 @@ async def test_price_on_plausible_matches_asks_which_not_kingfisher(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_deictic_price_without_image_ignores_stale_active(monkeypatch):
+    """Caption-only 'qual o preço desse?' must not quote the previous watch."""
+    from app import sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    state = CommerceConversationState(
+        active_domain="commerce",
+        product_resolution_state="found_available",
+        active_product={
+            "product_id": "15716",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Rosa",
+            "brand": "Christopher Ward",
+        },
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="qual o preço desse?"),
+        {},
+        {},
+        _interpretation(
+            goal="inspect",
+            purchase_action=None,
+            reference_type="current_product",
+        ),
+        commerce_state=state,
+    )
+
+    assert result is not None
+    assert result.response_metadata.get("fallback_reason") == (
+        "deictic_price_without_image"
+    )
+    assert "15716" not in (result.reply_text or "")
+    assert "Sealander" not in (result.reply_text or "")
+    assert "foto" in (result.reply_text or "").casefold()
+
+
+@pytest.mark.asyncio
 async def test_inbound_image_ignores_stale_kingfisher_context(monkeypatch):
     from app import sales_agent
     from app.models import AgentResult

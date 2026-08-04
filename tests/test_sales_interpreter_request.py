@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.commerce_context import CommerceConversationState
 from app.models import IncomingMessage, SalesInterpretation
+from openai_test_utils import install_fake_openai_client
 
 
 def _settings() -> SimpleNamespace:
@@ -83,7 +84,7 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
             self.chat = SimpleNamespace(completions=FakeCompletions())
 
     monkeypatch.setattr(sales_agent, "get_settings", _settings)
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
     monkeypatch.setattr(
         sales_agent,
         "_fallback_interpretation",
@@ -160,7 +161,7 @@ async def test_bad_request_logs_safe_details_and_observable_fallback(monkeypatch
             self.chat = SimpleNamespace(completions=FakeCompletions())
 
     monkeypatch.setattr(sales_agent, "get_settings", _settings)
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
 
     result = await sales_agent.interpret_message(IncomingMessage(text="esportivo"))
     logs = capsys.readouterr().out

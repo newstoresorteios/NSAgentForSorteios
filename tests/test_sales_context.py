@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import IncomingMessage, SalesInterpretation
+from openai_test_utils import install_fake_openai_client
 
 
 def _settings(*, api_key: str = "test-key") -> SimpleNamespace:
@@ -21,7 +22,7 @@ def _fake_openai(monkeypatch, interpretation: SalesInterpretation, captured: dic
         def __init__(self, **kwargs):
             self.chat = SimpleNamespace(completions=FakeCompletions())
 
-    monkeypatch.setattr("app.sales_agent.AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
 
 
 @pytest.mark.asyncio
@@ -155,10 +156,13 @@ async def test_greeting_uses_fast_local_interpretation_without_openai(monkeypatc
     import app.sales_agent as sales_agent
 
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings())
+
+    async def forbid_parse(**kwargs):
+        raise AssertionError("greeting must not call OpenAI")
+
     monkeypatch.setattr(
-        sales_agent,
-        "AsyncOpenAI",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("greeting must not call OpenAI")),
+        "app.openai_gateway.parse_structured_output",
+        forbid_parse,
     )
 
     result = await sales_agent.interpret_message(IncomingMessage(text="oi"))

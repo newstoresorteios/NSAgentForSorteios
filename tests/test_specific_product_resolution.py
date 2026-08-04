@@ -15,6 +15,7 @@ from app.product_retrieval import (
     prefilter_specific_candidates,
     product_availability_state,
 )
+from openai_test_utils import install_fake_openai_client
 
 
 def _interpretation(
@@ -91,7 +92,7 @@ def _mock_matcher(
             self.chat = SimpleNamespace(completions=FakeCompletions())
 
     monkeypatch.setattr(retrieval, "get_settings", lambda: _settings())
-    monkeypatch.setattr(retrieval, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
 
 
 @pytest.mark.asyncio
@@ -168,12 +169,12 @@ async def test_exact_structured_model_does_not_need_brand_fallback(monkeypatch):
             return product
         raise AssertionError(tool)
 
+    async def forbid_parse(**kwargs):
+        raise AssertionError("exact model match must not need OpenAI matcher")
+
     monkeypatch.setattr(
-        retrieval,
-        "AsyncOpenAI",
-        lambda **kwargs: (_ for _ in ()).throw(
-            AssertionError("exact model match must not need OpenAI matcher")
-        ),
+        "app.openai_gateway.parse_structured_output",
+        forbid_parse,
     )
     monkeypatch.setattr(retrieval, "get_settings", lambda: _settings())
     monkeypatch.setattr(sales_agent, "execute_tool", execute)

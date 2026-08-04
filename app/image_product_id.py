@@ -18,9 +18,10 @@ Você identifica relógios em fotos enviadas por clientes da NewStore (loja de r
 
 Extraia apenas o que estiver legível ou claramente visível na imagem:
 - marca (brand)
-- modelo / linha (model), incluindo códigos no mostrador (ex.: PH2000M, Sealander, C63)
+- modelo / linha (model), incluindo nome de coleção no mostrador
+  (ex.: PH2000M, Sealander, C63, Ecce Lys, Ecce Smalt)
 - referência comercial se aparecer (ex.: C050.607.44.011.02, C63-36ADA4-S00P0-B0)
-- cor dominante do mostrador/caixa quando clara
+- cor do MOSTRADOR (dial) no campo color — só a cor do disco (branco, preto, rosa…)
 
 Regras:
 - is_watch=false se a imagem não for um relógio de pulso.
@@ -28,6 +29,9 @@ Regras:
 - reference só quando houver código comercial legível (ex.: C63-36ADA4-S00P0-B0,
   C050.607.44.011.02). Nunca coloque cor/descrição do mostrador em reference
   (ex.: "rosa claro", "mostrador preto") — use o campo color.
+- Em color: NÃO inclua pulseira, couro, bege da pulseira, caixa prata/aço.
+  Ex.: mostrador branco + pulseira bege → color="branco" (não "branco prata pulseira bege").
+- Em model: priorize o nome de linha/coleção legível (Ecce Lys, Sealander…), não a pulseira.
 - confidence entre 0 e 1 conforme legibilidade.
 - Preferir nomes comerciais usados em e-commerce BR (ex.: "DS Super PH2000M Automático Branco Titânio").
 - Se houver legenda do cliente, use-a só como dica complementar — a imagem manda.
@@ -142,22 +146,16 @@ async def identify_product_from_image(
         "image_bytes": len(image_bytes),
         "content_type": content_type,
     })
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
-    response = await execute_openai_call(
-        call_type="image_product_identify",
+    from .openai_gateway import parse_structured_output
+
+    parse_result = await parse_structured_output(
         model=model,
+        text_format=ImageProductIdentification,
         messages=messages,
-        operation=lambda: client.chat.completions.parse(
-            model=model,
-            messages=messages,
-            temperature=0,
-            response_format=ImageProductIdentification,
-        ),
+        temperature=0,
+        call_type="image_product_identify",
     )
-    parsed_message = response.choices[0].message if response.choices else None
-    if parsed_message is None or getattr(parsed_message, "refusal", None):
-        raise ValueError("image_identify_refusal_or_empty")
-    identified = getattr(parsed_message, "parsed", None)
+    identified = parse_result.parsed
     if not isinstance(identified, ImageProductIdentification):
         raise ValueError("image_identify_schema_missing")
     print("[sales.image.identify]", {
@@ -288,12 +286,18 @@ def _visual_candidates_result(
         intent="commerce",
         handoff_required=False,
         safety_reason="visual_nearest_neighbor",
-        commercial_data={"products": products},
+        commercial_data={
+            "products": products,
+            "match_status": "ambiguous",
+        },
         response_metadata={
             "domain": "commerce",
             "image_search": True,
             "visual_search": True,
             "visual_trigger": trigger,
+            "presented_products": True,
+            "product_resolution_state": "plausible_matches",
+            "clear_active_product": True,
             "image_identify": (
                 identified.model_dump(mode="json") if identified is not None else None
             ),
@@ -371,7 +375,21 @@ async def handle_image_product_search(
     )
     try:
         identified = await identify_product_from_image(message)
-    except (APIError, LLMCallBudgetExceeded, httpx.HTTPError, ValueError, RuntimeError) as exc:
+    except Exception as exc:
+        from .openai_errors import OpenAIGatewayError
+
+        if not isinstance(
+            exc,
+            (
+                APIError,
+                OpenAIGatewayError,
+                LLMCallBudgetExceeded,
+                httpx.HTTPError,
+                ValueError,
+                RuntimeError,
+            ),
+        ):
+            raise
         print("[sales.image.identify.error]", {
             "error_type": type(exc).__name__,
             "error": str(exc)[:240],
@@ -485,6 +503,8 @@ async def handle_image_product_search(
                 + "\n".join(numbered_lines)
                 + "\n\nQuer ver alguma dessas?"
             )
+            if isinstance(tray_result.commercial_data, dict):
+                tray_result.commercial_data["match_status"] = "ambiguous"
         else:
             color_hint = (identified.color or "").strip()
             tray_result.reply_text = (
@@ -518,13 +538,18 @@ async def handle_image_product_search(
                 start=1,
             )
         ]
-        if match_status == "ambiguous" or not color_matched:
+        # Photo matches always need customer confirmation — never auto-price
+        # the first sibling (e.g. Ecce Smalt vs Ecce Lys).
+        multi = len(products) >= 2 or match_status == "ambiguous" or not color_matched
+        if multi:
             tray_result.reply_text = (
                 f"Pela foto, parece {label or 'este modelo'}. "
                 "Encontrei estas opções próximas:\n"
                 + "\n".join(numbered_lines)
                 + "\n\nÉ algum desses?"
             )
+            if isinstance(tray_result.commercial_data, dict):
+                tray_result.commercial_data["match_status"] = "ambiguous"
         elif tray_result.safety_reason is None or not tray_result.reply_text.startswith(
             "Pela foto"
         ):
@@ -535,11 +560,15 @@ async def handle_image_product_search(
                 + "\n\nÉ esse que você procura?"
             )
 
+    # Vision turns never activate a SKU — wait for explicit confirmation.
     tray_result.response_metadata.update({
         "image_search": True,
         "image_identify": identified.model_dump(mode="json"),
         "domain": "commerce",
         "used_tray": True,
+        "presented_products": True,
+        "clear_active_product": True,
+        "product_resolution_state": "plausible_matches",
     })
     # Skip OpenAI responder here: Vision already spent the critical latency budget.
     return _mark_sales_result(

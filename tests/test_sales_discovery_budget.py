@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
+from openai_test_utils import install_fake_openai_client
 
 
 def _settings(*, api_key: str = "") -> SimpleNamespace:
@@ -167,7 +168,7 @@ async def test_clarification_receives_known_preferences_and_recent_questions(mon
     )
     state = sales_agent._discovery_state(interpretation, recent_turns)
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings(api_key="test-key"))
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
 
     await sales_agent.generate_clarification_reply(
         message=IncomingMessage(text="material natural"),
@@ -191,10 +192,17 @@ async def test_structured_clarification_question_avoids_second_openai_call(monke
         clarification_question="Tem uma faixa de preço e um estilo em mente?",
     )
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings(api_key="test-key"))
+
+    async def forbid_openai(**kwargs):
+        raise AssertionError("structured question must be reused")
+
     monkeypatch.setattr(
-        sales_agent,
-        "AsyncOpenAI",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("structured question must be reused")),
+        "app.openai_gateway.parse_structured_output",
+        forbid_openai,
+    )
+    monkeypatch.setattr(
+        "app.openai_gateway.generate_text_output",
+        forbid_openai,
     )
 
     result = await sales_agent.generate_clarification_reply(
@@ -229,7 +237,7 @@ async def test_latest_explicit_preference_from_interpreter_is_preserved(monkeypa
             self.chat = SimpleNamespace(completions=FakeCompletions())
 
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings(api_key="test-key"))
-    monkeypatch.setattr(sales_agent, "AsyncOpenAI", FakeClient)
+    install_fake_openai_client(monkeypatch, FakeClient)
 
     result = await sales_agent.interpret_message(
         IncomingMessage(text="prefiro digital"),
