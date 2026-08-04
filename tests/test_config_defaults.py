@@ -41,6 +41,17 @@ def test_llm_budget_defaults_cover_critique_retry():
     assert Settings.model_fields["agent_quality_judge_risk_threshold"].default == 70
 
 
+def test_legacy_critique_mode_on_coerces_to_enforce(monkeypatch):
+    """Production Vercel had AGENT_CRITIQUE_MODE=on, which is not a Literal value."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("AGENT_CRITIQUE_MODE", "on")
+    try:
+        settings = Settings()
+    finally:
+        get_settings.cache_clear()
+    assert settings.agent_critique_mode == "enforce"
+
+
 def test_persona_and_memory_rollout_defaults():
     assert Settings.model_fields["agent_db_persona_enabled"].default is True
     assert Settings.model_fields["agent_memory_proposals_enabled"].default is True

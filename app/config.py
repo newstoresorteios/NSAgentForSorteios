@@ -455,6 +455,36 @@ class Settings(BaseSettings):
             return value.strip().rstrip("/")
         return value
 
+    @field_validator("agent_critique_mode", mode="before")
+    @classmethod
+    def normalize_critique_mode(cls, value: object) -> object:
+        """Accept legacy Vercel aliases like on/true → enforce so boot never 500s."""
+        if value is None:
+            return value
+        text = str(value).strip().casefold()
+        aliases = {
+            "on": "enforce",
+            "true": "enforce",
+            "1": "enforce",
+            "yes": "enforce",
+            "enabled": "enforce",
+            "false": "off",
+            "0": "off",
+            "no": "off",
+            "disabled": "off",
+        }
+        normalized = aliases.get(text, text)
+        if normalized != text:
+            print(
+                "[config.critique]",
+                {
+                    "event": "coerce_legacy_critique_mode",
+                    "from": str(value),
+                    "to": normalized,
+                },
+            )
+        return normalized
+
     @model_validator(mode="after")
     def normalize_history_windows(self) -> "Settings":
         """Keep boot resilient when Vercel still has legacy HISTORY_LIMIT=200.
