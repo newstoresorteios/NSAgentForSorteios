@@ -188,12 +188,13 @@ class Settings(BaseSettings):
         alias="AGENT_LEGACY_PROMPT_COMPAT_ENABLED",
     )
     agent_runtime_enabled: bool = Field(default=True, alias="AGENT_RUNTIME_ENABLED")
+    # Phase 8: real per-turn OpenAI budget. Keep critique off unless max >= 3+.
     agent_llm_budget_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="AGENT_LLM_BUDGET_ENABLED",
     )
     agent_max_llm_calls_per_turn: int = Field(
-        default=2,
+        default=3,
         alias="AGENT_MAX_LLM_CALLS_PER_TURN",
         ge=0,
     )

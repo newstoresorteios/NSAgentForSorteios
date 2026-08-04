@@ -25,7 +25,7 @@ class LLMCallBudgetExceeded(RuntimeError):
 
 
 class LLMCallBudget(BaseModel):
-    max_calls: int = Field(default=2, ge=0)
+    max_calls: int = Field(default=3, ge=0)
     used_calls: int = Field(default=0, ge=0)
     enforce: bool = False
     allowed_call_types: set[str] = Field(default_factory=set)
@@ -65,6 +65,9 @@ class TurnRuntimeContext(BaseModel):
     fallback_reasons: list[str] = Field(default_factory=list)
     stage_durations_ms: dict[str, float] = Field(default_factory=dict)
     llm_calls_by_type: dict[str, int] = Field(default_factory=dict)
+    llm_call_reasons: list[dict[str, object]] = Field(default_factory=list)
+    llm_calls_avoided: int = 0
+    llm_avoided_reasons: list[dict[str, object]] = Field(default_factory=list)
     integration_failures: dict[str, int] = Field(default_factory=dict)
     llm_budget: LLMCallBudget = Field(default_factory=LLMCallBudget)
     tray_calls: list[dict[str, object]] = Field(default_factory=list)
@@ -88,11 +91,52 @@ class TurnRuntimeContext(BaseModel):
             2,
         )
 
-    def register_openai_call(self, call_type: str) -> None:
-        self.llm_budget.reserve(call_type)
+    def register_avoided_llm_call(
+        self,
+        reason: str,
+        *,
+        intended_call_type: str | None = None,
+        intended_call_types: list[str] | None = None,
+    ) -> None:
+        types = list(intended_call_types or [])
+        if intended_call_type:
+            types.append(intended_call_type)
+        if not types:
+            types = ["unspecified"]
+        for call_type in types:
+            self.llm_calls_avoided += 1
+            self.llm_avoided_reasons.append(
+                {
+                    "reason": reason,
+                    "intended_call_type": call_type,
+                }
+            )
+
+    def register_openai_call(
+        self,
+        call_type: str,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        try:
+            self.llm_budget.reserve(call_type)
+        except LLMCallBudgetExceeded:
+            self.register_avoided_llm_call(
+                reason or "budget_exceeded",
+                intended_call_type=call_type,
+            )
+            self.register_fallback("llm_budget_exceeded")
+            raise
         self.openai_call_count += 1
         self.llm_calls_by_type[call_type] = (
             self.llm_calls_by_type.get(call_type, 0) + 1
+        )
+        self.llm_call_reasons.append(
+            {
+                "call_type": call_type,
+                "reason": reason or call_type,
+                "index": self.openai_call_count,
+            }
         )
         if self.openai_call_count == 1 and self.execution_path == "fast":
             self.execution_path = "normal"
@@ -140,6 +184,14 @@ class TurnRuntimeContext(BaseModel):
             "fallback_reasons": list(self.fallback_reasons),
             "stage_durations_ms": dict(self.stage_durations_ms),
             "llm_calls_by_type": dict(self.llm_calls_by_type),
+            "llm_call_reasons": list(self.llm_call_reasons[:12]),
+            "llm_calls_avoided": self.llm_calls_avoided,
+            "llm_avoided_reasons": list(self.llm_avoided_reasons[:12]),
+            "llm_budget": {
+                "max_calls": self.llm_budget.max_calls,
+                "used_calls": self.llm_budget.used_calls,
+                "enforce": self.llm_budget.enforce,
+            },
             "integration_failures": dict(self.integration_failures),
             "tray_tools": [
                 {

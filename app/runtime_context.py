@@ -55,3 +55,18 @@ def register_integration_failure(provider: str) -> None:
     context = get_current_turn()
     if context is not None:
         context.register_integration_failure(provider)
+
+
+def register_avoided_llm_call(
+    reason: str,
+    *,
+    intended_call_type: str | None = None,
+    intended_call_types: list[str] | None = None,
+) -> None:
+    context = get_current_turn()
+    if context is not None:
+        context.register_avoided_llm_call(
+            reason,
+            intended_call_type=intended_call_type,
+            intended_call_types=intended_call_types,
+        )

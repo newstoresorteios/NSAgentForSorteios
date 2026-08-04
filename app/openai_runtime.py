@@ -56,10 +56,14 @@ def _response_preview(response: Any) -> str | None:
     return None
 
 
-def _start_call(call_type: str) -> tuple[Any, float]:
+def _start_call(
+    call_type: str,
+    *,
+    reason: str | None = None,
+) -> tuple[Any, float]:
     context = get_current_turn()
     if context is not None:
-        context.register_openai_call(call_type)
+        context.register_openai_call(call_type, reason=reason)
     return context, time.perf_counter()
 
 
@@ -105,8 +109,9 @@ async def execute_openai_call(
     timeout_seconds: float | None = None,
     model: str | None = None,
     messages: list[dict[str, Any]] | None = None,
+    reason: str | None = None,
 ) -> T:
-    context, started_at = _start_call(call_type)
+    context, started_at = _start_call(call_type, reason=reason)
     try:
         awaitable = operation()
         response = (
@@ -145,8 +150,9 @@ def execute_openai_call_sync(
     operation: Callable[[], T],
     model: str | None = None,
     messages: list[dict[str, Any]] | None = None,
+    reason: str | None = None,
 ) -> T:
-    context, started_at = _start_call(call_type)
+    context, started_at = _start_call(call_type, reason=reason)
     try:
         response = operation()
     except Exception as exc:

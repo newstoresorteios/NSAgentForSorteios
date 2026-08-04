@@ -17,3 +17,9 @@ def test_history_window_defaults_separate_model_and_recovery():
     assert Settings.model_fields["agent_history_limit"].default == 12
     assert Settings.model_fields["agent_history_hard_cap"].default == 80
     assert Settings.model_fields["agent_max_recent_turns"].default == 8
+
+
+def test_llm_budget_defaults_enforce_three_calls():
+    assert Settings.model_fields["agent_llm_budget_enabled"].default is True
+    assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 3
+    assert Settings.model_fields["agent_critique_mode"].default == "off"

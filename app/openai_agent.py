@@ -108,6 +108,27 @@ def _annotate_agent_result(result: AgentResult, **metadata: object) -> AgentResu
     for key, value in metadata.items():
         if value is not None and key not in result.response_metadata:
             result.response_metadata[key] = value
+    # Phase 8: count skipped LLM slots when deterministic / partial paths win.
+    if "used_openai_interpreter" in metadata or "used_openai_responder" in metadata:
+        from .runtime_context import register_avoided_llm_call
+
+        used_interpreter = bool(
+            result.response_metadata.get("used_openai_interpreter")
+        )
+        used_responder = bool(result.response_metadata.get("used_openai_responder"))
+        source = str(
+            result.response_metadata.get("response_source") or "deterministic"
+        )
+        skipped: list[str] = []
+        if not used_interpreter:
+            skipped.append("decision")
+        if not used_responder:
+            skipped.append("response_composition")
+        if skipped:
+            register_avoided_llm_call(
+                f"path:{source}",
+                intended_call_types=skipped,
+            )
     return result
 
 
