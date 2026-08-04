@@ -3,8 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .config import get_settings
-from .db import get_conn
+from .config import resolved_sorteio_database_url
+from .db import get_sorteio_conn
+
+
+def _sorteio_db_ready() -> bool:
+    return bool(resolved_sorteio_database_url())
 
 
 def normalize_phone(phone: str | None) -> str | None:
@@ -271,9 +275,8 @@ def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
 
 
 def _resolve_account(phone: str | None, message_text: str | None) -> dict[str, Any]:
-    settings = get_settings()
     normalized = normalize_phone(phone)
-    if not settings.database_url:
+    if not _sorteio_db_ready():
         return {"found": False, "error": "database_not_configured"}
     if not normalized:
         return {"found": False, "error": "phone_missing"}
@@ -281,7 +284,7 @@ def _resolve_account(phone: str | None, message_text: str | None) -> dict[str, A
         return {"found": False, "error": "third_party_inquiry"}
 
     try:
-        with get_conn() as conn:
+        with get_sorteio_conn() as conn:
             with conn.cursor() as cur:
                 row = _lookup_user_by_phone(cur, normalized)
                 if not row:
@@ -331,8 +334,7 @@ def find_customer_profile_by_phone(phone: str | None) -> dict[str, Any]:
 
 
 def find_draw_app_config(draw_id: int) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.database_url:
+    if not _sorteio_db_ready():
         return {"found": False, "error": "database_not_configured"}
 
     queries = (
@@ -369,7 +371,7 @@ def find_draw_app_config(draw_id: int) -> dict[str, Any]:
     last_error: str | None = None
     for sql in queries:
         try:
-            with get_conn() as conn:
+            with get_sorteio_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, {"draw_id": draw_id})
                     row = cur.fetchone()
@@ -431,8 +433,7 @@ def find_current_raffle() -> dict[str, Any]:
 
 
 def find_open_draw() -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.database_url:
+    if not _sorteio_db_ready():
         return {"found": False, "error": "database_not_configured"}
 
     queries = (
@@ -483,7 +484,7 @@ def find_open_draw() -> dict[str, Any]:
     last_error: str | None = None
     for sql in queries:
         try:
-            with get_conn() as conn:
+            with get_sorteio_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql)
                     row = cur.fetchone()
@@ -536,8 +537,7 @@ def find_open_draw_context() -> dict[str, Any]:
 
 
 def find_draw_payments(draw_id: int) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.database_url:
+    if not _sorteio_db_ready():
         return {"found": False, "error": "database_not_configured"}
 
     queries = (
@@ -551,7 +551,7 @@ def find_draw_payments(draw_id: int) -> dict[str, Any]:
     last_error: str | None = None
     for sql in queries:
         try:
-            with get_conn() as conn:
+            with get_sorteio_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, {"draw_id": draw_id})
                     rows = cur.fetchall()
@@ -570,8 +570,7 @@ def find_available_numbers_for_open_draw() -> dict[str, Any]:
 
 
 def find_last_payment_participation(user_id: int) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.database_url:
+    if not _sorteio_db_ready():
         return {"found": False, "error": "database_not_configured"}
 
     queries = (
@@ -631,7 +630,7 @@ def find_last_payment_participation(user_id: int) -> dict[str, Any]:
     last_error: str | None = None
     for sql in queries:
         try:
-            with get_conn() as conn:
+            with get_sorteio_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, {"user_id": user_id})
                     row = cur.fetchone()
@@ -660,8 +659,7 @@ def find_last_payment_participation(user_id: int) -> dict[str, Any]:
 
 
 def find_user_raffle_participation(user_id: int) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.database_url:
+    if not _sorteio_db_ready():
         return {"found": False, "error": "database_not_configured"}
 
     queries = (
@@ -718,7 +716,7 @@ def find_user_raffle_participation(user_id: int) -> dict[str, Any]:
     last_error: str | None = None
     for sql in queries:
         try:
-            with get_conn() as conn:
+            with get_sorteio_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, {"user_id": user_id})
                     rows = cur.fetchall()

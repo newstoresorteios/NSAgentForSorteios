@@ -4,7 +4,7 @@ from typing import Any, Iterator
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-from .config import get_settings
+from .config import get_settings, resolved_sorteio_database_url
 from .runtime_context import register_database_call
 
 
@@ -27,11 +27,30 @@ def get_returning_id(row: Any) -> int | None:
 
 @contextmanager
 def get_conn() -> Iterator[psycopg.Connection]:
+    """Agent-dedicated Postgres (ai_* tables and agent operational state)."""
     settings = get_settings()
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
     register_database_call()
     conn = psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=10)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+@contextmanager
+def get_sorteio_conn() -> Iterator[psycopg.Connection]:
+    """Sorteio/raffle Postgres (users, draws, payments). Falls back to DATABASE_URL."""
+    url = resolved_sorteio_database_url()
+    if not url:
+        raise RuntimeError("SORTEIO_DATABASE_URL (or DATABASE_URL fallback) is not configured")
+    register_database_call()
+    conn = psycopg.connect(url, row_factory=dict_row, connect_timeout=10)
     try:
         yield conn
         conn.commit()

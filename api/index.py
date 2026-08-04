@@ -273,6 +273,12 @@ async def health():
             True,
         ),
         "database_configured": bool(settings.database_url),
+        "sorteio_database_configured": bool(
+            getattr(settings, "sorteio_database_url", "") or settings.database_url
+        ),
+        "sorteio_database_dedicated": bool(
+            str(getattr(settings, "sorteio_database_url", "") or "").strip()
+        ),
         "brevo_send_configured": bool(
             settings.brevo_api_key
             and (

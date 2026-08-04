@@ -395,7 +395,11 @@ class Settings(BaseSettings):
     supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
     supabase_audio_bucket: str = Field(default="agent-audio", alias="SUPABASE_AUDIO_BUCKET")
 
+    # Agent-owned Postgres (ai_* tables, sessions, memory, image index).
     database_url: str = Field(default="", alias="DATABASE_URL")
+    # Sorteio/raffle domain Postgres (users, draw/draws, payments, app_config_new).
+    # Falls back to DATABASE_URL when empty (legacy shared-DB setups).
+    sorteio_database_url: str = Field(default="", alias="SORTEIO_DATABASE_URL")
     auto_create_tables: bool = Field(default=False, alias="AUTO_CREATE_TABLES")
     remarketing_enabled: bool = Field(default=False, alias="REMARKETING_ENABLED")
     remarketing_cron_secret: str = Field(default="", alias="CRON_SECRET")
@@ -527,6 +531,15 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+def resolved_sorteio_database_url(settings: Settings | None = None) -> str:
+    """Raffle DB URL; falls back to agent DATABASE_URL for legacy shared setups."""
+    cfg = settings or get_settings()
+    dedicated = str(getattr(cfg, "sorteio_database_url", "") or "").strip()
+    if dedicated:
+        return dedicated
+    return str(getattr(cfg, "database_url", "") or "").strip()
 
 
 def get_allowed_channels(settings: Settings) -> set[str]:
