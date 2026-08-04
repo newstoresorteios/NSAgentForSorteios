@@ -88,15 +88,13 @@ api/index.py                         # FastAPI app para Vercel
 app/webhook_parser.py                # Parser defensivo do payload Brevo
 app/openai_agent.py                  # Chamada OpenAI + instruções do agente
 app/openai_gateway.py                # Gateway Chat Completions / Responses / shadow
-app/openai_client.py                 # Cliente AsyncOpenAI compartilhado
+app/response_presenter.py            # Naturalidade / regras de apresentação
+app/product_snapshot.py              # ProductSnapshot + cache TTL Tray
+app/turn_metrics.py                  # Evento turn.quality (sem PII)
+app/sales/                           # Extração incremental do sales_agent
 app/prompt_compiler.py               # Compila instructions (persona + overlays)
 app/persona_repository.py            # CRUD versionado da persona
-app/persona_admin_api.py             # Admin API de personas
-app/brevo_client.py                  # Adapter outbound configurável/dry-run
-app/db.py                            # Auditoria em Postgres
-app/repository.py                    # Lookup mínimo por telefone
-sql/001_ai_agent_audit.sql           # Tabelas de auditoria
-sql/009_ai_agent_persona.sql         # Persona versionada + audit de prompt
+tests/evals/                         # Avaliações offline determinísticas (50+)
 .env.example                         # Variáveis sem segredos reais
 vercel.json                          # Config Vercel
 ```

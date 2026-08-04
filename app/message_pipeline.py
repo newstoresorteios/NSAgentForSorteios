@@ -344,11 +344,25 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         outbound_snapshot["openai_api_route"] = runtime.openai_api_route
         outbound_snapshot["openai_api_fallback"] = bool(runtime.openai_api_fallback)
     log_event("turn.end", outbound_snapshot)
+    if runtime is not None:
+        from app.turn_metrics import build_turn_quality_event
+
+        quality_event = build_turn_quality_event(
+            runtime,
+            result_metadata={
+                **response_metadata,
+                "handoff_required": result.handoff_required,
+            },
+            intent=result.intent,
+            model=getattr(settings, "openai_model", None),
+        )
+        print("[agent.turn.quality]", quality_event)
+        log_event("turn.quality", quality_event)
     if runtime is not None and runtime.openai_api_route:
         print("[openai.canary.turn]", {
             "route": runtime.openai_api_route,
             "fallback": bool(runtime.openai_api_fallback),
-            "conversation_key": runtime.conversation_key,
+            "conversation_key_present": runtime.conversation_key != "unresolved",
         })
 
     if customer_context.get("found") and user_id:

@@ -5,6 +5,7 @@ import re
 
 from .channel_profiles import get_channel_profile
 from .models import AgentResult, IncomingMessage
+from .response_presenter import present_agent_result
 
 
 _MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
@@ -15,7 +16,13 @@ def truncate_reply(text: str, max_chars: int) -> str:
     cleaned = (text or "").strip()
     if len(cleaned) <= max_chars:
         return cleaned
-    return cleaned[: max_chars - 1].rstrip() + "…"
+    # Prefer not to cut mid-URL when possible.
+    cut = cleaned[: max_chars - 1].rstrip()
+    if "http" in cut and "://" in cleaned[max_chars - 40 : max_chars + 40]:
+        last_space = cut.rfind(" ")
+        if last_space > max_chars // 2:
+            cut = cut[:last_space].rstrip()
+    return cut + "…"
 
 
 def normalize_reply_text(text: str) -> str:
@@ -33,6 +40,7 @@ def compose_outbound_reply(
 ) -> AgentResult:
     profile = get_channel_profile(incoming.channel)
     limit = max_reply_chars or profile.max_reply_chars
+    result = present_agent_result(incoming, result)
     result.reply_text = truncate_reply(
         normalize_reply_text(result.reply_text),
         limit,
@@ -48,5 +56,6 @@ def compose_outbound_reply(
         "assisted_chat": profile.assisted_chat,
         "max_reply_chars": limit,
         "allow_audio_reply": profile.allow_audio_reply,
+        "presentation_style": profile.tone,
     }
     return result

@@ -66,14 +66,39 @@ def get_channel_profile(channel: str | None) -> ChannelProfile:
 
 def channel_system_hint(channel: str | None) -> str:
     profile = get_channel_profile(channel)
+    shared = (
+        "Responda primeiro à pergunta; evite aberturas genéricas "
+        "(Claro/Com certeza); no máximo uma pergunta principal; "
+        "preserve URLs completas; sem forçar venda em suporte."
+    )
+    if profile.channel == "whatsapp":
+        return (
+            f"Canal: whatsapp. {shared} Use 1–3 blocos curtos, "
+            "uma ideia por bloco, no máximo um CTA."
+        )
+    if profile.channel == "instagram":
+        return (
+            f"Canal: instagram. {shared} Seja direto; continue por aqui "
+            "sem mandar o cliente para WhatsApp sem necessidade."
+        )
+    if profile.channel == "facebook":
+        return (
+            f"Canal: facebook. {shared} Respostas curtas a médias, "
+            "preservando continuidade."
+        )
+    if profile.channel == "widget":
+        return (
+            f"Canal: widget. {shared} Pode usar um pouco mais de estrutura, "
+            "mas continue objetivo."
+        )
     if profile.tone == "short_social":
         return (
-            f"Canal: {profile.channel}. Responda de forma curta, "
-            "sem áudio e com no máximo duas perguntas."
+            f"Canal: {profile.channel}. {shared} Responda de forma curta, "
+            "sem áudio e com no máximo uma pergunta."
         )
     if profile.assisted_chat:
         return (
-            f"Canal: {profile.channel}. Conduza o atendimento de forma "
+            f"Canal: {profile.channel}. {shared} Conduza o atendimento de forma "
             "assistida, objetiva e natural."
         )
-    return f"Canal: {profile.channel}."
+    return f"Canal: {profile.channel}. {shared}"

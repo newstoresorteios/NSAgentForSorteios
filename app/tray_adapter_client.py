@@ -442,10 +442,71 @@ class TrayAdapterClient:
         )
 
     async def get_product(self, product_id: str | int) -> Any:
-        return await self._request("GET", f"/internal/products/{product_id}")
+        from .product_snapshot import (
+            cache_ttl_for_kind,
+            get_product_snapshot_cache,
+            product_cache_enabled,
+            product_dict_to_snapshot,
+        )
+
+        tenant_id = self.base_url or "default"
+        cache = get_product_snapshot_cache()
+        if product_cache_enabled():
+            cached_payload = cache.get_payload(
+                tenant_id=tenant_id,
+                kind="product",
+                entity_id=str(product_id),
+                allow_stale=False,
+            )
+            if cached_payload is not None:
+                return cached_payload
+        payload = await self._request("GET", f"/internal/products/{product_id}")
+        if product_cache_enabled() and isinstance(payload, dict):
+            snapshot = product_dict_to_snapshot(payload, tenant_id=tenant_id)
+            if snapshot.product_id:
+                cache.put(
+                    snapshot,
+                    kind="product",
+                    ttl_seconds=cache_ttl_for_kind("product"),
+                    payload=payload,
+                )
+        return payload
 
     async def get_product_stock(self, product_id: str | int) -> Any:
-        return await self._request("GET", f"/internal/products/{product_id}/stock")
+        from .product_snapshot import (
+            cache_ttl_for_kind,
+            get_product_snapshot_cache,
+            product_cache_enabled,
+            product_dict_to_snapshot,
+        )
+
+        tenant_id = self.base_url or "default"
+        cache = get_product_snapshot_cache()
+        # Stock must not be confirmed from stale cache.
+        if product_cache_enabled():
+            cached_payload = cache.get_payload(
+                tenant_id=tenant_id,
+                kind="stock",
+                entity_id=str(product_id),
+                allow_stale=False,
+            )
+            if cached_payload is not None:
+                return cached_payload
+        payload = await self._request(
+            "GET",
+            f"/internal/products/{product_id}/stock",
+        )
+        if product_cache_enabled() and isinstance(payload, dict):
+            merged = {"id": str(product_id), **payload}
+            snapshot = product_dict_to_snapshot(merged, tenant_id=tenant_id)
+            cache.put(
+                snapshot,
+                kind="stock",
+                ttl_seconds=cache_ttl_for_kind("stock"),
+                entity_id=str(product_id),
+                payload=payload,
+            )
+        return payload
 
     async def list_product_variants(self, product_id: str | int) -> Any:
         return await self._request(
@@ -466,6 +527,14 @@ class TrayAdapterClient:
         variant_id: str | int | None = None,
         session_id: str | None = None,
     ) -> Any:
+        from .product_snapshot import get_product_snapshot_cache
+
+        # Mutations must not reuse fresh stock/product confirmation blindly.
+        get_product_snapshot_cache().invalidate(
+            tenant_id=self.base_url or "default",
+            entity_id=str(product_id),
+            kinds=["stock", "product"],
+        )
         return await self._request(
             "POST",
             "/internal/carts",

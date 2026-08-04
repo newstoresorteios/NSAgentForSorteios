@@ -265,6 +265,46 @@ class Settings(BaseSettings):
         default=True,
         alias="AGENT_SEND_IDEMPOTENCY_ENABLED",
     )
+    # Phase 13: short TTL Tray product cache (off disables all kinds).
+    agent_product_cache_enabled: bool = Field(
+        default=True,
+        alias="AGENT_PRODUCT_CACHE_ENABLED",
+    )
+    agent_product_cache_ttl_seconds: float = Field(
+        default=180.0,
+        alias="AGENT_PRODUCT_CACHE_TTL_SECONDS",
+        ge=0,
+        le=3600,
+    )
+    agent_price_cache_ttl_seconds: float = Field(
+        default=45.0,
+        alias="AGENT_PRICE_CACHE_TTL_SECONDS",
+        ge=0,
+        le=600,
+    )
+    agent_stock_cache_ttl_seconds: float = Field(
+        default=20.0,
+        alias="AGENT_STOCK_CACHE_TTL_SECONDS",
+        ge=0,
+        le=300,
+    )
+    agent_search_cache_ttl_seconds: float = Field(
+        default=45.0,
+        alias="AGENT_SEARCH_CACHE_TTL_SECONDS",
+        ge=0,
+        le=600,
+    )
+    agent_image_cache_ttl_seconds: float = Field(
+        default=300.0,
+        alias="AGENT_IMAGE_CACHE_TTL_SECONDS",
+        ge=0,
+        le=3600,
+    )
+    # Phase 14: salt for irreversible observability ids (empty → process-local).
+    agent_obs_hash_secret: str = Field(
+        default="",
+        alias="AGENT_OBS_HASH_SECRET",
+    )
 
     tray_adapter_url: str = Field(default="", alias="TRAY_ADAPTER_URL")
     tray_adapter_token: str = Field(default="", alias="TRAY_ADAPTER_TOKEN")
