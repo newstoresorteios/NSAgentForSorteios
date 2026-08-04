@@ -14,8 +14,10 @@ from app.db import (
 )
 from app.observability import (
     log_event,
+    log_exception,
     redact_text,
     summarize_commerce_state,
+    summarize_customer_context,
 )
 from app.working_memory import build_working_memory
 from app.factual_validator import apply_factual_validation
@@ -45,18 +47,23 @@ async def prepare_incoming_message(incoming: IncomingMessage) -> IncomingMessage
             filename=incoming.audio_filename,
         )
     except Exception as exc:
-        print("[audio.inbound] transcription_failed", {
-            "error_type": type(exc).__name__,
-            "has_audio_url": bool(incoming.audio_url),
-        })
+        log_exception(
+            "audio.inbound.transcription_failed",
+            exc,
+            {"has_audio_url": bool(incoming.audio_url)},
+        )
         incoming.transcription_failed = True
         incoming.text = ""
         incoming.input_modality = "audio"
         return incoming
 
-    print("[audio.inbound] transcribed", {
-        "chars": len(transcribed),
-    })
+    log_event(
+        "audio.inbound.transcribed",
+        {
+            "chars": len(transcribed),
+            "preview": redact_text(transcribed, max_chars=400),
+        },
+    )
     incoming.text = transcribed
     incoming.input_modality = "audio"
     return incoming
@@ -76,9 +83,7 @@ async def enrich_agent_result(incoming: IncomingMessage, result: AgentResult) ->
         audio_bytes, mime_type, filename = synthesize_reply_audio(result.reply_text)
         audio_url = await upload_public_audio(audio_bytes, content_type=mime_type, filename=filename)
     except Exception as exc:
-        print("[audio.outbound] tts_or_upload_failed", {
-            "error_type": type(exc).__name__,
-        })
+        log_exception("audio.outbound.tts_or_upload_failed", exc)
         return result
 
     result.reply_modality = "audio"
@@ -118,10 +123,15 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "sender_key_present": bool(incoming.sender_key),
         "sender_phone_present": bool(incoming.sender_phone),
         "sender_name_present": bool(incoming.sender_name),
+        "visitor_id_present": bool(incoming.visitor_id),
         "input_modality": incoming.input_modality,
+        "attachment_type": incoming.attachment_type,
+        "image_url_present": bool((incoming.image_url or "").strip()),
+        "audio_url_present": bool(incoming.audio_url),
         "text_chars": len(incoming.text or ""),
-        "text_preview": redact_text(incoming.text, max_chars=220),
+        "text_preview": redact_text(incoming.text, max_chars=500),
         "customer_found": bool(customer_context.get("found")),
+        "customer_context": summarize_customer_context(customer_context),
     }
     if runtime is not None:
         runtime.inbound_snapshot = inbound_snapshot
@@ -140,9 +150,12 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     # previous SKU (e.g. CW Rosa) while Vision runs on a Beaubleu.
     if (incoming.image_url or "").strip():
         if commerce_state.active_product is not None:
-            print("[sales.context.clear_active_for_image]", {
-                "had_active_product_id": commerce_state.active_product.product_id,
-            })
+            log_event(
+                "sales.context.clear_active_for_image",
+                {
+                    "had_active_product_id": commerce_state.active_product.product_id,
+                },
+            )
         commerce_state.active_product = None
     working_memory = build_working_memory(commerce_state)
     customer_context = {
@@ -154,6 +167,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         **summarize_commerce_state(commerce_state),
         "working_memory_payment_pending": bool(working_memory.get("payment_pending")),
         "working_memory_has_open_order": bool(working_memory.get("has_open_order")),
+        "working_memory_keys": sorted(str(k) for k in working_memory.keys())[:30],
         "person_key_aliases": len(
             resolve_person_key_candidates(
                 sender_key=incoming.sender_key,
@@ -161,22 +175,27 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
                 state=commerce_state,
             )
         ),
+        "customer_context": summarize_customer_context(customer_context),
     }
     if runtime is not None:
         runtime.context_snapshot = context_snapshot
     log_event("context.loaded", context_snapshot)
-    print("[sales.context.state]", {
-        "active_domain": commerce_state.active_domain,
-        "has_active_product": commerce_state.active_product is not None,
-        "presented_product_count": len(commerce_state.last_presented_products),
-        "active_topic_present": bool(commerce_state.active_topic),
-        "purchase_stage": commerce_state.purchase_stage,
-        "has_cart_session": bool(commerce_state.cart_session_id),
-        "pending_action": commerce_state.pending_action,
-        "pending_action_has_product": bool(commerce_state.pending_action_product_ids),
-        "has_open_order": bool(working_memory.get("has_open_order")),
-        "payment_pending": bool(working_memory.get("payment_pending")),
-    })
+    log_event(
+        "sales.context.state",
+        {
+            "active_domain": commerce_state.active_domain,
+            "has_active_product": commerce_state.active_product is not None,
+            "presented_product_count": len(commerce_state.last_presented_products),
+            "active_topic_present": bool(commerce_state.active_topic),
+            "purchase_stage": commerce_state.purchase_stage,
+            "has_cart_session": bool(commerce_state.cart_session_id),
+            "pending_action": commerce_state.pending_action,
+            "pending_action_has_product": bool(commerce_state.pending_action_product_ids),
+            "has_open_order": bool(working_memory.get("has_open_order")),
+            "payment_pending": bool(working_memory.get("payment_pending")),
+            **summarize_commerce_state(commerce_state),
+        },
+    )
 
     user_id = customer_context.get("user_id")
     if customer_context.get("found") and user_id:
@@ -326,20 +345,31 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     }
     if runtime is not None:
         runtime.outbound_snapshot = outbound_snapshot
-    print("[agent.response]", {
-        "domain": outbound_snapshot["domain"],
-        "goal": outbound_snapshot["goal"],
-        "response_source": outbound_snapshot["response_source"],
-        "used_openai_interpreter": outbound_snapshot["used_openai_interpreter"],
-        "used_openai_responder": outbound_snapshot["used_openai_responder"],
-        "used_tray": outbound_snapshot["used_tray"],
-        "fallback_reason": outbound_snapshot["fallback_reason"],
-        "safety_reason": outbound_snapshot["safety_reason"],
-        "handoff_required": outbound_snapshot["handoff_required"],
-        "judge_triggered": bool(
-            (response_metadata.get("quality_judge") or {}).get("triggered")
-        ),
-    })
+    log_event(
+        "agent.response",
+        {
+            "domain": outbound_snapshot["domain"],
+            "goal": outbound_snapshot["goal"],
+            "response_source": outbound_snapshot["response_source"],
+            "used_openai_interpreter": outbound_snapshot["used_openai_interpreter"],
+            "used_openai_responder": outbound_snapshot["used_openai_responder"],
+            "used_tray": outbound_snapshot["used_tray"],
+            "fallback_reason": outbound_snapshot["fallback_reason"],
+            "safety_reason": outbound_snapshot["safety_reason"],
+            "handoff_required": outbound_snapshot["handoff_required"],
+            "reply_preview": outbound_snapshot["reply_preview"],
+            "reply_chars": outbound_snapshot["reply_chars"],
+            "tray_tools": outbound_snapshot["tray_tools"],
+            "openai_call_types": outbound_snapshot["openai_call_types"],
+            "judge_triggered": bool(
+                (response_metadata.get("quality_judge") or {}).get("triggered")
+            ),
+            "factual_validation": response_metadata.get("factual_validation"),
+            "commerce_state": summarize_commerce_state(
+                response_metadata.get("commerce_state")
+            ),
+        },
+    )
     if runtime is not None:
         outbound_snapshot["openai_api_route"] = runtime.openai_api_route
         outbound_snapshot["openai_api_fallback"] = bool(runtime.openai_api_fallback)
@@ -356,14 +386,16 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             intent=result.intent,
             model=getattr(settings, "openai_model", None),
         )
-        print("[agent.turn.quality]", quality_event)
         log_event("turn.quality", quality_event)
     if runtime is not None and runtime.openai_api_route:
-        print("[openai.canary.turn]", {
-            "route": runtime.openai_api_route,
-            "fallback": bool(runtime.openai_api_fallback),
-            "conversation_key_present": runtime.conversation_key != "unresolved",
-        })
+        log_event(
+            "openai.canary.turn",
+            {
+                "route": runtime.openai_api_route,
+                "fallback": bool(runtime.openai_api_fallback),
+                "conversation_key_present": runtime.conversation_key != "unresolved",
+            },
+        )
 
     if customer_context.get("found") and user_id:
         record_interaction_memory(int(user_id), result.intent, incoming.text)
@@ -396,10 +428,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
                     mode="json"
                 )
             except Exception as exc:
-                print("[memory.pipeline.error]", {
-                    "error_type": type(exc).__name__,
-                    "error": str(exc)[:160],
-                })
+                log_exception("memory.pipeline.error", exc)
 
     with runtime_stage("enrich_result"):
         enriched = await enrich_agent_result(incoming, result)

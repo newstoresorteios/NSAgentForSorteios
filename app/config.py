@@ -307,6 +307,17 @@ class Settings(BaseSettings):
         default="",
         alias="AGENT_OBS_HASH_SECRET",
     )
+    # Full observability for Vercel Runtime Logs: history, GPT payloads,
+    # Tray/Brevo calls, context and outbound reply (PII still redacted).
+    agent_full_obs_logs: bool = Field(
+        default=True,
+        alias="AGENT_FULL_OBS_LOGS",
+    )
+    # Also attach turn runtime context to every HTTP request (not only webhooks).
+    agent_http_obs_logs: bool = Field(
+        default=True,
+        alias="AGENT_HTTP_OBS_LOGS",
+    )
 
     tray_adapter_url: str = Field(default="", alias="TRAY_ADAPTER_URL")
     tray_adapter_token: str = Field(default="", alias="TRAY_ADAPTER_TOKEN")

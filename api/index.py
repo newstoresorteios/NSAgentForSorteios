@@ -48,6 +48,11 @@ from app.runtime_context import (
 )
 from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 from app.turn_runtime import LLMCallBudget, TurnRuntimeContext
+from app.observability import (
+    log_event,
+    log_exception,
+    summarize_webhook_payload,
+)
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
 app.include_router(persona_admin_router)
@@ -66,10 +71,17 @@ def _request_trace_id(request: Request) -> str:
 @app.middleware("http")
 async def turn_runtime_middleware(request: Request, call_next):
     settings = get_settings()
-    monitored_path = request.url.path.startswith(
-        ("/api/webhooks/", "/api/test/agent")
-    )
-    if not getattr(settings, "agent_runtime_enabled", True) or not monitored_path:
+    path = request.url.path
+    monitored_path = path.startswith(("/api/webhooks/", "/api/test/agent"))
+    http_obs = bool(getattr(settings, "agent_http_obs_logs", True))
+    runtime_enabled = bool(getattr(settings, "agent_runtime_enabled", True))
+
+    if not runtime_enabled and not http_obs:
+        return await call_next(request)
+
+    # Always attach a turn context for webhook/test; optionally for every route.
+    attach_turn = runtime_enabled and (monitored_path or http_obs)
+    if not attach_turn:
         return await call_next(request)
 
     context = TurnRuntimeContext(
@@ -81,31 +93,66 @@ async def turn_runtime_middleware(request: Request, call_next):
     )
     context.start_stage("request")
     token = set_current_turn(context)
+    status_code = 500
     try:
+        log_event(
+            "http.request",
+            {
+                "method": request.method,
+                "path": path,
+                "query": str(request.url.query or "")[:200] or None,
+                "content_type": request.headers.get("content-type"),
+                "user_agent": (request.headers.get("user-agent") or "")[:120] or None,
+                "monitored_path": monitored_path,
+            },
+        )
         response = await call_next(request)
+        status_code = getattr(response, "status_code", 200) or 200
         response.headers["X-Trace-ID"] = context.trace_id
         return response
+    except Exception as exc:
+        if not isinstance(exc, HTTPException):
+            log_exception(
+                "http.exception",
+                exc,
+                {"method": request.method, "path": path},
+            )
+        raise
     finally:
         await release_conversation_lock(
             getattr(request.state, "conversation_lock_handle", None)
         )
         context.finish_stage("request")
         summary = context.safe_summary()
-        print("[agent.runtime]", summary)
-        try:
-            import json as _json
-
-            print(
-                "[agent.obs]",
-                _json.dumps(
-                    {"event": "runtime.summary", **summary},
-                    ensure_ascii=False,
-                    default=str,
-                ),
-            )
-        except Exception:
-            pass
+        log_event(
+            "http.response",
+            {
+                "method": request.method,
+                "path": path,
+                "status_code": status_code,
+                "latency_ms": context.stage_durations_ms.get("request"),
+            },
+        )
+        if monitored_path:
+            print("[agent.runtime]", summary)
+            log_event("runtime.summary", summary)
         reset_current_turn(token)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    log_exception(
+        "app.unhandled_exception",
+        exc,
+        {
+            "method": request.method,
+            "path": request.url.path,
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"ok": False, "error": "internal_server_error"},
+    )
 
 
 def _webhook_event_name(payload: dict | None) -> str | None:
@@ -125,18 +172,15 @@ def _skip_webhook_event(
     reason: str,
     error_type: str | None = None,
 ) -> JSONResponse:
-    print("[brevo.webhook] routing", {
-        "event_name": event_name,
-        "should_process": False,
-        "reason": reason,
-    })
     skipped = {
         "event_name": event_name,
+        "should_process": False,
         "reason": reason,
     }
     if error_type is not None:
         skipped["error_type"] = error_type
-    print("[brevo.webhook] skipped", skipped)
+    log_event("brevo.webhook.routing", skipped)
+    log_event("brevo.webhook.skipped", skipped)
     return JSONResponse({"ok": True, "skipped": True, "reason": reason})
 
 
@@ -211,7 +255,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v6"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v7"
 
 
 @app.get("/api/health")
@@ -234,6 +278,8 @@ async def health():
         "openai_key_length": len(openai_key),
         "openai_model": settings.openai_model,
         "agent_runtime_enabled": getattr(settings, "agent_runtime_enabled", True),
+        "agent_full_obs_logs": getattr(settings, "agent_full_obs_logs", True),
+        "agent_http_obs_logs": getattr(settings, "agent_http_obs_logs", True),
         "agent_llm_budget_enabled": getattr(
             settings,
             "agent_llm_budget_enabled",
@@ -364,24 +410,29 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
     try:
         payload = await read_request_payload(request)
     except HTTPException:
-        print("[brevo.webhook] routing", {
-            "event_name": None,
-            "should_process": False,
-            "reason": "invalid_payload",
-        })
-        print("[brevo.webhook] skipped", {
-            "event_name": None,
-            "reason": "invalid_payload",
-        })
+        log_event(
+            "brevo.webhook.routing",
+            {
+                "event_name": None,
+                "should_process": False,
+                "reason": "invalid_payload",
+            },
+        )
+        log_event(
+            "brevo.webhook.skipped",
+            {"event_name": None, "reason": "invalid_payload"},
+        )
         raise
 
     event_name = _webhook_event_name(payload)
-    print("[brevo.webhook] received", {
-        "content_type": request.headers.get("content-type"),
-        "has_body": True,
-        "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
-        "event": payload.get("eventName") or payload.get("event") if isinstance(payload, dict) else None,
-    })
+    log_event(
+        "brevo.webhook.received",
+        {
+            "content_type": request.headers.get("content-type"),
+            "has_body": True,
+            **summarize_webhook_payload(payload if isinstance(payload, dict) else {}),
+        },
+    )
 
     event_skip_reason = webhook_event_skip_reason(payload)
     if event_skip_reason:
@@ -393,21 +444,32 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
     try:
         incoming = parse_brevo_conversations_payload(payload)
     except Exception as exc:
-        print("[brevo.webhook] parsed", {
-            "parsed": False,
-            "event_name": payload.get("eventName") if isinstance(payload, dict) else None,
-            "channel": "unknown",
-            "sender_key_present": False,
-            "visitor_id_present": False,
-            "source_conversation_ref_present": False,
-            "message_id_present": False,
-            "conversation_id_present": False,
-            "sender_phone_present": False,
-            "text_present": False,
-            "input_modality": None,
-            "attachment_type": None,
-            "direction": None,
-        })
+        log_exception(
+            "brevo.webhook.parse_failed",
+            exc,
+            {
+                "event_name": payload.get("eventName") if isinstance(payload, dict) else None,
+                "parsed": False,
+            },
+        )
+        log_event(
+            "brevo.webhook.parsed",
+            {
+                "parsed": False,
+                "event_name": payload.get("eventName") if isinstance(payload, dict) else None,
+                "channel": "unknown",
+                "sender_key_present": False,
+                "visitor_id_present": False,
+                "source_conversation_ref_present": False,
+                "message_id_present": False,
+                "conversation_id_present": False,
+                "sender_phone_present": False,
+                "text_present": False,
+                "input_modality": None,
+                "attachment_type": None,
+                "direction": None,
+            },
+        )
         return _skip_webhook_event(
             event_name=event_name,
             reason="invalid_payload",
@@ -425,36 +487,47 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             or "unresolved"
         )
 
-    print("[brevo.webhook] parsed", {
-        "parsed": True,
-        "event_name": incoming.event_type,
-        "channel": incoming.channel,
-        "sender_key_present": bool(incoming.sender_key),
-        "visitor_id_present": bool(incoming.visitor_id),
-        "source_conversation_ref_present": bool(incoming.source_conversation_ref),
-        "message_id_present": bool(incoming.message_id),
-        "conversation_id_present": bool(incoming.conversation_id),
-        "sender_phone_present": bool(incoming.sender_phone),
-        "text_present": bool(incoming.text),
-        "input_modality": incoming.input_modality,
-        "attachment_type": incoming.attachment_type,
-        "direction": selected_message_info(payload).get("role"),
-    })
+    log_event(
+        "brevo.webhook.parsed",
+        {
+            "parsed": True,
+            "event_name": incoming.event_type,
+            "channel": incoming.channel,
+            "sender_key_present": bool(incoming.sender_key),
+            "visitor_id_present": bool(incoming.visitor_id),
+            "source_conversation_ref_present": bool(incoming.source_conversation_ref),
+            "message_id_present": bool(incoming.message_id),
+            "conversation_id_present": bool(incoming.conversation_id),
+            "sender_phone_present": bool(incoming.sender_phone),
+            "sender_name_present": bool(incoming.sender_name),
+            "text_present": bool(incoming.text),
+            "text_chars": len(incoming.text or ""),
+            "text_preview": (incoming.text or "")[:500],
+            "input_modality": incoming.input_modality,
+            "attachment_type": incoming.attachment_type,
+            "image_url_present": bool((incoming.image_url or "").strip()),
+            "audio_url_present": bool(incoming.audio_url),
+            "direction": selected_message_info(payload).get("role"),
+        },
+    )
 
     selected = select_effective_inbound_message(payload)
     selection_info = selected_message_info(payload, selected)
-    print("[brevo.webhook] selected_message", {
-        "message_id_present": bool(incoming.message_id),
-        "role": selection_info.get("role"),
-        "timestamp_present": selection_info.get("timestamp_present"),
-        "text_length": len(incoming.text or ""),
-        "text_hash": hashlib.sha256((incoming.text or "").encode("utf-8")).hexdigest()[:12],
-        "ordering_fallback": selection_info.get("ordering_fallback"),
-        "channel": incoming.channel,
-        "event_name": incoming.event_type,
-        "input_modality": incoming.input_modality,
-        "attachment_type": incoming.attachment_type,
-    })
+    log_event(
+        "brevo.webhook.selected_message",
+        {
+            "message_id_present": bool(incoming.message_id),
+            "role": selection_info.get("role"),
+            "timestamp_present": selection_info.get("timestamp_present"),
+            "text_length": len(incoming.text or ""),
+            "text_hash": hashlib.sha256((incoming.text or "").encode("utf-8")).hexdigest()[:12],
+            "ordering_fallback": selection_info.get("ordering_fallback"),
+            "channel": incoming.channel,
+            "event_name": incoming.event_type,
+            "input_modality": incoming.input_modality,
+            "attachment_type": incoming.attachment_type,
+        },
+    )
 
     skip_reason = inbound_skip_reason(payload)
     if skip_reason:
@@ -536,16 +609,19 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                     )
             except ConversationLockUnavailable as exc:
                 lock_error = str(exc)
-                print("[agent.lock] unavailable", {
-                    "error": lock_error,
-                    "channel": incoming.channel,
-                    "conversation_id_present": bool(
-                        incoming.conversation_id
-                    ),
-                    "sender_key_present": bool(incoming.sender_key),
-                    "inbound_image": bool((incoming.image_url or "").strip()),
-                    "lock_timeout_seconds": lock_timeout,
-                })
+                log_event(
+                    "agent.lock.unavailable",
+                    {
+                        "error": lock_error,
+                        "channel": incoming.channel,
+                        "conversation_id_present": bool(
+                            incoming.conversation_id
+                        ),
+                        "sender_key_present": bool(incoming.sender_key),
+                        "inbound_image": bool((incoming.image_url or "").strip()),
+                        "lock_timeout_seconds": lock_timeout,
+                    },
+                )
                 # Contention: another worker holds the conversation — acknowledge
                 # and stop Brevo retries. DB lock failure is different: dropping
                 # the event loses photo turns, so fall back to a local-only lock.
@@ -558,12 +634,15 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                                 timeout_seconds=min(lock_timeout, 5.0),
                             )
                         )
-                        print("[agent.lock] local_fallback", {
-                            "channel": incoming.channel,
-                            "inbound_image": bool(
-                                (incoming.image_url or "").strip()
-                            ),
-                        })
+                        log_event(
+                            "agent.lock.local_fallback",
+                            {
+                                "channel": incoming.channel,
+                                "inbound_image": bool(
+                                    (incoming.image_url or "").strip()
+                                ),
+                            },
+                        )
                     except ConversationLockUnavailable:
                         return _skip_webhook_event(
                             event_name=event_name,
@@ -588,18 +667,21 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
     try:
         claimed, inbound_id = claim_inbound_message(incoming.model_dump())
     except Exception as exc:
-        print("[brevo.webhook] inbound_insert_failed", {
-            "error_type": type(exc).__name__,
-            "event_type": incoming.event_type,
-            "channel": incoming.channel,
-            "sender_key_present": bool(incoming.sender_key),
-            "visitor_id_present": bool(incoming.visitor_id),
-            "conversation_id_present": bool(incoming.conversation_id),
-            "sender_phone_present": bool(incoming.sender_phone),
-            "message_id_present": bool(incoming.message_id),
-            "input_modality": incoming.input_modality,
-            "attachment_type": incoming.attachment_type,
-        })
+        log_exception(
+            "brevo.webhook.inbound_insert_failed",
+            exc,
+            {
+                "event_type": incoming.event_type,
+                "channel": incoming.channel,
+                "sender_key_present": bool(incoming.sender_key),
+                "visitor_id_present": bool(incoming.visitor_id),
+                "conversation_id_present": bool(incoming.conversation_id),
+                "sender_phone_present": bool(incoming.sender_phone),
+                "message_id_present": bool(incoming.message_id),
+                "input_modality": incoming.input_modality,
+                "attachment_type": incoming.attachment_type,
+            },
+        )
         raise HTTPException(status_code=500, detail={"error": "inbound_insert_failed"}) from exc
     if not claimed:
         return _skip_webhook_event(
@@ -620,35 +702,62 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "sender_key": incoming.sender_key,
             "display_name": incoming.sender_name,
         }
-    print("[brevo.webhook] routing", {
-        "event_name": event_name,
-        "should_process": True,
-        "reason": "inbound_message",
-    })
-    print("[brevo.webhook] processing", {
-        "channel": incoming.channel,
-        "sender_key_present": bool(incoming.sender_key),
-        "visitor_id_present": bool(incoming.visitor_id),
-        "source_conversation_ref_present": bool(incoming.source_conversation_ref),
-        "conversation_id_present": bool(incoming.conversation_id),
-        "sender_phone_present": bool(incoming.sender_phone),
-        "message_id_present": bool(incoming.message_id),
-        "event_name": incoming.event_type,
-        "input_modality": incoming.input_modality,
-        "attachment_type": incoming.attachment_type,
-    })
+    log_event(
+        "brevo.webhook.routing",
+        {
+            "event_name": event_name,
+            "should_process": True,
+            "reason": "inbound_message",
+            "inbound_id": inbound_id,
+            "customer_found": bool(customer_context.get("found")),
+        },
+    )
+    log_event(
+        "brevo.webhook.processing",
+        {
+            "channel": incoming.channel,
+            "sender_key_present": bool(incoming.sender_key),
+            "visitor_id_present": bool(incoming.visitor_id),
+            "source_conversation_ref_present": bool(incoming.source_conversation_ref),
+            "conversation_id_present": bool(incoming.conversation_id),
+            "sender_phone_present": bool(incoming.sender_phone),
+            "message_id_present": bool(incoming.message_id),
+            "event_name": incoming.event_type,
+            "input_modality": incoming.input_modality,
+            "attachment_type": incoming.attachment_type,
+            "text_preview": (incoming.text or "")[:500],
+            "inbound_id": inbound_id,
+            "customer_found": bool(customer_context.get("found")),
+        },
+    )
     agent_result = await process_incoming_message(incoming, customer_context)
 
-    print("[brevo.webhook] agent_result", {
-        "intent": agent_result.intent,
-        "handoff_required": agent_result.handoff_required,
-        "safety_reason": agent_result.safety_reason,
-        "reply_length": len(agent_result.reply_text or ""),
-        "channel": incoming.channel,
-        "input_modality": incoming.input_modality,
-        "attachment_type": incoming.attachment_type,
-        "transcription_failed": incoming.transcription_failed,
-    })
+    log_event(
+        "brevo.webhook.agent_result",
+        {
+            "intent": agent_result.intent,
+            "handoff_required": agent_result.handoff_required,
+            "safety_reason": agent_result.safety_reason,
+            "reply_length": len(agent_result.reply_text or ""),
+            "reply_preview": (agent_result.reply_text or "")[:500],
+            "channel": incoming.channel,
+            "input_modality": incoming.input_modality,
+            "attachment_type": incoming.attachment_type,
+            "transcription_failed": incoming.transcription_failed,
+            "response_source": (agent_result.response_metadata or {}).get(
+                "response_source"
+            ),
+            "domain": (agent_result.response_metadata or {}).get("domain"),
+            "goal": (agent_result.response_metadata or {}).get("goal"),
+            "used_openai_interpreter": bool(
+                (agent_result.response_metadata or {}).get("used_openai_interpreter")
+            ),
+            "used_openai_responder": bool(
+                (agent_result.response_metadata or {}).get("used_openai_responder")
+            ),
+            "used_tray": bool((agent_result.response_metadata or {}).get("used_tray")),
+        },
+    )
 
     if not is_latest_inbound_message(
         inbound_id,
@@ -656,7 +765,10 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         incoming.sender_key,
         incoming.sender_phone,
     ):
-        print("[brevo.webhook] skipped_reply", {"reason": "stale_inbound", "inbound_id": inbound_id})
+        log_event(
+            "brevo.webhook.skipped_reply",
+            {"reason": "stale_inbound", "inbound_id": inbound_id},
+        )
         send_result = None
         provider_send_ok = False
         provider_response = {"skipped": True, "reason": "stale_inbound"}
@@ -664,10 +776,13 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         getattr(settings, "agent_send_idempotency_enabled", True)
         and has_successful_agent_response(inbound_id)
     ):
-        print("[brevo.webhook] skipped_reply", {
-            "reason": "already_sent",
-            "inbound_id": inbound_id,
-        })
+        log_event(
+            "brevo.webhook.skipped_reply",
+            {
+                "reason": "already_sent",
+                "inbound_id": inbound_id,
+            },
+        )
         send_result = None
         provider_send_ok = True
         provider_response = {"skipped": True, "reason": "already_sent"}
@@ -675,6 +790,18 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         send_result = await send_brevo_reply(incoming, agent_result)
         provider_send_ok = send_result.ok
         provider_response = send_result.model_dump()
+        log_event(
+            "brevo.webhook.send_result",
+            {
+                "ok": send_result.ok,
+                "dry_run": send_result.dry_run,
+                "status_code": send_result.status_code,
+                "error": send_result.error,
+                "channel": incoming.channel,
+                "inbound_id": inbound_id,
+                "reply_chars": len(agent_result.reply_text or ""),
+            },
+        )
     commerce_state = (agent_result.response_metadata or {}).get("commerce_state")
     decision_snapshot = (agent_result.response_metadata or {}).get(
         "decision_snapshot"
@@ -725,11 +852,14 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             }
         )
     except Exception as exc:
-        print("[brevo.webhook] response_insert_failed", {
-            "error_type": type(exc).__name__,
-            "inbound_id": inbound_id,
-            "channel": incoming.channel,
-        })
+        log_exception(
+            "brevo.webhook.response_insert_failed",
+            exc,
+            {
+                "inbound_id": inbound_id,
+                "channel": incoming.channel,
+            },
+        )
         raise HTTPException(
             status_code=500,
             detail={
@@ -750,11 +880,14 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             handoff_required=agent_result.handoff_required,
         )
     except Exception as exc:
-        print("[remarketing.sync] failed", {
-            "error_type": type(exc).__name__,
-            "inbound_id": inbound_id,
-            "channel": incoming.channel,
-        })
+        log_exception(
+            "remarketing.sync.failed",
+            exc,
+            {
+                "inbound_id": inbound_id,
+                "channel": incoming.channel,
+            },
+        )
 
     return JSONResponse(
         {
@@ -774,7 +907,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
 )
 async def remarketing_cron():
     result = await run_remarketing_batch()
-    print("[remarketing.cron] completed", result)
+    log_event("remarketing.cron.completed", result if isinstance(result, dict) else {"result": result})
     return {"ok": True, **result}
 
 
@@ -792,7 +925,10 @@ async def remarketing_cron_manual():
 )
 async def product_image_index_cron():
     result = await run_product_image_index_batch()
-    print("[product_image_index.cron] completed", result)
+    log_event(
+        "product_image_index.cron.completed",
+        result if isinstance(result, dict) else {"result": result},
+    )
     return result
 
 
@@ -824,11 +960,17 @@ async def brevo_whatsapp_webhook(
 async def test_agent(request: Request, _: None = Depends(verify_admin_token)):
     payload = await read_request_payload(request)
 
-    print("[agent.test] received", {
-        "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
-        "has_phone": bool(payload.get("phone")) if isinstance(payload, dict) else False,
-        "has_text": bool(payload.get("text")) if isinstance(payload, dict) else False,
-    })
+    log_event(
+        "agent.test.received",
+        {
+            "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
+            "has_phone": bool(payload.get("phone")) if isinstance(payload, dict) else False,
+            "has_text": bool(payload.get("text")) if isinstance(payload, dict) else False,
+            "text_preview": str(payload.get("text") or "")[:300]
+            if isinstance(payload, dict)
+            else None,
+        },
+    )
 
     incoming = parse_brevo_conversations_payload(
         {

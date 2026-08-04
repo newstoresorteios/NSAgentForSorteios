@@ -178,11 +178,11 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
     assert second_messages[1]["role"] == "system"
     assert second_messages[1]["content"].startswith("COMMERCE_STATE:")
     logs = capsys.readouterr().out
-    assert "[sales.context]" in logs
-    assert "'history_user_turns': 1" in logs
-    assert "'history_assistant_turns': 1" in logs
-    assert "[agent.response]" in logs
-    assert "'response_source': 'openai'" in logs
+    assert '"event": "sales.context"' in logs or "[agent.obs]" in logs
+    assert '"history_user_turns": 1' in logs
+    assert '"history_assistant_turns": 1' in logs
+    assert '"event": "agent.response"' in logs
+    assert '"response_source": "openai"' in logs
 
 
 @pytest.mark.asyncio

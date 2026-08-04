@@ -1,9 +1,13 @@
 from app.commerce_context import CommerceConversationState
 from app.observability import (
+    full_obs_enabled,
+    log_event,
     redact_text,
     summarize_commerce_state,
+    summarize_history_turns,
     summarize_openai_messages,
     summarize_tray_result,
+    summarize_webhook_payload,
 )
 
 
@@ -56,3 +60,49 @@ def test_summarize_tray_result_keeps_useful_flags():
     assert summary["order_id"] == "25400"
     assert summary["payment"]["payment_url_present"] is True
     assert summary["products_count"] == 2
+
+
+def test_summarize_history_turns_includes_previews():
+    turns = [
+        {"role": "user", "content": "quero um seiko"},
+        {"role": "assistant", "content": "tenho estas opções"},
+        {"role": "user", "content": "manda o link"},
+    ]
+    summarized = summarize_history_turns(turns, max_turns=10)
+    assert len(summarized) == 3
+    assert summarized[0]["role"] == "user"
+    assert "seiko" in summarized[0]["preview"]
+
+
+def test_summarize_webhook_payload_keeps_channel_hints():
+    summary = summarize_webhook_payload(
+        {
+            "eventName": "conversationFragment",
+            "conversationId": "c1",
+            "visitor": {
+                "id": "v1",
+                "source": "whatsapp",
+                "sourceConversationRef": "ref",
+            },
+            "message": {"id": "m1", "text": "olá"},
+            "messages": [{"id": "m0"}, {"id": "m1"}],
+        }
+    )
+    assert summary["event_name"] == "conversationFragment"
+    assert summary["visitor_source"] == "whatsapp"
+    assert summary["messages_count"] == 2
+    assert summary["message_text_preview"] == "olá"
+
+
+def test_log_event_emits_agent_obs_json(capsys, monkeypatch):
+    monkeypatch.setenv("AGENT_FULL_OBS_LOGS", "true")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    assert full_obs_enabled() is True
+    log_event("test.event", {"channel": "whatsapp", "text_preview": "oi"})
+    captured = capsys.readouterr().out
+    assert "[agent.obs]" in captured
+    assert "test.event" in captured
+    assert "whatsapp" in captured
+    get_settings.cache_clear()

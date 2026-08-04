@@ -503,22 +503,30 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         if message.conversation_id
         else ("sender_key" if message.sender_key else ("sender_phone" if message.sender_phone else "none"))
     )
-    from .observability import log_event, redact_text, summarize_commerce_state
+    from .observability import (
+        log_event,
+        redact_text,
+        summarize_commerce_state,
+        summarize_history_turns,
+    )
 
     recovery_counts = count_user_assistant_turns(recovery_turns)
     model_counts = count_user_assistant_turns(model_turns)
-    print("[sales.context]", {
-        "history_turns": model_counts["total"],
-        "recovery_turns": recovery_counts["total"],
-        "history_limit": history_limit,
-        "history_hard_cap": history_hard_cap,
-        "history_user_turns": model_counts["user"],
-        "history_assistant_turns": model_counts["assistant"],
-        "conversation_id_present": bool(message.conversation_id),
-        "sender_key_present": bool(message.sender_key),
-        "before_inbound_id_present": inbound_id is not None,
-        "context_source": context_source,
-    })
+    log_event(
+        "sales.context",
+        {
+            "history_turns": model_counts["total"],
+            "recovery_turns": recovery_counts["total"],
+            "history_limit": history_limit,
+            "history_hard_cap": history_hard_cap,
+            "history_user_turns": model_counts["user"],
+            "history_assistant_turns": model_counts["assistant"],
+            "conversation_id_present": bool(message.conversation_id),
+            "sender_key_present": bool(message.sender_key),
+            "before_inbound_id_present": inbound_id is not None,
+            "context_source": context_source,
+        },
+    )
     customer_context["_conversation_turns"] = recovery_turns
     customer_context["_model_conversation_turns"] = model_turns
     commerce_state = CommerceConversationState.from_payload(
@@ -532,14 +540,11 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             "recovery_turns": recovery_counts["total"],
             "history_limit": history_limit,
             "history_hard_cap": history_hard_cap,
-            "history_preview": [
-                {
-                    "role": turn.get("role"),
-                    "preview": redact_text(str(turn.get("content") or ""), max_chars=160),
-                }
-                for turn in model_turns[-6:]
-            ],
+            "history_preview": summarize_history_turns(model_turns),
+            "recovery_preview": summarize_history_turns(recovery_turns),
             "commerce_state": summarize_commerce_state(commerce_state),
+            "inbound_text_preview": redact_text(message.text, max_chars=500),
+            "channel": message.channel,
         },
     )
     if commerce_state.pending_action == "awaiting_order_customer_document":

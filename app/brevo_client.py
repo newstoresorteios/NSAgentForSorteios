@@ -6,6 +6,7 @@ import httpx
 
 from .config import get_settings
 from .models import BrevoSendResult, AgentResult, IncomingMessage
+from .observability import log_event, record_brevo_send
 from .repository import normalize_phone
 
 BREVO_WHATSAPP_SEND_URL = "https://api.brevo.com/v3/whatsapp/sendMessage"
@@ -81,10 +82,14 @@ async def _send_conversations_reply(
 
     ok = 200 <= resp.status_code < 300
     if not ok:
-        print("[brevo.send] conversations_failed", {
-            "status_code": resp.status_code,
-            "visitor_id_present": bool(incoming.visitor_id),
-        })
+        log_event(
+            "brevo.send.conversations_failed",
+            {
+                "status_code": resp.status_code,
+                "visitor_id_present": bool(incoming.visitor_id),
+                "channel": incoming.channel,
+            },
+        )
 
     return BrevoSendResult(
         ok=ok,
@@ -134,11 +139,15 @@ async def _send_whatsapp_transactional_reply(incoming: IncomingMessage, text: st
 
     ok = 200 <= resp.status_code < 300
     if not ok:
-        print("[brevo.send] whatsapp_failed", {
-            "status_code": resp.status_code,
-            "recipient_present": bool(recipient),
-            "sender_present": bool(sender),
-        })
+        log_event(
+            "brevo.send.whatsapp_failed",
+            {
+                "status_code": resp.status_code,
+                "recipient_present": bool(recipient),
+                "sender_present": bool(sender),
+                "channel": incoming.channel,
+            },
+        )
 
     return BrevoSendResult(
         ok=ok,
@@ -178,10 +187,13 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
         text = f"{text}\n\nOuça: {result.reply_audio_url}".strip()
 
     if isinstance(result, AgentResult) and result.reply_modality == "audio" and not result.reply_audio_url:
-        print("[brevo.send] audio_reply_fallback_to_text", {
-            "reason": "supabase_upload_or_tts_failed",
-            "audio_bytes": len(result.reply_audio_bytes or b""),
-        })
+        log_event(
+            "brevo.send.audio_reply_fallback_to_text",
+            {
+                "reason": "supabase_upload_or_tts_failed",
+                "audio_bytes": len(result.reply_audio_bytes or b""),
+            },
+        )
 
     if incoming.channel in {"instagram", "facebook", "widget"} and audio_file:
         audio_file = None
@@ -241,12 +253,33 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
                 "fallback_link_sent": fallback_link_sent,
                 "fallback_link_failed": fallback_link_failed,
             })
-        print("[sales.media.send]", {
-            "channel": channel,
-            "image_url_found": True,
-            "media_send_supported": media_send_supported,
-            "media_send_failed": media_send_failed,
-            "fallback_link_sent": fallback_link_sent,
-            "fallback_link_failed": fallback_link_failed,
-        })
+        log_event(
+            "sales.media.send",
+            {
+                "channel": channel,
+                "image_url_found": True,
+                "media_send_supported": media_send_supported,
+                "media_send_failed": media_send_failed,
+                "fallback_link_sent": fallback_link_sent,
+                "fallback_link_failed": fallback_link_failed,
+            },
+        )
+    record_brevo_send(
+        channel=channel,
+        ok=bool(sent.ok),
+        dry_run=bool(sent.dry_run),
+        status_code=sent.status_code,
+        error=sent.error,
+        reply_preview=text,
+        reply_modality=(
+            result.reply_modality if isinstance(result, AgentResult) else "text"
+        ),
+        visitor_id_present=bool(incoming.visitor_id),
+        sender_phone_present=bool(incoming.sender_phone),
+        extra={
+            "inbound_channel": incoming.channel,
+            "has_outbound_image": has_outbound_image,
+            "has_audio_file": bool(audio_file),
+        },
+    )
     return sent

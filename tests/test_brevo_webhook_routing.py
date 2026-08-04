@@ -69,10 +69,11 @@ async def test_conversation_fragment_enters_agent_pipeline(monkeypatch, capsys):
     assert len(processed) == 1
     assert processed[0][0].event_type == "conversationFragment"
     output = capsys.readouterr().out
-    assert "[brevo.webhook] routing" in output
-    assert "'event_name': 'conversationFragment'" in output
-    assert "'should_process': True" in output
-    assert "[brevo.webhook] processing" in output
+    assert "[agent.obs]" in output
+    assert '"event": "brevo.webhook.routing"' in output
+    assert '"event_name": "conversationFragment"' in output
+    assert '"should_process": true' in output
+    assert '"event": "brevo.webhook.processing"' in output
 
 
 @pytest.mark.asyncio
@@ -107,10 +108,10 @@ async def test_conversation_transcript_is_explicitly_ignored(monkeypatch, capsys
         "reason": "non_inbound_event",
     }
     output = capsys.readouterr().out
-    assert "'event_name': 'conversationTranscript'" in output
-    assert "'should_process': False" in output
-    assert "'reason': 'non_inbound_event'" in output
-    assert "[brevo.webhook] processing" not in output
+    assert '"event_name": "conversationTranscript"' in output
+    assert '"should_process": false' in output
+    assert '"reason": "non_inbound_event"' in output
+    assert '"event": "brevo.webhook.processing"' not in output
 
 
 @pytest.mark.asyncio
@@ -145,9 +146,9 @@ async def test_conversation_started_without_message_preserves_no_text_skip(
         "reason": "no_text",
     }
     output = capsys.readouterr().out
-    assert "'event_name': 'conversationStarted'" in output
-    assert "'should_process': False" in output
-    assert "'reason': 'no_text'" in output
+    assert '"event_name": "conversationStarted"' in output
+    assert '"should_process": false' in output
+    assert '"reason": "no_text"' in output
 
 
 @pytest.mark.asyncio
