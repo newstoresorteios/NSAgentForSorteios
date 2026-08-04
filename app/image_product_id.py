@@ -39,6 +39,8 @@ Regras:
 - Em model: priorize linha/coleção legível. Se vir "AUTOMATIC" / "DIVER'S 200m" /
   "CHRONO" no mostrador, inclua no model ou em features — não descarte.
 - Se houver submostradores ou botões de cronógrafo, features DEVE incluir "cronógrafo".
+- Se o mostrador tiver a palavra AUTOMATIC / AUTOMÁTICO, features DEVE incluir "automático"
+  (não confunda com variantes manuais/mecânicas da mesma linha).
 - Nunca retorne só brand+color quando a linha ou a função estiver legível na foto.
 - confidence entre 0 e 1 conforme legibilidade.
 - Preferir nomes comerciais usados em e-commerce BR.
@@ -277,7 +279,10 @@ def interpretation_from_identification(
 
     features = []
     seen_features: set[str] = set()
-    for item in identified.features or []:
+    for item in list(identified.features or []) + [
+        identified.model,
+        identified.notes,
+    ]:
         label = normalize_feature_label(item)
         if not label:
             continue
@@ -509,6 +514,172 @@ def products_match_required_features(
     return True
 
 
+def _product_id(product: dict[str, Any]) -> str | None:
+    value = product.get("id") or product.get("product_id")
+    return str(value) if value is not None else None
+
+
+def filter_products_to_interpretation_family(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+) -> list[dict[str, Any]]:
+    """Keep candidates that share brand + model identity with the Vision ask."""
+    from .product_retrieval import (
+        identity_core_tokens,
+        preference_color_tokens,
+        product_compatible_with_requested_movement,
+        product_matches_feature_tokens,
+        preference_feature_tokens,
+        _fold,
+        _product_text,
+    )
+
+    brand = _fold(interpretation.subject.brand)
+    color_tokens = preference_color_tokens(interpretation)
+    core = identity_core_tokens(
+        interpretation.subject.model,
+        color_tokens=color_tokens,
+    )
+    feature_tokens = preference_feature_tokens(interpretation)
+    kept: list[dict[str, Any]] = []
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        text = _product_text(product)
+        candidate_brand = _fold(product.get("brand"))
+        if brand:
+            if candidate_brand and candidate_brand != brand:
+                continue
+            if not candidate_brand and brand not in text:
+                continue
+        if core and not all(token in text for token in core):
+            continue
+        if not product_compatible_with_requested_movement(
+            product,
+            interpretation.subject.model,
+            interpretation.preferences.attributes,
+        ):
+            continue
+        if feature_tokens and not product_matches_feature_tokens(product, feature_tokens):
+            continue
+        kept.append(product)
+    return kept
+
+
+def merge_tray_with_visual_neighbors(
+    tray_products: list[dict[str, Any]],
+    visual_products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    *,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """Prefer visual nearest neighbors within the same model family."""
+    family_visual = filter_products_to_interpretation_family(
+        visual_products,
+        interpretation,
+    )
+    family_tray = filter_products_to_interpretation_family(
+        tray_products,
+        interpretation,
+    )
+    if not family_visual and not family_tray:
+        return tray_products[:limit]
+
+    by_id: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    def _add(product: dict[str, Any]) -> None:
+        product_id = _product_id(product)
+        if not product_id:
+            return
+        if product_id not in by_id:
+            order.append(product_id)
+            by_id[product_id] = product
+            return
+        # Keep visual_distance when present.
+        existing = by_id[product_id]
+        if product.get("visual_distance") is not None and existing.get(
+            "visual_distance"
+        ) is None:
+            merged = dict(existing)
+            merged["visual_distance"] = product.get("visual_distance")
+            by_id[product_id] = merged
+
+    # Visual family first (true photo similarity), then tray leftovers.
+    for product in family_visual:
+        _add(product)
+    for product in family_tray:
+        _add(product)
+
+    ranked = [by_id[product_id] for product_id in order]
+    # If visual distances exist, stable-sort by distance among known ones.
+    with_distance = [
+        product for product in ranked if product.get("visual_distance") is not None
+    ]
+    without = [
+        product for product in ranked if product.get("visual_distance") is None
+    ]
+    with_distance.sort(key=lambda item: float(item.get("visual_distance") or 99))
+    return (with_distance + without)[: max(1, limit)]
+
+
+async def _disambiguate_with_visual(
+    message: IncomingMessage,
+    *,
+    identified: ImageProductIdentification,
+    interpretation: SalesInterpretation,
+    tray_products: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Re-rank / replace Tray siblings using visual nearest neighbors."""
+    settings = get_settings()
+    if not bool(getattr(settings, "agent_visual_search_enabled", True)):
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+    if not str(getattr(settings, "database_url", "") or "").strip():
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+    image_url = (message.image_url or "").strip()
+    if not image_url:
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+
+    try:
+        from .product_image_index import visual_search_from_image_url
+
+        visual_products = await visual_search_from_image_url(image_url)
+    except (
+        APIError,
+        LLMCallBudgetExceeded,
+        httpx.HTTPError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
+        print("[sales.image.visual.disambiguate.error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+
+    if not visual_products:
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+
+    merged = merge_tray_with_visual_neighbors(
+        tray_products,
+        visual_products,
+        interpretation,
+        limit=2,
+    )
+    print("[sales.image.visual.disambiguate]", {
+        "tray_count": len(tray_products),
+        "visual_count": len(visual_products),
+        "merged_ids": [_product_id(item) for item in merged],
+        "best_distance": merged[0].get("visual_distance") if merged else None,
+    })
+    return merged, "image_visual_disambiguate"
+
+
 async def handle_image_product_search(
     message: IncomingMessage,
 ) -> AgentResult | None:
@@ -657,6 +828,38 @@ async def handle_image_product_search(
         if visual is not None:
             return visual
 
+    # Keyword Tray often returns several siblings of the same line. Re-rank with
+    # visual nearest neighbors so we don't send the mechanical/wrong SKU.
+    if isinstance(tray_products, list) and tray_products:
+        disambiguated, visual_trigger = await _disambiguate_with_visual(
+            message,
+            identified=identified,
+            interpretation=interpretation,
+            tray_products=tray_products,
+        )
+        if disambiguated:
+            tray_products = disambiguated
+            if isinstance(tray_result.commercial_data, dict):
+                tray_result.commercial_data["products"] = disambiguated
+                if visual_trigger:
+                    tray_result.commercial_data["visual_disambiguated"] = True
+                    tray_result.response_metadata["visual_trigger"] = visual_trigger
+                    # One clear visual winner → treat as exact for assertive reply.
+                    if len(disambiguated) == 1:
+                        tray_result.commercial_data["match_status"] = "exact"
+                    elif (
+                        disambiguated[0].get("visual_distance") is not None
+                        and (
+                            len(disambiguated) == 1
+                            or float(disambiguated[0].get("visual_distance") or 99)
+                            + 0.08
+                            < float(disambiguated[1].get("visual_distance") or 99)
+                        )
+                    ):
+                        tray_result.commercial_data["products"] = disambiguated[:1]
+                        tray_products = disambiguated[:1]
+                        tray_result.commercial_data["match_status"] = "exact"
+
     label = " ".join(
         part
         for part in (
@@ -735,7 +938,11 @@ async def handle_image_product_search(
         ]
         # Photo matches always need customer confirmation — never auto-price
         # the first sibling (e.g. Ecce Smalt vs Ecce Lys).
-        multi = len(products) >= 2 or match_status == "ambiguous" or not color_matched
+        multi = (
+            len(products) >= 2
+            or match_status == "ambiguous"
+            or not color_matched
+        )
         if multi:
             tray_result.reply_text = (
                 f"Pela foto, parece {label or 'este modelo'}. "
@@ -745,9 +952,7 @@ async def handle_image_product_search(
             )
             if isinstance(tray_result.commercial_data, dict):
                 tray_result.commercial_data["match_status"] = "ambiguous"
-        elif tray_result.safety_reason is None or not tray_result.reply_text.startswith(
-            "Pela foto"
-        ):
+        else:
             tray_result.reply_text = (
                 f"Pela foto, parece {label or 'este modelo'}. "
                 "Encontrei no catálogo:\n"

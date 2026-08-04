@@ -417,6 +417,184 @@ async def test_chrono_feature_mismatch_falls_back_to_visual(monkeypatch):
     assert result.safety_reason == "visual_nearest_neighbor"
 
 
+def test_automatic_rejects_mechanical_intra_matic_sibling():
+    from app.models import SalesInterpretation
+    from app.product_retrieval import score_catalog_candidates
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        subject={
+            "product_type": "relógio",
+            "brand": "Hamilton",
+            "model": "Intra-Matic Cronógrafo Automático Preto",
+        },
+        preferences={
+            "color": "Preto",
+            "attributes": ["Cronógrafo", "Automático"],
+        },
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    products = [
+        {
+            "id": "10333",
+            "name": "Relógio Hamilton American Classic Intra-Matic Chrono H Mecânico Preto H38429130",
+            "brand": "Hamilton",
+            "price": 20299.99,
+        },
+        {
+            "id": "900",
+            "name": "Relógio Hamilton American Classic Intra-Matic Chrono Automático Preto H38446732",
+            "brand": "Hamilton",
+            "price": 19999.99,
+        },
+    ]
+    ranked = score_catalog_candidates(products, interpretation, require_color=True)
+    assert [item["id"] for item in ranked] == ["900"]
+
+
+def test_merge_tray_with_visual_prefers_nearest_family_sibling():
+    from app.models import SalesInterpretation
+    from app.image_product_id import merge_tray_with_visual_neighbors
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        subject={
+            "product_type": "relógio",
+            "brand": "Hamilton",
+            "model": "Intra-Matic Cronógrafo Automático Preto",
+        },
+        preferences={
+            "color": "Preto",
+            "attributes": ["Cronógrafo", "Automático"],
+        },
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    tray = [
+        {
+            "id": "10333",
+            "name": "Relógio Hamilton Intra-Matic Chrono H Mecânico Preto H38429130",
+            "brand": "Hamilton",
+        },
+        {
+            "id": "13428",
+            "name": "Relógio Hamilton Intra-Matic Chrono Automático Preto H38446730",
+            "brand": "Hamilton",
+        },
+    ]
+    visual = [
+        {
+            "id": "900",
+            "name": "Relógio Hamilton Intra-Matic Chrono Automático Preto H38446732",
+            "brand": "Hamilton",
+            "visual_distance": 0.12,
+        },
+        {
+            "id": "13428",
+            "name": "Relógio Hamilton Intra-Matic Chrono Automático Preto H38446730",
+            "brand": "Hamilton",
+            "visual_distance": 0.31,
+        },
+    ]
+    merged = merge_tray_with_visual_neighbors(tray, visual, interpretation, limit=2)
+    assert merged[0]["id"] == "900"
+    assert "Mecânico" not in merged[0]["name"]
+
+
+@pytest.mark.asyncio
+async def test_handle_image_disambiguates_siblings_visually(monkeypatch):
+    from app import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="[Imagem recebida via WhatsApp]",
+        input_modality="image",
+        attachment_type="image",
+        image_url="https://example.com/hamilton-orange.jpg",
+    )
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Hamilton",
+        model="Intra-Matic Chronograph Automatic",
+        color="Preto",
+        features=["chronograph", "automatic"],
+        confidence=0.94,
+    )
+    tray_result = AgentResult(
+        reply_text="Encontrei opções.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "10333",
+                    "name": "Relógio Hamilton Intra-Matic Chrono H Mecânico Preto H38429130",
+                    "brand": "Hamilton",
+                },
+                {
+                    "id": "13428",
+                    "name": "Relógio Hamilton Intra-Matic Chrono Automático Preto H38446730",
+                    "brand": "Hamilton",
+                },
+            ],
+            "match_status": "ambiguous",
+        },
+        response_metadata={"used_tray": True},
+    )
+
+    async def fake_identify(msg):
+        return identified
+
+    async def fake_retrieval(interpretation):
+        return tray_result
+
+    async def fake_disambiguate(message, **kwargs):
+        return (
+            [
+                {
+                    "id": "900",
+                    "name": "Relógio Hamilton Intra-Matic Chrono Automático Preto H38446732",
+                    "brand": "Hamilton",
+                    "visual_distance": 0.11,
+                }
+            ],
+            "image_visual_disambiguate",
+        )
+
+    async def fake_visual_fallback(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        agent_image_search_enabled=True,
+        agent_image_search_min_confidence=0.55,
+        agent_visual_search_enabled=True,
+        database_url="postgresql://test",
+        agent_visual_top_k=3,
+    ))
+    monkeypatch.setattr(module, "identify_product_from_image", fake_identify)
+    monkeypatch.setattr(module, "_try_visual_fallback", fake_visual_fallback)
+    monkeypatch.setattr(module, "_disambiguate_with_visual", fake_disambiguate)
+
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "_execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+
+    result = await handle_image_product_search(message)
+    assert result is not None
+    assert len(result.commercial_data["products"]) == 1
+    assert result.commercial_data["products"][0]["id"] == "900"
+    assert "Encontrei no catálogo" in result.reply_text
+    assert "opções próximas" not in result.reply_text.casefold()
+
+
 @pytest.mark.asyncio
 async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
     from app import image_product_id as module

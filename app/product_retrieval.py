@@ -351,6 +351,7 @@ def score_catalog_candidates(
         movement_ok = product_compatible_with_requested_movement(
             product,
             interpretation.subject.model,
+            interpretation.preferences.attributes,
         )
         if not movement_ok and not allow_movement_mismatch:
             continue
@@ -601,15 +602,42 @@ def model_excludes_gmt(model: str | None) -> bool:
     return "automatic" in folded or "automatico" in folded
 
 
+def requests_automatic_movement(
+    model: str | None,
+    attributes: list[str] | None = None,
+) -> bool:
+    blob = _fold(
+        " ".join(
+            part
+            for part in ((model or ""), *(attributes or ()))
+            if part
+        )
+    )
+    return "automatic" in blob or "automatico" in blob
+
+
 def product_compatible_with_requested_movement(
     product: dict[str, Any],
     model: str | None,
+    attributes: list[str] | None = None,
 ) -> bool:
-    if not model_excludes_gmt(model):
-        return True
     text = _product_text(product)
-    # Customer/Vision asked Automatic without GMT — don't substitute GMT siblings.
-    return "gmt" not in text
+    wants_auto = requests_automatic_movement(model, attributes)
+    if wants_auto:
+        # Don't substitute GMT siblings for a plain Automatic ask.
+        if "gmt" in text and "gmt" not in _fold(model):
+            return False
+        mechanical = (
+            "mecanico" in text
+            or "mechanical" in text
+            or bool(re.search(r"\bh\s*mecan", text))
+        )
+        has_auto = "automatico" in text or "automatic" in text
+        if mechanical and not has_auto:
+            return False
+    elif model_excludes_gmt(model):
+        return "gmt" not in text
+    return True
 
 
 def extract_reference_code(text: str | None) -> str | None:
@@ -1140,7 +1168,11 @@ def hard_filter_products(
             continue
         if expected_ean and _fold(product.get("ean")) != expected_ean:
             continue
-        if not product_compatible_with_requested_movement(product, subject.model):
+        if not product_compatible_with_requested_movement(
+            product,
+            subject.model,
+            interpretation.preferences.attributes,
+        ):
             continue
         color_tokens = preference_color_tokens(interpretation)
         if color_tokens and not product_matches_color_tokens(product, color_tokens):
@@ -1351,7 +1383,11 @@ def exact_specific_product_matches(
     )
     matches: list[dict[str, Any]] = []
     for product in candidates:
-        if not product_compatible_with_requested_movement(product, subject.model):
+        if not product_compatible_with_requested_movement(
+            product,
+            subject.model,
+            interpretation.preferences.attributes,
+        ):
             continue
         if expected_reference:
             if _fold(product.get("reference")) == expected_reference:
@@ -1455,6 +1491,7 @@ async def match_specific_products(
             product_compatible_with_requested_movement(
                 product,
                 interpretation.subject.model,
+                interpretation.preferences.attributes,
             )
             for product in compatible
         )
