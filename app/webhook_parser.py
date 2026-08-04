@@ -139,8 +139,128 @@ def select_effective_inbound_message(payload: dict[str, Any]) -> dict[str, Any]:
         if (timestamp := _message_timestamp(message)) is not None
     ]
     if timestamped:
-        return max(timestamped, key=lambda item: (item[0], item[1]))[2]
-    return valid_messages[-1]
+        selected = max(timestamped, key=lambda item: (item[0], item[1]))[2]
+    else:
+        selected = valid_messages[-1]
+    return _merge_sibling_image_caption(valid_messages, selected)
+
+
+def _message_has_image_attachment(message: dict[str, Any]) -> bool:
+    for attachment in _attachment_candidates(message):
+        if _attachment_type(attachment) in {"image", "sticker"}:
+            return True
+    return False
+
+
+def _visitor_text(message: dict[str, Any]) -> str:
+    return (
+        _first_non_empty(
+            message.get("text") if isinstance(message.get("text"), str) else None,
+            message.get("body") if isinstance(message.get("body"), str) else None,
+            _get_nested(message, "text", "body"),
+        )
+        or ""
+    ).strip()
+
+
+def _sibling_gap_seconds(
+    selected: dict[str, Any],
+    candidate: dict[str, Any],
+    messages: list[dict[str, Any]],
+    candidate_index: int,
+    *,
+    max_gap_seconds: float,
+) -> float | None:
+    selected_ts = _message_timestamp(selected)
+    candidate_ts = _message_timestamp(candidate)
+    if selected_ts is not None and candidate_ts is not None:
+        gap = abs(selected_ts - candidate_ts)
+        return gap if gap <= max_gap_seconds else None
+    selected_index = next(
+        (i for i, item in enumerate(messages) if item is selected),
+        -1,
+    )
+    if abs(selected_index - candidate_index) > 1:
+        return None
+    return 0.0
+
+
+def _merge_sibling_image_caption(
+    messages: list[dict[str, Any]],
+    selected: dict[str, Any],
+    *,
+    max_gap_seconds: float = 2.0,
+) -> dict[str, Any]:
+    """Merge near-simultaneous visitor image + caption siblings in one payload."""
+    if not selected or not _is_visitor_message(selected):
+        return selected
+
+    selected_has_image = _message_has_image_attachment(selected)
+    selected_text = _visitor_text(selected)
+
+    # Case A: newest item is text-only; pull image attachment from sibling.
+    if not selected_has_image:
+        if not selected_text:
+            return selected
+        best: dict[str, Any] | None = None
+        best_gap: float | None = None
+        for index, candidate in enumerate(messages):
+            if candidate is selected or not _is_visitor_message(candidate):
+                continue
+            if not _message_has_image_attachment(candidate):
+                continue
+            gap = _sibling_gap_seconds(
+                selected,
+                candidate,
+                messages,
+                index,
+                max_gap_seconds=max_gap_seconds,
+            )
+            if gap is None:
+                continue
+            if best_gap is None or gap < best_gap:
+                best = candidate
+                best_gap = gap
+        if best is None:
+            return selected
+        merged = dict(best)
+        merged["text"] = selected_text
+        selected_id = _message_id(selected)
+        if selected_id:
+            merged["id"] = selected_id
+            merged["messageId"] = selected_id
+        return merged
+
+    # Case B: newest item is image without real caption; pull text from sibling.
+    if selected_text:
+        return selected
+    best_text: str | None = None
+    best_gap = None
+    for index, candidate in enumerate(messages):
+        if candidate is selected or not _is_visitor_message(candidate):
+            continue
+        if _message_has_image_attachment(candidate):
+            continue
+        caption = _visitor_text(candidate)
+        if not caption:
+            continue
+        gap = _sibling_gap_seconds(
+            selected,
+            candidate,
+            messages,
+            index,
+            max_gap_seconds=max_gap_seconds,
+        )
+        if gap is None:
+            continue
+        if best_gap is None or gap < best_gap:
+            best_text = caption
+            best_gap = gap
+    if not best_text:
+        return selected
+    merged = dict(selected)
+    merged["text"] = best_text
+    return merged
 
 
 def selected_message_info(payload: dict[str, Any], message: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -491,6 +611,9 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
         channel_metadata["attachment_type"] = attachment_type
     if image_url:
         channel_metadata["image_url_present"] = True
+        channel_metadata["image_url"] = image_url
+    if input_modality:
+        channel_metadata["input_modality"] = input_modality
     if source_channel_ref:
         channel_metadata["source_channel_ref_present"] = True
 

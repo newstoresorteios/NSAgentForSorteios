@@ -29,6 +29,7 @@ from app.db import (
     insert_inbound_message,
     is_latest_inbound_message,
 )
+from app.inbound_coalesce import is_caption_echo_of_recent_image
 from app.config import get_allowed_channels, get_settings
 from app.conversation_lock import (
     ConversationLockUnavailable,
@@ -259,7 +260,7 @@ async def health():
             "agent_quality_judge_mode",
             "shadow",
         ),
-        "agent_critique_mode": getattr(settings, "agent_critique_mode", "off"),
+        "agent_critique_mode": getattr(settings, "agent_critique_mode", "enforce"),
         "agent_critique_max_retries": getattr(
             settings,
             "agent_critique_max_retries",
@@ -567,6 +568,16 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                         event_name=event_name,
                         reason="conversation_busy",
                     )
+
+    # Brevo often redelivers the caption as a second text-only webhook after the
+    # photo+caption turn. Skip exact caption echoes so we don't reply twice.
+    if not (incoming.image_url or "").strip() and is_caption_echo_of_recent_image(
+        incoming
+    ):
+        return _skip_webhook_event(
+            event_name=event_name,
+            reason="caption_echo",
+        )
 
     try:
         claimed, inbound_id = claim_inbound_message(incoming.model_dump())

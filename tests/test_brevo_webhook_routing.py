@@ -315,3 +315,91 @@ def test_event_skip_reason_only_blocks_transcript_event():
     assert webhook_event_skip_reason({
         "eventName": "conversationStarted",
     }) is None
+
+
+@pytest.mark.asyncio
+async def test_caption_echo_is_skipped_before_claim(monkeypatch):
+    import api.index as index
+
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
+    monkeypatch.setattr(index, "is_caption_echo_of_recent_image", lambda _incoming: True)
+    monkeypatch.setattr(
+        index,
+        "claim_inbound_message",
+        lambda _message: (_ for _ in ()).throw(
+            AssertionError("caption echo must not be claimed")
+        ),
+    )
+    monkeypatch.setattr(
+        index,
+        "process_incoming_message",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("caption echo must not be processed")
+        ),
+    )
+
+    response = await _post_webhook(index, _fragment_payload())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "skipped": True,
+        "reason": "caption_echo",
+    }
+
+
+@pytest.mark.asyncio
+async def test_photo_without_caption_still_processed(monkeypatch):
+    """Image-only inbound must not be treated as caption_echo."""
+    import api.index as index
+
+    processed = []
+
+    async def process(incoming, customer_context):
+        processed.append(incoming)
+        return AgentResult(reply_text="ok", intent="commerce")
+
+    async def send(*_args):
+        return BrevoSendResult(
+            ok=True,
+            dry_run=True,
+            provider_response={"accepted": True},
+        )
+
+    def fail_if_called(_incoming):
+        raise AssertionError("image inbound must short-circuit caption echo check")
+
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
+    monkeypatch.setattr(index, "is_caption_echo_of_recent_image", fail_if_called)
+    monkeypatch.setattr(index, "claim_inbound_message", lambda _message: (True, 303))
+    monkeypatch.setattr(index, "is_latest_inbound_message", lambda *_args: True)
+    monkeypatch.setattr(index, "find_customer_profile_by_phone", lambda _phone: {})
+    monkeypatch.setattr(index, "process_incoming_message", process)
+    monkeypatch.setattr(index, "send_brevo_reply", send)
+    monkeypatch.setattr(index, "insert_agent_response", lambda _data: None)
+
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conversation-img-only",
+        "messages": [
+            {
+                "type": "visitor",
+                "id": "message-img-only",
+                "file": {
+                    "link": "https://cdn.example.com/solo.jpg",
+                    "mimeType": "image/jpeg",
+                    "type": "image",
+                },
+            }
+        ],
+        "visitor": {
+            "id": "visitor-1",
+            "attributes": {"WHATSAPP": "5511999999999"},
+        },
+    }
+
+    response = await _post_webhook(index, payload)
+
+    assert response.status_code == 200
+    assert len(processed) == 1
+    assert processed[0].image_url == "https://cdn.example.com/solo.jpg"

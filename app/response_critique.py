@@ -11,16 +11,48 @@ from .capability_catalog import (
     build_capability_catalog,
     format_capability_catalog_for_prompt,
 )
-from .commerce_context import CommerceConversationState
+from .commerce_context import (
+    CommerceConversationState,
+    CommerceProductReference,
+    PresentedCommerceProduct,
+    product_reference_from_product,
+)
 from .config import get_settings
 from .models import AgentResult, IncomingMessage
-from .quality_judge import JudgeReport, JudgeVerdict, attach_judge_report
+from .quality_judge import (
+    JudgeReport,
+    JudgeVerdict,
+    attach_judge_report,
+    is_low_risk_judge_skip,
+)
 from .runtime_context import get_current_turn
 from .tray_tools import execute_tool
 from .turn_runtime import LLMCallBudgetExceeded
 
 
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+CRITIQUE_JUDGE_SYSTEM_PROMPT = (
+    "Você é o JUÍZ redundante do agente NewStore. "
+    "Valide se a resposta cumpre o pedido do cliente com o "
+    "histórico completo e as capacidades/APIs disponíveis. "
+    "pass_check=false se a resposta negar pedido/link/pagamento "
+    "existentes no histórico, inventar fatos, ignorar contexto, "
+    "ou deixar de consultar API necessária. "
+    "Também reprove (pass_check=false) quando o cliente pediu um "
+    "tipo, função ou atributo de produto (ex.: cronógrafo, diver, GMT, "
+    "automático, cor, orçamento, gênero, marca) e os itens em "
+    "commercial_data.products / a resposta NÃO evidenciam esse "
+    "requisito nos nomes ou fatos disponíveis — mesmo que sejam "
+    "produtos reais da categoria genérica. "
+    "Nesses casos, recommended_apis DEVE incluir search_products com "
+    "arguments.query refinada em termos de catálogo (português quando "
+    "fizer sentido, ex.: 'cronógrafo', 'mergulho', 'GMT'), sem inventar "
+    "produtos. "
+    "Quando reprovar, liste recommended_apis (somente retryable) "
+    "com arguments concretos e retry_instruction objetiva. "
+    "Não reescreva a resposta final aqui."
+)
 
 
 class RecommendedApiCall(BaseModel):
@@ -214,17 +246,7 @@ async def run_critique_judge(
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Você é o JUÍZ redundante do agente NewStore. "
-                        "Valide se a resposta cumpre o pedido do cliente com o "
-                        "histórico completo e as capacidades/APIs disponíveis. "
-                        "pass_check=false se a resposta negar pedido/link/pagamento "
-                        "existentes no histórico, inventar fatos, ignorar contexto, "
-                        "ou deixar de consultar API necessária. "
-                        "Quando reprovar, liste recommended_apis (somente retryable) "
-                        "com arguments concretos e retry_instruction objetiva. "
-                        "Não reescreva a resposta final aqui."
-                    ),
+                    "content": CRITIQUE_JUDGE_SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",
@@ -297,7 +319,105 @@ async def _execute_recommended_apis(
             payment = payload.get("payment") if isinstance(payload.get("payment"), dict) else payload
             if isinstance(payment, dict) and payment.get("payment_url"):
                 seeds["payment_url"] = payment.get("payment_url")
+        if item.name == "search_products" and "error" not in payload:
+            if args.get("query"):
+                seeds["query"] = args.get("query")
     return calls, gathered
+
+
+def _products_from_search_payload(payload: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    """Return product list from search_products payload, or None if not a search result."""
+    if not isinstance(payload, dict) or "error" in payload:
+        return None
+    products = payload.get("products")
+    if not isinstance(products, list):
+        return None
+    return [item for item in products if isinstance(item, dict)]
+
+
+def apply_search_products_to_result(
+    *,
+    result: AgentResult,
+    api_facts: dict[str, Any],
+    commerce_state: CommerceConversationState | None = None,
+    search_query: str | None = None,
+) -> AgentResult:
+    """Replace commercial_data.products with critique search_products evidence."""
+    products = _products_from_search_payload(
+        api_facts.get("search_products") if isinstance(api_facts, dict) else None
+    )
+    if products is None:
+        return result
+    updated = result.model_copy(deep=True)
+    commercial = dict(updated.commercial_data or {})
+    commercial["products"] = products
+    if search_query:
+        commercial["query"] = search_query
+    if not products:
+        commercial.pop("inventory", None)
+    updated.commercial_data = commercial
+    metadata = dict(updated.response_metadata or {})
+    metadata["presented_products"] = bool(products)
+    metadata["critique_products_replaced"] = True
+    if not products:
+        metadata["product_resolution_state"] = "not_found"
+        metadata["clear_active_product"] = True
+    updated.response_metadata = metadata
+    if commerce_state is not None:
+        compact: list[PresentedCommerceProduct] = []
+        for position, product in enumerate(products[:3], start=1):
+            identity = product_reference_from_product(product)
+            if identity:
+                compact.append(
+                    PresentedCommerceProduct(position=position, **identity.model_dump())
+                )
+        commerce_state.last_presented_products = compact
+        if compact:
+            commerce_state.active_product = CommerceProductReference.model_validate(
+                compact[0].model_dump(exclude={"position"})
+            )
+            commerce_state.product_resolution_state = "plausible_matches"
+        else:
+            commerce_state.active_product = None
+            commerce_state.product_resolution_state = "not_found"
+    return updated
+
+
+def _merge_payment_and_order_facts(
+    commercial: dict[str, Any],
+    api_facts: dict[str, Any],
+    commerce_state: CommerceConversationState | None,
+) -> dict[str, Any]:
+    commercial = dict(commercial)
+    commercial["critique_api_facts"] = {
+        key: ("error" not in value) if isinstance(value, dict) else True
+        for key, value in api_facts.items()
+    }
+    payment_url = None
+    for payload in api_facts.values():
+        if not isinstance(payload, dict):
+            continue
+        payment = payload.get("payment")
+        if isinstance(payment, dict) and payment.get("payment_url"):
+            payment_url = payment.get("payment_url")
+        elif payload.get("payment_url"):
+            payment_url = payload.get("payment_url")
+    if payment_url:
+        payment_block = dict(commercial.get("payment") or {})
+        payment_block["payment_url"] = payment_url
+        commercial["payment"] = payment_block
+        if commerce_state is not None:
+            commerce_state.order_payment_url = str(payment_url)
+    order_id = None
+    for payload in api_facts.values():
+        if isinstance(payload, dict) and (
+            payload.get("order_id") or payload.get("id")
+        ):
+            order_id = payload.get("order_id") or payload.get("id")
+            break
+    if order_id:
+        commercial["order_id"] = str(order_id)
+    return commercial
 
 
 async def _regenerate_reply(
@@ -316,6 +436,27 @@ async def _regenerate_reply(
         from .openai_errors import OpenAIGatewayError
         from .openai_gateway import generate_text_output
 
+        search_query = None
+        for item in verdict.recommended_apis:
+            if item.name == "search_products":
+                query = (item.arguments or {}).get("query")
+                if query:
+                    search_query = str(query)
+                    break
+        working = apply_search_products_to_result(
+            result=result,
+            api_facts=api_facts,
+            commerce_state=commerce_state,
+            search_query=search_query,
+        )
+        products = (working.commercial_data or {}).get("products")
+        search_ran = "search_products" in (api_facts or {})
+        empty_search = (
+            search_ran
+            and isinstance(products, list)
+            and len(products) == 0
+        )
+
         messages = [
             {
                 "role": "system",
@@ -324,6 +465,11 @@ async def _regenerate_reply(
                     "Regenera a resposta ao cliente usando o histórico, os fatos "
                     "já conhecidos e os novos resultados de API. "
                     "Não invente dados. Se houver payment_url nos fatos, envie o link. "
+                    "Se commercial_data.products foi atualizado pela reconsulta, "
+                    "apresente SOMENTE esses produtos (não os da resposta anterior). "
+                    "Se a reconsulta search_products veio vazia, diga com honestidade "
+                    "que não encontrou o que o cliente pediu — nunca reenvie a lista "
+                    "anterior inadequada. "
                     "Resposta curta em português do Brasil para WhatsApp.\n\n"
                     + format_capability_catalog_for_prompt()
                 ),
@@ -342,7 +488,8 @@ async def _regenerate_reply(
                         "commerce_state": (
                             commerce_state.interpreter_payload() if commerce_state else {}
                         ),
-                        "previous_commercial_data": result.commercial_data or {},
+                        "commercial_data": working.commercial_data or {},
+                        "search_products_empty": empty_search,
                         "api_facts": api_facts,
                     },
                     ensure_ascii=False,
@@ -359,38 +506,15 @@ async def _regenerate_reply(
         content = text_result.text
         if not content or not content.strip():
             return None
-        regenerated = result.model_copy(deep=True)
+        regenerated = working.model_copy(deep=True)
         regenerated.reply_text = content.strip()
         commercial = dict(regenerated.commercial_data or {})
         if api_facts:
-            commercial["critique_api_facts"] = {
-                key: ("error" not in value) if isinstance(value, dict) else True
-                for key, value in api_facts.items()
-            }
-            payment_url = None
-            for payload in api_facts.values():
-                if not isinstance(payload, dict):
-                    continue
-                payment = payload.get("payment")
-                if isinstance(payment, dict) and payment.get("payment_url"):
-                    payment_url = payment.get("payment_url")
-                elif payload.get("payment_url"):
-                    payment_url = payload.get("payment_url")
-            if payment_url:
-                payment_block = dict(commercial.get("payment") or {})
-                payment_block["payment_url"] = payment_url
-                commercial["payment"] = payment_block
-                if commerce_state is not None:
-                    commerce_state.order_payment_url = str(payment_url)
-            order_id = None
-            for payload in api_facts.values():
-                if isinstance(payload, dict) and (
-                    payload.get("order_id") or payload.get("id")
-                ):
-                    order_id = payload.get("order_id") or payload.get("id")
-                    break
-            if order_id:
-                commercial["order_id"] = str(order_id)
+            commercial = _merge_payment_and_order_facts(
+                commercial,
+                api_facts,
+                commerce_state,
+            )
         regenerated.commercial_data = commercial
         regenerated.response_metadata = dict(regenerated.response_metadata or {})
         regenerated.response_metadata["critique_regenerated"] = True
@@ -423,6 +547,17 @@ async def apply_response_critique_loop(
     )
     report = CritiqueLoopReport(mode=critique_mode, max_retries=retries)
     if critique_mode == "off":
+        return result, report
+
+    skip, skip_reason = is_low_risk_judge_skip(incoming, result)
+    if skip:
+        result.response_metadata = dict(result.response_metadata or {})
+        result.response_metadata["response_critique"] = {
+            **report.model_dump(mode="json"),
+            "skipped": True,
+            "skip_reason": skip_reason,
+        }
+        print("[agent.critique.skip]", {"reason": skip_reason})
         return result, report
 
     try:

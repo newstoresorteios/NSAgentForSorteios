@@ -440,7 +440,20 @@ def _prepare_inbound_message(message: dict[str, Any]) -> dict[str, Any]:
     }
     for key, value in defaults.items():
         safe_message.setdefault(key, value)
-    safe_message["channel_metadata"] = to_jsonb(safe_message.get("channel_metadata") or {})
+    metadata = dict(safe_message.get("channel_metadata") or {})
+    image_url = str(safe_message.get("image_url") or metadata.get("image_url") or "").strip()
+    if image_url:
+        metadata["image_url_present"] = True
+        metadata["image_url"] = image_url
+    input_modality = str(safe_message.get("input_modality") or "").strip()
+    if input_modality:
+        metadata["input_modality"] = input_modality
+    attachment_type = str(
+        safe_message.get("attachment_type") or metadata.get("attachment_type") or ""
+    ).strip()
+    if attachment_type:
+        metadata["attachment_type"] = attachment_type
+    safe_message["channel_metadata"] = to_jsonb(metadata)
     safe_message["raw"] = to_jsonb(safe_message.get("raw") or {})
     return safe_message
 

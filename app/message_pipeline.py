@@ -239,7 +239,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     )
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
-    critique_mode = getattr(settings, "agent_critique_mode", "off")
+    critique_mode = getattr(settings, "agent_critique_mode", "enforce")
     from .history_window import select_model_history_turns
 
     model_turns = customer_context.get("_model_conversation_turns")
@@ -267,7 +267,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
                 recent_turns=model_turns,
                 commerce_state=commerce_state,
                 mode=critique_mode,
-                max_retries=int(getattr(settings, "agent_critique_max_retries", 2)),
+                max_retries=int(getattr(settings, "agent_critique_max_retries", 1)),
             )
             judge_report = None
             if critique_report.applied_handoff and runtime is not None:

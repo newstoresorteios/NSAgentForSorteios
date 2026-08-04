@@ -99,3 +99,66 @@ def test_fragment_does_not_replace_selected_visitor_text_with_payload_text():
         "text": "saldo do João",
     }
     assert parse_brevo_whatsapp_payload(payload).text == "oi"
+
+
+def test_fragment_merges_sibling_image_and_caption_into_text_with_image():
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conv-merge",
+        "messages": [
+            {
+                "type": "visitor",
+                "id": "msg-image",
+                "createdAt": "2026-08-04T04:52:00Z",
+                "file": {
+                    "link": "https://cdn.example.com/venezianico.jpg",
+                    "mimeType": "image/jpeg",
+                    "type": "image",
+                },
+            },
+            {
+                "type": "visitor",
+                "id": "msg-caption",
+                "createdAt": "2026-08-04T04:52:01Z",
+                "text": "e esse?",
+            },
+        ],
+        "visitor": {
+            "id": "visitor-1",
+            "attributes": {"WHATSAPP": "5511999999999"},
+        },
+    }
+    incoming = parse_brevo_whatsapp_payload(payload)
+    assert incoming.text == "e esse?"
+    assert incoming.image_url == "https://cdn.example.com/venezianico.jpg"
+    assert incoming.input_modality == "text_with_image"
+    assert incoming.channel_metadata.get("image_url") == (
+        "https://cdn.example.com/venezianico.jpg"
+    )
+
+
+def test_image_only_fragment_stays_image_modality():
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conv-image-only",
+        "messages": [
+            {
+                "type": "visitor",
+                "id": "msg-image-only",
+                "createdAt": "2026-08-04T04:52:00Z",
+                "file": {
+                    "link": "https://cdn.example.com/solo.jpg",
+                    "mimeType": "image/jpeg",
+                    "type": "image",
+                },
+            }
+        ],
+        "visitor": {
+            "id": "visitor-1",
+            "attributes": {"WHATSAPP": "5511999999999"},
+        },
+    }
+    incoming = parse_brevo_whatsapp_payload(payload)
+    assert incoming.input_modality == "image"
+    assert incoming.image_url == "https://cdn.example.com/solo.jpg"
+    assert "Imagem recebida" in incoming.text

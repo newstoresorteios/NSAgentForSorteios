@@ -3,9 +3,11 @@ import pytest
 from app.commerce_context import CommerceConversationState, CommerceProductReference
 from app.models import AgentResult, IncomingMessage
 from app.response_critique import (
+    CRITIQUE_JUDGE_SYSTEM_PROMPT,
     CritiqueVerdict,
     RecommendedApiCall,
     apply_response_critique_loop,
+    apply_search_products_to_result,
     _fill_api_arguments,
     _seed_args_from_context,
 )
@@ -177,3 +179,207 @@ async def test_critique_shadow_does_not_change_reply(monkeypatch):
     assert final.reply_text == "sem link"
     assert report.regenerated is False
     assert report.approved is False
+
+
+def test_critique_judge_prompt_requires_catalog_fit():
+    prompt = CRITIQUE_JUDGE_SYSTEM_PROMPT.casefold()
+    assert "cronógrafo" in prompt or "cronografo" in prompt
+    assert "search_products" in prompt
+    assert "commercial_data.products" in prompt
+
+
+def test_apply_search_products_replaces_classic_list():
+    result = AgentResult(
+        reply_text="Encontrei estes Bulova Classic…",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "737", "name": "Bulova Classic Automatic"},
+                {"id": "753", "name": "Bulova Classic"},
+            ]
+        },
+        response_metadata={"presented_products": True},
+    )
+    state = CommerceConversationState()
+    updated = apply_search_products_to_result(
+        result=result,
+        api_facts={
+            "search_products": {
+                "products": [
+                    {
+                        "id": "9001",
+                        "name": "Bulova Marine Star Chronograph",
+                        "brand": "Bulova",
+                    }
+                ]
+            }
+        },
+        commerce_state=state,
+        search_query="cronógrafo",
+    )
+    products = updated.commercial_data["products"]
+    assert len(products) == 1
+    assert "Chronograph" in products[0]["name"]
+    assert updated.commercial_data["query"] == "cronógrafo"
+    assert updated.response_metadata["critique_products_replaced"] is True
+    assert state.last_presented_products[0].product_id == "9001"
+
+
+def test_apply_search_products_empty_clears_wrong_list():
+    result = AgentResult(
+        reply_text="lista errada",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "737", "name": "Bulova Classic Automatic"}],
+            "inventory": {"737": True},
+        },
+    )
+    updated = apply_search_products_to_result(
+        result=result,
+        api_facts={"search_products": {"products": []}},
+    )
+    assert updated.commercial_data["products"] == []
+    assert "inventory" not in updated.commercial_data
+    assert updated.response_metadata["presented_products"] is False
+    assert updated.response_metadata["product_resolution_state"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_critique_catalog_mismatch_retries_search_and_swaps_products(monkeypatch):
+    incoming = IncomingMessage(channel="whatsapp", text="quero um chrono")
+    result = AgentResult(
+        reply_text="Separei 3 opções Bulova Classic…",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "737", "name": "Bulova Classic Automatic"},
+                {"id": "753", "name": "Bulova Classic"},
+                {"id": "783", "name": "Bulova Classic Dress"},
+            ]
+        },
+        response_metadata={"presented_products": True},
+    )
+    state = CommerceConversationState()
+    calls = {"judge": 0, "tools": []}
+
+    async def fake_judge(**kwargs):
+        calls["judge"] += 1
+        products = (kwargs["result"].commercial_data or {}).get("products") or []
+        names = " ".join(str(p.get("name") or "") for p in products if isinstance(p, dict))
+        if "Chronograph" not in names and "Cronógrafo" not in names:
+            return CritiqueVerdict(
+                score=25,
+                pass_check=False,
+                issues=["catalog_fit_mismatch"],
+                summary="Classic Automatic ≠ cronógrafo",
+                recommended_apis=[
+                    RecommendedApiCall(
+                        name="search_products",
+                        arguments={"query": "cronógrafo", "limit": 5},
+                        reason="refine for chronograph function",
+                    )
+                ],
+                retry_instruction="Buscar cronógrafos e apresentar só itens com evidência",
+            )
+        return CritiqueVerdict(score=95, pass_check=True, issues=[], summary="ok")
+
+    async def fake_execute(name, args):
+        calls["tools"].append((name, args))
+        assert name == "search_products"
+        assert args["query"] == "cronógrafo"
+        return {
+            "products": [
+                {
+                    "id": "9001",
+                    "name": "Relógio Bulova Marine Star Chronograph",
+                    "brand": "Bulova",
+                }
+            ]
+        }
+
+    async def fake_regen(**kwargs):
+        swapped = apply_search_products_to_result(
+            result=kwargs["result"],
+            api_facts=kwargs["api_facts"],
+            commerce_state=kwargs.get("commerce_state"),
+            search_query="cronógrafo",
+        )
+        swapped.reply_text = (
+            "Encontrei este cronógrafo: Relógio Bulova Marine Star Chronograph"
+        )
+        swapped.response_metadata["critique_regenerated"] = True
+        return swapped
+
+    monkeypatch.setattr("app.response_critique.run_critique_judge", fake_judge)
+    monkeypatch.setattr("app.response_critique._regenerate_reply", fake_regen)
+
+    final, report = await apply_response_critique_loop(
+        incoming=incoming,
+        result=result,
+        commerce_state=state,
+        mode="enforce",
+        max_retries=1,
+        execute=fake_execute,
+    )
+
+    assert report.regenerated is True
+    assert report.approved is True
+    assert calls["tools"][0][0] == "search_products"
+    assert final.commercial_data["products"][0]["id"] == "9001"
+    assert "Chronograph" in final.reply_text
+    assert "Classic" not in final.commercial_data["products"][0]["name"]
+    assert state.last_presented_products[0].product_id == "9001"
+
+
+@pytest.mark.asyncio
+async def test_critique_skips_greeting(monkeypatch):
+    incoming = IncomingMessage(channel="whatsapp", text="oi")
+    result = AgentResult(reply_text="Olá! Como posso ajudar?", intent="greeting")
+
+    async def boom(**_kwargs):
+        raise AssertionError("critique judge must not run for greetings")
+
+    monkeypatch.setattr("app.response_critique.run_critique_judge", boom)
+
+    final, report = await apply_response_critique_loop(
+        incoming=incoming,
+        result=result,
+        mode="enforce",
+        max_retries=1,
+    )
+    assert final.reply_text == "Olá! Como posso ajudar?"
+    assert report.attempts == 0
+    assert final.response_metadata["response_critique"]["skipped"] is True
+    assert final.response_metadata["response_critique"]["skip_reason"] == "soft_greeting"
+
+
+@pytest.mark.asyncio
+async def test_critique_generic_catalog_approves_once(monkeypatch):
+    """Regression: attribute-free browse still ships after a single approve."""
+    incoming = IncomingMessage(channel="whatsapp", text="tem relógio?")
+    result = AgentResult(
+        reply_text="Tenho estas opções…",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "1", "name": "Relógio X"}],
+        },
+    )
+    calls = {"judge": 0}
+
+    async def fake_judge(**_kwargs):
+        calls["judge"] += 1
+        return CritiqueVerdict(score=90, pass_check=True, issues=[], summary="ok")
+
+    monkeypatch.setattr("app.response_critique.run_critique_judge", fake_judge)
+
+    final, report = await apply_response_critique_loop(
+        incoming=incoming,
+        result=result,
+        mode="enforce",
+        max_retries=1,
+        execute=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no tools")),
+    )
+    assert calls["judge"] == 1
+    assert report.approved is True
+    assert report.regenerated is False
+    assert final.reply_text == "Tenho estas opções…"

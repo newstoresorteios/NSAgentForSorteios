@@ -32,10 +32,10 @@ def test_legacy_history_limit_200_does_not_crash_and_coerces_to_model_window(mon
     assert settings.agent_history_hard_cap == 80
 
 
-def test_llm_budget_defaults_enforce_three_calls():
+def test_llm_budget_defaults_cover_critique_retry():
     assert Settings.model_fields["agent_llm_budget_enabled"].default is True
-    assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 3
-    assert Settings.model_fields["agent_critique_mode"].default == "off"
+    assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 6
+    assert Settings.model_fields["agent_critique_mode"].default == "enforce"
     assert Settings.model_fields["agent_critique_max_retries"].default == 1
     assert Settings.model_fields["agent_quality_judge_mode"].default == "shadow"
     assert Settings.model_fields["agent_quality_judge_risk_threshold"].default == 70

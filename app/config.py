@@ -189,13 +189,14 @@ class Settings(BaseSettings):
         alias="AGENT_LEGACY_PROMPT_COMPAT_ENABLED",
     )
     agent_runtime_enabled: bool = Field(default=True, alias="AGENT_RUNTIME_ENABLED")
-    # Phase 8: real per-turn OpenAI budget. Keep critique off unless max >= 3+.
+    # Phase 8: per-turn OpenAI budget. Critique enforce needs headroom for
+    # interpret/respond + judge + regenerate + re-judge (1 retry).
     agent_llm_budget_enabled: bool = Field(
         default=True,
         alias="AGENT_LLM_BUDGET_ENABLED",
     )
     agent_max_llm_calls_per_turn: int = Field(
-        default=3,
+        default=6,
         alias="AGENT_MAX_LLM_CALLS_PER_TURN",
         ge=0,
     )
@@ -236,9 +237,9 @@ class Settings(BaseSettings):
         le=100,
     )
     # Dual-agent critique: judge draft with API catalog and retry before send.
-    # Start in off; use shadow then enforce after validating latency/cost.
+    # Enforce with 1 retry; low-risk greetings/thanks skip the judge call.
     agent_critique_mode: Literal["off", "shadow", "enforce"] = Field(
-        default="off",
+        default="enforce",
         alias="AGENT_CRITIQUE_MODE",
     )
     agent_critique_max_retries: int = Field(
