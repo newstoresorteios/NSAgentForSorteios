@@ -169,3 +169,83 @@ def test_enforce_mode_uses_deterministic_factual_fallback():
     )
     assert validated.safety_reason == "factual_validation_failed"
     assert validated.response_metadata["factual_validation"]["fallback_applied"]
+    assert validated.response_metadata["factual_validation"]["fallback_required"]
+    assert validated.response_metadata["factual_validation"]["risk_level"] == "high"
+
+
+def test_promo_without_promotional_price_is_unsupported():
+    result = AgentResult(
+        reply_text="Temos promoção especial neste modelo.",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "1", "current_price": "199.90"}],
+        },
+        response_metadata={"domain": "commerce", "used_tray": True},
+    )
+    report = validate_factual_response(
+        result,
+        decision=_decision(result),
+        mode="shadow",
+    )
+    assert report.valid is False
+    assert report.violations[0].kind == "promo"
+    assert report.unsupported_claims
+
+
+def test_stock_conflict_and_payment_missing_evidence():
+    stock_result = AgentResult(
+        reply_text="O relógio está em estoque agora.",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "1", "stock": 0, "current_price": "10.00"}],
+        },
+        response_metadata={"domain": "commerce", "used_tray": True},
+    )
+    stock_report = validate_factual_response(
+        stock_result,
+        decision=_decision(stock_result),
+        mode="shadow",
+    )
+    assert stock_report.valid is False
+    assert any(item.kind == "stock" for item in stock_report.violations)
+    assert stock_report.conflicting_claims
+
+    paid_result = AgentResult(
+        reply_text="Seu pedido já está pago.",
+        intent="commerce",
+        commercial_data={
+            "order_id": "ABC123",
+            "payment": {"status": "awaiting_payment"},
+        },
+        response_metadata={"domain": "commerce", "used_tray": True},
+    )
+    paid_report = validate_factual_response(
+        paid_result,
+        decision=_decision(paid_result),
+        mode="shadow",
+        commerce_state={"order_id": "ABC123", "order_payment_status": "awaiting_payment"},
+    )
+    assert paid_report.valid is False
+    assert paid_report.risk_level == "critical"
+    assert any(item.kind == "payment" for item in paid_report.violations)
+
+
+def test_fact_evidence_is_attached_for_observability():
+    result = AgentResult(
+        reply_text="O produto custa R$ 10,00.",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "1", "current_price": "10.00"}],
+        },
+        response_metadata={"domain": "commerce", "used_tray": True},
+    )
+    validated = apply_factual_validation(
+        result,
+        decision=_decision(result),
+        mode="shadow",
+    )
+    assert validated.response_metadata["fact_evidence"]
+    assert validated.response_metadata["factual_validation"]["evidence_count"] >= 1
+    assert "tray_adapter" in validated.response_metadata["factual_validation"][
+        "evidence_sources"
+    ]

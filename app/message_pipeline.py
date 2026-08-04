@@ -235,6 +235,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             "shadow",
         ),
         trusted_domains=trusted_fact_domains,
+        commerce_state=commerce_state.model_dump(mode="json"),
     )
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
