@@ -10,17 +10,17 @@ from .commerce_context import (
     checkout_fields_view,
     checkout_missing_fields,
 )
+from .config import get_settings
 from .models import AgentResult
 
 
 CheckoutChannel = Literal["whatsapp", "site"]
 
-# The agent can now create the Tray order after an explicit review, but payment
-# execution/tokenization remains outside this backend.
+# The agent can create the Tray order after an explicit review.
+# Native PIX in chat is gated by PIX_DIRECT_ENABLED + MP token.
 WHATSAPP_ORDER_SUPPORTED = True
 WHATSAPP_HOSTED_PAYMENT_SUPPORTED = True
-WHATSAPP_NATIVE_PAYMENT_SUPPORTED = False
-WHATSAPP_PAYMENT_SUPPORTED = False
+WHATSAPP_PAYMENT_SUPPORTED = False  # card/tokenization still outside this backend
 WHATSAPP_CHECKOUT_SUPPORTED = False
 
 
@@ -46,6 +46,12 @@ def checkout_capabilities(
     )
     official_cart_url = _site_url(state.cart_url)
     cart_ready = bool(state.cart_session_id and official_cart_url)
+    settings = get_settings()
+    pix_direct = bool(
+        cart_ready
+        and settings.pix_direct_enabled
+        and settings.resolved_mp_access_token()
+    )
     supported = {
         "whatsapp": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
         "site": bool(cart_ready and official_cart_url),
@@ -57,10 +63,9 @@ def checkout_capabilities(
         "whatsapp_hosted_payment_supported": bool(
             cart_ready and WHATSAPP_HOSTED_PAYMENT_SUPPORTED
         ),
-        "whatsapp_native_payment_supported": bool(
-            cart_ready and WHATSAPP_NATIVE_PAYMENT_SUPPORTED
-        ),
+        "whatsapp_native_payment_supported": pix_direct,
         "whatsapp_payment_supported": bool(cart_ready and WHATSAPP_PAYMENT_SUPPORTED),
+        "pix_direct_enabled": pix_direct,
         "site_checkout_supported": supported["site"],
         "requires_channel_choice": bool(
             cart_ready

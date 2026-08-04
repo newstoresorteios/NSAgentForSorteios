@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token, verify_remarketing_cron
 from app.persona_admin_api import router as persona_admin_router
+from app.pix_webhook_api import router as pix_payments_router
 from app.webhook_parser import (
     inbound_skip_reason,
     parse_brevo_conversations_payload,
@@ -49,6 +50,7 @@ from app.turn_runtime import LLMCallBudget, TurnRuntimeContext
 
 app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
 app.include_router(persona_admin_router)
+app.include_router(pix_payments_router)
 
 
 def _request_trace_id(request: Request) -> str:
@@ -299,6 +301,10 @@ async def health():
         "dry_run": settings.dry_run,
         "tray_adapter_configured": bool(settings.tray_adapter_url and settings.tray_adapter_token),
         "tray_tools_enabled": bool(settings.tray_adapter_url and settings.tray_adapter_token),
+        "pix_direct_enabled": bool(getattr(settings, "pix_direct_enabled", False)),
+        "pix_mp_configured": bool(settings.resolved_mp_access_token()),
+        "pix_public_url_configured": bool(getattr(settings, "public_url", "")),
+        "pix_webhook_path": "/api/payments/webhook",
         "remarketing_enabled": getattr(settings, "remarketing_enabled", False),
         "remarketing_cron_configured": bool(
             getattr(settings, "remarketing_cron_secret", "")

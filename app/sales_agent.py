@@ -67,6 +67,11 @@ from .payment_service import (
     inspect_order_payment,
     inspect_payment_options,
 )
+from .pix_checkout_service import (
+    generate_direct_pix_checkout,
+    refresh_direct_pix_checkout,
+    should_use_direct_pix,
+)
 from .shipping_service import list_shipping_methods, quote_shipping, select_shipping
 from .order_service import (
     confirm_prepared_order,
@@ -322,7 +327,8 @@ CHECKOUT_FLOW_INSTRUCTIONS = """
 FLUXO DE PEDIDO PELO WHATSAPP:
 - Para escolher o canal, whatsapp_order_supported indica criacao de pedido pelo agente;
   whatsapp_hosted_payment_supported indica link oficial hospedado;
-  whatsapp_native_payment_supported e whatsapp_payment_supported permanecem false.
+  whatsapp_native_payment_supported / pix_direct_enabled indicam PIX copia-e-cola no chat
+  (somente quando true em FACTS); whatsapp_payment_supported permanece false para cartao.
 - Quando o cliente escolher continuar pelo WhatsApp, conduza o restante da compra com
   as acoes estruturadas disponiveis e use required_fields/missing_fields do estado.
 - Nao peca novamente um dado de checkout ja valido. Aceite checkout_data parcial e
@@ -339,19 +345,22 @@ FLUXO DE PEDIDO PELO WHATSAPP:
   da fala do cliente para a cotacao.
 - Apresente somente fretes retornados em FACTS. Para resposta como "o primeiro", use
   shipping_action=select e shipping_selection_position. Nunca envie preco livre.
-- A forma de pagamento deve vir das opcoes reais. Esta etapa apenas seleciona a forma
-  no pedido; nao processa Pix, boleto ou cartao.
+- A forma de pagamento deve vir das opcoes reais. Selecione Pix/cartao/boleto; o
+  servidor gera o PIX direto quando pix_direct_enabled=true e o metodo for Pix.
 - Quando os dados estiverem completos, use checkout_action=prepare_order para obter o
   resumo factual. Essa acao nao cria pedido.
-- Antes de criar pedido real, peca confirmacao explicita do resumo atual. So use
-  checkout_action=create_order apos essa confirmacao.
+- Antes de criar pedido real ou gerar PIX, peca confirmacao explicita do resumo atual.
+  So use checkout_action=create_order apos essa confirmacao.
 - Se item, quantidade, frete, endereco ou pagamento mudar, prepare novo resumo e peca
   nova confirmacao. Nunca reutilize confirmacao antiga.
 - Nunca diga que criou pedido antes de FACTS confirmar order_id.
-- Depois da criacao, use somente payment_url retornada em FACTS. Preserve a URL exata.
-  Nunca construa link, QR Code, Pix copia-e-cola, boleto, linha digitavel ou cobranca.
-- Use payment_action=order_payment quando o cliente disser que pagou ou pedir confirmacao.
-  Essa acao consulta o estado atual uma unica vez; nao use memoria antiga como confirmacao.
+- No PIX direto, use somente copy_paste_code / pix em FACTS. Nunca invente QR Code,
+  Pix copia-e-cola, boleto ou cobranca. Pedido Tray so nasce apos PIX approved.
+- Depois da criacao com link hospedado, use somente payment_url retornada em FACTS.
+  Preserve a URL exata. Nunca construa link, QR Code, Pix, boleto ou cobranca.
+- Use payment_action=order_payment quando o cliente disser que pagou ou pedir confirmacao
+  (incluindo "ja paguei" no PIX direto). Essa acao consulta o estado atual uma unica vez;
+  nao use memoria antiga como confirmacao.
 - has_payment=true confirma pagamento; has_payment=false significa pendente; null significa
   desconhecido. URL ausente nao autoriza inventar alternativa nem recriar o pedido.
 - Pagamento confirmado nao significa pedido enviado. Preserve separadamente o status do pedido.
@@ -1450,11 +1459,17 @@ async def _confirm_current_order_review(
     })
     confirmed = confirm_prepared_order(state)
     confirmed_state = evolve_commerce_state(state, confirmed)
-    order_result = await _create_order_with_payment_lookup(confirmed_state)
+    order_result = await _fulfill_confirmed_order(confirmed_state, message=message)
     final_state = evolve_commerce_state(confirmed_state, order_result)
     print("[sales.order.confirmation.turn]", {
         "pending_action_after": final_state.pending_action,
-        "branch_taken": "order_created" if final_state.order_id else "order_not_created",
+        "branch_taken": (
+            "order_created"
+            if final_state.order_id
+            else "pix_pending"
+            if final_state.pix_payment_id
+            else "order_not_created"
+        ),
     })
     return await _respond_to_commerce_service(
         message=message,
@@ -2528,6 +2543,24 @@ def _order_payment_revalidation(
     return "ambiguous" if len(semantic_candidates) > 1 else "unavailable"
 
 
+async def _fulfill_confirmed_order(
+    state: CommerceConversationState,
+    *,
+    message: IncomingMessage | None = None,
+) -> AgentResult:
+    """After explicit order confirmation: direct PIX (if enabled) or Tray order+link."""
+    if should_use_direct_pix(state):
+        return await generate_direct_pix_checkout(
+            state=state,
+            execute=execute_tool,
+            conversation_id=message.conversation_id if message else None,
+            sender_key=message.sender_key if message else None,
+            sender_phone=message.sender_phone if message else None,
+            channel=message.channel if message else None,
+        )
+    return await _create_order_with_payment_lookup(state)
+
+
 async def _create_order_with_payment_lookup(
     state: CommerceConversationState,
 ) -> AgentResult:
@@ -2814,11 +2847,14 @@ async def _handle_sales_message_inner(
         "current_purchase_stage": state.purchase_stage,
     })
     if interpretation is not None and interpretation.payment_action == "order_payment":
-        payment_result = await inspect_order_payment(
-            state=state,
-            execute=execute_tool,
-            order_id=interpretation.order_id,
-        )
+        if state.pix_payment_id and not state.order_id:
+            payment_result = await refresh_direct_pix_checkout(state=state)
+        else:
+            payment_result = await inspect_order_payment(
+                state=state,
+                execute=execute_tool,
+                order_id=interpretation.order_id,
+            )
         return await _respond_to_commerce_service(
             message=message,
             plan=plan,
@@ -2854,7 +2890,9 @@ async def _handle_sales_message_inner(
     ):
         confirmed = confirm_prepared_order(state)
         confirmed_state = evolve_commerce_state(state, confirmed)
-        order_result = await _create_order_with_payment_lookup(confirmed_state)
+        order_result = await _fulfill_confirmed_order(
+            confirmed_state, message=message,
+        )
         return await _respond_to_commerce_service(
             message=message,
             plan=plan,
@@ -2986,12 +3024,13 @@ async def _handle_sales_message_inner(
             interpretation=interpretation,
         )
     if interpretation is not None and interpretation.checkout_action == "create_order":
-        order_result = await _create_order_with_payment_lookup(state)
+        order_result = await _fulfill_confirmed_order(state, message=message)
         return await _respond_to_commerce_service(
             message=message,
             plan=plan,
             result=order_result,
             interpretation=interpretation,
+            state=evolve_commerce_state(state, order_result),
         )
     if (
         interpretation is not None

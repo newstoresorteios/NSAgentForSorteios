@@ -325,6 +325,21 @@ class Settings(BaseSettings):
         alias="CHECKOUT_CEP_LOOKUP_URL",
     )
 
+    # Mercado Pago PIX direto no chat (fase 1+: create; webhook depois).
+    # Default off até o fluxo de venda ligar o canal.
+    pix_direct_enabled: bool = Field(default=False, alias="PIX_DIRECT_ENABLED")
+    mp_access_token: str = Field(default="", alias="MP_ACCESS_TOKEN")
+    mercadopago_access_token: str = Field(
+        default="",
+        alias="MERCADOPAGO_ACCESS_TOKEN",
+    )
+    mp_base_url: str = Field(
+        default="https://api.mercadopago.com",
+        alias="MP_BASE_URL",
+    )
+    pix_exp_min: int = Field(default=30, alias="PIX_EXP_MIN", ge=1, le=1440)
+    public_url: str = Field(default="", alias="PUBLIC_URL")
+
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
     supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
     supabase_audio_bucket: str = Field(default="agent-audio", alias="SUPABASE_AUDIO_BUCKET")
@@ -358,7 +373,9 @@ class Settings(BaseSettings):
 
     @field_validator(
         "openai_api_key", "admin_api_token", "brevo_webhook_secret", "brevo_api_key",
-        "tray_adapter_token", "remarketing_cron_secret", mode="before"
+        "tray_adapter_token", "remarketing_cron_secret",
+        "mp_access_token", "mercadopago_access_token",
+        mode="before",
     )
     @classmethod
     def normalize_secret(cls, value: object) -> object:
@@ -379,6 +396,22 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.strip()
         return value
+
+    @field_validator("public_url", "mp_base_url", mode="before")
+    @classmethod
+    def normalize_public_base_url(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().rstrip("/")
+        return value
+
+    def resolved_mp_access_token(self) -> str:
+        return self.mp_access_token or self.mercadopago_access_token or ""
+
+    def pix_notification_url(self) -> str | None:
+        base = (self.public_url or "").strip().rstrip("/")
+        if not base:
+            return None
+        return f"{base}/api/payments/webhook"
 
 
 @lru_cache(maxsize=1)

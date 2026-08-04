@@ -29,6 +29,7 @@ def test_checkout_capabilities_reflect_only_supported_backend_paths():
         "whatsapp_hosted_payment_supported": True,
         "whatsapp_native_payment_supported": False,
         "whatsapp_payment_supported": False,
+        "pix_direct_enabled": False,
         "site_checkout_supported": True,
         "requires_channel_choice": True,
         "selected_channel": None,
