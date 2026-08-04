@@ -23,3 +23,6 @@ def test_llm_budget_defaults_enforce_three_calls():
     assert Settings.model_fields["agent_llm_budget_enabled"].default is True
     assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 3
     assert Settings.model_fields["agent_critique_mode"].default == "off"
+    assert Settings.model_fields["agent_critique_max_retries"].default == 1
+    assert Settings.model_fields["agent_quality_judge_mode"].default == "shadow"
+    assert Settings.model_fields["agent_quality_judge_risk_threshold"].default == 70

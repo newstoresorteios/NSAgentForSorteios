@@ -241,7 +241,7 @@ class Settings(BaseSettings):
         alias="AGENT_CRITIQUE_MODE",
     )
     agent_critique_max_retries: int = Field(
-        default=2,
+        default=1,
         alias="AGENT_CRITIQUE_MAX_RETRIES",
         ge=0,
         le=10,
