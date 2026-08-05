@@ -69,6 +69,7 @@ from .sales_agent import (
     interpret_message,
     _is_greeting,
 )
+from .greeting_policy import choose_greeting_reply
 
 
 SYSTEM_INSTRUCTIONS = f"""
@@ -312,7 +313,11 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
     if scope.get("domain") == "out_of_scope":
         return AgentResult(reply_text=OUT_OF_SCOPE_REPLY, intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal")
     if scope.get("domain") == "greeting":
-        return AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False)
+        return AgentResult(
+            reply_text=choose_greeting_reply(None),
+            intent="general",
+            handoff_required=False,
+        )
     primary_intent = detect_primary_intent(message.text)
     print("[agent.route]", {"inbound_id": (message.raw or {}).get("inbound_id"), "primary_intent": primary_intent})
     third_party_reply = _third_party_guardrail(message, primary_intent)
@@ -893,7 +898,11 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 fallback_reason=interpretation._fallback_reason,
             )
         return _annotate_agent_result(
-            AgentResult(reply_text=GREETING_REPLY, intent="general", handoff_required=False),
+            AgentResult(
+                reply_text=choose_greeting_reply(recent_turns),
+                intent="general",
+                handoff_required=False,
+            ),
             domain="greeting",
             response_source="local_greeting",
             used_openai_interpreter=False,

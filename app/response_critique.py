@@ -18,6 +18,9 @@ from .commerce_context import (
     product_reference_from_product,
 )
 from .config import get_settings
+from .greeting_policy import is_generic_greeting_reply
+from .guardrails import detect_trade_in_or_appraisal_request
+from .handoff_service import build_human_handoff_result
 from .models import AgentResult, IncomingMessage
 from .quality_judge import (
     JudgeReport,
@@ -26,6 +29,7 @@ from .quality_judge import (
     is_low_risk_judge_skip,
 )
 from .runtime_context import get_current_turn
+from .site_knowledge import TRADE_IN_HANDOFF_MESSAGE
 from .tray_tools import execute_tool
 from .turn_runtime import LLMCallBudgetExceeded
 
@@ -81,6 +85,129 @@ class CritiqueLoopReport(BaseModel):
     verdicts: list[dict[str, Any]] = Field(default_factory=list)
     regenerated: bool = False
     applied_handoff: bool = False
+
+
+def _last_assistant_reply(recent_turns: list[dict[str, Any]] | None) -> str | None:
+    for turn in reversed(recent_turns or []):
+        if isinstance(turn, dict) and turn.get("role") == "assistant":
+            content = str(turn.get("content") or "").strip()
+            return content or None
+    return None
+
+
+def _fold_reply(text: str | None) -> str:
+    import unicodedata
+
+    value = unicodedata.normalize("NFKD", (text or "").strip().lower())
+    return "".join(ch for ch in value if not unicodedata.combining(ch))
+
+
+def apply_fast_deterministic_critique(
+    *,
+    incoming: IncomingMessage,
+    result: AgentResult,
+    recent_turns: list[dict[str, Any]] | None = None,
+) -> tuple[AgentResult, CritiqueVerdict | None, str | None]:
+    """Instant judge for clear gaffes — no LLM latency.
+
+    Returns (possibly fixed result, verdict-or-None, skip_reason-or-None).
+    When skip_reason is set, the LLM critique should be skipped entirely.
+    When verdict.pass_check is False and result was rewritten, skip LLM too.
+    """
+    reply = (result.reply_text or "").strip()
+    text = (incoming.text or "").strip()
+
+    # 1) Trade-in / appraisal must never be flatly refused by the bot.
+    if detect_trade_in_or_appraisal_request(text):
+        denied = any(
+            cue in reply.casefold()
+            for cue in (
+                "não compramos",
+                "nao compramos",
+                "apenas vendemos",
+                "só vendemos",
+                "so vendemos",
+                "não avaliamos",
+                "nao avaliamos",
+                "não fazemos troca",
+                "nao fazemos troca",
+            )
+        )
+        if denied or not result.handoff_required:
+            fixed = build_human_handoff_result(reason="trade_in_or_appraisal")
+            verdict = CritiqueVerdict(
+                score=20,
+                pass_check=False,
+                issues=["trade_in_policy_violation"],
+                summary="Cliente pediu avaliação/troca/compra de usado; handoff obrigatório.",
+                better_reply_hint=TRADE_IN_HANDOFF_MESSAGE,
+            )
+            return fixed, verdict, "fast_trade_in_handoff"
+
+    # 2) Do not re-send the same greeting this person already received.
+    previous = _last_assistant_reply(recent_turns)
+    if (
+        reply
+        and previous
+        and _fold_reply(reply) == _fold_reply(previous)
+        and is_generic_greeting_reply(reply)
+    ):
+        from .greeting_policy import choose_greeting_reply
+
+        alt = choose_greeting_reply(recent_turns)
+        if _fold_reply(alt) == _fold_reply(reply):
+            alt = "Pode me dizer o que você precisa?"
+        fixed = result.model_copy(deep=True)
+        fixed.reply_text = alt
+        fixed.response_metadata = dict(fixed.response_metadata or {})
+        fixed.response_metadata["fast_critique"] = "deduped_greeting"
+        verdict = CritiqueVerdict(
+            score=60,
+            pass_check=True,
+            issues=["duplicate_greeting_rewritten"],
+            summary="Mesma saudação já enviada a esta pessoa; reescrita sem LLM.",
+        )
+        return fixed, verdict, "fast_greeting_dedupe"
+
+    # 3) Empty exact-product denial when customer gave gender+budget preferences.
+    if reply.casefold().startswith("não encontrei esse produto") or reply.casefold().startswith(
+        "nao encontrei esse produto"
+    ):
+        genderish = any(
+            token in text.casefold()
+            for token in ("feminino", "masculino", "unissex", "dama", "mulher", "homem")
+        )
+        budgetish = any(
+            token in text.casefold() for token in ("até", "ate", "reais", "r$", "mil")
+        )
+        if genderish or budgetish:
+            verdict = CritiqueVerdict(
+                score=35,
+                pass_check=False,
+                issues=["preference_search_treated_as_exact_product"],
+                summary=(
+                    "Cliente deu preferências (gênero/orçamento), não um modelo exato. "
+                    "Reconsultar catálogo com query refinada."
+                ),
+                recommended_apis=[
+                    RecommendedApiCall(
+                        name="search_products",
+                        arguments={
+                            "query": text[:120],
+                            "limit": 20,
+                        },
+                        reason="retry_gender_budget_recommendation",
+                    )
+                ],
+                retry_instruction=(
+                    "Busque recomendações por categoria/gênero/orçamento; "
+                    "não trate a mensagem como modelo exato."
+                ),
+            )
+            # Do not skip LLM regeneration path — return fail so retry loop runs.
+            return result, verdict, None
+
+    return result, None, None
 
 
 def _transcript_blob(recent_turns: list[dict[str, Any]] | None, *, max_chars: int = 12000) -> str:
@@ -560,6 +687,32 @@ async def apply_response_critique_loop(
         print("[agent.critique.skip]", {"reason": skip_reason})
         return result, report
 
+    # Instant deterministic checks (no LLM) — keeps latency low for clear gaffes.
+    fast_result, fast_verdict, fast_skip = apply_fast_deterministic_critique(
+        incoming=incoming,
+        result=result,
+        recent_turns=recent_turns,
+    )
+    if fast_skip:
+        report.attempts = 1
+        report.approved = True
+        if fast_verdict is not None:
+            report.verdicts.append(fast_verdict.model_dump(mode="json"))
+        fast_result.response_metadata = dict(fast_result.response_metadata or {})
+        fast_result.response_metadata["response_critique"] = {
+            **report.model_dump(mode="json"),
+            "skipped": True,
+            "skip_reason": fast_skip,
+            "fast_path": True,
+        }
+        print("[agent.critique.fast]", {"reason": fast_skip})
+        return fast_result, report
+
+    if fast_verdict is not None and not fast_verdict.pass_check:
+        # Seed the LLM retry loop with a deterministic fail (one attempt max feel).
+        result = fast_result
+        report.verdicts.append(fast_verdict.model_dump(mode="json"))
+
     try:
         return await _run_response_critique_loop(
             incoming=incoming,
@@ -570,6 +723,7 @@ async def apply_response_critique_loop(
             retries=retries,
             report=report,
             execute=execute,
+            seed_verdict=fast_verdict if (fast_verdict and not fast_verdict.pass_check) else None,
         )
     except Exception as exc:
         # Critique must never take down the WhatsApp reply path.
@@ -595,6 +749,7 @@ async def _run_response_critique_loop(
     retries: int,
     report: CritiqueLoopReport,
     execute: ToolExecutor | None,
+    seed_verdict: CritiqueVerdict | None = None,
 ) -> tuple[AgentResult, CritiqueLoopReport]:
     executor = execute or execute_tool
     current = result
@@ -603,19 +758,26 @@ async def _run_response_critique_loop(
     while True:
         attempt += 1
         report.attempts = attempt
-        verdict = await run_critique_judge(
-            incoming=incoming,
-            result=current,
-            recent_turns=recent_turns,
-            commerce_state=commerce_state,
-        )
-        report.verdicts.append(verdict.model_dump(mode="json"))
+        if attempt == 1 and seed_verdict is not None:
+            verdict = seed_verdict
+            # Already recorded in report.verdicts by caller when seeded.
+            if not report.verdicts or report.verdicts[-1].get("issues") != seed_verdict.issues:
+                report.verdicts.append(seed_verdict.model_dump(mode="json"))
+        else:
+            verdict = await run_critique_judge(
+                incoming=incoming,
+                result=current,
+                recent_turns=recent_turns,
+                commerce_state=commerce_state,
+            )
+            report.verdicts.append(verdict.model_dump(mode="json"))
         print("[agent.critique]", {
             "attempt": attempt,
             "pass_check": verdict.pass_check,
             "score": verdict.score,
             "issues": verdict.issues[:5],
             "recommended_apis": [item.name for item in verdict.recommended_apis[:4]],
+            "seeded": bool(attempt == 1 and seed_verdict is not None),
         })
         if verdict.pass_check:
             report.approved = True

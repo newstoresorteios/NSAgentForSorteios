@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 BALANCE_KEYWORDS = (
     "saldo",
     "meu saldo",
@@ -118,6 +120,33 @@ HUMAN_SUPPORT_KEYWORDS = (
     "contato new store",
 )
 
+TRADE_IN_KEYWORDS = (
+    "seminovo",
+    "semi novo",
+    "semi-novo",
+    "usado",
+    "usados",
+    "segunda mao",
+    "segunda mão",
+    "troca",
+    "trocar",
+    "permuta",
+    "avaliacao",
+    "avaliação",
+    "avaliar",
+    "estao comprando",
+    "estão comprando",
+    "voces compram",
+    "vocês compram",
+    "vcs compram",
+    "compram relogio",
+    "compram relógio",
+    "aceitam troca",
+    "aceita troca",
+    "trade in",
+    "trade-in",
+)
+
 
 def detect_balance_inquiry(text: str) -> bool:
     normalized = (text or "").lower()
@@ -193,6 +222,50 @@ def detect_rules_inquiry(text: str) -> bool:
 def detect_human_support_request(text: str) -> bool:
     normalized = (text or "").lower()
     return any(keyword in normalized for keyword in HUMAN_SUPPORT_KEYWORDS)
+
+
+def detect_trade_in_or_appraisal_request(text: str) -> bool:
+    """Customer wants to sell, trade or appraise a watch — human sales handoff."""
+    normalized = (text or "").lower()
+    if not normalized:
+        return False
+    if any(keyword in normalized for keyword in TRADE_IN_KEYWORDS):
+        # Avoid false positives like "trocar o estado" / cart quantity wording alone.
+        commerce_cue = any(
+            term in normalized
+            for term in (
+                "relogio",
+                "relógio",
+                "certina",
+                "tissot",
+                "seiko",
+                "omega",
+                "tag",
+                "kuoe",
+                "marca",
+                "modelo",
+                "peca",
+                "peça",
+                "seminovo",
+                "usado",
+                "avali",
+                "compra",
+                "comprando",
+                "compram",
+            )
+        )
+        if commerce_cue or any(
+            term in normalized
+            for term in ("seminovo", "semi novo", "usado", "avaliacao", "avaliação", "avaliar")
+        ):
+            return True
+    # Explicit "are you buying X?" patterns.
+    if re.search(
+        r"\b(est[aã]o|vcs|voc[eê]s?)\s+comprando\b",
+        normalized,
+    ) and any(term in normalized for term in ("relogio", "relógio", "seminovo", "usado")):
+        return True
+    return False
 
 
 BLOCKED_TOPICS = (

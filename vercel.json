@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/product-image-index",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/attendance-learning",
+      "schedule": "0 * * * *"
     }
   ]
 }

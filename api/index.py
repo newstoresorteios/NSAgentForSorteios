@@ -956,6 +956,29 @@ async def product_image_index_cron_manual():
     return await product_image_index_cron()
 
 
+@app.get(
+    "/api/cron/attendance-learning",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def attendance_learning_cron():
+    from app.attendance_learning import run_attendance_learning_batch
+
+    result = await run_attendance_learning_batch()
+    log_event(
+        "attendance.learning.cron.completed",
+        result if isinstance(result, dict) else {"result": result},
+    )
+    return result
+
+
+@app.post(
+    "/api/cron/attendance-learning",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def attendance_learning_cron_manual():
+    return await attendance_learning_cron()
+
+
 @app.post("/api/webhooks/brevo/conversations")
 async def brevo_conversations_webhook(
     request: Request,

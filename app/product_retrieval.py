@@ -172,6 +172,21 @@ _DESCRIPTOR_MODEL_TOKENS = frozenset(
         "bezel",
         "face",
         "caixa",
+        # Gender never participates in model identity / exact probes.
+        "feminino",
+        "feminina",
+        "masculino",
+        "masculina",
+        "unissex",
+        "unisex",
+        "lady",
+        "ladies",
+        "dama",
+        "damas",
+        "women",
+        "woman",
+        "men",
+        "man",
     }
 )
 # Strap/case materials from Vision — useful for ranking, never AND-required.
@@ -545,6 +560,23 @@ def preference_feature_tokens(interpretation: SalesInterpretation) -> tuple[str,
     return tuple(dict.fromkeys(tokens))
 
 
+def preference_gender_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
+    """Catalog search/ranking tokens for requested gender (soft, not AND-hard)."""
+    from .preference_normalize import gender_search_aliases, preference_gender_label
+
+    return gender_search_aliases(preference_gender_label(interpretation))
+
+
+def product_matches_gender_tokens(
+    product: dict[str, Any],
+    gender_tokens: tuple[str, ...],
+) -> bool:
+    if not gender_tokens:
+        return True
+    text = _product_text(product)
+    return any(token in text for token in gender_tokens)
+
+
 def product_matches_feature_tokens(
     product: dict[str, Any],
     feature_tokens: tuple[str, ...],
@@ -756,16 +788,19 @@ class ProductRetrievalCompiler:
         category_ids: tuple[str, ...] | list[str] = (),
     ) -> ProductRetrievalPlan:
         subject = interpretation.subject
+        from .preference_normalize import is_gender_only_label
+
+        model_for_exact = None if is_gender_only_label(subject.model) else subject.model
         inferred_reference = effective_product_reference(subject.reference) or (
             extract_reference_code(
                 " ".join(
                     part
-                    for part in (subject.model, subject.brand, subject.product_type)
+                    for part in (model_for_exact, subject.brand, subject.product_type)
                     if part
                 )
             )
         )
-        exact = bool(inferred_reference or subject.ean or subject.model)
+        exact = bool(inferred_reference or subject.ean or model_for_exact)
         requests: list[ProductRetrievalRequest] = []
 
         if subject.ean:
@@ -777,19 +812,19 @@ class ProductRetrievalCompiler:
                     reference=inferred_reference,
                 )
             )
-            if subject.model:
+            if model_for_exact:
                 requests.append(
                     ProductRetrievalRequest(
                         strategy="exact_query_reference_context",
                         query=" ".join(
                             part
-                            for part in (subject.brand, subject.model)
+                            for part in (subject.brand, model_for_exact)
                             if part
                         ).strip(),
                     )
                 )
-        elif subject.model:
-            pt_model = normalize_pt_catalog_query(subject.model)
+        elif model_for_exact:
+            pt_model = normalize_pt_catalog_query(model_for_exact)
             color_tokens = preference_color_tokens(interpretation)
             color_label = " ".join(color_tokens).strip()
             core_tokens = identity_core_tokens(
@@ -942,13 +977,30 @@ class ProductRetrievalCompiler:
                     available_in_store=available_in_store,
                 ))
             if subject.product_type:
+                gender_tokens = preference_gender_tokens(interpretation)
+                gender_label = gender_tokens[0] if gender_tokens else None
+                # Prefer gendered catalog query ("relógio feminino") so Tray
+                # surfaces the right segment before soft ranking.
+                primary_name = (
+                    f"{subject.product_type} {gender_label}".strip()
+                    if gender_label
+                    else subject.product_type
+                )
                 requests.append(ProductRetrievalRequest(
                     strategy="name_fallback",
-                    name=subject.product_type,
+                    name=primary_name,
                     brand=subject.brand,
                     available=available,
                     available_in_store=available_in_store,
                 ))
+                if gender_label and primary_name != subject.product_type:
+                    requests.append(ProductRetrievalRequest(
+                        strategy="name_fallback_category",
+                        name=subject.product_type,
+                        brand=subject.brand,
+                        available=available,
+                        available_in_store=available_in_store,
+                    ))
             elif subject.brand:
                 requests.append(ProductRetrievalRequest(
                     strategy="explicit_brand",
@@ -1194,6 +1246,13 @@ def hard_filter_products(
 
 def semantic_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
     preferences = interpretation.preferences
+    gender = None
+    try:
+        from .preference_normalize import preference_gender_label
+
+        gender = preference_gender_label(interpretation)
+    except Exception:
+        gender = preferences.recipient
     return {
         key: value
         for key, value in {
@@ -1202,6 +1261,7 @@ def semantic_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
             "material": preferences.material,
             "occasion": preferences.occasion,
             "recipient": preferences.recipient,
+            "gender": gender,
             "attributes": preferences.attributes,
             "explicit_no_preferences": preferences.explicit_no_preferences,
         }.items()
@@ -1810,6 +1870,7 @@ def _deterministic_semantic_order(
     products: list[dict[str, Any]],
     interpretation: SalesInterpretation,
 ) -> list[dict[str, Any]]:
+    gender_tokens = preference_gender_tokens(interpretation)
     terms = [
         _fold(value)
         for value in (
@@ -1822,10 +1883,14 @@ def _deterministic_semantic_order(
         )
         if value
     ]
-    scored = [
-        (sum(1 for term in terms if term in _product_text(product)), index, product)
-        for index, product in enumerate(products)
-    ]
+    scored = []
+    for index, product in enumerate(products):
+        text = _product_text(product)
+        base = sum(1 for term in terms if term in text)
+        # Strong boost when catalog text evidences requested gender.
+        if gender_tokens and product_matches_gender_tokens(product, gender_tokens):
+            base += 3
+        scored.append((base, index, product))
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [product for _, _, product in scored[:RERANK_SELECTION_LIMIT]]
 

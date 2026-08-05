@@ -9,6 +9,12 @@ HUMAN_SUPPORT_MESSAGE = (
     "Lá você encontra orientação e atendimento humano."
 )
 
+TRADE_IN_HANDOFF_MESSAGE = (
+    "A New Store avalia, troca e compra relógios. "
+    "Vou encaminhar você para um atendente da loja seguir com a avaliação. "
+    f"{HUMAN_SUPPORT_MESSAGE}"
+)
+
 REGISTER_PHONE_MESSAGE = (
     "Não encontramos telefone cadastrado na sua conta. "
     f"Acesse {SITE_URL}, faça login e inclua seu telefone no perfil. "
@@ -115,6 +121,11 @@ Exemplo prático (referência do site):
 - Importante: o desconto segue a forma de pagamento; compras via Pix podem ter desconto aplicado manualmente pela equipe.
 
 Atendimento humano (vendas e dúvidas): WhatsApp {NS_SALES_WHATSAPP}.
+
+Política comercial New Store Relógios:
+- A New Store avalia, troca e compra relógios (incluindo seminovos).
+- Pedidos de avaliação, troca ou compra de usado devem ser encaminhados ao atendente humano.
+- Nunca diga que a loja não compra ou não avalia relógios.
 
 FAQ resumido:
 1. Sorteio baseado na Lotomania; ganhador = último número sorteado.

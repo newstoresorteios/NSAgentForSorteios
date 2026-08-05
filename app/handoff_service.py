@@ -4,7 +4,7 @@ from typing import Any
 
 from .guardrails import default_safe_handoff, detect_human_support_request
 from .models import AgentResult, IncomingMessage
-from .site_knowledge import HUMAN_SUPPORT_MESSAGE, NS_SALES_WHATSAPP
+from .site_knowledge import HUMAN_SUPPORT_MESSAGE, NS_SALES_WHATSAPP, TRADE_IN_HANDOFF_MESSAGE
 
 
 def should_request_human_handoff(
@@ -16,6 +16,10 @@ def should_request_human_handoff(
         return result.safety_reason or "handoff_required"
     if detect_human_support_request(incoming.text):
         return "customer_requested_human"
+    from .guardrails import detect_trade_in_or_appraisal_request
+
+    if detect_trade_in_or_appraisal_request(incoming.text):
+        return "trade_in_or_appraisal"
     return None
 
 
@@ -24,10 +28,15 @@ def build_human_handoff_result(
     reason: str,
     reply_text: str | None = None,
 ) -> AgentResult:
-    text = (reply_text or "").strip() or (
-        "Vou encaminhar seu atendimento para a equipe da New Store. "
-        f"{HUMAN_SUPPORT_MESSAGE}"
-    )
+    text = (reply_text or "").strip()
+    if not text:
+        if reason == "trade_in_or_appraisal":
+            text = TRADE_IN_HANDOFF_MESSAGE
+        else:
+            text = (
+                "Vou encaminhar seu atendimento para a equipe da New Store. "
+                f"{HUMAN_SUPPORT_MESSAGE}"
+            )
     if reason.startswith("blocked_topic:"):
         text = default_safe_handoff()
     return AgentResult(

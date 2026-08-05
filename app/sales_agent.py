@@ -214,6 +214,21 @@ Exemplo 6:
 Atual sem contexto comercial: quem ganhou o jogo ontem?
 Interpretação: domain=out_of_scope.
 
+Exemplo 7:
+Histórico: cliente quer um relógio; atendente pergunta o estilo.
+Atual: feminino até 3000 reais.
+Interpretação: domain=commerce, goal=recommend, product_type=relógio,
+recipient=feminino, attributes inclui "feminino", budget_max=3000,
+references_previous_context=true, enough_information_to_search=true,
+ready_for_retrieval=true, needs_clarification=false.
+NUNCA use feminino/masculino/unissex como model nem como style
+(esportivo/social/casual). Gênero vai em recipient/attributes.
+
+Exemplo 8:
+Atual: vocês estão comprando Certina DS Action seminovo?
+Interpretação: domain=store_general (avaliação/troca/compra de usado).
+Não invente política: o sistema encaminha para atendente humano.
+
 Não copie uma fala anterior como fato comercial. Preserve produto, preferências e
 orçamento que estejam evidentes no contexto. confidence deve refletir a certeza da
 interpretação entre 0 e 1. Em information_needed, indique somente os fatos necessários:
@@ -538,7 +553,9 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
         confidence=0.6,
     )
     interpretation._source = "deterministic_fallback"
-    return interpretation
+    from .preference_normalize import normalize_sales_interpretation
+
+    return normalize_sales_interpretation(interpretation, message_text=text)
 
 
 def _log_interpretation(
@@ -789,6 +806,12 @@ async def interpret_message(
         if not isinstance(interpretation, SalesInterpretation):
             raise ValueError("interpreter_schema_missing")
         interpretation._source = "openai"
+        from .preference_normalize import normalize_sales_interpretation
+
+        interpretation = normalize_sales_interpretation(
+            interpretation,
+            message_text=current_text,
+        )
         _log_interpretation(interpretation, settings.openai_model)
         return interpretation
     except BadRequestError as exc:
@@ -2614,6 +2637,13 @@ async def _handle_sales_message_inner(
     commerce_state: CommerceConversationState | None = None,
 ) -> AgentResult | None:
     interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
+    if interpretation is not None:
+        from .preference_normalize import normalize_sales_interpretation
+
+        interpretation = normalize_sales_interpretation(
+            interpretation,
+            message_text=message.text,
+        )
     state = commerce_state or CommerceConversationState()
     deterministic_confirmation = _confirmation_text_kind(state, message.text)
     if deterministic_confirmation == "confirm":

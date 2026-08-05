@@ -248,6 +248,27 @@ class Settings(BaseSettings):
         ge=0,
         le=10,
     )
+    # Hourly self-learning over recent attendances.
+    agent_learning_lookback_hours: int = Field(
+        default=2,
+        alias="AGENT_LEARNING_LOOKBACK_HOURS",
+        ge=1,
+        le=48,
+    )
+    agent_learning_batch_limit: int = Field(
+        default=120,
+        alias="AGENT_LEARNING_BATCH_LIMIT",
+        ge=10,
+        le=500,
+    )
+    agent_learning_auto_promote: bool = Field(
+        default=True,
+        alias="AGENT_LEARNING_AUTO_PROMOTE",
+    )
+    agent_learning_auto_activate: bool = Field(
+        default=True,
+        alias="AGENT_LEARNING_AUTO_ACTIVATE",
+    )
     # Model prompt window (interpreter/responder/critique). Operational recovery
     # still loads up to AGENT_HISTORY_HARD_CAP from the database.
     # Accept legacy Vercel values up to 200, then normalize in model_validator.
