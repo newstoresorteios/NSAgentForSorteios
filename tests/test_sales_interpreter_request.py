@@ -13,8 +13,17 @@ from app.models import IncomingMessage, SalesInterpretation
 from openai_test_utils import install_fake_openai_client
 
 
-def _settings() -> SimpleNamespace:
-    return SimpleNamespace(openai_api_key="test-key", openai_model="gpt-4.1-mini")
+def _settings(**overrides) -> SimpleNamespace:
+    base = dict(
+        openai_api_key="test-key",
+        openai_model="gpt-4.1-mini",
+        openai_main_model="gpt-4.1-mini",
+        openai_fast_model="gpt-4.1-nano",
+        # Legacy interpreter path for contract tests against SalesInterpretation.
+        agent_turn_understanding_enabled=False,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
 
 
 def _interpretation() -> SalesInterpretation:

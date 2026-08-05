@@ -8,7 +8,14 @@ from openai_test_utils import install_fake_openai_client
 
 
 def _settings(*, api_key: str = "test-key") -> SimpleNamespace:
-    return SimpleNamespace(openai_api_key=api_key, openai_model="gpt-test", database_url="postgresql://test")
+    return SimpleNamespace(
+        openai_api_key=api_key,
+        openai_model="gpt-test",
+        openai_main_model="gpt-test",
+        openai_fast_model="gpt-test",
+        database_url="postgresql://test",
+        agent_turn_understanding_enabled=False,
+    )
 
 
 def _fake_openai(monkeypatch, interpretation: SalesInterpretation, captured: dict) -> None:

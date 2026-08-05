@@ -65,12 +65,10 @@ def get_channel_profile(channel: str | None) -> ChannelProfile:
 
 
 def channel_system_hint(channel: str | None) -> str:
+    from .prompt_layers import STYLE_VOICE_RULES
+
     profile = get_channel_profile(channel)
-    shared = (
-        "Responda primeiro à pergunta; evite aberturas genéricas "
-        "(Claro/Com certeza); no máximo uma pergunta principal; "
-        "preserve URLs completas; sem forçar venda em suporte."
-    )
+    shared = STYLE_VOICE_RULES
     if profile.channel == "whatsapp":
         return (
             f"Canal: whatsapp. {shared} Use 1–3 blocos curtos, "

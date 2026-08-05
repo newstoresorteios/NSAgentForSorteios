@@ -659,14 +659,21 @@ async def apply_response_critique_loop(
     mode: Literal["off", "shadow", "enforce"] | None = None,
     max_retries: int | None = None,
     execute: ToolExecutor | None = None,
+    risk_score: int = 0,
+    factual_valid: bool = True,
+    openai_call_count: int = 0,
 ) -> tuple[AgentResult, CritiqueLoopReport]:
     """Dual-agent critique: judge draft, optionally call APIs and regenerate before send."""
     settings = get_settings()
-    critique_mode: Literal["off", "shadow", "enforce"] = mode or getattr(
-        settings,
-        "agent_critique_mode",
-        "off",
-    )
+    if mode is not None:
+        critique_mode: Literal["off", "shadow", "enforce"] = mode
+    else:
+        from .rollout import resolve_effective_critique_mode
+
+        resolved = resolve_effective_critique_mode(settings)
+        critique_mode = (  # type: ignore[assignment]
+            resolved if resolved in {"off", "shadow", "enforce"} else "shadow"
+        )
     retries = (
         max_retries
         if max_retries is not None
@@ -708,10 +715,40 @@ async def apply_response_critique_loop(
         print("[agent.critique.fast]", {"reason": fast_skip})
         return fast_result, report
 
-    if fast_verdict is not None and not fast_verdict.pass_check:
+    seeded_fail = bool(fast_verdict is not None and not fast_verdict.pass_check)
+    if seeded_fail:
         # Seed the LLM retry loop with a deterministic fail (one attempt max feel).
         result = fast_result
         report.verdicts.append(fast_verdict.model_dump(mode="json"))
+
+    from .llm_call_policy import should_run_llm_critique
+
+    run_llm, gate_reason, gate_signals = should_run_llm_critique(
+        incoming=incoming,
+        result=result,
+        critique_mode=critique_mode,
+        risk_score=risk_score,
+        factual_valid=factual_valid,
+        openai_call_count=openai_call_count,
+    )
+    # Deterministic fail always warrants the LLM path in enforce (and observe in shadow).
+    if seeded_fail:
+        run_llm = True
+        gate_reason = "deterministic_seed_fail"
+    if not run_llm:
+        result.response_metadata = dict(result.response_metadata or {})
+        result.response_metadata["response_critique"] = {
+            **report.model_dump(mode="json"),
+            "skipped": True,
+            "skip_reason": gate_reason,
+            "risk_gate": True,
+            "risk_signals": gate_signals,
+        }
+        print(
+            "[agent.critique.skip]",
+            {"reason": gate_reason, "signals": gate_signals[:8]},
+        )
+        return result, report
 
     try:
         return await _run_response_critique_loop(
@@ -723,7 +760,7 @@ async def apply_response_critique_loop(
             retries=retries,
             report=report,
             execute=execute,
-            seed_verdict=fast_verdict if (fast_verdict and not fast_verdict.pass_check) else None,
+            seed_verdict=fast_verdict if seeded_fail else None,
         )
     except Exception as exc:
         # Critique must never take down the WhatsApp reply path.

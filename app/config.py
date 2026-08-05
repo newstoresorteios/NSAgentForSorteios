@@ -27,22 +27,26 @@ class Settings(BaseSettings):
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")
+    # Role-specific models (fall back to OPENAI_MODEL when empty).
+    openai_main_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MAIN_MODEL")
+    openai_fast_model: str = Field(default="gpt-4.1-nano", alias="OPENAI_FAST_MODEL")
     openai_agent_name: str = Field(default="NewStoreAgent", alias="OPENAI_AGENT_NAME")
     openai_transcribe_model: str = Field(default="whisper-1", alias="OPENAI_TRANSCRIBE_MODEL")
     openai_tts_model: str = Field(default="gpt-4o-mini-tts", alias="OPENAI_TTS_MODEL")
     openai_tts_voice: str = Field(default="nova", alias="OPENAI_TTS_VOICE")
     openai_tts_format: str = Field(default="opus", alias="OPENAI_TTS_FORMAT")
-    # OpenAI API migration (Responses). Default keeps Chat Completions.
+    # Responses is the primary path; Chat Completions remains emergency fallback.
     openai_api_mode: Literal[
         "chat_completions",
         "responses",
         "shadow",
         "canary",
-    ] = Field(default="chat_completions", alias="OPENAI_API_MODE")
+    ] = Field(default="responses", alias="OPENAI_API_MODE")
     openai_store_responses: bool = Field(
         default=False,
         alias="OPENAI_STORE_RESPONSES",
     )
+    # Never use OpenAI-stored conversation state for commerce; keep false.
     openai_use_previous_response_id: bool = Field(
         default=False,
         alias="OPENAI_USE_PREVIOUS_RESPONSE_ID",
@@ -65,9 +69,9 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
     )
-    # Phase 7: percentage of traffic using Responses as primary (canary mode).
+    # Canary share on Responses (0.0–1.0). Mode=responses ignores this (always 100%).
     openai_responses_traffic_percent: float = Field(
-        default=0.0,
+        default=1.0,
         alias="OPENAI_RESPONSES_TRAFFIC_PERCENT",
         ge=0.0,
         le=1.0,
@@ -80,11 +84,82 @@ class Settings(BaseSettings):
         default=True,
         alias="OPENAI_CANARY_STICKY_ROUTING",
     )
-    # Phase 8: when false, OPENAI_API_MODE=chat_completions is redirected to
-    # Responses (+ Chat fallback). Keep true until canary metrics are green.
-    openai_chat_completions_primary_allowed: bool = Field(
+    # Etapa 12: progressive canary profile (overrides mode/traffic when canary_*|emergency).
+    agent_rollout_profile: Literal[
+        "full",
+        "canary_5",
+        "canary_25",
+        "canary_50",
+        "canary_100",
+        "emergency",
+    ] = Field(default="full", alias="AGENT_ROLLOUT_PROFILE")
+    agent_emergency_rollback: bool = Field(
+        default=False,
+        alias="AGENT_EMERGENCY_ROLLBACK",
+    )
+    agent_rollout_alert_enabled: bool = Field(
         default=True,
+        alias="AGENT_ROLLOUT_ALERT_ENABLED",
+    )
+    agent_rollout_alert_window: int = Field(
+        default=40,
+        alias="AGENT_ROLLOUT_ALERT_WINDOW",
+        ge=5,
+        le=500,
+    )
+    agent_rollout_alert_min_samples: int = Field(
+        default=20,
+        alias="AGENT_ROLLOUT_ALERT_MIN_SAMPLES",
+        ge=5,
+        le=500,
+    )
+    agent_rollout_fallback_alert_rate: float = Field(
+        default=0.25,
+        alias="AGENT_ROLLOUT_FALLBACK_ALERT_RATE",
+        ge=0.0,
+        le=1.0,
+    )
+    agent_rollout_factual_alert_rate: float = Field(
+        default=0.10,
+        alias="AGENT_ROLLOUT_FACTUAL_ALERT_RATE",
+        ge=0.0,
+        le=1.0,
+    )
+    agent_rollout_handoff_alert_rate: float = Field(
+        default=0.40,
+        alias="AGENT_ROLLOUT_HANDOFF_ALERT_RATE",
+        ge=0.0,
+        le=1.0,
+    )
+    # When false, OPENAI_API_MODE=chat_completions redirects to Responses (+ fallback).
+    openai_chat_completions_primary_allowed: bool = Field(
+        default=False,
         alias="OPENAI_CHAT_COMPLETIONS_PRIMARY_ALLOWED",
+    )
+    openai_reasoning_effort: Literal["", "minimal", "low", "medium", "high"] = Field(
+        default="medium",
+        alias="OPENAI_REASONING_EFFORT",
+    )
+    openai_text_verbosity: Literal["", "low", "medium", "high"] = Field(
+        default="medium",
+        alias="OPENAI_TEXT_VERBOSITY",
+    )
+    openai_max_output_tokens: int | None = Field(
+        default=None,
+        alias="OPENAI_MAX_OUTPUT_TOKENS",
+        ge=1,
+    )
+    openai_timeout_seconds: float = Field(
+        default=45.0,
+        alias="OPENAI_TIMEOUT_SECONDS",
+        gt=0,
+        le=300,
+    )
+    openai_max_retries: int = Field(
+        default=2,
+        alias="OPENAI_MAX_RETRIES",
+        ge=0,
+        le=8,
     )
     # Phase 5: DB persona for tone/identity; falls back to in-code contract.
     agent_db_persona_enabled: bool = Field(
@@ -174,6 +249,11 @@ class Settings(BaseSettings):
         default=False,
         alias="AGENT_CONVERSATION_SUMMARY_ENABLED",
     )
+    # Inject compacted conversation summary into compiled system instructions.
+    agent_conversation_summary_in_prompt_enabled: bool = Field(
+        default=False,
+        alias="AGENT_CONVERSATION_SUMMARY_IN_PROMPT_ENABLED",
+    )
     agent_prompt_compilation_audit_enabled: bool = Field(
         default=True,
         alias="AGENT_PROMPT_COMPILATION_AUDIT_ENABLED",
@@ -195,10 +275,21 @@ class Settings(BaseSettings):
         default=True,
         alias="AGENT_LLM_BUDGET_ENABLED",
     )
+    # Etapa 6: normal turns ≤2–3 (interpret + respond [+ rare gated critique]).
     agent_max_llm_calls_per_turn: int = Field(
-        default=6,
+        default=3,
         alias="AGENT_MAX_LLM_CALLS_PER_TURN",
         ge=0,
+    )
+    agent_max_llm_calls_per_turn_complex: int = Field(
+        default=5,
+        alias="AGENT_MAX_LLM_CALLS_PER_TURN_COMPLEX",
+        ge=0,
+    )
+    # Etapa 3: unified TurnUnderstanding as interpreter schema (adapted to SalesInterpretation).
+    agent_turn_understanding_enabled: bool = Field(
+        default=True,
+        alias="AGENT_TURN_UNDERSTANDING_ENABLED",
     )
     agent_policy_mode: Literal["off", "shadow", "enforce"] = Field(
         default="shadow",
@@ -209,7 +300,7 @@ class Settings(BaseSettings):
         "shadow",
         "enforce",
     ] = Field(
-        default="shadow",
+        default="enforce",
         alias="AGENT_FACTUAL_VALIDATION_MODE",
     )
     agent_trusted_fact_domains: str = Field(
@@ -226,6 +317,11 @@ class Settings(BaseSettings):
         gt=0,
         le=60,
     )
+    # Etapa 7: thin = minimal presenter; full = legacy regex; shadow = outbound full + thin diff.
+    agent_presenter_mode: Literal["full", "thin", "shadow"] = Field(
+        default="thin",
+        alias="AGENT_PRESENTER_MODE",
+    )
     # After human assumes a ChatBô thread, resume the bot if the attendant
     # stays idle for this many minutes (next customer message).
     human_takeover_idle_minutes: int = Field(
@@ -235,7 +331,7 @@ class Settings(BaseSettings):
         le=1440,
     )
     agent_quality_judge_mode: Literal["off", "shadow", "enforce"] = Field(
-        default="shadow",
+        default="off",
         alias="AGENT_QUALITY_JUDGE_MODE",
     )
     agent_quality_judge_risk_threshold: int = Field(
@@ -244,10 +340,15 @@ class Settings(BaseSettings):
         ge=0,
         le=100,
     )
-    # Dual-agent critique: judge draft with API catalog and retry before send.
-    # Enforce with 1 retry; low-risk greetings/thanks skip the judge call.
+    agent_quality_judge_sample_rate: float = Field(
+        default=0.0,
+        alias="AGENT_QUALITY_JUDGE_SAMPLE_RATE",
+        ge=0.0,
+        le=1.0,
+    )
+    # Dual-agent critique: shadow by default (Etapa 6); LLM only on risk/sample.
     agent_critique_mode: Literal["off", "shadow", "enforce"] = Field(
-        default="enforce",
+        default="shadow",
         alias="AGENT_CRITIQUE_MODE",
     )
     agent_critique_max_retries: int = Field(
@@ -255,6 +356,16 @@ class Settings(BaseSettings):
         alias="AGENT_CRITIQUE_MAX_RETRIES",
         ge=0,
         le=10,
+    )
+    agent_critique_llm_on_risk_only: bool = Field(
+        default=True,
+        alias="AGENT_CRITIQUE_LLM_ON_RISK_ONLY",
+    )
+    agent_critique_shadow_sample_rate: float = Field(
+        default=0.0,
+        alias="AGENT_CRITIQUE_SHADOW_SAMPLE_RATE",
+        ge=0.0,
+        le=1.0,
     )
     # Hourly self-learning over recent attendances.
     agent_learning_lookback_hours: int = Field(
@@ -269,12 +380,13 @@ class Settings(BaseSettings):
         ge=10,
         le=500,
     )
+    # Etapa 9: learning writes pending proposals only; never auto-activate.
     agent_learning_auto_promote: bool = Field(
-        default=True,
+        default=False,
         alias="AGENT_LEARNING_AUTO_PROMOTE",
     )
     agent_learning_auto_activate: bool = Field(
-        default=True,
+        default=False,
         alias="AGENT_LEARNING_AUTO_ACTIVATE",
     )
     # Model prompt window (interpreter/responder/critique). Operational recovery
@@ -332,6 +444,29 @@ class Settings(BaseSettings):
         ge=60,
         le=86400,
     )
+    # Etapa 4: hybrid retrieval / LLM rerank / revalidation budgets.
+    agent_candidate_pool_limit: int = Field(
+        default=20,
+        alias="AGENT_CANDIDATE_POOL_LIMIT",
+        ge=5,
+        le=80,
+    )
+    agent_rerank_selection_limit: int = Field(
+        default=15,
+        alias="AGENT_RERANK_SELECTION_LIMIT",
+        ge=5,
+        le=20,
+    )
+    agent_revalidate_top_n: int = Field(
+        default=3,
+        alias="AGENT_REVALIDATE_TOP_N",
+        ge=1,
+        le=10,
+    )
+    agent_catalog_index_write_enabled: bool = Field(
+        default=True,
+        alias="AGENT_CATALOG_INDEX_WRITE_ENABLED",
+    )
     agent_image_cache_ttl_seconds: float = Field(
         default=300.0,
         alias="AGENT_IMAGE_CACHE_TTL_SECONDS",
@@ -343,15 +478,14 @@ class Settings(BaseSettings):
         default="",
         alias="AGENT_OBS_HASH_SECRET",
     )
-    # Full observability for Vercel Runtime Logs: history, GPT payloads,
-    # Tray/Brevo calls, context and outbound reply (PII still redacted).
+    # Etapa 10: full/HTTP obs opt-in only (PII-safe defaults).
     agent_full_obs_logs: bool = Field(
-        default=True,
+        default=False,
         alias="AGENT_FULL_OBS_LOGS",
     )
-    # Also attach turn runtime context to every HTTP request (not only webhooks).
+    # Attach turn runtime context to every HTTP request (not only webhooks).
     agent_http_obs_logs: bool = Field(
-        default=True,
+        default=False,
         alias="AGENT_HTTP_OBS_LOGS",
     )
 
@@ -492,11 +626,32 @@ class Settings(BaseSettings):
             return _strip_secret(value)
         return value
 
-    @field_validator("openai_model", mode="before")
+    @field_validator(
+        "openai_model",
+        "openai_main_model",
+        "openai_fast_model",
+        mode="before",
+    )
     @classmethod
     def normalize_model(cls, value: object) -> object:
         if isinstance(value, str):
             return value.strip()
+        return value
+
+    @field_validator("openai_reasoning_effort", "openai_text_verbosity", mode="before")
+    @classmethod
+    def normalize_optional_literal(cls, value: object) -> object:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip().casefold()
+        return value
+
+    @field_validator("openai_max_output_tokens", mode="before")
+    @classmethod
+    def normalize_max_output_tokens(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
         return value
 
     @field_validator("public_url", "mp_base_url", mode="before")

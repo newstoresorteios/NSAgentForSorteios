@@ -8,7 +8,13 @@ from openai_test_utils import install_fake_openai_client
 
 
 def _settings(*, api_key: str = "") -> SimpleNamespace:
-    return SimpleNamespace(openai_api_key=api_key, openai_model="gpt-4.1-mini")
+    return SimpleNamespace(
+        openai_api_key=api_key,
+        openai_model="gpt-4.1-mini",
+        openai_main_model="gpt-4.1-mini",
+        openai_fast_model="gpt-4.1-nano",
+        agent_turn_understanding_enabled=False,
+    )
 
 
 def _interpretation(

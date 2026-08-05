@@ -34,6 +34,33 @@ def test_security_and_deterministic_outrank_persona_and_memory():
     assert chosen.value == "199.90"
 
 
+def test_tray_live_outranks_tray_adapter_and_local_db():
+    facts = [
+        StructuredFact(
+            source=FactSource.LOCAL_DATABASE,
+            key="price",
+            value="150.00",
+            entity_type="price",
+        ),
+        StructuredFact(
+            source=FactSource.TRAY_ADAPTER,
+            key="price",
+            value="180.00",
+            entity_type="price",
+        ),
+        StructuredFact(
+            source=FactSource.TRAY_LIVE,
+            key="price",
+            value="199.90",
+            entity_type="price",
+        ),
+    ]
+    chosen = preferred_fact(facts, key="price", entity_type="price")
+    assert chosen is not None
+    assert chosen.source == FactSource.TRAY_LIVE
+
+
+
 def test_infer_source_maps_catalog_and_state_keys():
     assert (
         infer_source_for_payload_key("current_price", used_tray=True)

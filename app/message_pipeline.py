@@ -251,15 +251,26 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         mode=getattr(
             settings,
             "agent_factual_validation_mode",
-            "shadow",
+            "enforce",
         ),
         trusted_domains=trusted_fact_domains,
         commerce_state=commerce_state.model_dump(mode="json"),
     )
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
-    critique_mode = getattr(settings, "agent_critique_mode", "enforce")
+    from .rollout import (
+        resolve_effective_critique_mode,
+        resolve_effective_judge_mode,
+    )
+
+    critique_mode = resolve_effective_critique_mode(settings)
+    if critique_mode not in {"off", "shadow", "enforce"}:
+        critique_mode = "shadow"
+    judge_mode = resolve_effective_judge_mode(settings)
+    if judge_mode not in {"off", "shadow", "enforce"}:
+        judge_mode = "off"
     from .history_window import select_model_history_turns
+    from .llm_call_policy import should_run_quality_judge
 
     model_turns = customer_context.get("_model_conversation_turns")
     if not model_turns:
@@ -277,8 +288,12 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             operational_turns,
             limit=int(getattr(settings, "agent_history_limit", 12)),
         )
-    # Dual-agent critique runs before outbound compose/send: judge + optional API retry.
+    factual_ok = bool(validation.get("valid", True))
+    openai_calls = runtime.openai_call_count if runtime else 0
+    # Dual-agent critique runs before outbound compose/send; LLM gated by risk.
     with runtime_stage("response_critique"):
+        judge_report = None
+        critique_report = None
         if critique_mode != "off":
             result, critique_report = await apply_response_critique_loop(
                 incoming=incoming,
@@ -287,21 +302,53 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
                 commerce_state=commerce_state,
                 mode=critique_mode,
                 max_retries=int(getattr(settings, "agent_critique_max_retries", 1)),
+                risk_score=decision.risk.score,
+                factual_valid=factual_ok,
+                openai_call_count=openai_calls,
             )
-            judge_report = None
             if critique_report.applied_handoff and runtime is not None:
                 runtime.register_fallback("response_critique_failed")
-        else:
-            critique_report = None
+            # Critique may regenerate wording/products — re-validate before send.
+            result = apply_factual_validation(
+                result,
+                decision=decision,
+                mode=getattr(
+                    settings,
+                    "agent_factual_validation_mode",
+                    "enforce",
+                ),
+                trusted_domains=trusted_fact_domains,
+                commerce_state=commerce_state.model_dump(mode="json"),
+            )
+            validation = result.response_metadata.get("factual_validation") or {}
+            result.response_metadata["factual_validation_post_critique"] = True
+            factual_ok = bool(validation.get("valid", True))
+        # Quality judge stays off by default; when enabled, only on risk/sample.
+        run_judge, judge_gate_reason, _judge_signals = should_run_quality_judge(
+            incoming=incoming,
+            result=result,
+            judge_mode=judge_mode,
+            risk_score=decision.risk.score,
+            factual_valid=factual_ok,
+            openai_call_count=openai_calls,
+        )
+        if run_judge and critique_mode == "off":
             judge_report = await run_quality_judge(
                 incoming,
                 result,
-                mode=getattr(settings, "agent_quality_judge_mode", "off"),
+                mode=judge_mode,
                 risk_score=decision.risk.score,
-                factual_valid=bool(validation.get("valid", True)),
-                openai_call_count=runtime.openai_call_count if runtime else 0,
+                factual_valid=factual_ok,
+                openai_call_count=openai_calls,
             )
             result = attach_judge_report(result, judge_report)
+        elif judge_mode != "off":
+            result.response_metadata = dict(result.response_metadata or {})
+            result.response_metadata["quality_judge_gate"] = {
+                "run": run_judge,
+                "reason": judge_gate_reason,
+                "critique_mode": critique_mode,
+            }
     max_reply_chars = getattr(settings, "max_reply_chars", 900)
     result = compose_outbound_reply(
         incoming,
@@ -386,7 +433,12 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             intent=result.intent,
             model=getattr(settings, "openai_model", None),
         )
+        from .rollout import build_rollout_status, observe_turn_for_rollout_alerts
+
+        quality_event["rollout_profile"] = build_rollout_status(settings).get("profile")
+        quality_event["openai_api_fallback"] = bool(runtime.openai_api_fallback)
         log_event("turn.quality", quality_event)
+        observe_turn_for_rollout_alerts(quality_event, settings=settings)
     if runtime is not None and runtime.openai_api_route:
         log_event(
             "openai.canary.turn",
@@ -402,7 +454,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
 
     if getattr(settings, "agent_memory_proposals_enabled", False) or getattr(
         settings, "agent_instruction_extension_proposals_enabled", False
-    ):
+    ) or getattr(settings, "agent_conversation_summary_enabled", False):
         envelope_payload = (result.response_metadata or {}).get("agent_turn_envelope")
         if isinstance(envelope_payload, dict):
             try:

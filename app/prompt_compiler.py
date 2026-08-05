@@ -142,6 +142,7 @@ def compile_agent_prompt(
     memory_ids: list[int] = []
     extensions_block = "<approved_instruction_extensions>\n</approved_instruction_extensions>"
     memory_block = "<customer_memory>\n</customer_memory>"
+    summary_block = ""
 
     load_extensions = bool(getattr(settings, "agent_db_persona_enabled", False))
     load_contact_memory = bool(
@@ -149,6 +150,16 @@ def compile_agent_prompt(
         or getattr(settings, "agent_contact_memory_in_prompt_enabled", False)
         or getattr(settings, "agent_memory_auto_apply_enabled", False)
     )
+    load_conversation_summary = bool(
+        getattr(settings, "agent_conversation_summary_in_prompt_enabled", False)
+    )
+    resolved_conversation_key = conversation_key
+    if not resolved_conversation_key and incoming is not None:
+        resolved_conversation_key = (
+            getattr(incoming, "conversation_id", None)
+            or getattr(incoming, "sender_key", None)
+            or getattr(incoming, "sender_phone", None)
+        )
     if load_extensions:
         try:
             from .instruction_extension_repository import (
@@ -198,6 +209,22 @@ def compile_agent_prompt(
                 "error": str(exc)[:160],
             })
 
+    if load_conversation_summary and resolved_conversation_key:
+        try:
+            from .conversation_summary_policy import format_conversation_summary_block
+            from .conversation_summary_repository import get_conversation_summary
+
+            row = get_conversation_summary(
+                tenant_id=tenant_id,
+                conversation_key=str(resolved_conversation_key),
+            )
+            summary_block = format_conversation_summary_block(row)
+        except Exception as exc:
+            print("[prompt.compiler.summary.error]", {
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:160],
+            })
+
     blocks = [
         FIXED_SAFETY_POLICY.strip(),
         f"<user_managed_persona>\n{persona_text.strip()}\n</user_managed_persona>",
@@ -205,6 +232,9 @@ def compile_agent_prompt(
         channel_overlay_block(channel),
         memory_block,
     ]
+    if summary_block:
+        blocks.append(summary_block)
+    # Layer order: see app.prompt_layers.PROMPT_LAYER_ORDER (Etapa 7–8).
     # Phase 5: DB persona owns tone/identity. Keep code sales/tool contract as a
     # separate operational layer — never as a second copy of the same persona body.
     if used_db_persona:
@@ -365,41 +395,60 @@ def _append_contact_memory_block(
         getattr(settings, "agent_contact_memory_in_prompt_enabled", False)
         or getattr(settings, "agent_memory_auto_apply_enabled", False)
     )
-    if not inject:
-        return instructions
+    out = instructions
     sender_key = getattr(incoming, "sender_key", None) if incoming else None
-    if not sender_key:
-        return instructions
-    try:
-        from . import contact_memory_repository as contact_memory_repository
+    if inject and sender_key:
+        try:
+            from . import contact_memory_repository as contact_memory_repository
 
-        domain = None
-        if conversation_state is not None:
-            domain = getattr(conversation_state, "active_domain", None)
-        memories = contact_memory_repository.select_relevant_memories(
-            tenant_id=tenant_id,
-            sender_key=str(sender_key),
-            domain=domain,
-            limit=int(getattr(settings, "agent_max_active_contact_memories", 20)),
-            max_chars=int(getattr(settings, "agent_max_contact_memory_chars", 3000)),
-        )
-        if not memories:
-            return instructions
-        block = contact_memory_repository.format_customer_memory_block(memories)
-        if "preferred_" not in block and "explicit_no_preference" not in block:
-            # Empty wrapper only — nothing useful to inject.
-            if block.strip() in {
-                "<customer_memory>\n</customer_memory>",
-                "<customer_memory></customer_memory>",
-            }:
-                return instructions
-        return f"{instructions}\n\n{block}"
-    except Exception as exc:
-        print("[prompt.compiler.memory_inject.error]", {
-            "error_type": type(exc).__name__,
-            "error": str(exc)[:160],
-        })
-        return instructions
+            domain = None
+            if conversation_state is not None:
+                domain = getattr(conversation_state, "active_domain", None)
+            memories = contact_memory_repository.select_relevant_memories(
+                tenant_id=tenant_id,
+                sender_key=str(sender_key),
+                domain=domain,
+                limit=int(getattr(settings, "agent_max_active_contact_memories", 20)),
+                max_chars=int(getattr(settings, "agent_max_contact_memory_chars", 3000)),
+            )
+            if memories:
+                block = contact_memory_repository.format_customer_memory_block(memories)
+                if block.strip() not in {
+                    "<customer_memory>\n</customer_memory>",
+                    "<customer_memory></customer_memory>",
+                }:
+                    out = f"{out}\n\n{block}"
+        except Exception as exc:
+            print("[prompt.compiler.memory_inject.error]", {
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:160],
+            })
+
+    if bool(getattr(settings, "agent_conversation_summary_in_prompt_enabled", False)):
+        conversation_key = None
+        if incoming is not None:
+            conversation_key = (
+                incoming.conversation_id
+                or incoming.sender_key
+                or incoming.sender_phone
+            )
+        if conversation_key:
+            try:
+                from .conversation_summary_policy import format_conversation_summary_block
+                from .conversation_summary_repository import get_conversation_summary
+
+                row = get_conversation_summary(
+                    tenant_id=tenant_id,
+                    conversation_key=str(conversation_key),
+                )
+                if row:
+                    out = f"{out}\n\n{format_conversation_summary_block(row)}"
+            except Exception as exc:
+                print("[prompt.compiler.summary_inject.error]", {
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:160],
+                })
+    return out
 
 
 def _normalize_prompt_fingerprint(text: str) -> str:

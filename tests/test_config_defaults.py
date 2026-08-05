@@ -32,13 +32,26 @@ def test_legacy_history_limit_200_does_not_crash_and_coerces_to_model_window(mon
     assert settings.agent_history_hard_cap == 80
 
 
-def test_llm_budget_defaults_cover_critique_retry():
+def test_llm_budget_defaults_are_conservative_etapa6():
     assert Settings.model_fields["agent_llm_budget_enabled"].default is True
-    assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 6
-    assert Settings.model_fields["agent_critique_mode"].default == "enforce"
+    assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 3
+    assert Settings.model_fields["agent_max_llm_calls_per_turn_complex"].default == 5
+    assert Settings.model_fields["agent_critique_mode"].default == "shadow"
     assert Settings.model_fields["agent_critique_max_retries"].default == 1
-    assert Settings.model_fields["agent_quality_judge_mode"].default == "shadow"
+    assert Settings.model_fields["agent_critique_llm_on_risk_only"].default is True
+    assert Settings.model_fields["agent_critique_shadow_sample_rate"].default == 0.0
+    assert Settings.model_fields["agent_quality_judge_mode"].default == "off"
     assert Settings.model_fields["agent_quality_judge_risk_threshold"].default == 70
+    assert Settings.model_fields["agent_quality_judge_sample_rate"].default == 0.0
+    assert Settings.model_fields["agent_presenter_mode"].default == "thin"
+
+
+def test_rollout_defaults_etapa12():
+    assert Settings.model_fields["agent_rollout_profile"].default == "full"
+    assert Settings.model_fields["agent_emergency_rollback"].default is False
+    assert Settings.model_fields["agent_rollout_alert_enabled"].default is True
+    assert Settings.model_fields["agent_rollout_alert_window"].default == 40
+    assert Settings.model_fields["agent_rollout_fallback_alert_rate"].default == 0.25
 
 
 def test_legacy_critique_mode_on_coerces_to_enforce(monkeypatch):
@@ -58,3 +71,11 @@ def test_persona_and_memory_rollout_defaults():
     assert Settings.model_fields["agent_memory_auto_apply_enabled"].default is False
     assert Settings.model_fields["agent_contact_memory_in_prompt_enabled"].default is True
     assert Settings.model_fields["agent_conversation_summary_enabled"].default is False
+    assert (
+        Settings.model_fields["agent_conversation_summary_in_prompt_enabled"].default
+        is False
+    )
+    assert Settings.model_fields["agent_learning_auto_promote"].default is False
+    assert Settings.model_fields["agent_learning_auto_activate"].default is False
+    assert Settings.model_fields["agent_full_obs_logs"].default is False
+    assert Settings.model_fields["agent_http_obs_logs"].default is False

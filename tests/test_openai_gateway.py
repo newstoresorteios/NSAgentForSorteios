@@ -103,10 +103,13 @@ def _reset_gateway():
     reset_openai_gateway()
 
 
-def test_build_gateway_defaults_to_chat_completions(monkeypatch):
+def test_build_gateway_chat_completions_when_explicitly_allowed(monkeypatch):
     monkeypatch.setattr(
         "app.openai_gateway.get_settings",
-        lambda: SimpleNamespace(openai_api_mode="chat_completions"),
+        lambda: SimpleNamespace(
+            openai_api_mode="chat_completions",
+            openai_chat_completions_primary_allowed=True,
+        ),
     )
     gateway = build_openai_gateway()
     assert isinstance(gateway, ChatCompletionsGateway)
@@ -118,7 +121,7 @@ def test_build_gateway_responses_and_shadow(monkeypatch):
         lambda: SimpleNamespace(
             openai_api_mode="responses",
             openai_responses_fallback_to_chat=True,
-            openai_chat_completions_primary_allowed=True,
+            openai_chat_completions_primary_allowed=False,
         ),
     )
     assert isinstance(build_openai_gateway("responses"), FallbackOpenAIGateway)
@@ -132,7 +135,7 @@ def test_build_responses_without_fallback(monkeypatch):
         lambda: SimpleNamespace(
             openai_api_mode="responses",
             openai_responses_fallback_to_chat=False,
-            openai_chat_completions_primary_allowed=True,
+            openai_chat_completions_primary_allowed=False,
         ),
     )
     assert isinstance(build_openai_gateway("responses"), ResponsesGateway)
@@ -198,6 +201,10 @@ async def test_responses_gateway_parse_sends_store_false(monkeypatch):
             openai_store_responses=False,
             openai_responses_structured_enabled=True,
             openai_use_previous_response_id=False,
+            openai_reasoning_effort="",
+            openai_text_verbosity="",
+            openai_max_output_tokens=None,
+            openai_timeout_seconds=45.0,
         ),
     )
     client = _FakeClient()
@@ -224,7 +231,13 @@ async def test_responses_gateway_parse_sends_store_false(monkeypatch):
 async def test_responses_gateway_generate_text_uses_output_text(monkeypatch):
     monkeypatch.setattr(
         "app.openai_gateway.get_settings",
-        lambda: SimpleNamespace(openai_store_responses=False),
+        lambda: SimpleNamespace(
+            openai_store_responses=False,
+            openai_reasoning_effort="",
+            openai_text_verbosity="",
+            openai_max_output_tokens=None,
+            openai_timeout_seconds=45.0,
+        ),
     )
     client = _FakeClient()
     gateway = ResponsesGateway(client=client)
@@ -245,6 +258,10 @@ async def test_responses_refusal_raises(monkeypatch):
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,
+            openai_reasoning_effort="",
+            openai_text_verbosity="",
+            openai_max_output_tokens=None,
+            openai_timeout_seconds=45.0,
         ),
     )
 
@@ -276,6 +293,10 @@ async def test_responses_missing_parsed_raises(monkeypatch):
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,
+            openai_reasoning_effort="",
+            openai_text_verbosity="",
+            openai_max_output_tokens=None,
+            openai_timeout_seconds=45.0,
         ),
     )
 

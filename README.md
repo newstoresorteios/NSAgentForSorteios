@@ -70,6 +70,8 @@ AGENT_CONTACT_MEMORY_IN_PROMPT_ENABLED=true   # injeta memórias ativas no promp
 AGENT_MEMORY_AUTO_APPLY_ENABLED=false         # manter off até allowlist
 AGENT_CONVERSATION_SUMMARY_ENABLED=false      # critérios/async; não a cada turno
 AGENT_INSTRUCTION_EXTENSION_PROPOSALS_ENABLED=false
+AGENT_LEARNING_AUTO_PROMOTE=false             # Etapa 9: insights pending only
+AGENT_LEARNING_AUTO_ACTIVATE=false            # nunca ativar extension sem admin
 ```
 
 Com propostas ligadas, o responder comercial usa `AgentTurnEnvelope` (reply + proposals)
@@ -79,7 +81,8 @@ Summary só aplica delta com progresso real (compromisso, correção, falha, met
 Auto-apply exige **ambos**:
 `AGENT_MEMORY_AUTO_APPLY_ENABLED=true` **e** `AGENT_MEMORY_AUTO_APPLY_SENDER_ALLOWLIST`
 (lista de `sender_key` ou `*`). Thresholds: confidence ≥ 0.85, importance ≥ 0.70,
-kinds allowlisted, evidência explícita. Extensões tenant nunca auto-aplicam.
+kinds allowlisted, evidência explícita. Extensões tenant e attendance learning
+nunca auto-ativam (approve só via admin).
 
 ## Arquivos principais
 
@@ -94,10 +97,20 @@ app/turn_metrics.py                  # Evento turn.quality (sem PII)
 app/sales/                           # Extração incremental do sales_agent
 app/prompt_compiler.py               # Compila instructions (persona + overlays)
 app/persona_repository.py            # CRUD versionado da persona
-tests/evals/                         # Avaliações offline determinísticas (50+)
+tests/evals/                         # Offline eval honestos (`pytest -m offline_eval`)
 .env.example                         # Variáveis sem segredos reais
 vercel.json                          # Config Vercel
 ```
+
+Replay offline (agente real + fakes; score não copia `expected`):
+
+```bash
+pytest -m offline_eval
+```
+
+Detalhes: `docs/agent_generative_migration_etapa11.md`.
+
+Canary progressivo / rollback (Etapa 12): `AGENT_ROLLOUT_PROFILE=canary_5|…|full` ou `AGENT_EMERGENCY_ROLLBACK=true`. Status: `GET /api/health` → `rollout` ou `GET /api/admin/rollout`. Doc: `docs/agent_generative_migration_etapa12.md`.
 
 ## Segurança obrigatória
 

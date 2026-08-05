@@ -168,7 +168,23 @@ def _append_evidence(
     key: str,
     value: Any,
     entity_id: str | None = None,
+    confidence: float | None = None,
+    tenant_id: str | None = None,
+    revalidation_status: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
+    # Persona/memory must never enter commercial evidence bags.
+    if entity_type in {
+        "product",
+        "variant",
+        "price",
+        "inventory",
+        "url",
+        "payment",
+        "shipping",
+        "cart",
+    } and source in {FactSource.APPROVED_PERSONA, FactSource.CUSTOMER_MEMORY}:
+        return
     pack.evidence.append(
         StructuredFact(
             source=source,
@@ -176,6 +192,10 @@ def _append_evidence(
             entity_id=entity_id,
             key=key,
             value=value,
+            confidence=confidence,
+            tenant_id=tenant_id,
+            revalidation_status=revalidation_status,
+            metadata=dict(metadata or {}),
         )
     )
 
@@ -188,6 +208,9 @@ def _collect_facts(
     used_tray: bool = False,
     from_commerce_state: bool = False,
     entity_id: str | None = None,
+    factual_source: str | None = None,
+    revalidated: bool = False,
+    tenant_id: str | None = None,
 ) -> None:
     if isinstance(value, dict):
         local_entity_id = entity_id
@@ -195,7 +218,16 @@ def _collect_facts(
             if value.get(id_key) is not None:
                 local_entity_id = str(value.get(id_key))
                 break
+        local_factual = (
+            str(value.get("_factual_source") or factual_source or "").strip() or None
+        )
+        local_revalidated = bool(value.get("_revalidated")) or revalidated
+        local_tenant = (
+            str(value.get("tenant_id") or tenant_id or "").strip() or tenant_id
+        )
         for child_key, child_value in value.items():
+            if str(child_key).startswith("_"):
+                continue
             _collect_facts(
                 child_value,
                 key=str(child_key).lower(),
@@ -203,6 +235,9 @@ def _collect_facts(
                 used_tray=used_tray,
                 from_commerce_state=from_commerce_state,
                 entity_id=local_entity_id,
+                factual_source=local_factual,
+                revalidated=local_revalidated,
+                tenant_id=local_tenant,
             )
         name = value.get("name") or value.get("title") or value.get("product_name")
         if name:
@@ -219,6 +254,9 @@ def _collect_facts(
                 used_tray=used_tray,
                 from_commerce_state=from_commerce_state,
                 entity_id=entity_id,
+                factual_source=factual_source,
+                revalidated=revalidated,
+                tenant_id=tenant_id,
             )
         return
 
@@ -229,6 +267,18 @@ def _collect_facts(
         key,
         used_tray=used_tray,
         from_commerce_state=from_commerce_state,
+        factual_source=factual_source,
+        revalidated=revalidated,
+    )
+    revalidation_status = (
+        "revalidated"
+        if revalidated or source == FactSource.TRAY_LIVE
+        else ("pending" if source == FactSource.TRAY_ADAPTER else "not_applicable")
+    )
+    confidence = (
+        0.95
+        if source == FactSource.TRAY_LIVE
+        else (0.75 if source == FactSource.TRAY_ADAPTER else 0.5)
     )
     entity_type = "other"
     handled = False
@@ -244,6 +294,10 @@ def _collect_facts(
                 key=key or "url",
                 value=cleaned,
                 entity_id=entity_id,
+                confidence=confidence,
+                tenant_id=tenant_id,
+                revalidation_status=revalidation_status,
+                metadata={"revalidated": revalidated},
             )
             handled = True
     if text and key in _ORDER_KEYS:
@@ -256,6 +310,9 @@ def _collect_facts(
             key=key,
             value=text,
             entity_id=text,
+            confidence=confidence,
+            tenant_id=tenant_id,
+            revalidation_status=revalidation_status,
         )
         handled = True
     if any(token in key for token in _MONEY_KEYS):
@@ -270,6 +327,10 @@ def _collect_facts(
                 key=key,
                 value=str(amount),
                 entity_id=entity_id,
+                confidence=confidence,
+                tenant_id=tenant_id,
+                revalidation_status=revalidation_status,
+                metadata={"revalidated": revalidated},
             )
             if any(token in key for token in _PROMO_KEYS):
                 pack.has_promotional_price = True
@@ -290,6 +351,10 @@ def _collect_facts(
                 key=key,
                 value=available,
                 entity_id=entity_id,
+                confidence=confidence,
+                tenant_id=tenant_id,
+                revalidation_status=revalidation_status,
+                metadata={"revalidated": revalidated},
             )
             handled = True
     if any(token in key for token in _PAYMENT_STATUS_KEYS) and "payment" in key:
@@ -304,6 +369,9 @@ def _collect_facts(
                 key=key,
                 value=text,
                 entity_id=entity_id,
+                confidence=confidence,
+                tenant_id=tenant_id,
+                revalidation_status=revalidation_status,
             )
             handled = True
     if not handled and entity_type == "other" and key and text:
@@ -314,6 +382,9 @@ def _collect_facts(
             key=key,
             value=text,
             entity_id=entity_id,
+            confidence=confidence,
+            tenant_id=tenant_id,
+            revalidation_status=revalidation_status,
         )
 
 
@@ -392,9 +463,9 @@ def _risk_from_violations(violations: list[FactualViolation]) -> RiskLevel:
     kinds = {item.kind for item in violations}
     if "payment" in kinds or "order_id" in kinds:
         return "critical"
-    if "money" in kinds or "url" in kinds or "promo" in kinds:
+    if "money" in kinds or "url" in kinds or "promo" in kinds or "stock" in kinds:
         return "high"
-    if "stock" in kinds or "product_mix" in kinds:
+    if "product_mix" in kinds:
         return "medium"
     return "medium"
 
@@ -438,6 +509,8 @@ def validate_factual_response(
             "entity_id": item.entity_id,
             "key": item.key,
             "confidence": item.confidence,
+            "tenant_id": item.tenant_id,
+            "revalidation_status": item.revalidation_status,
             "retrieved_at": item.retrieved_at.isoformat(),
         }
         for item in pack.evidence[:40]
@@ -496,12 +569,45 @@ def validate_factual_response(
         )
     )
     if validate_money and decision.domain == "commerce":
+        # Only trust commerce-safe monetary evidence (never persona/memory).
+        safe_money = {
+            _money_decimal(item.value)
+            for item in pack.evidence
+            if item.entity_type == "price"
+            and item.source
+            not in {FactSource.APPROVED_PERSONA, FactSource.CUSTOMER_MEMORY}
+        }
+        safe_money.discard(None)
+        trusted_amounts = safe_money or pack.monetary_values
         for amount_text in _MONEY_RE.findall(text):
             amount = _money_decimal(amount_text)
             if amount is None:
                 continue
             report.checked_claims += 1
-            if amount in pack.monetary_values:
+            matching = [
+                item
+                for item in pack.evidence
+                if item.entity_type == "price"
+                and _money_decimal(item.value) == amount
+                and item.source
+                not in {FactSource.APPROVED_PERSONA, FactSource.CUSTOMER_MEMORY}
+            ]
+            if amount in trusted_amounts and matching:
+                best = matching[0]
+                report.supported_claims.append(
+                    FactClaim(
+                        kind="money",
+                        claim=str(amount),
+                        evidence_ids=[best.entity_id] if best.entity_id else [],
+                        reason=(
+                            "money_supported_revalidated"
+                            if best.revalidation_status == "revalidated"
+                            or best.source == FactSource.TRAY_LIVE
+                            else "money_supported"
+                        ),
+                    )
+                )
+            elif amount in trusted_amounts:
                 report.supported_claims.append(
                     FactClaim(
                         kind="money",

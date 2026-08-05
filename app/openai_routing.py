@@ -41,11 +41,12 @@ def select_api_route(
     on the same API for the whole rollout window.
     """
     settings = get_settings()
-    percent = (
-        traffic_percent
-        if traffic_percent is not None
-        else float(getattr(settings, "openai_responses_traffic_percent", 0.0) or 0.0)
-    )
+    if traffic_percent is not None:
+        percent = traffic_percent
+    else:
+        from .rollout import resolve_responses_traffic_percent
+
+        percent = resolve_responses_traffic_percent(settings)
     percent = max(0.0, min(1.0, percent))
     if percent <= 0.0:
         return "chat_completions"

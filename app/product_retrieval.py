@@ -24,10 +24,37 @@ SEMANTIC_MATCH_POOL_LIMIT = 20
 CANDIDATE_POOL_LIMIT = SEMANTIC_MATCH_POOL_LIMIT
 GPT_MATCH_CANDIDATE_LIMIT = 80
 CUSTOMER_RESULT_LIMIT = 3
-RERANK_SELECTION_LIMIT = 5
+RERANK_SELECTION_LIMIT = 5  # legacy default; prefer rerank_selection_limit()
 MAX_VARIANT_PRODUCT_QUERIES = 5
 
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+def rerank_selection_limit() -> int:
+    settings = get_settings()
+    try:
+        value = int(getattr(settings, "agent_rerank_selection_limit", 15) or 15)
+    except (TypeError, ValueError):
+        value = 15
+    return max(5, min(20, value))
+
+
+def revalidate_top_n() -> int:
+    settings = get_settings()
+    try:
+        value = int(getattr(settings, "agent_revalidate_top_n", CUSTOMER_RESULT_LIMIT) or CUSTOMER_RESULT_LIMIT)
+    except (TypeError, ValueError):
+        value = CUSTOMER_RESULT_LIMIT
+    return max(1, min(10, value))
+
+
+def candidate_pool_limit() -> int:
+    settings = get_settings()
+    try:
+        value = int(getattr(settings, "agent_candidate_pool_limit", CANDIDATE_POOL_LIMIT) or CANDIDATE_POOL_LIMIT)
+    except (TypeError, ValueError):
+        value = CANDIDATE_POOL_LIMIT
+    return max(5, min(80, value))
 
 
 class ProductRerankSelection(BaseModel):
@@ -1268,14 +1295,40 @@ def hard_filter_products(
     *,
     mode: Literal["exact", "recommendation"],
 ) -> list[dict[str, Any]]:
+    """Apply mandatory filters. Prefer TurnUnderstanding hard constraints when present."""
     subject = interpretation.subject
     preferences = interpretation.preferences
     expected_brand = _fold(subject.brand)
     expected_model = _fold(subject.model)
     expected_reference = _fold(effective_product_reference(subject.reference))
     expected_ean = _fold(subject.ean)
-    selected: list[dict[str, Any]] = []
+    brand_exclusive = False
+    exact_only = False
+    hard_color = None
+    hard_material = None
+    try:
+        from .catalog_index import _hard_constraints_from_interpretation
 
+        hard = _hard_constraints_from_interpretation(interpretation)
+        expected_brand = _fold(hard.get("brand")) or expected_brand
+        expected_reference = _fold(hard.get("reference")) or expected_reference
+        expected_ean = _fold(hard.get("ean")) or expected_ean
+        brand_exclusive = bool(hard.get("brand_exclusive"))
+        exact_only = bool(hard.get("exact_only"))
+        hard_color = _fold(hard.get("dial_color"))
+        hard_material = _fold(hard.get("material"))
+        if hard.get("budget_max") is not None:
+            preferences = preferences.model_copy(
+                update={"budget_max": hard.get("budget_max")}
+            )
+        if hard.get("budget_min") is not None:
+            preferences = preferences.model_copy(
+                update={"budget_min": hard.get("budget_min")}
+            )
+    except Exception:
+        pass
+
+    selected: list[dict[str, Any]] = []
     for product in products:
         if not isinstance(product, dict) or not product.get("id"):
             continue
@@ -1285,6 +1338,8 @@ def hard_filter_products(
             if candidate_brand and candidate_brand != expected_brand:
                 continue
             if not candidate_brand and expected_brand not in text:
+                continue
+            if brand_exclusive and candidate_brand and candidate_brand != expected_brand:
                 continue
         if expected_reference and _fold(product.get("reference")) != expected_reference:
             continue
@@ -1297,15 +1352,21 @@ def hard_filter_products(
         ):
             continue
         color_tokens = preference_color_tokens(interpretation)
+        if hard_color:
+            color_tokens = tuple(dict.fromkeys((*color_tokens, hard_color)))
         # Exact identity searches still require color evidence (with aliases).
         # Recommendation keeps brand/category pool intact so the LLM/reranker
-        # can match "azul" ↔ "blue" and other soft preferences.
+        # can match "azul" ↔ "blue" — unless the customer said "somente"/exact_only.
+        require_color = mode == "exact" or (exact_only and bool(color_tokens or hard_color))
         if (
-            mode == "exact"
+            require_color
             and color_tokens
             and not product_matches_color_tokens(product, color_tokens)
         ):
             continue
+        if hard_material and exact_only:
+            if hard_material not in text and hard_material not in _fold(product.get("material")):
+                continue
         if mode == "exact" and expected_model:
             model_tokens = list(required_model_tokens(subject.model))
             if model_tokens and not all(token in text for token in model_tokens):
@@ -1922,7 +1983,8 @@ async def revalidate_products(
 ) -> tuple[list[dict[str, Any]], bool]:
     refreshed: list[dict[str, Any]] = []
     failed = False
-    for product in products[:CUSTOMER_RESULT_LIMIT]:
+    top_n = revalidate_top_n()
+    for product in products[:top_n]:
         product_id = product.get("id")
         if product_id is None:
             continue
@@ -1930,12 +1992,18 @@ async def revalidate_products(
         if "error" in result:
             failed = True
             continue
+        # Revalidation is factual authority: overlay live Tray fields but never
+        # invent price/stock when the live payload omits them.
         current = {**product, **result}
+        # Drop retrieval-only metadata from customer-facing payload later.
         current["commercial_availability"] = commercial_availability_facts(current)
+        current["_revalidated"] = True
+        current["_factual_source"] = "tray_live"
         print("[sales.availability.fact]", {
             "has_stock": current["commercial_availability"]["has_stock"],
             "has_lead_time": current["commercial_availability"]["has_lead_time"],
             "immediate_delivery_supported": current["commercial_availability"]["immediate_delivery_supported"],
+            "revalidated": True,
         })
         refreshed.append(current)
     if refreshed:
@@ -1972,7 +2040,7 @@ def _deterministic_semantic_order(
             base += 4
         scored.append((base, index, product))
     scored.sort(key=lambda item: (-item[0], item[1]))
-    return [product for _, _, product in scored[:RERANK_SELECTION_LIMIT]]
+    return [product for _, _, product in scored[:rerank_selection_limit()]]
 
 
 async def rerank_products(
@@ -1984,6 +2052,8 @@ async def rerank_products(
         if product_availability_state(product) != "unavailable"
     ]
     settings = get_settings()
+    selection_limit = rerank_selection_limit()
+    pool_limit = candidate_pool_limit()
     fallback = _deterministic_semantic_order(available_products, interpretation)
     if not available_products or not settings.openai_api_key:
         print("[sales.reranker]", {
@@ -1991,11 +2061,21 @@ async def rerank_products(
             "candidate_count": len(available_products),
             "selected_count": len(fallback),
             "invalid_ids_count": 0,
+            "selection_limit": selection_limit,
         })
         return fallback
 
-    candidate_by_id = {str(product["id"]): product for product in available_products if product.get("id") is not None}
+    # Cap what the LLM may see — never the whole catalog.
+    pool = available_products[:pool_limit]
+    candidate_by_id = {
+        str(product["id"]): product
+        for product in pool
+        if product.get("id") is not None
+    }
+    allowed_ids = set(candidate_by_id)
+    prior_order = [str(p["id"]) for p in pool if p.get("id") is not None]
     try:
+        from .catalog_index import reject_unknown_rerank_ids
         from .openai_errors import OpenAIGatewayError
         from .openai_gateway import parse_structured_output
 
@@ -2007,10 +2087,12 @@ async def rerank_products(
                     "role": "system",
                     "content": (
                         "Classifique produtos reais da NewStore conforme as preferências. "
-                        "Retorne no máximo cinco IDs presentes em CANDIDATES, em ordem de relevância. "
+                        f"Retorne no máximo {selection_limit} IDs presentes em CANDIDATES, "
+                        "em ordem de relevância. "
                         "Trate sinônimos de cor (azul=blue, preto=black, branco=white, rosa=pink, "
                         "verde=green, vermelho=red) e gênero (feminino/lady/dama). "
-                        "Não invente IDs. Use só evidências dos candidatos (nome, marca, cor, descrição)."
+                        "Não invente IDs. Não altere preço, estoque, URL ou disponibilidade. "
+                        "Use só evidências dos candidatos (nome, marca, cor, descrição)."
                     ),
                 },
                 {
@@ -2021,7 +2103,7 @@ async def rerank_products(
                             token: sorted(expand_color_aliases(token))
                             for token in preference_color_tokens(interpretation)
                         },
-                        "CANDIDATES": compact_candidates(available_products),
+                        "CANDIDATES": compact_candidates(pool, limit=pool_limit),
                     }, ensure_ascii=False),
                 },
             ],
@@ -2030,26 +2112,22 @@ async def rerank_products(
         parsed = parse_result.parsed
         if not isinstance(parsed, ProductRerankSelection):
             raise ValueError("reranker_schema_missing")
-        selected: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        invalid_ids = 0
-        for product_id in parsed.selected_product_ids[:RERANK_SELECTION_LIMIT]:
-            normalized_id = str(product_id)
-            if normalized_id in seen:
-                continue
-            seen.add(normalized_id)
-            product = candidate_by_id.get(normalized_id)
-            if product is None:
-                invalid_ids += 1
-                continue
-            selected.append(product)
+        ordered_ids, invalid_ids = reject_unknown_rerank_ids(
+            list(parsed.selected_product_ids or []),
+            allowed_ids,
+            limit=selection_limit,
+        )
+        selected = [candidate_by_id[pid] for pid in ordered_ids]
         if not selected:
             selected = fallback
         print("[sales.reranker]", {
             "source": "openai",
-            "candidate_count": len(available_products),
+            "candidate_count": len(pool),
             "selected_count": len(selected),
             "invalid_ids_count": invalid_ids,
+            "selection_limit": selection_limit,
+            "prior_order_sample": prior_order[:5],
+            "posterior_order_sample": ordered_ids[:5],
         })
         return selected
     except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
@@ -2059,5 +2137,6 @@ async def rerank_products(
             "selected_count": len(fallback),
             "invalid_ids_count": 0,
             "error_type": type(exc).__name__,
+            "selection_limit": selection_limit,
         })
         return fallback

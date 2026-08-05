@@ -986,6 +986,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 goal=interpretation.goal,
                 used_openai_interpreter=used_openai_interpreter,
                 fallback_reason=interpretation._fallback_reason,
+                interpretation_confidence=interpretation.confidence,
             )
     print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})
     result = await generate_openai_reply_async(message, customer_context, facts)
@@ -998,4 +999,5 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         used_openai_responder=not bool(result.safety_reason),
         used_tray=False,
         fallback_reason=result.safety_reason or interpretation._fallback_reason,
+        interpretation_confidence=interpretation.confidence,
     )

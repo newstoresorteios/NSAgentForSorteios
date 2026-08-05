@@ -31,6 +31,7 @@ from app.db import (
 )
 from app.inbound_coalesce import is_caption_echo_of_recent_image
 from app.config import get_allowed_channels, get_settings
+from app.rollout import build_rollout_status
 from app.conversation_lock import (
     ConversationLockUnavailable,
     acquire_conversation_lock,
@@ -51,6 +52,7 @@ from app.turn_runtime import LLMCallBudget, TurnRuntimeContext
 from app.observability import (
     log_event,
     log_exception,
+    redact_text,
     summarize_webhook_payload,
 )
 
@@ -73,7 +75,7 @@ async def turn_runtime_middleware(request: Request, call_next):
     settings = get_settings()
     path = request.url.path
     monitored_path = path.startswith(("/api/webhooks/", "/api/test/agent"))
-    http_obs = bool(getattr(settings, "agent_http_obs_logs", True))
+    http_obs = bool(getattr(settings, "agent_http_obs_logs", False))
     runtime_enabled = bool(getattr(settings, "agent_runtime_enabled", True))
 
     if not runtime_enabled and not http_obs:
@@ -87,7 +89,7 @@ async def turn_runtime_middleware(request: Request, call_next):
     context = TurnRuntimeContext(
         trace_id=_request_trace_id(request),
         llm_budget=LLMCallBudget(
-            max_calls=getattr(settings, "agent_max_llm_calls_per_turn", 2),
+            max_calls=getattr(settings, "agent_max_llm_calls_per_turn", 3),
             enforce=getattr(settings, "agent_llm_budget_enabled", False),
         ),
     )
@@ -278,8 +280,8 @@ async def health():
         "openai_key_length": len(openai_key),
         "openai_model": settings.openai_model,
         "agent_runtime_enabled": getattr(settings, "agent_runtime_enabled", True),
-        "agent_full_obs_logs": getattr(settings, "agent_full_obs_logs", True),
-        "agent_http_obs_logs": getattr(settings, "agent_http_obs_logs", True),
+        "agent_full_obs_logs": getattr(settings, "agent_full_obs_logs", False),
+        "agent_http_obs_logs": getattr(settings, "agent_http_obs_logs", False),
         "agent_llm_budget_enabled": getattr(
             settings,
             "agent_llm_budget_enabled",
@@ -381,6 +383,7 @@ async def health():
             "remarketing_meta_window_hours",
             24,
         ),
+        "rollout": build_rollout_status(settings),
     }
 
 
@@ -502,7 +505,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "sender_name_present": bool(incoming.sender_name),
             "text_present": bool(incoming.text),
             "text_chars": len(incoming.text or ""),
-            "text_preview": (incoming.text or "")[:500],
+            "text_preview": redact_text(incoming.text, max_chars=200),
             "input_modality": incoming.input_modality,
             "attachment_type": incoming.attachment_type,
             "image_url_present": bool((incoming.image_url or "").strip()),
@@ -752,7 +755,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "event_name": incoming.event_type,
             "input_modality": incoming.input_modality,
             "attachment_type": incoming.attachment_type,
-            "text_preview": (incoming.text or "")[:500],
+            "text_preview": redact_text(incoming.text, max_chars=200),
             "inbound_id": inbound_id,
             "customer_found": bool(customer_context.get("found")),
         },
@@ -766,7 +769,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "handoff_required": agent_result.handoff_required,
             "safety_reason": agent_result.safety_reason,
             "reply_length": len(agent_result.reply_text or ""),
-            "reply_preview": (agent_result.reply_text or "")[:500],
+            "reply_preview": redact_text(agent_result.reply_text, max_chars=200),
             "channel": incoming.channel,
             "input_modality": incoming.input_modality,
             "attachment_type": incoming.attachment_type,
@@ -1006,6 +1009,12 @@ async def brevo_whatsapp_webhook(
     return await handle_brevo_conversations_webhook(request)
 
 
+@app.get("/api/admin/rollout", dependencies=[Depends(verify_admin_token)])
+async def admin_rollout_status():
+    """Read-only rollout snapshot + rollback checklist (mutate via Vercel env)."""
+    return {"ok": True, **build_rollout_status()}
+
+
 @app.post("/api/test/agent")
 async def test_agent(request: Request, _: None = Depends(verify_admin_token)):
     payload = await read_request_payload(request)
@@ -1016,7 +1025,10 @@ async def test_agent(request: Request, _: None = Depends(verify_admin_token)):
             "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
             "has_phone": bool(payload.get("phone")) if isinstance(payload, dict) else False,
             "has_text": bool(payload.get("text")) if isinstance(payload, dict) else False,
-            "text_preview": str(payload.get("text") or "")[:300]
+            "text_preview": redact_text(
+                str(payload.get("text") or "") if isinstance(payload, dict) else None,
+                max_chars=120,
+            )
             if isinstance(payload, dict)
             else None,
         },

@@ -282,7 +282,11 @@ def promote_insights_to_extensions(
     confidence: float,
     importance: float,
 ) -> int | None:
-    """Create an instruction extension from a learning insight (optionally activate)."""
+    """Create an instruction extension from a learning insight (optionally activate).
+
+    Etapa 9: default is pending_review only. Activation requires
+    AGENT_LEARNING_AUTO_ACTIVATE=true (rollback/emergency) or admin approve.
+    """
     settings = get_settings()
     extension_key = f"learning:{category}:{insight_id}"
     try:
@@ -304,7 +308,10 @@ def promote_insights_to_extensions(
         })
         return None
     extension_id = created.get("id") if isinstance(created, dict) else None
-    if extension_id and bool(getattr(settings, "agent_learning_auto_activate", True)):
+    activated = False
+    if extension_id and bool(
+        getattr(settings, "agent_learning_auto_activate", False)
+    ):
         try:
             from .instruction_extension_repository import approve_extension
 
@@ -313,6 +320,7 @@ def promote_insights_to_extensions(
                 tenant_id=tenant_id,
                 approved_by="attendance_learning_cron",
             )
+            activated = True
         except Exception as exc:
             print("[attendance.learning.activate_error]", {
                 "error_type": type(exc).__name__,
@@ -321,17 +329,35 @@ def promote_insights_to_extensions(
     if extension_id:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE public.ai_learning_insights
-                    SET applied_extension_id = %s,
-                        status = 'applied',
-                        reviewed_at = now(),
-                        updated_at = now()
-                    WHERE id = %s
-                    """,
-                    (extension_id, insight_id),
-                )
+                if activated:
+                    cur.execute(
+                        """
+                        UPDATE public.ai_learning_insights
+                        SET applied_extension_id = %s,
+                            status = 'applied',
+                            reviewed_at = now(),
+                            updated_at = now()
+                        WHERE id = %s
+                        """,
+                        (extension_id, insight_id),
+                    )
+                else:
+                    # Link pending extension; keep insight pending_review for humans.
+                    cur.execute(
+                        """
+                        UPDATE public.ai_learning_insights
+                        SET applied_extension_id = %s,
+                            updated_at = now()
+                        WHERE id = %s
+                          AND status = 'pending_review'
+                        """,
+                        (extension_id, insight_id),
+                    )
+                print("[attendance.learning.promote]", {
+                    "insight_id": insight_id,
+                    "extension_id": extension_id,
+                    "activated": activated,
+                })
     return extension_id
 
 
@@ -339,7 +365,7 @@ async def run_attendance_learning_batch(
     *,
     lookback_hours: int | None = None,
     limit: int | None = None,
-    auto_promote: bool = True,
+    auto_promote: bool | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     tenant_id = str(getattr(settings, "agent_persona_tenant_id", "newstore") or "newstore")
@@ -347,9 +373,11 @@ async def run_attendance_learning_batch(
         getattr(settings, "agent_learning_lookback_hours", 2) or 2
     )
     row_limit = limit or int(getattr(settings, "agent_learning_batch_limit", 120) or 120)
-    auto_apply = auto_promote and bool(
-        getattr(settings, "agent_learning_auto_promote", True)
-    )
+    # Etapa 9: promote off by default; explicit arg overrides for tests/ops.
+    if auto_promote is None:
+        auto_apply = bool(getattr(settings, "agent_learning_auto_promote", False))
+    else:
+        auto_apply = bool(auto_promote)
 
     rows = fetch_recent_attendances(
         tenant_id=tenant_id,

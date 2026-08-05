@@ -1,6 +1,7 @@
 import pytest
 
 from app.commerce_context import CommerceConversationState, CommerceProductReference
+from app.config import get_settings
 from app.models import AgentResult, IncomingMessage
 from app.response_critique import (
     CRITIQUE_JUDGE_SYSTEM_PROMPT,
@@ -12,6 +13,13 @@ from app.response_critique import (
     _seed_args_from_context,
 )
 from app.capability_catalog import build_capability_catalog, RETRYABLE_API_NAMES
+
+
+def _allow_critique_llm_without_risk(monkeypatch):
+    """Legacy critique-loop tests exercise the LLM path directly."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("AGENT_CRITIQUE_LLM_ON_RISK_ONLY", "false")
+    get_settings.cache_clear()
 
 
 def test_capability_catalog_includes_order_payment_apis():
@@ -49,6 +57,7 @@ def test_seed_args_from_active_product_reference():
 
 @pytest.mark.asyncio
 async def test_critique_enforce_retries_api_and_regenerates(monkeypatch):
+    _allow_critique_llm_without_risk(monkeypatch)
     incoming = IncomingMessage(
         channel="whatsapp",
         text="me da o link para pagamento",
@@ -153,6 +162,7 @@ async def test_critique_enforce_retries_api_and_regenerates(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_critique_shadow_does_not_change_reply(monkeypatch):
+    _allow_critique_llm_without_risk(monkeypatch)
     incoming = IncomingMessage(channel="whatsapp", text="me da o link")
     result = AgentResult(reply_text="sem link", intent="commerce")
 
@@ -246,6 +256,7 @@ def test_apply_search_products_empty_clears_wrong_list():
 
 @pytest.mark.asyncio
 async def test_critique_catalog_mismatch_retries_search_and_swaps_products(monkeypatch):
+    _allow_critique_llm_without_risk(monkeypatch)
     incoming = IncomingMessage(channel="whatsapp", text="quero um chrono")
     result = AgentResult(
         reply_text="Separei 3 opções Bulova Classic…",
@@ -356,6 +367,7 @@ async def test_critique_skips_greeting(monkeypatch):
 @pytest.mark.asyncio
 async def test_critique_generic_catalog_approves_once(monkeypatch):
     """Regression: attribute-free browse still ships after a single approve."""
+    _allow_critique_llm_without_risk(monkeypatch)
     incoming = IncomingMessage(channel="whatsapp", text="tem relógio?")
     result = AgentResult(
         reply_text="Tenho estas opções…",
@@ -383,3 +395,38 @@ async def test_critique_generic_catalog_approves_once(monkeypatch):
     assert report.approved is True
     assert report.regenerated is False
     assert final.reply_text == "Tenho estas opções…"
+
+
+@pytest.mark.asyncio
+async def test_critique_risk_gate_skips_llm_on_low_risk(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("AGENT_CRITIQUE_LLM_ON_RISK_ONLY", "true")
+    monkeypatch.setenv("AGENT_CRITIQUE_SHADOW_SAMPLE_RATE", "0")
+    get_settings.cache_clear()
+
+    incoming = IncomingMessage(channel="whatsapp", text="tem relógio?")
+    result = AgentResult(
+        reply_text="Tenho estas opções…",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "1", "name": "Relógio X"}],
+        },
+    )
+
+    async def boom(**_kwargs):
+        raise AssertionError("LLM critique must not run when risk gate skips")
+
+    monkeypatch.setattr("app.response_critique.run_critique_judge", boom)
+
+    final, report = await apply_response_critique_loop(
+        incoming=incoming,
+        result=result,
+        mode="shadow",
+        max_retries=1,
+    )
+    assert final.reply_text == "Tenho estas opções…"
+    assert report.attempts == 0
+    meta = final.response_metadata["response_critique"]
+    assert meta["skipped"] is True
+    assert meta["risk_gate"] is True
+    assert meta["skip_reason"] == "risk_gate_skip"

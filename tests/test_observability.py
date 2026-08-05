@@ -62,16 +62,40 @@ def test_summarize_tray_result_keeps_useful_flags():
     assert summary["products_count"] == 2
 
 
-def test_summarize_history_turns_includes_previews():
-    turns = [
-        {"role": "user", "content": "quero um seiko"},
-        {"role": "assistant", "content": "tenho estas opções"},
-        {"role": "user", "content": "manda o link"},
-    ]
-    summarized = summarize_history_turns(turns, max_turns=10)
-    assert len(summarized) == 3
-    assert summarized[0]["role"] == "user"
-    assert "seiko" in summarized[0]["preview"]
+def test_summarize_history_turns_includes_previews(monkeypatch):
+    monkeypatch.setenv("AGENT_FULL_OBS_LOGS", "true")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        turns = [
+            {"role": "user", "content": "quero um seiko"},
+            {"role": "assistant", "content": "tenho estas opções"},
+            {"role": "user", "content": "manda o link"},
+        ]
+        summarized = summarize_history_turns(turns, max_turns=10)
+        assert len(summarized) == 3
+        assert summarized[0]["role"] == "user"
+        assert "seiko" in summarized[0]["preview"]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_history_preview_omitted_when_full_obs_off(monkeypatch):
+    monkeypatch.setenv("AGENT_FULL_OBS_LOGS", "false")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        assert full_obs_enabled() is False
+        summarized = summarize_history_turns(
+            [{"role": "user", "content": "cpf 072.810.359-18"}],
+            max_turns=10,
+        )
+        assert summarized[0]["preview"] is None
+        assert summarized[0]["chars"] > 0
+    finally:
+        get_settings.cache_clear()
 
 
 def test_summarize_webhook_payload_keeps_channel_hints():
@@ -92,6 +116,18 @@ def test_summarize_webhook_payload_keeps_channel_hints():
     assert summary["visitor_source"] == "whatsapp"
     assert summary["messages_count"] == 2
     assert summary["message_text_preview"] == "olá"
+
+
+def test_full_obs_defaults_off(monkeypatch):
+    monkeypatch.delenv("AGENT_FULL_OBS_LOGS", raising=False)
+    from app.config import Settings, get_settings
+
+    get_settings.cache_clear()
+    try:
+        assert Settings().agent_full_obs_logs is False
+        assert full_obs_enabled() is False
+    finally:
+        get_settings.cache_clear()
 
 
 def test_log_event_emits_agent_obs_json(capsys, monkeypatch):

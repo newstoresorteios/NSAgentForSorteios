@@ -50,6 +50,24 @@ _SENSITIVE_PATTERNS = (
     r"\b\d{13,19}\b",  # card-like digit runs
 )
 
+# Live catalog/order claims must not become durable memory (Etapa 8).
+_COMMERCIAL_VOLATILE_PATTERNS = (
+    r"R\$\s*\d",
+    r"\bestoque\b",
+    r"\besgotado\b",
+    r"\bdispon[ií]vel\b",
+    r"\bpronta\s+entrega\b",
+    r"\bfrete\b",
+    r"\b(status|rastreio)\s+(do\s+)?pedido\b",
+    r"\bpedido\s*#?\s*\d{3,}\b",
+    r"\bpagamento\.php\b",
+)
+
+_PRICE_PREFERENCE_KEYS = {
+    "preferred_price_max",
+    "preferred_price_min",
+}
+
 _ALLOWED_KEYS = {
     "preferred_name",
     "communication_style",
@@ -229,10 +247,19 @@ def evaluate_memory_proposal(
         codes.append("url_blocked")
     if sensitive:
         codes.append("sensitive")
-    if proposal.kind == MemoryKind.instruction_improvement:
-        codes.append("use_instruction_extension_channel")
 
     normalized_key = _normalize_key(proposal.key, proposal.kind)
+    # Preferências de orçamento (kind/key) podem ter número; resto não guarda fato vivo.
+    allow_budget_number = (
+        proposal.kind == MemoryKind.price_preference
+        or (normalized_key or "") in _PRICE_PREFERENCE_KEYS
+    )
+    if not allow_budget_number and any(
+        re.search(pat, blob, flags=re.I) for pat in _COMMERCIAL_VOLATILE_PATTERNS
+    ):
+        codes.append("commercial_volatile")
+    if proposal.kind == MemoryKind.instruction_improvement:
+        codes.append("use_instruction_extension_channel")
     if normalized_key and normalized_key not in _ALLOWED_KEYS:
         if proposal.scope != MemoryScope.conversation:
             codes.append("key_not_allowlisted")

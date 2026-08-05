@@ -55,6 +55,8 @@ class TurnRuntimeContext(BaseModel):
     database_call_count: int = 0
     openai_input_tokens: int = 0
     openai_output_tokens: int = 0
+    openai_cached_tokens: int = 0
+    openai_reasoning_tokens: int = 0
     openai_api_route: str | None = None
     openai_api_fallback: bool = False
 
@@ -143,14 +145,38 @@ class TurnRuntimeContext(BaseModel):
         elif self.openai_call_count >= 2 and self.execution_path != "critical":
             self.execution_path = "complex"
 
+    def release_failed_openai_attempt(self, call_type: str) -> None:
+        """Refund budget when Responses fails and Chat fallback will retry.
+
+        Etapa 6: budget counts logical LLM operations, not transport retries.
+        """
+        if self.llm_budget.used_calls > 0:
+            self.llm_budget.used_calls -= 1
+        if self.openai_call_count > 0:
+            self.openai_call_count -= 1
+        count = self.llm_calls_by_type.get(call_type, 0)
+        if count <= 1:
+            self.llm_calls_by_type.pop(call_type, None)
+        else:
+            self.llm_calls_by_type[call_type] = count - 1
+        if self.llm_call_reasons and self.llm_call_reasons[-1].get("call_type") == call_type:
+            self.llm_call_reasons.pop()
+        if self.openai_calls and self.openai_calls[-1].get("call_type") == call_type:
+            # Keep observability of the failed attempt; only refund the counter.
+            pass
+
     def register_openai_usage(
         self,
         *,
         input_tokens: int = 0,
         output_tokens: int = 0,
+        cached_tokens: int = 0,
+        reasoning_tokens: int = 0,
     ) -> None:
         self.openai_input_tokens += max(0, int(input_tokens or 0))
         self.openai_output_tokens += max(0, int(output_tokens or 0))
+        self.openai_cached_tokens += max(0, int(cached_tokens or 0))
+        self.openai_reasoning_tokens += max(0, int(reasoning_tokens or 0))
 
     def register_integration_failure(self, provider: str) -> None:
         self.integration_failures[provider] = (
@@ -178,6 +204,8 @@ class TurnRuntimeContext(BaseModel):
             "database_call_count": self.database_call_count,
             "openai_input_tokens": self.openai_input_tokens,
             "openai_output_tokens": self.openai_output_tokens,
+            "openai_cached_tokens": self.openai_cached_tokens,
+            "openai_reasoning_tokens": self.openai_reasoning_tokens,
             "judge_triggered": self.judge_triggered,
             "judge_mode": self.judge_mode,
             "risk_score": self.risk_score,

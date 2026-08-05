@@ -12,6 +12,7 @@ import asyncio
 import json
 import random
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar
 
@@ -53,6 +54,22 @@ class ModelCapabilities:
 
 
 @dataclass
+class GatewayCallMetrics:
+    """Normalized per-call telemetry (no PII / no full prompts)."""
+
+    call_id: str
+    model: str | None = None
+    status: str | None = None
+    latency_ms: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass
 class StructuredParseResult:
     parsed: BaseModel
     raw_response: Any
@@ -61,6 +78,7 @@ class StructuredParseResult:
     output_text: str | None = None
     model: str | None = None
     latency_ms: float = 0.0
+    metrics: GatewayCallMetrics | None = None
 
 
 @dataclass
@@ -71,6 +89,7 @@ class TextGenerationResult:
     refusal: str | None = None
     model: str | None = None
     latency_ms: float = 0.0
+    metrics: GatewayCallMetrics | None = None
 
 
 @dataclass
@@ -83,6 +102,7 @@ class ToolLoopResult:
     model: str | None = None
     latency_ms: float = 0.0
     limit_reached: bool = False
+    metrics: GatewayCallMetrics | None = None
 
 
 class OpenAIGateway(Protocol):
@@ -132,9 +152,113 @@ class OpenAIGateway(Protocol):
 
 
 def model_capabilities(model: str | None = None) -> ModelCapabilities:
-    """Conservative capability map; keep current model params unchanged."""
-    del model
-    return ModelCapabilities()
+    """Capability map used to attach Responses-only controls safely."""
+    name = (model or "").strip().casefold()
+    reasoning = name.startswith(("o1", "o3", "o4", "gpt-5"))
+    # text.verbosity is supported on modern Responses models (gpt-4.1 / gpt-5 / o*).
+    verbosity = reasoning or name.startswith(("gpt-4.1", "gpt-5", "gpt-4o"))
+    return ModelCapabilities(
+        supports_responses=True,
+        supports_structured_outputs=True,
+        supports_reasoning_effort=reasoning,
+        supports_text_verbosity=verbosity,
+        supports_parallel_tool_calls=True,
+    )
+
+
+def extract_usage_metrics(
+    response: Any,
+    *,
+    model: str | None = None,
+    latency_ms: float = 0.0,
+    call_id: str | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> GatewayCallMetrics:
+    usage = getattr(response, "usage", None) if response is not None else None
+    input_tokens = 0
+    output_tokens = 0
+    cached_tokens = 0
+    reasoning_tokens = 0
+    if usage is not None:
+        input_tokens = int(
+            getattr(usage, "input_tokens", None)
+            or getattr(usage, "prompt_tokens", None)
+            or 0
+        )
+        output_tokens = int(
+            getattr(usage, "output_tokens", None)
+            or getattr(usage, "completion_tokens", None)
+            or 0
+        )
+        details_in = getattr(usage, "input_tokens_details", None)
+        if details_in is not None:
+            cached_tokens = int(getattr(details_in, "cached_tokens", 0) or 0)
+            if isinstance(details_in, dict):
+                cached_tokens = int(details_in.get("cached_tokens") or 0)
+        details_out = getattr(usage, "output_tokens_details", None)
+        if details_out is not None:
+            reasoning_tokens = int(getattr(details_out, "reasoning_tokens", 0) or 0)
+            if isinstance(details_out, dict):
+                reasoning_tokens = int(details_out.get("reasoning_tokens") or 0)
+    status = None
+    if response is not None:
+        status = getattr(response, "status", None)
+        if status is None and getattr(response, "choices", None) is not None:
+            status = "completed"
+    return GatewayCallMetrics(
+        call_id=call_id or uuid.uuid4().hex,
+        model=model,
+        status=str(status) if status is not None else None,
+        latency_ms=float(latency_ms or 0.0),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cached_tokens=cached_tokens,
+        reasoning_tokens=reasoning_tokens,
+        error_code=error_code,
+        error_message=(error_message[:240] if error_message else None),
+    )
+
+
+def _resolve_timeout(timeout_seconds: float | None) -> float | None:
+    if timeout_seconds is not None and timeout_seconds > 0:
+        return float(timeout_seconds)
+    settings = get_settings()
+    configured = getattr(settings, "openai_timeout_seconds", None)
+    if configured is None:
+        return None
+    try:
+        value = float(configured)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _apply_responses_controls(kwargs: dict[str, Any], *, model: str) -> None:
+    """Attach reasoning / verbosity / max_output_tokens when configured + supported.
+
+    Never attaches ``previous_response_id`` — conversation state lives in app DB.
+    """
+    settings = get_settings()
+    caps = model_capabilities(model)
+    effort = str(getattr(settings, "openai_reasoning_effort", "") or "").strip()
+    if effort and caps.supports_reasoning_effort:
+        kwargs["reasoning"] = {"effort": effort}
+    verbosity = str(getattr(settings, "openai_text_verbosity", "") or "").strip()
+    if verbosity and caps.supports_text_verbosity:
+        text_cfg = dict(kwargs.get("text") or {})
+        text_cfg["verbosity"] = verbosity
+        kwargs["text"] = text_cfg
+    max_tokens = getattr(settings, "openai_max_output_tokens", None)
+    if max_tokens is not None:
+        try:
+            value = int(max_tokens)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            kwargs["max_output_tokens"] = value
+    # Explicitly refuse OpenAI-side conversation chaining for commerce state.
+    kwargs.pop("previous_response_id", None)
 
 
 def messages_to_responses_parts(
@@ -371,7 +495,7 @@ class ChatCompletionsGateway:
                 call_type=call_type,
                 model=model,
                 messages=chat_messages,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=_resolve_timeout(timeout_seconds),
                 operation=lambda: self.client.chat.completions.parse(**kwargs),
             )
         except BadRequestError:
@@ -423,7 +547,7 @@ class ChatCompletionsGateway:
                 call_type=call_type,
                 model=model,
                 messages=chat_messages,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=_resolve_timeout(timeout_seconds),
                 operation=lambda: self.client.chat.completions.create(**kwargs),
             )
         except BadRequestError:
@@ -477,6 +601,7 @@ class ChatCompletionsGateway:
         last_response: Any = None
         started = time.perf_counter()
         rounds = max(1, int(max_rounds))
+        resolved_timeout = _resolve_timeout(timeout_seconds)
         for round_index in range(rounds):
             kwargs: dict[str, Any] = {
                 "model": model,
@@ -495,7 +620,7 @@ class ChatCompletionsGateway:
                     ),
                     model=model,
                     messages=current_messages,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=resolved_timeout,
                     operation=lambda: self.client.chat.completions.create(**kwargs),
                 )
             except BadRequestError:
@@ -608,18 +733,23 @@ class ResponsesGateway:
             kwargs["input"] = resolved_input
         if temperature is not None:
             kwargs["temperature"] = temperature
-        # Never attach previous_response_id in this migration phase.
+        _apply_responses_controls(kwargs, model=model)
         started = time.perf_counter()
+        call_id = uuid.uuid4().hex
         try:
             response = await execute_openai_call(
                 call_type=call_type,
                 model=model,
                 messages=messages,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=_resolve_timeout(timeout_seconds),
                 operation=lambda: self.client.responses.parse(**kwargs),
             )
         except Exception as exc:
             raise _map_api_error(exc) from exc
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        metrics = extract_usage_metrics(
+            response, model=model, latency_ms=latency_ms, call_id=call_id
+        )
         _raise_for_incomplete(response)
         refusal = _extract_refusal(response)
         if refusal:
@@ -633,7 +763,8 @@ class ResponsesGateway:
             api_mode="responses",
             output_text=extract_output_text(response) or None,
             model=model,
-            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            latency_ms=latency_ms,
+            metrics=metrics,
         )
 
     async def generate_text(
@@ -663,17 +794,23 @@ class ResponsesGateway:
             kwargs["input"] = resolved_input
         if temperature is not None:
             kwargs["temperature"] = temperature
+        _apply_responses_controls(kwargs, model=model)
         started = time.perf_counter()
+        call_id = uuid.uuid4().hex
         try:
             response = await execute_openai_call(
                 call_type=call_type,
                 model=model,
                 messages=messages,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=_resolve_timeout(timeout_seconds),
                 operation=lambda: self.client.responses.create(**kwargs),
             )
         except Exception as exc:
             raise _map_api_error(exc) from exc
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        metrics = extract_usage_metrics(
+            response, model=model, latency_ms=latency_ms, call_id=call_id
+        )
         _raise_for_incomplete(response)
         refusal = _extract_refusal(response)
         if refusal:
@@ -686,7 +823,8 @@ class ResponsesGateway:
             raw_response=response,
             api_mode="responses",
             model=model,
-            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            latency_ms=latency_ms,
+            metrics=metrics,
         )
 
     async def run_tool_loop(
@@ -727,7 +865,13 @@ class ResponsesGateway:
         call_ids: list[str] = []
         last_response: Any = None
         started = time.perf_counter()
+        loop_call_id = uuid.uuid4().hex
+        total_input = 0
+        total_output = 0
+        total_cached = 0
+        total_reasoning = 0
         rounds = max(1, int(max_rounds))
+        resolved_timeout = _resolve_timeout(timeout_seconds)
         for round_index in range(rounds):
             kwargs: dict[str, Any] = {
                 "model": model,
@@ -740,6 +884,7 @@ class ResponsesGateway:
                 kwargs["instructions"] = resolved_instructions
             if temperature is not None:
                 kwargs["temperature"] = temperature
+            _apply_responses_controls(kwargs, model=model)
             try:
                 response = await execute_openai_call(
                     call_type=(
@@ -747,7 +892,7 @@ class ResponsesGateway:
                     ),
                     model=model,
                     messages=messages,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=resolved_timeout,
                     operation=lambda: self.client.responses.create(**kwargs),
                 )
             except BadRequestError:
@@ -755,10 +900,16 @@ class ResponsesGateway:
             except Exception as exc:
                 raise _map_api_error(exc) from exc
             last_response = response
+            round_metrics = extract_usage_metrics(response, model=model)
+            total_input += round_metrics.input_tokens
+            total_output += round_metrics.output_tokens
+            total_cached += round_metrics.cached_tokens
+            total_reasoning += round_metrics.reasoning_tokens
             _raise_for_incomplete(response)
             calls = extract_function_calls(response)
             if not calls:
                 text = extract_output_text(response) or None
+                latency_ms = round((time.perf_counter() - started) * 1000, 2)
                 return ToolLoopResult(
                     text=text,
                     raw_response=response,
@@ -766,7 +917,17 @@ class ResponsesGateway:
                     tool_results=tool_results,
                     call_ids=call_ids,
                     model=model,
-                    latency_ms=round((time.perf_counter() - started) * 1000, 2),
+                    latency_ms=latency_ms,
+                    metrics=GatewayCallMetrics(
+                        call_id=loop_call_id,
+                        model=model,
+                        status=getattr(response, "status", None),
+                        latency_ms=latency_ms,
+                        input_tokens=total_input,
+                        output_tokens=total_output,
+                        cached_tokens=total_cached,
+                        reasoning_tokens=total_reasoning,
+                    ),
                 )
             # Preserve intermediate model output items (including function_call).
             for item in getattr(response, "output", None) or []:
@@ -777,14 +938,14 @@ class ResponsesGateway:
                     or (call.get("name") if isinstance(call, dict) else "")
                     or ""
                 )
-                call_id = str(
+                tool_call_id = str(
                     getattr(call, "call_id", None)
                     or (call.get("call_id") if isinstance(call, dict) else "")
                     or ""
                 )
                 if name not in allowlist:
                     raise OpenAIUnknownToolError(f"unknown_tool:{name}")
-                if not call_id:
+                if not tool_call_id:
                     raise OpenAIInvalidToolArgumentsError("missing_call_id")
                 arguments = _parse_tool_arguments(
                     getattr(call, "arguments", None)
@@ -793,16 +954,17 @@ class ResponsesGateway:
                 )
                 result = await execute_tool(name, arguments)
                 tool_results.append(
-                    {"name": name, "call_id": call_id, "result": result}
+                    {"name": name, "call_id": tool_call_id, "result": result}
                 )
-                call_ids.append(call_id)
+                call_ids.append(tool_call_id)
                 working_input.append(
                     {
                         "type": "function_call_output",
-                        "call_id": call_id,
+                        "call_id": tool_call_id,
                         "output": json.dumps(result, ensure_ascii=False),
                     }
                 )
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
         return ToolLoopResult(
             text=None,
             raw_response=last_response,
@@ -810,8 +972,18 @@ class ResponsesGateway:
             tool_results=tool_results,
             call_ids=call_ids,
             model=model,
-            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            latency_ms=latency_ms,
             limit_reached=True,
+            metrics=GatewayCallMetrics(
+                call_id=loop_call_id,
+                model=model,
+                status=getattr(last_response, "status", None),
+                latency_ms=latency_ms,
+                input_tokens=total_input,
+                output_tokens=total_output,
+                cached_tokens=total_cached,
+                reasoning_tokens=total_reasoning,
+            ),
         )
 
 
@@ -831,7 +1003,7 @@ class FallbackOpenAIGateway:
         self._primary = primary or ResponsesGateway()
         self._fallback = fallback or ChatCompletionsGateway()
 
-    def _mark_fallback(self) -> None:
+    def _mark_fallback(self, reason: str, *, call_type: str | None = None) -> None:
         from .runtime_context import get_current_turn
 
         runtime = get_current_turn()
@@ -839,6 +1011,11 @@ class FallbackOpenAIGateway:
             runtime.openai_api_fallback = True
             runtime.openai_api_route = "chat_completions"
             runtime.register_fallback("openai_responses_fallback_chat")
+            runtime.register_fallback(reason)
+            # Failed Responses attempt already reserved budget — refund so Chat
+            # fallback counts as the same logical LLM operation (Etapa 6).
+            if call_type:
+                runtime.release_failed_openai_attempt(call_type)
 
     def _fallback_enabled(self) -> bool:
         return bool(getattr(get_settings(), "openai_responses_fallback_to_chat", True))
@@ -873,11 +1050,13 @@ class FallbackOpenAIGateway:
         except Exception as exc:
             if not self._fallback_enabled():
                 raise
+            reason = f"fallback_structured:{type(exc).__name__}"
             print("[openai.responses.fallback.structured]", {
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:200],
+                "reason": reason,
             })
-            self._mark_fallback()
+            self._mark_fallback(reason, call_type=call_type)
             result = await self._fallback.parse_structured(
                 model=model,
                 text_format=text_format,
@@ -920,11 +1099,13 @@ class FallbackOpenAIGateway:
         except Exception as exc:
             if not self._fallback_enabled():
                 raise
+            reason = f"fallback_text:{type(exc).__name__}"
             print("[openai.responses.fallback.text]", {
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:200],
+                "reason": reason,
             })
-            self._mark_fallback()
+            self._mark_fallback(reason, call_type=call_type)
             result = await self._fallback.generate_text(
                 model=model,
                 messages=messages,
@@ -1000,7 +1181,7 @@ class CanaryOpenAIGateway:
         settings = get_settings()
         return bool(getattr(settings, "openai_responses_fallback_to_chat", True))
 
-    def _mark_fallback(self) -> None:
+    def _mark_fallback(self, *, call_type: str | None = None) -> None:
         from .runtime_context import get_current_turn
 
         runtime = get_current_turn()
@@ -1008,6 +1189,8 @@ class CanaryOpenAIGateway:
             runtime.openai_api_fallback = True
             runtime.openai_api_route = "chat_completions"
             runtime.register_fallback("openai_responses_canary_fallback")
+            if call_type:
+                runtime.release_failed_openai_attempt(call_type)
 
     async def parse_structured(
         self,
@@ -1049,7 +1232,7 @@ class CanaryOpenAIGateway:
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:200],
             })
-            self._mark_fallback()
+            self._mark_fallback(call_type=call_type)
             result = await self._chat.parse_structured(
                 model=model,
                 text_format=text_format,
@@ -1102,7 +1285,7 @@ class CanaryOpenAIGateway:
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:200],
             })
-            self._mark_fallback()
+            self._mark_fallback(call_type=call_type)
             result = await self._chat.generate_text(
                 model=model,
                 messages=messages,
@@ -1329,9 +1512,11 @@ def build_openai_gateway(
     client: AsyncOpenAI | None = None,
 ) -> OpenAIGateway:
     settings = get_settings()
-    selected = (mode or getattr(settings, "openai_api_mode", "chat_completions") or "").strip()
+    from .rollout import resolve_openai_api_mode
+
+    selected = (mode or resolve_openai_api_mode(settings) or "").strip()
     chat_primary_allowed = bool(
-        getattr(settings, "openai_chat_completions_primary_allowed", True)
+        getattr(settings, "openai_chat_completions_primary_allowed", False)
     )
     responses_fallback = bool(
         getattr(settings, "openai_responses_fallback_to_chat", True)

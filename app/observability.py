@@ -20,9 +20,10 @@ def full_obs_enabled() -> bool:
     try:
         from .config import get_settings
 
-        return bool(getattr(get_settings(), "agent_full_obs_logs", True))
+        return bool(getattr(get_settings(), "agent_full_obs_logs", False))
     except Exception:
-        return True
+        # Fail closed: never dump full prompts/history on config errors.
+        return False
 
 
 def obs_limits() -> dict[str, int]:
@@ -187,7 +188,11 @@ def summarize_history_turns(
             {
                 "role": turn.get("role"),
                 "chars": len(content),
-                "preview": redact_text(content, max_chars=preview_chars),
+                "preview": (
+                    redact_text(content, max_chars=preview_chars)
+                    if full_obs_enabled()
+                    else None
+                ),
                 "inbound_id": turn.get("inbound_id"),
                 "created_at": turn.get("created_at"),
             }
@@ -428,6 +433,8 @@ def record_openai_observation(
     elapsed_ms: float | None = None,
     ok: bool = True,
     error_type: str | None = None,
+    cached_tokens: int = 0,
+    reasoning_tokens: int = 0,
 ) -> None:
     runtime = get_current_turn()
     limits = obs_limits()
@@ -438,14 +445,21 @@ def record_openai_observation(
         "error_type": error_type,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "cached_tokens": cached_tokens,
+        "reasoning_tokens": reasoning_tokens,
         "elapsed_ms": elapsed_ms,
-        "messages": summarize_openai_messages(messages),
+        "messages": (
+            summarize_openai_messages(messages) if full_obs_enabled() else []
+        ),
         "message_count": len(messages or []),
-        "response_preview": redact_text(
-            response_preview,
-            max_chars=limits["openai_preview_chars"],
-        )
-        or None,
+        "response_preview": (
+            redact_text(
+                response_preview,
+                max_chars=limits["openai_preview_chars"],
+            )
+            if full_obs_enabled()
+            else None
+        ),
         "response_chars": len(str(response_preview or "")),
     }
     if runtime is not None:
@@ -456,6 +470,8 @@ def record_openai_observation(
                 "ok": ok,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
+                "cached_tokens": cached_tokens,
+                "reasoning_tokens": reasoning_tokens,
                 "message_count": len(messages or []),
             }
         )
@@ -494,7 +510,9 @@ def record_brevo_send(
         "error": error,
         "reply_modality": reply_modality,
         "reply_chars": len(str(reply_preview or "")),
-        "reply_preview": redact_text(reply_preview),
+        "reply_preview": (
+            redact_text(reply_preview) if full_obs_enabled() else None
+        ),
         "visitor_id_present": visitor_id_present,
         "sender_phone_present": sender_phone_present,
     }

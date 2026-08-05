@@ -126,8 +126,11 @@ Use exclusivamente os fatos comerciais retornados pelo TrayAdapter no bloco FACT
 Não invente produto, preço, estoque, promoção, disponibilidade, Pix, parcelamento ou cupom.
 Se um fato não estiver em FACTS, diga que não foi informado.
 Responda em português do Brasil, de forma curta para WhatsApp.
-Apresente normalmente no máximo três opções relevantes. Não termine toda resposta
-automaticamente com outra pergunta; deixe o cliente reagir quando os produtos já foram apresentados.
+Estilo: responda primeiro ao pedido; sem aberturas genéricas (Claro/Com certeza);
+no máximo uma pergunta principal por mensagem comercial; preserve URLs completas;
+no máximo um CTA. Não termine toda resposta automaticamente com outra pergunta;
+deixe o cliente reagir quando os produtos já foram apresentados.
+Apresente normalmente no máximo três opções relevantes.
 Quando FACTS contiver uma lista de produtos, preserve a ordem recebida e numere as opções
 como 1, 2 e 3. Não altere essa ordem, pois ela será usada nas referências posteriores.
 Quando FACTS.match_status for ambiguous, apresente as correspondências plausíveis e peça
@@ -556,8 +559,13 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
     )
     interpretation._source = "deterministic_fallback"
     from .preference_normalize import normalize_sales_interpretation
+    from .turn_understanding import sales_to_turn_understanding
 
-    return normalize_sales_interpretation(interpretation, message_text=text)
+    normalized = normalize_sales_interpretation(interpretation, message_text=text)
+    normalized._turn_understanding = sales_to_turn_understanding(
+        normalized, message_text=text
+    )
+    return normalized
 
 
 def _log_interpretation(
@@ -567,6 +575,7 @@ def _log_interpretation(
     fallback_reason: str | None = None,
 ) -> None:
     preferences = interpretation.preferences
+    turn = getattr(interpretation, "_turn_understanding", None)
     payload = {
         "source": interpretation._source,
         "model": model,
@@ -586,6 +595,24 @@ def _log_interpretation(
     }
     if fallback_reason:
         payload["fallback_reason"] = fallback_reason
+    if turn is not None:
+        payload.update(
+            {
+                "primary_intent": getattr(turn, "primary_intent", None),
+                "answer_strategy": getattr(turn, "answer_strategy", None),
+                "clarification_required": getattr(turn, "clarification_required", None),
+                "hard_brand": bool(getattr(getattr(turn, "hard_constraints", None), "brand", None)),
+                "hard_budget_max": getattr(
+                    getattr(turn, "hard_constraints", None), "budget_max", None
+                ),
+                "ambiguity_count": len(getattr(turn, "ambiguity", None) or []),
+                "blocking_ambiguity": sum(
+                    1
+                    for item in (getattr(turn, "ambiguity", None) or [])
+                    if getattr(item, "blocking", False)
+                ),
+            }
+        )
     print("[sales.interpreter]", payload)
 
 
@@ -762,6 +789,26 @@ async def interpret_message(
         return fallback
 
     from .capability_catalog import format_capability_catalog_for_prompt
+    from .turn_understanding import (
+        TURN_UNDERSTANDING_INSTRUCTIONS,
+        TurnUnderstanding,
+        apply_clarification_policy,
+        sanitize_turn_understanding,
+        sales_to_turn_understanding,
+        turn_understanding_to_sales,
+    )
+
+    from .rollout import is_turn_understanding_enabled
+
+    use_turn_understanding = is_turn_understanding_enabled(settings)
+    if use_turn_understanding:
+        interpreter_model = (
+            (getattr(settings, "openai_fast_model", None) or "").strip()
+            or (getattr(settings, "openai_main_model", None) or "").strip()
+            or settings.openai_model
+        )
+    else:
+        interpreter_model = settings.openai_model
 
     normalized_history = _normalize_interpreter_history(recent_turns)
     state_obj = commerce_state or CommerceConversationState()
@@ -778,15 +825,21 @@ async def interpret_message(
             + format_capability_catalog_for_prompt()
         ),
     }
+    system_instructions = (
+        TURN_UNDERSTANDING_INSTRUCTIONS
+        if use_turn_understanding
+        else SALES_INTERPRETER_INSTRUCTIONS
+    )
     messages = [
-        {"role": "system", "content": SALES_INTERPRETER_INSTRUCTIONS},
+        {"role": "system", "content": system_instructions},
         state_message,
         *normalized_history,
         {"role": "user", "content": current_text},
     ]
     print("[sales.interpreter.request]", {
-        "model": settings.openai_model,
+        "model": interpreter_model,
         "structured_output": True,
+        "turn_understanding": use_turn_understanding,
         "history_turns": len(normalized_history),
         "message_count": len(messages),
         "has_temperature": True,
@@ -796,31 +849,66 @@ async def interpret_message(
     try:
         from .openai_errors import OpenAIGatewayError, OpenAIRefusalError
         from .openai_gateway import parse_structured_output
+        from .preference_normalize import normalize_sales_interpretation
 
+        text_format = TurnUnderstanding if use_turn_understanding else SalesInterpretation
         parse_result = await parse_structured_output(
-            model=settings.openai_model,
-            text_format=SalesInterpretation,
+            model=interpreter_model,
+            text_format=text_format,
             messages=messages,
             temperature=0,
             call_type="decision",
         )
-        interpretation = parse_result.parsed
-        if not isinstance(interpretation, SalesInterpretation):
-            raise ValueError("interpreter_schema_missing")
-        interpretation._source = "openai"
-        from .preference_normalize import normalize_sales_interpretation
+        parsed = parse_result.parsed
+        if use_turn_understanding:
+            if isinstance(parsed, TurnUnderstanding):
+                understanding = sanitize_turn_understanding(parsed)
+                has_recoverable_reference = bool(
+                    getattr(state_obj, "last_presented_products", None)
+                    or getattr(state_obj, "active_product", None)
+                )
+                understanding = apply_clarification_policy(
+                    understanding,
+                    message_text=current_text,
+                    has_recoverable_reference=has_recoverable_reference,
+                )
+                understanding._source = "openai"
+                interpretation = turn_understanding_to_sales(understanding)
+            elif isinstance(parsed, SalesInterpretation):
+                # Compatibility: legacy schema / test fakes during rollout.
+                interpretation = parsed
+                interpretation._source = "openai"
+                interpretation._turn_understanding = sales_to_turn_understanding(
+                    interpretation, message_text=current_text
+                )
+            else:
+                raise ValueError("interpreter_turn_understanding_missing")
+        else:
+            if not isinstance(parsed, SalesInterpretation):
+                raise ValueError("interpreter_schema_missing")
+            interpretation = parsed
+            interpretation._source = "openai"
+            # Shadow: keep a TurnUnderstanding view for metrics / later cutover.
+            interpretation._turn_understanding = sales_to_turn_understanding(
+                interpretation, message_text=current_text
+            )
 
         interpretation = normalize_sales_interpretation(
             interpretation,
             message_text=current_text,
         )
-        _log_interpretation(interpretation, settings.openai_model)
+        # Re-sync TurnUnderstanding after preference normalization when present.
+        if interpretation._turn_understanding is None:
+            interpretation._turn_understanding = sales_to_turn_understanding(
+                interpretation, message_text=current_text
+            )
+        _log_interpretation(interpretation, interpreter_model)
         return interpretation
     except BadRequestError as exc:
-        print("[sales.interpreter.error]", _bad_request_details(exc, settings.openai_model))
+        print("[sales.interpreter.error]", _bad_request_details(exc, interpreter_model))
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "openai_bad_request"
-        _log_interpretation(fallback, settings.openai_model, fallback_reason="openai_bad_request")
+        _log_interpretation(fallback, interpreter_model, fallback_reason="openai_bad_request")
         return fallback
     except OpenAIRefusalError as exc:
         print("[sales.interpreter] failed", {"error_type": type(exc).__name__})
@@ -828,7 +916,7 @@ async def interpret_message(
         fallback._fallback_reason = "openai_invalid_response"
         _log_interpretation(
             fallback,
-            settings.openai_model,
+            interpreter_model,
             fallback_reason="openai_invalid_response",
         )
         return fallback
@@ -844,7 +932,7 @@ async def interpret_message(
         fallback = _fallback_interpretation(message.text)
         fallback_reason = "openai_request_failed" if isinstance(exc, APIError) else "openai_invalid_response"
         fallback._fallback_reason = fallback_reason
-        _log_interpretation(fallback, settings.openai_model, fallback_reason=fallback_reason)
+        _log_interpretation(fallback, interpreter_model, fallback_reason=fallback_reason)
         return fallback
 
 
@@ -1246,6 +1334,7 @@ async def _sales_response_with_openai(
         memory_sidechannel = bool(
             getattr(settings, "agent_memory_proposals_enabled", False)
             or getattr(settings, "agent_instruction_extension_proposals_enabled", False)
+            or getattr(settings, "agent_conversation_summary_enabled", False)
         )
         if memory_sidechannel:
             from .memory_policy import MEMORY_POLICY_PROMPT
@@ -2090,6 +2179,17 @@ async def _execute_compiled_product_retrieval(
         )
 
     if retrieval_plan.mode == "recommendation":
+        from .catalog_index import hybrid_rank_products, index_products_best_effort
+
+        # Hybrid hard/soft ranking over the filtered pool (no free LLM catalog search).
+        hard_filtered = hybrid_rank_products(
+            hard_filtered,
+            interpretation,
+            mode="recommendation",
+            factual_source="tray_search",
+        )
+        if bool(getattr(get_settings(), "agent_catalog_index_write_enabled", True)):
+            index_products_best_effort(hard_filtered, factual_source="tray_search")
         enriched = await enrich_product_variants(
             hard_filtered,
             interpretation,

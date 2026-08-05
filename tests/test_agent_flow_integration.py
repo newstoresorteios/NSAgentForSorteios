@@ -11,6 +11,9 @@ def _settings(**overrides):
     values = {
         "openai_api_key": "test-key",
         "openai_model": "gpt-4.1-mini",
+        "openai_main_model": "gpt-4.1-mini",
+        "openai_fast_model": "gpt-4.1-nano",
+        "agent_turn_understanding_enabled": False,
         "audio_inbound_enabled": False,
         "audio_outbound_enabled": False,
         "tray_adapter_url": "https://tray-adapter.test",

@@ -12,10 +12,11 @@ from .runtime_context import get_current_turn
 T = TypeVar("T")
 
 
-def _usage_tokens(response: Any) -> tuple[int, int]:
+def _usage_tokens(response: Any) -> tuple[int, int, int, int]:
+    """Return input, output, cached, reasoning token counts."""
     usage = getattr(response, "usage", None)
     if usage is None:
-        return 0, 0
+        return 0, 0, 0, 0
     input_tokens = (
         getattr(usage, "prompt_tokens", None)
         or getattr(usage, "input_tokens", None)
@@ -26,7 +27,26 @@ def _usage_tokens(response: Any) -> tuple[int, int]:
         or getattr(usage, "output_tokens", None)
         or 0
     )
-    return int(input_tokens or 0), int(output_tokens or 0)
+    cached_tokens = 0
+    reasoning_tokens = 0
+    details_in = getattr(usage, "input_tokens_details", None)
+    if details_in is not None:
+        if isinstance(details_in, dict):
+            cached_tokens = int(details_in.get("cached_tokens") or 0)
+        else:
+            cached_tokens = int(getattr(details_in, "cached_tokens", 0) or 0)
+    details_out = getattr(usage, "output_tokens_details", None)
+    if details_out is not None:
+        if isinstance(details_out, dict):
+            reasoning_tokens = int(details_out.get("reasoning_tokens") or 0)
+        else:
+            reasoning_tokens = int(getattr(details_out, "reasoning_tokens", 0) or 0)
+    return (
+        int(input_tokens or 0),
+        int(output_tokens or 0),
+        cached_tokens,
+        reasoning_tokens,
+    )
 
 
 def _response_preview(response: Any) -> str | None:
@@ -78,11 +98,15 @@ def _finish_call(
     ok: bool = True,
     error_type: str | None = None,
 ) -> None:
-    input_tokens, output_tokens = _usage_tokens(response) if ok else (0, 0)
+    input_tokens, output_tokens, cached_tokens, reasoning_tokens = (
+        _usage_tokens(response) if ok else (0, 0, 0, 0)
+    )
     if context is not None and ok:
         context.register_openai_usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
+            reasoning_tokens=reasoning_tokens,
         )
         stage_name = f"openai_{context.openai_call_count}"
         context.stage_durations_ms[stage_name] = round(
@@ -99,6 +123,8 @@ def _finish_call(
         elapsed_ms=round((time.perf_counter() - started_at) * 1000, 2),
         ok=ok,
         error_type=error_type,
+        cached_tokens=cached_tokens,
+        reasoning_tokens=reasoning_tokens,
     )
 
 

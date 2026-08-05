@@ -49,6 +49,40 @@ def test_sensitive_card_rejected():
     assert "sensitive" in decision.rejection_codes
 
 
+def test_commercial_volatile_fact_rejected():
+    decision = evaluate_memory_proposal(
+        proposal=MemoryProposal(
+            action=MemoryAction.upsert,
+            scope=MemoryScope.contact,
+            kind=MemoryKind.stable_customer_fact,
+            key="last_price_seen",
+            value="Seastar em estoque por R$ 1990",
+            importance=0.9,
+            confidence=0.95,
+            reason_code="explicit_user_preference",
+        )
+    )
+    assert decision.accepted is False
+    assert "commercial_volatile" in decision.rejection_codes
+
+
+def test_price_preference_budget_still_accepted():
+    decision = evaluate_memory_proposal(
+        proposal=MemoryProposal(
+            action=MemoryAction.upsert,
+            scope=MemoryScope.contact,
+            kind=MemoryKind.price_preference,
+            key="preferred_price_max",
+            value="5000",
+            importance=0.9,
+            confidence=0.95,
+            reason_code="explicit_user_preference",
+        )
+    )
+    assert decision.accepted is True
+    assert decision.normalized_key == "preferred_price_max"
+
+
 def test_prompt_injection_rejected():
     decision = evaluate_memory_proposal(
         proposal=MemoryProposal(

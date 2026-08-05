@@ -38,6 +38,7 @@ EVAL_CASES = [
 ]
 
 
+@pytest.mark.offline_eval
 @pytest.mark.parametrize("case", EVAL_CASES, ids=[case["id"] for case in EVAL_CASES])
 def test_offline_routing_eval(case, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "")
@@ -57,6 +58,7 @@ def test_offline_routing_eval(case, monkeypatch):
     assert result.handoff_required is case["expect_handoff"]
 
 
+@pytest.mark.offline_eval
 def test_offline_factual_eval_blocks_unknown_money_in_enforce():
     incoming = IncomingMessage(channel="whatsapp", text="quanto custa?")
     result = AgentResult(
@@ -79,6 +81,7 @@ def test_offline_factual_eval_blocks_unknown_money_in_enforce():
     assert "não confirmei" in validated.reply_text.lower()
 
 
+@pytest.mark.offline_eval
 def test_offline_policy_eval_marks_openai_urls_for_review():
     result = AgentResult(
         reply_text="Veja https://example.com/x",
