@@ -370,9 +370,9 @@ async def test_color_mismatch_does_not_substitute_other_automatic_colors(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_gpt_normalizes_when_local_color_score_empty(monkeypatch):
-    """Local score misses 'Pink Dial' for color=rosa → GPT picks from full list."""
-    from app.product_retrieval import ProductMatchSelection, match_specific_products
+async def test_local_color_aliases_match_pink_dial_for_rosa(monkeypatch):
+    """'rosa' matches catalog 'Pink Dial' without needing GPT."""
+    from app.product_retrieval import match_specific_products
 
     interpretation = _interpretation(
         goal="find",
@@ -393,44 +393,15 @@ async def test_gpt_normalizes_when_local_color_score_empty(monkeypatch):
         },
     ]
 
-    class _Parsed:
-        def __init__(self):
-            self.choices = [
-                SimpleNamespace(
-                    message=SimpleNamespace(
-                        parsed=ProductMatchSelection(
-                            match_status="exact",
-                            candidate_ids=["pink-sku"],
-                            best_candidate_id="pink-sku",
-                            confidence=0.9,
-                        )
-                    )
-                )
-            ]
-
-    class _Client:
-        class chat:
-            class completions:
-                @staticmethod
-                async def parse(**_kwargs):
-                    return _Parsed()
-
     monkeypatch.setattr(
         "app.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="sk-test", openai_model="gpt-4.1-mini"),
     )
-    install_fake_openai_client(monkeypatch, _Client)
-
-    async def _run_op(**kwargs):
-        return await kwargs["operation"]()
-
-    monkeypatch.setattr("app.product_retrieval.execute_openai_call", _run_op)
 
     resolution = await match_specific_products(products, interpretation)
     assert resolution.status == "exact"
-    assert resolution.match_source == "openai"
+    assert resolution.match_source == "exact"
     assert resolution.products[0]["id"] == "pink-sku"
-
 
 @pytest.mark.asyncio
 async def test_color_mismatch_soft_confirm_does_not_list_wrong_colors():

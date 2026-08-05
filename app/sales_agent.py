@@ -92,6 +92,7 @@ from .product_retrieval import (
     identity_core_tokens,
     infer_family_codes_from_candidates,
     match_specific_products,
+    preference_color_search_labels,
     preference_color_tokens,
     prefilter_specific_candidates,
     product_matches_color_tokens,
@@ -103,6 +104,7 @@ from .product_retrieval import (
     soft_confirm_candidates,
     specific_product_search_terms,
 )
+from .catalog_cache import ensure_brand_pool_in_candidates
 from .tray_tools import execute_tool
 
 
@@ -1793,6 +1795,10 @@ async def _execute_compiled_product_retrieval(
         and preference_color_tokens(interpretation)
     ):
         color_hue = " ".join(preference_color_tokens(interpretation)).title()
+        color_labels = [
+            label.title() if label.isalpha() else label
+            for label in preference_color_search_labels(interpretation)
+        ] or ([color_hue] if color_hue else [])
         core = " ".join(
             identity_core_tokens(
                 interpretation.subject.model,
@@ -1867,58 +1873,64 @@ async def _execute_compiled_product_retrieval(
                 _absorb_products(raw_products, prefer_color=True)
             _refresh_hard_filtered()
 
-        # Tier 2.6 — page brand+color (Rosa) until the hue lands in the pool.
-        # Tray often keeps color variants outside the first brand pages.
-        if brand and color_hue and not hard_filtered:
+        # Tier 2.6 — page brand+color aliases (azul/blue) until hue lands in pool.
+        if brand and color_labels and not hard_filtered:
             color_pages_hits = 0
-            for page in range(1, 6):
-                print("[sales.retrieval.color_harvest]", {
-                    "color": color_hue,
-                    "page": page,
-                })
-                result = await execute_tool(
-                    "search_products",
-                    {
-                        "name": color_hue,
-                        "brand": brand,
-                        "limit": 20,
+            for label in color_labels[:4]:
+                for page in range(1, 4):
+                    print("[sales.retrieval.color_harvest]", {
+                        "color": label,
                         "page": page,
-                    },
-                )
-                if "error" in result:
-                    product_lookup_failed = True
-                    break
-                raw_products = (
-                    result.get("products")
-                    if isinstance(result.get("products"), list)
-                    else []
-                )
-                before = len(candidates)
-                _absorb_products(raw_products, prefer_color=True)
-                color_pages_hits += max(0, len(candidates) - before)
-                _refresh_hard_filtered()
-                if hard_filtered or not raw_products:
-                    break
-                paging = (
-                    result.get("paging")
-                    if isinstance(result.get("paging"), dict)
-                    else {}
-                )
-                try:
-                    total = (
-                        int(paging["total"])
-                        if paging.get("total") is not None
-                        else None
+                    })
+                    result = await execute_tool(
+                        "search_products",
+                        {
+                            "name": label,
+                            "brand": brand,
+                            "limit": 20,
+                            "page": page,
+                        },
                     )
-                except (TypeError, ValueError):
-                    total = None
-                if total is not None and page * 20 >= total:
+                    if "error" in result:
+                        product_lookup_failed = True
+                        break
+                    raw_products = (
+                        result.get("products")
+                        if isinstance(result.get("products"), list)
+                        else []
+                    )
+                    before = len(candidates)
+                    _absorb_products(raw_products, prefer_color=True)
+                    color_pages_hits += max(0, len(candidates) - before)
+                    _refresh_hard_filtered()
+                    if hard_filtered or not raw_products:
+                        break
+                if hard_filtered:
                     break
             print("[sales.retrieval.color_harvest.done]", {
-                "color": color_hue,
+                "colors": color_labels[:4],
                 "absorbed_colorish": color_pages_hits,
                 "hard_filtered": len(hard_filtered),
             })
+
+    # Merge durable brand catalog cache before preference ranking.
+    if (
+        retrieval_plan.mode == "recommendation"
+        and interpretation.subject.brand
+    ):
+        candidates = await ensure_brand_pool_in_candidates(
+            brand=interpretation.subject.brand,
+            candidates=candidates,
+            seen_ids=seen_ids,
+            execute_tool=execute_tool,
+            limit=max(retrieval_plan.candidate_limit, 120),
+        )
+        _refresh_hard_filtered()
+        print("[sales.retrieval.catalog_cache]", {
+            "brand": interpretation.subject.brand,
+            "candidate_count": len(candidates),
+            "hard_filtered_count": len(hard_filtered),
+        })
 
     # Recommendation mode with only probe requests (no discovery strategies).
     if retrieval_plan.mode == "recommendation" and not discovery_requests:

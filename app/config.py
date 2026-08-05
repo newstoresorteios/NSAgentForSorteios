@@ -325,6 +325,13 @@ class Settings(BaseSettings):
         ge=0,
         le=600,
     )
+    # Brand/category catalog pools used for preference filtering (azul/blue…).
+    agent_catalog_cache_ttl_seconds: int = Field(
+        default=3600,
+        alias="AGENT_CATALOG_CACHE_TTL_SECONDS",
+        ge=60,
+        le=86400,
+    )
     agent_image_cache_ttl_seconds: float = Field(
         default=300.0,
         alias="AGENT_IMAGE_CACHE_TTL_SECONDS",

@@ -231,7 +231,30 @@ _DIAL_COLOR_TOKENS = frozenset(
         "black",
         "white",
         "green",
+        "navy",
+        "marinho",
+        "red",
+        "gold",
+        "silver",
+        "gray",
+        "grey",
+        "yellow",
+        "orange",
     }
+)
+# PT ↔ EN (and close variants) so "azul" matches catalog "blue".
+_COLOR_ALIAS_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"azul", "blue", "navy", "marinho"}),
+    frozenset({"preto", "black"}),
+    frozenset({"branco", "white"}),
+    frozenset({"verde", "green"}),
+    frozenset({"vermelho", "red"}),
+    frozenset({"rosa", "pink", "rose"}),
+    frozenset({"amarelo", "yellow"}),
+    frozenset({"laranja", "orange"}),
+    frozenset({"cinza", "gray", "grey"}),
+    frozenset({"dourado", "gold", "golden"}),
+    frozenset({"prata", "silver"}),
 )
 _ACCESSORY_NAME_TOKENS = frozenset(
     {
@@ -476,6 +499,17 @@ def normalize_pt_catalog_query(text: str | None) -> str:
     return updated
 
 
+def expand_color_aliases(token: str | None) -> frozenset[str]:
+    """Expand a color word to PT/EN synonyms used in Tray titles."""
+    folded = _fold(token)
+    if not folded:
+        return frozenset()
+    for group in _COLOR_ALIAS_GROUPS:
+        if folded in group:
+            return group
+    return frozenset({folded})
+
+
 def preference_color_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
     """Dial-color tokens only — never strap/case materials from Vision dumps."""
     color = _fold(interpretation.preferences.color)
@@ -502,6 +536,17 @@ def preference_color_tokens(interpretation: SalesInterpretation) -> tuple[str, .
         return (dial[0],)
     return ()
 
+
+def preference_color_search_labels(interpretation: SalesInterpretation) -> tuple[str, ...]:
+    """All alias spellings to probe Tray name filters (azul → azul, blue, …)."""
+    tokens = preference_color_tokens(interpretation)
+    if not tokens:
+        return ()
+    labels: list[str] = []
+    for token in tokens:
+        for alias in sorted(expand_color_aliases(token)):
+            labels.append(alias)
+    return tuple(dict.fromkeys(labels))
 
 def catalog_match_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
     """Significant AND-search tokens for Tray token/ILIKE lookup."""
@@ -622,7 +667,11 @@ def product_matches_color_tokens(
     if not color_tokens:
         return True
     text = _product_text(product)
-    return all(token in text for token in color_tokens)
+    for token in color_tokens:
+        aliases = expand_color_aliases(token)
+        if not any(alias in text for alias in aliases):
+            return False
+    return True
 
 
 def model_excludes_gmt(model: str | None) -> bool:
@@ -1009,6 +1058,27 @@ class ProductRetrievalCompiler:
                     available_in_store=available_in_store,
                 ))
 
+            # Color probes (PT/EN aliases) so Tray returns blue when user said azul.
+            color_labels = preference_color_search_labels(interpretation)
+            if subject.brand and color_labels:
+                for label in color_labels[:4]:
+                    requests.append(ProductRetrievalRequest(
+                        strategy="color_brand_probe",
+                        name=label,
+                        brand=subject.brand,
+                        available=available,
+                        available_in_store=available_in_store,
+                    ))
+            elif color_labels and subject.product_type:
+                for label in color_labels[:3]:
+                    requests.append(ProductRetrievalRequest(
+                        strategy="color_name_probe",
+                        name=f"{subject.product_type} {label}".strip(),
+                        brand=subject.brand,
+                        available=available,
+                        available_in_store=available_in_store,
+                    ))
+
         discovery_pages = CATALOG_DISCOVERY_MAX_PAGES
         if preference_color_tokens(interpretation):
             # A few extra brand pages help surface color variants without
@@ -1227,7 +1297,14 @@ def hard_filter_products(
         ):
             continue
         color_tokens = preference_color_tokens(interpretation)
-        if color_tokens and not product_matches_color_tokens(product, color_tokens):
+        # Exact identity searches still require color evidence (with aliases).
+        # Recommendation keeps brand/category pool intact so the LLM/reranker
+        # can match "azul" ↔ "blue" and other soft preferences.
+        if (
+            mode == "exact"
+            and color_tokens
+            and not product_matches_color_tokens(product, color_tokens)
+        ):
             continue
         if mode == "exact" and expected_model:
             model_tokens = list(required_model_tokens(subject.model))
@@ -1871,6 +1948,7 @@ def _deterministic_semantic_order(
     interpretation: SalesInterpretation,
 ) -> list[dict[str, Any]]:
     gender_tokens = preference_gender_tokens(interpretation)
+    color_tokens = preference_color_tokens(interpretation)
     terms = [
         _fold(value)
         for value in (
@@ -1890,6 +1968,8 @@ def _deterministic_semantic_order(
         # Strong boost when catalog text evidences requested gender.
         if gender_tokens and product_matches_gender_tokens(product, gender_tokens):
             base += 3
+        if color_tokens and product_matches_color_tokens(product, color_tokens):
+            base += 4
         scored.append((base, index, product))
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [product for _, _, product in scored[:RERANK_SELECTION_LIMIT]]
@@ -1926,15 +2006,21 @@ async def rerank_products(
                 {
                     "role": "system",
                     "content": (
-                        "Classifique produtos reais da NewStore conforme as preferências estruturadas. "
+                        "Classifique produtos reais da NewStore conforme as preferências. "
                         "Retorne no máximo cinco IDs presentes em CANDIDATES, em ordem de relevância. "
-                        "Não invente IDs, produtos nem atributos e use somente evidências dos candidatos."
+                        "Trate sinônimos de cor (azul=blue, preto=black, branco=white, rosa=pink, "
+                        "verde=green, vermelho=red) e gênero (feminino/lady/dama). "
+                        "Não invente IDs. Use só evidências dos candidatos (nome, marca, cor, descrição)."
                     ),
                 },
                 {
                     "role": "user",
                     "content": json.dumps({
                         "PREFERENCES": semantic_preferences(interpretation),
+                        "COLOR_ALIASES": {
+                            token: sorted(expand_color_aliases(token))
+                            for token in preference_color_tokens(interpretation)
+                        },
                         "CANDIDATES": compact_candidates(available_products),
                     }, ensure_ascii=False),
                 },
