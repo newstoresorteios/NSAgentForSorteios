@@ -689,6 +689,22 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             reason="duplicate_message",
         )
 
+    # Central ChatBô: se um humano assumiu, grava inbound mas não responde.
+    try:
+        from app.human_takeover import human_takeover_active
+
+        if human_takeover_active(incoming):
+            return _skip_webhook_event(
+                event_name=event_name,
+                reason="human_takeover",
+            )
+    except Exception as exc:  # noqa: BLE001
+        log_exception(
+            "brevo.webhook.human_takeover_check_failed",
+            exc,
+            {"inbound_id": inbound_id},
+        )
+
     if runtime is not None:
         runtime.inbound_id = inbound_id
     if isinstance(incoming.raw, dict):
