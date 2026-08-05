@@ -23,7 +23,7 @@
     },
     {
       "path": "/api/cron/attendance-learning",
-      "schedule": "0 * * * *"
+      "schedule": "0 5 * * *"
     }
   ]
 }
