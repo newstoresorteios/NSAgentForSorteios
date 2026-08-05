@@ -486,6 +486,19 @@ def ensure_tables() -> None:
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_learning_insight_pending_key
                 ON public.ai_learning_insights (tenant_id, insight_key)
                 WHERE status = 'pending_review';
+
+                CREATE TABLE IF NOT EXISTS public.ai_human_takeover_state (
+                    state_key text PRIMARY KEY,
+                    conversation_key text,
+                    sender_key text,
+                    last_human_activity_at timestamptz NOT NULL DEFAULT now(),
+                    takeover_detected_at timestamptz NOT NULL DEFAULT now(),
+                    updated_at timestamptz NOT NULL DEFAULT now(),
+                    metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ai_human_takeover_activity
+                ON public.ai_human_takeover_state (last_human_activity_at DESC);
                 """
             )
 

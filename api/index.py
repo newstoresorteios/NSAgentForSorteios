@@ -531,6 +531,17 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
 
     skip_reason = inbound_skip_reason(payload)
     if skip_reason:
+        if skip_reason in {"agent_message", "outbound_message"}:
+            try:
+                from app.human_takeover import touch_human_activity
+
+                touch_human_activity(incoming)
+            except Exception as exc:  # noqa: BLE001
+                log_exception(
+                    "brevo.webhook.human_takeover_touch_failed",
+                    exc,
+                    {"skip_reason": skip_reason},
+                )
         return _skip_webhook_event(
             event_name=event_name,
             reason=skip_reason,

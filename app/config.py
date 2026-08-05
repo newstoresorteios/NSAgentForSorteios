@@ -226,6 +226,14 @@ class Settings(BaseSettings):
         gt=0,
         le=60,
     )
+    # After human assumes a ChatBô thread, resume the bot if the attendant
+    # stays idle for this many minutes (next customer message).
+    human_takeover_idle_minutes: int = Field(
+        default=15,
+        alias="HUMAN_TAKEOVER_IDLE_MINUTES",
+        ge=1,
+        le=1440,
+    )
     agent_quality_judge_mode: Literal["off", "shadow", "enforce"] = Field(
         default="shadow",
         alias="AGENT_QUALITY_JUDGE_MODE",
