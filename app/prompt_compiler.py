@@ -150,9 +150,20 @@ def compile_agent_prompt(
         or getattr(settings, "agent_contact_memory_in_prompt_enabled", False)
         or getattr(settings, "agent_memory_auto_apply_enabled", False)
     )
-    load_conversation_summary = bool(
-        getattr(settings, "agent_conversation_summary_in_prompt_enabled", False)
-    )
+    load_conversation_summary = False
+    summary_mode = str(
+        getattr(settings, "agent_conversation_summary_mode", "off") or "off"
+    ).strip().casefold()
+    if summary_mode == "enforce":
+        load_conversation_summary = True
+    elif summary_mode == "shadow":
+        # Generate/persist elsewhere; never inject into reply prompt.
+        load_conversation_summary = False
+    else:
+        # Legacy off path: only when explicit inject flag is on.
+        load_conversation_summary = bool(
+            getattr(settings, "agent_conversation_summary_in_prompt_enabled", False)
+        )
     resolved_conversation_key = conversation_key
     if not resolved_conversation_key and incoming is not None:
         resolved_conversation_key = (
@@ -424,7 +435,16 @@ def _append_contact_memory_block(
                 "error": str(exc)[:160],
             })
 
-    if bool(getattr(settings, "agent_conversation_summary_in_prompt_enabled", False)):
+    summary_mode = str(
+        getattr(settings, "agent_conversation_summary_mode", "off") or "off"
+    ).strip().casefold()
+    # Inject only in enforce. Shadow may generate elsewhere but never enters the prompt.
+    # Legacy: mode=off + AGENT_CONVERSATION_SUMMARY_IN_PROMPT_ENABLED=true still injects.
+    inject_summary = summary_mode == "enforce" or (
+        summary_mode == "off"
+        and bool(getattr(settings, "agent_conversation_summary_in_prompt_enabled", False))
+    )
+    if inject_summary:
         conversation_key = None
         if incoming is not None:
             conversation_key = (

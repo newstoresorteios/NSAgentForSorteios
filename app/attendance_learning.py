@@ -308,24 +308,19 @@ def promote_insights_to_extensions(
         })
         return None
     extension_id = created.get("id") if isinstance(created, dict) else None
+    # Etapa 13 / v6: cron never auto-approves. Admin API only.
     activated = False
     if extension_id and bool(
         getattr(settings, "agent_learning_auto_activate", False)
     ):
-        try:
-            from .instruction_extension_repository import approve_extension
-
-            approve_extension(
-                int(extension_id),
-                tenant_id=tenant_id,
-                approved_by="attendance_learning_cron",
-            )
-            activated = True
-        except Exception as exc:
-            print("[attendance.learning.activate_error]", {
-                "error_type": type(exc).__name__,
-                "error": str(exc)[:160],
-            })
+        print(
+            "[attendance.learning.activate_skipped]",
+            {
+                "reason": "cron_cannot_approve",
+                "extension_id": extension_id,
+                "hint": "use admin approve endpoint",
+            },
+        )
     if extension_id:
         with get_conn() as conn:
             with conn.cursor() as cur:

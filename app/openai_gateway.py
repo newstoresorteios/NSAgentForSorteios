@@ -152,11 +152,55 @@ class OpenAIGateway(Protocol):
 
 
 def model_capabilities(model: str | None = None) -> ModelCapabilities:
-    """Capability map used to attach Responses-only controls safely."""
+    """Capability map used to attach Responses-only controls safely.
+
+    Prefer explicit overrides from settings when present; otherwise use a
+    conservative capability table (not only fragile prefixes).
+    """
+    settings = get_settings()
     name = (model or "").strip().casefold()
-    reasoning = name.startswith(("o1", "o3", "o4", "gpt-5"))
-    # text.verbosity is supported on modern Responses models (gpt-4.1 / gpt-5 / o*).
-    verbosity = reasoning or name.startswith(("gpt-4.1", "gpt-5", "gpt-4o"))
+    overrides_raw = getattr(settings, "openai_model_capability_overrides", None)
+    overrides: dict[str, Any] = {}
+    if isinstance(overrides_raw, dict):
+        overrides = {
+            str(k).casefold(): v
+            for k, v in overrides_raw.items()
+            if isinstance(v, dict)
+        }
+    elif isinstance(overrides_raw, str) and overrides_raw.strip():
+        try:
+            import json
+
+            parsed = json.loads(overrides_raw)
+            if isinstance(parsed, dict):
+                overrides = {
+                    str(k).casefold(): v
+                    for k, v in parsed.items()
+                    if isinstance(v, dict)
+                }
+        except Exception:
+            overrides = {}
+
+    if name in overrides:
+        row = overrides[name]
+        return ModelCapabilities(
+            supports_responses=bool(row.get("supports_responses", True)),
+            supports_structured_outputs=bool(
+                row.get("supports_structured_outputs", True)
+            ),
+            supports_reasoning_effort=bool(row.get("supports_reasoning_effort", False)),
+            supports_text_verbosity=bool(row.get("supports_text_verbosity", False)),
+            supports_parallel_tool_calls=bool(
+                row.get("supports_parallel_tool_calls", True)
+            ),
+        )
+
+    # Known families (conservative).
+    # Reasoning effort: o* and gpt-5 only (not gpt-4.1 / gpt-4o).
+    reasoning_families = ("o1", "o3", "o4", "gpt-5")
+    verbosity_families = reasoning_families + ("gpt-4.1", "gpt-4o", "chatgpt-4o")
+    reasoning = any(name.startswith(prefix) for prefix in reasoning_families)
+    verbosity = any(name.startswith(prefix) for prefix in verbosity_families)
     return ModelCapabilities(
         supports_responses=True,
         supports_structured_outputs=True,
@@ -164,6 +208,79 @@ def model_capabilities(model: str | None = None) -> ModelCapabilities:
         supports_text_verbosity=verbosity,
         supports_parallel_tool_calls=True,
     )
+
+
+def apply_responses_controls_report(
+    kwargs: dict[str, Any],
+    *,
+    model: str,
+) -> dict[str, Any]:
+    """Apply Responses controls and return applied/skipped metrics (no prompts)."""
+    settings = get_settings()
+    caps = model_capabilities(model)
+    report: dict[str, Any] = {
+        "model": model,
+        "configured_reasoning_effort": None,
+        "reasoning_effort_applied": False,
+        "reasoning_effort_skip_reason": None,
+        "configured_text_verbosity": None,
+        "text_verbosity_applied": False,
+        "text_verbosity_skip_reason": None,
+        "max_output_tokens_applied": False,
+    }
+    effort = str(getattr(settings, "openai_reasoning_effort", "") or "").strip()
+    report["configured_reasoning_effort"] = effort or None
+    if effort:
+        if caps.supports_reasoning_effort:
+            kwargs["reasoning"] = {"effort": effort}
+            report["reasoning_effort_applied"] = True
+        else:
+            report["reasoning_effort_skip_reason"] = "model_capability_not_declared"
+            print(
+                "[openai.responses.control.skipped]",
+                {
+                    "param": "reasoning.effort",
+                    "reason": "model_capability_not_declared",
+                    "model": model,
+                },
+            )
+    verbosity = str(getattr(settings, "openai_text_verbosity", "") or "").strip()
+    report["configured_text_verbosity"] = verbosity or None
+    if verbosity:
+        if caps.supports_text_verbosity:
+            text_cfg = dict(kwargs.get("text") or {})
+            text_cfg["verbosity"] = verbosity
+            kwargs["text"] = text_cfg
+            report["text_verbosity_applied"] = True
+        else:
+            report["text_verbosity_skip_reason"] = "model_capability_not_declared"
+            print(
+                "[openai.responses.control.skipped]",
+                {
+                    "param": "text.verbosity",
+                    "reason": "model_capability_not_declared",
+                    "model": model,
+                },
+            )
+    max_tokens = getattr(settings, "openai_max_output_tokens", None)
+    if max_tokens is not None:
+        try:
+            value = int(max_tokens)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            kwargs["max_output_tokens"] = value
+            report["max_output_tokens_applied"] = True
+    kwargs.pop("previous_response_id", None)
+    return report
+
+
+def _apply_responses_controls(kwargs: dict[str, Any], *, model: str) -> None:
+    """Attach reasoning / verbosity / max_output_tokens when configured + supported.
+
+    Never attaches ``previous_response_id`` — conversation state lives in app DB.
+    """
+    apply_responses_controls_report(kwargs, model=model)
 
 
 def extract_usage_metrics(
@@ -232,33 +349,6 @@ def _resolve_timeout(timeout_seconds: float | None) -> float | None:
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
-
-
-def _apply_responses_controls(kwargs: dict[str, Any], *, model: str) -> None:
-    """Attach reasoning / verbosity / max_output_tokens when configured + supported.
-
-    Never attaches ``previous_response_id`` — conversation state lives in app DB.
-    """
-    settings = get_settings()
-    caps = model_capabilities(model)
-    effort = str(getattr(settings, "openai_reasoning_effort", "") or "").strip()
-    if effort and caps.supports_reasoning_effort:
-        kwargs["reasoning"] = {"effort": effort}
-    verbosity = str(getattr(settings, "openai_text_verbosity", "") or "").strip()
-    if verbosity and caps.supports_text_verbosity:
-        text_cfg = dict(kwargs.get("text") or {})
-        text_cfg["verbosity"] = verbosity
-        kwargs["text"] = text_cfg
-    max_tokens = getattr(settings, "openai_max_output_tokens", None)
-    if max_tokens is not None:
-        try:
-            value = int(max_tokens)
-        except (TypeError, ValueError):
-            value = 0
-        if value > 0:
-            kwargs["max_output_tokens"] = value
-    # Explicitly refuse OpenAI-side conversation chaining for commerce state.
-    kwargs.pop("previous_response_id", None)
 
 
 def messages_to_responses_parts(

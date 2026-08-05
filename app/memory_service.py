@@ -74,7 +74,12 @@ def process_agent_memory_proposals(
     extensions_on = bool(
         getattr(settings, "agent_instruction_extension_proposals_enabled", False)
     )
-    summary_on = bool(getattr(settings, "agent_conversation_summary_enabled", False))
+    summary_mode = str(
+        getattr(settings, "agent_conversation_summary_mode", "off") or "off"
+    ).strip().casefold()
+    summary_on = summary_mode in {"shadow", "enforce"} or bool(
+        getattr(settings, "agent_conversation_summary_enabled", False)
+    )
     if not proposals_on and not extensions_on and not summary_on:
         return result
 
@@ -404,22 +409,41 @@ def process_agent_memory_proposals(
                 if proposal_id is not None:
                     result.proposal_ids.append(proposal_id)
                     result.proposals_persisted += 1
-                    apply_summary_delta(
-                        tenant_id=tenant_id,
-                        conversation_key=conversation_key,
-                        delta=cleaned_delta,
-                        inbound_id=inbound_id,
-                        response_id=response_id,
-                        max_chars=int(
-                            getattr(
-                                settings,
-                                "agent_max_conversation_summary_chars",
-                                2500,
-                            )
-                        ),
-                    )
-                    mark_proposal_applied(proposal_id)
-                    result.proposals_applied += 1
+                    if summary_mode == "shadow":
+                        from .conversation_summary_policy import (
+                            compare_summary_delta_to_facts,
+                        )
+
+                        divergences = compare_summary_delta_to_facts(
+                            cleaned_delta,
+                            commercial_data=None,
+                        )
+                        print(
+                            "[memory.service.summary_shadow]",
+                            {
+                                "divergences": divergences[:8],
+                                "applied": False,
+                                "injected": False,
+                            },
+                        )
+                        # Shadow: do not mutate conversation summary / memory / persona.
+                    else:
+                        apply_summary_delta(
+                            tenant_id=tenant_id,
+                            conversation_key=conversation_key,
+                            delta=cleaned_delta,
+                            inbound_id=inbound_id,
+                            response_id=response_id,
+                            max_chars=int(
+                                getattr(
+                                    settings,
+                                    "agent_max_conversation_summary_chars",
+                                    2500,
+                                )
+                            ),
+                        )
+                        mark_proposal_applied(proposal_id)
+                        result.proposals_applied += 1
                     if summary_codes:
                         print("[memory.service.summary_scrubbed]", {
                             "codes": summary_codes[:6],

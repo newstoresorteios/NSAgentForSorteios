@@ -40,6 +40,55 @@ def compose_outbound_reply(
 ) -> AgentResult:
     profile = get_channel_profile(incoming.channel)
     limit = max_reply_chars or profile.max_reply_chars
+    # Ensure commercial products in metadata are authority-filtered before present.
+    products = (result.commercial_data or {}).get("products")
+    if isinstance(products, list) and products:
+        from .catalog_index import build_allowed_id_sets, filter_products_to_allowed
+        from .fact_authority import authorize_products_for_responder
+
+        tenant_id = str(
+            (result.response_metadata or {}).get("tenant_id") or "newstore"
+        )
+        # Closed ID set from evidence already attached to the turn (if any).
+        meta = dict(result.response_metadata or {})
+        allowed_meta = meta.get("allowed_id_sets")
+        if isinstance(allowed_meta, dict) and allowed_meta.get("allowed_product_ids"):
+            allowed = {
+                "allowed_product_ids": set(str(x) for x in allowed_meta["allowed_product_ids"]),
+                "allowed_variant_ids": set(
+                    str(x) for x in (allowed_meta.get("allowed_variant_ids") or [])
+                ),
+                "allowed_catalog_item_keys": set(
+                    str(x)
+                    for x in (allowed_meta.get("allowed_catalog_item_keys") or [])
+                ),
+            }
+            products, invented = filter_products_to_allowed(
+                [p for p in products if isinstance(p, dict)],
+                allowed,
+            )
+            if invented:
+                print(
+                    "[composer.invented_product_rejected]",
+                    {"count": invented, "tenant_id": tenant_id},
+                )
+        else:
+            products = [p for p in products if isinstance(p, dict)]
+            allowed = build_allowed_id_sets(products)
+            meta["allowed_id_sets"] = {
+                k: sorted(v) for k, v in allowed.items()
+            }
+        authorized, grounded = authorize_products_for_responder(
+            products,
+            tenant_id=tenant_id,
+        )
+        result.commercial_data = dict(result.commercial_data or {})
+        result.commercial_data["products"] = authorized
+        result.response_metadata = meta
+        result.response_metadata.setdefault(
+            "grounded_commerce_evidence",
+            [row.model_dump(mode="json") for row in grounded[:40]],
+        )
     result = present_agent_result(incoming, result)
     result.reply_text = truncate_reply(
         normalize_reply_text(result.reply_text),

@@ -811,6 +811,38 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             used_openai_responder=False,
             used_tray=bool(result.response_metadata.get("used_tray")),
         )
+    # Instagram Story reply → associated product (feature-flagged / rollout).
+    try:
+        from .instagram_story_intent import should_route_story_question
+        from .instagram_story_service import (
+            resolve_story_product_question,
+            story_result_to_agent_result,
+        )
+
+        if should_route_story_question(message):
+            story_resolution = await resolve_story_product_question(
+                incoming=message,
+                execute_tool=execute_tool,
+            )
+            if story_resolution is not None:
+                story_agent = story_result_to_agent_result(
+                    story_resolution,
+                    incoming=message,
+                )
+                if story_agent is not None:
+                    return _annotate_agent_result(
+                        story_agent,
+                        domain="commerce",
+                        goal="inspect",
+                        response_source="instagram_story",
+                        used_openai_interpreter=False,
+                        used_openai_responder=False,
+                        used_tray=bool(story_resolution.product_payload),
+                        fallback_reason=story_resolution.failure_reason,
+                    )
+    except Exception as exc:  # noqa: BLE001
+        print("[instagram.story.route.error]", {"error_type": type(exc).__name__})
+
     if image_search_eligible(message):
         image_result = await handle_image_product_search(message)
         if image_result is not None:

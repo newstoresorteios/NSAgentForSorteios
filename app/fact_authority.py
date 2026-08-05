@@ -274,3 +274,154 @@ def filter_commerce_safe_evidence(
             continue
         safe.append(fact)
     return safe
+
+
+class GroundedCommerceEvidence(BaseModel):
+    """Authorized commercial field ready for the responder prompt."""
+
+    tenant_id: str
+    product_id: str
+    variant_id: str | None = None
+    field: str
+    value: Any = None
+    source: str
+    freshness_at: datetime | None = None
+    revalidation_status: RevalidationStatus = RevalidationStatus.PENDING
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    catalog_item_key: str | None = None
+
+    @property
+    def is_displayable(self) -> bool:
+        if self.source in {s.value for s in COMMERCE_FORBIDDEN_SOURCES}:
+            return False
+        if self.revalidation_status == RevalidationStatus.FAILED:
+            return False
+        return True
+
+
+_COMMERCE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("price", "price"),
+    ("promotional_price", "promotional_price"),
+    ("stock", "stock"),
+    ("available", "availability"),
+    ("url", "url"),
+    ("name", "product"),
+    ("title", "product"),
+)
+
+
+def catalog_item_key_for(product_id: str, variant_id: str | None = None) -> str:
+    vid = str(variant_id or "").strip()
+    if vid:
+        return f"variant:{vid}"
+    return f"product:{str(product_id).strip()}"
+
+
+def grounded_evidence_from_product(
+    product: dict[str, Any],
+    *,
+    tenant_id: str = "newstore",
+    expected_tenant_id: str | None = None,
+) -> list[GroundedCommerceEvidence]:
+    """Build grounded evidence rows; omit unauthorized / cross-tenant fields."""
+    pid = str(product.get("id") or product.get("product_id") or "").strip()
+    if not pid:
+        return []
+    product_tenant = str(product.get("tenant_id") or tenant_id or "newstore").strip()
+    if expected_tenant_id and product_tenant != str(expected_tenant_id).strip():
+        return []
+    vid = (
+        str(product.get("variant_id")).strip()
+        if product.get("variant_id") is not None
+        else None
+    )
+    rows: list[GroundedCommerceEvidence] = []
+    for field, kind in _COMMERCE_FIELDS:
+        if field not in product or product.get(field) in (None, ""):
+            continue
+        claim = claim_from_product_field(
+            product,
+            kind=kind,  # type: ignore[arg-type]
+            key=field,
+            value=product.get(field),
+            tenant_id=product_tenant,
+        )
+        if not claim.is_commerce_safe():
+            continue
+        if not CommerceDataAuthority.may_supply(
+            "price" if kind in {"price", "promotional_price"} else kind,
+            claim.source,
+        ):
+            continue
+        # Stale index/cache may guide discovery but must not assert live price/stock.
+        if claim.revalidation_status == RevalidationStatus.STALE and kind in {
+            "price",
+            "promotional_price",
+            "stock",
+            "availability",
+        }:
+            continue
+        rows.append(
+            GroundedCommerceEvidence(
+                tenant_id=product_tenant,
+                product_id=pid,
+                variant_id=vid,
+                field=field,
+                value=claim.value,
+                source=claim.source.value,
+                freshness_at=claim.freshness_at,
+                revalidation_status=claim.revalidation_status,
+                confidence=claim.confidence,
+                catalog_item_key=catalog_item_key_for(pid, vid),
+            )
+        )
+    return rows
+
+
+def authorize_products_for_responder(
+    products: list[dict[str, Any]],
+    *,
+    tenant_id: str = "newstore",
+) -> tuple[list[dict[str, Any]], list[GroundedCommerceEvidence]]:
+    """Return product dicts stripped to authorized commercial fields + evidence."""
+    authorized: list[dict[str, Any]] = []
+    all_evidence: list[GroundedCommerceEvidence] = []
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        evidence = grounded_evidence_from_product(
+            product, tenant_id=tenant_id, expected_tenant_id=tenant_id
+        )
+        if not evidence and not product.get("id"):
+            continue
+        allowed_fields = {row.field for row in evidence}
+        cleaned = {
+            key: value
+            for key, value in product.items()
+            if key.startswith("_")
+            or key
+            in {
+                "id",
+                "product_id",
+                "variant_id",
+                "sku",
+                "ean",
+                "reference",
+                "brand",
+                "model",
+                "name",
+                "title",
+                "tenant_id",
+                "image_url",
+            }
+            or key in allowed_fields
+        }
+        # Drop unauthorized commercial numbers
+        for field in ("price", "promotional_price", "stock", "available", "url"):
+            if field not in allowed_fields:
+                cleaned.pop(field, None)
+        cleaned["tenant_id"] = tenant_id
+        cleaned["_grounded"] = True
+        authorized.append(cleaned)
+        all_evidence.extend(evidence)
+    return authorized, all_evidence

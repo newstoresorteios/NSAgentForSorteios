@@ -34,8 +34,8 @@ def test_legacy_history_limit_200_does_not_crash_and_coerces_to_model_window(mon
 
 def test_llm_budget_defaults_are_conservative_etapa6():
     assert Settings.model_fields["agent_llm_budget_enabled"].default is True
-    assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 3
-    assert Settings.model_fields["agent_max_llm_calls_per_turn_complex"].default == 5
+    assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 2
+    assert Settings.model_fields["agent_max_llm_calls_per_turn_complex"].default == 4
     assert Settings.model_fields["agent_critique_mode"].default == "shadow"
     assert Settings.model_fields["agent_critique_max_retries"].default == 1
     assert Settings.model_fields["agent_critique_llm_on_risk_only"].default is True

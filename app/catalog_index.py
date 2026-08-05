@@ -28,6 +28,7 @@ FactualSource = Literal[
 
 class CanonicalCatalogItem(BaseModel):
     tenant_id: str = "newstore"
+    catalog_item_key: str = ""
     product_id: str
     variant_id: str | None = None
     sku: str | None = None
@@ -71,6 +72,21 @@ class ProductCandidate(BaseModel):
     freshness_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     score_explanation: str = ""
     product: dict[str, Any] = Field(default_factory=dict, exclude=True)
+
+
+class CandidateTrace(BaseModel):
+    """Internal scoring trace — observability only, never customer-facing."""
+
+    catalog_item_key: str
+    initial_score: float = 0.0
+    exact_matches: list[str] = Field(default_factory=list)
+    hard_constraints_passed: list[str] = Field(default_factory=list)
+    hard_constraints_failed: list[str] = Field(default_factory=list)
+    soft_preferences_matched: list[str] = Field(default_factory=list)
+    soft_preferences_missed: list[str] = Field(default_factory=list)
+    score_components: dict[str, float] = Field(default_factory=dict)
+    excluded: bool = False
+    exclusion_reason: str | None = None
 
 
 def _fold(value: Any) -> str:
@@ -166,7 +182,7 @@ def to_canonical_item(
         stock = int(stock_raw) if stock_raw is not None else None
     except (TypeError, ValueError):
         stock = None
-    return CanonicalCatalogItem(
+    item = CanonicalCatalogItem(
         tenant_id=(
             tenant_id
             or getattr(settings, "agent_persona_tenant_id", None)
@@ -178,6 +194,7 @@ def to_canonical_item(
             if product.get("variant_id") is not None
             else None
         ),
+        catalog_item_key="",  # filled below
         sku=(
             str(product.get("sku"))
             if product.get("sku") is not None
@@ -240,6 +257,10 @@ def to_canonical_item(
         factual_source=factual_source,
         raw=product,
     )
+    from .fact_authority import catalog_item_key_for
+
+    item.catalog_item_key = catalog_item_key_for(item.product_id, item.variant_id)
+    return item
 
 
 def _hard_constraints_from_interpretation(
@@ -540,6 +561,7 @@ def hybrid_rank_candidates(
 
     kept: list[ProductCandidate] = []
     excluded_log: list[dict[str, Any]] = []
+    traces: list[CandidateTrace] = []
 
     for product in products:
         item = to_canonical_item(product, factual_source=factual_source)
@@ -548,16 +570,38 @@ def hybrid_rank_candidates(
         ok, reason, exact_matches = evaluate_hard_constraints(
             item, hard, mode=mode
         )
+        soft_score, soft_matches, mismatches, explanation = score_soft_preferences(
+            item, interpretation
+        )
+        soft_missed = [m for m in mismatches if m]
+        components = {
+            "exact_boost": float(len(exact_matches) * 10.0),
+            "soft_score": float(soft_score),
+        }
+        score = components["exact_boost"] + components["soft_score"]
+        trace = CandidateTrace(
+            catalog_item_key=item.catalog_item_key
+            or (
+                f"variant:{item.variant_id}"
+                if item.variant_id
+                else f"product:{item.product_id}"
+            ),
+            initial_score=score,
+            exact_matches=list(exact_matches),
+            hard_constraints_passed=list(exact_matches) if ok else [],
+            hard_constraints_failed=[reason] if not ok and reason else [],
+            soft_preferences_matched=list(soft_matches),
+            soft_preferences_missed=soft_missed,
+            score_components=components,
+            excluded=not ok,
+            exclusion_reason=reason if not ok else None,
+        )
+        traces.append(trace)
         if not ok:
             excluded_log.append(
                 {"product_id": item.product_id, "reason": reason}
             )
             continue
-        soft_score, soft_matches, mismatches, explanation = score_soft_preferences(
-            item, interpretation
-        )
-        # Exact matches dominate ordering.
-        score = float(len(exact_matches) * 10.0 + soft_score)
         if exact_matches:
             explanation = (
                 f"exact={exact_matches}; {explanation}"
@@ -597,6 +641,10 @@ def hybrid_rank_candidates(
             "excluded": len(excluded_log),
             "top_score": kept[0].score if kept else None,
             "mode": mode,
+            "traces_sample": [
+                t.model_dump(mode="json")
+                for t in traces[:5]
+            ],
         },
     )
     return kept[: max(1, pool_limit)]
@@ -621,6 +669,12 @@ def hybrid_rank_products(
     ranked: list[dict[str, Any]] = []
     for candidate in candidates:
         product = dict(candidate.product or {})
+        catalog_key = (
+            f"variant:{candidate.variant_id}"
+            if candidate.variant_id
+            else f"product:{candidate.product_id}"
+        )
+        product["_catalog_item_key"] = catalog_key
         product["_retrieval"] = {
             "score": candidate.score,
             "exact_matches": list(candidate.exact_matches),
@@ -629,6 +683,16 @@ def hybrid_rank_products(
             "score_explanation": candidate.score_explanation,
             "factual_source": candidate.factual_source,
             "freshness_at": candidate.freshness_at.isoformat(),
+            "catalog_item_key": catalog_key,
+            "candidate_trace": {
+                "catalog_item_key": catalog_key,
+                "initial_score": candidate.score,
+                "exact_matches": list(candidate.exact_matches),
+                "soft_preferences_matched": list(candidate.soft_matches),
+                "soft_preferences_missed": list(candidate.mismatches),
+                "excluded": False,
+                "exclusion_reason": None,
+            },
         }
         ranked.append(product)
     return ranked
@@ -658,6 +722,64 @@ def reject_unknown_rerank_ids(
     return ordered, invalid
 
 
+def build_allowed_id_sets(
+    products: list[dict[str, Any]],
+) -> dict[str, set[str]]:
+    """Closed sets the LLM may reference — never invent outside these."""
+    product_ids: set[str] = set()
+    variant_ids: set[str] = set()
+    catalog_keys: set[str] = set()
+    for product in products:
+        if not isinstance(product, dict) or product.get("id") is None:
+            continue
+        pid = str(product["id"])
+        product_ids.add(pid)
+        vid = product.get("variant_id")
+        if vid is not None and str(vid).strip():
+            variant_ids.add(str(vid))
+            catalog_keys.add(f"variant:{vid}")
+        else:
+            catalog_keys.add(f"product:{pid}")
+        key = product.get("catalog_item_key") or product.get("_catalog_item_key")
+        if key:
+            catalog_keys.add(str(key))
+    return {
+        "allowed_product_ids": product_ids,
+        "allowed_variant_ids": variant_ids,
+        "allowed_catalog_item_keys": catalog_keys,
+    }
+
+
+def filter_products_to_allowed(
+    products: list[dict[str, Any]],
+    allowed: dict[str, set[str]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop products / variants outside the closed evidence set."""
+    allowed_pids = allowed.get("allowed_product_ids") or set()
+    allowed_vids = allowed.get("allowed_variant_ids") or set()
+    kept: list[dict[str, Any]] = []
+    rejected = 0
+    for product in products:
+        if not isinstance(product, dict) or product.get("id") is None:
+            rejected += 1
+            continue
+        pid = str(product["id"])
+        if pid not in allowed_pids:
+            rejected += 1
+            continue
+        vid = product.get("variant_id")
+        if (
+            vid is not None
+            and str(vid).strip()
+            and allowed_vids
+            and str(vid) not in allowed_vids
+        ):
+            rejected += 1
+            continue
+        kept.append(product)
+    return kept, rejected
+
+
 def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
     """Best-effort durable index write (no-op without database)."""
     if not items:
@@ -674,7 +796,7 @@ def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
                     cur.execute(
                         """
                         INSERT INTO public.ai_catalog_index (
-                            tenant_id, product_id, variant_id, sku, ean, reference,
+                            tenant_id, catalog_item_key, product_id, variant_id, sku, ean, reference,
                             brand, collection, model, title_normalized, category,
                             gender, mechanism, case_size, dial_color, strap_color,
                             material, strap_type, colors_normalized, aliases,
@@ -682,7 +804,7 @@ def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
                             available_in_store, url, image_url, freshness_at,
                             factual_source, payload
                         ) VALUES (
-                            %(tenant_id)s, %(product_id)s, %(variant_id)s, %(sku)s,
+                            %(tenant_id)s, %(catalog_item_key)s, %(product_id)s, %(variant_id)s, %(sku)s,
                             %(ean)s, %(reference)s, %(brand)s, %(collection)s,
                             %(model)s, %(title_normalized)s, %(category)s,
                             %(gender)s, %(mechanism)s, %(case_size)s, %(dial_color)s,
@@ -692,8 +814,9 @@ def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
                             %(available_in_store)s, %(url)s, %(image_url)s,
                             %(freshness_at)s, %(factual_source)s, %(payload)s::jsonb
                         )
-                        ON CONFLICT (tenant_id, product_id)
+                        ON CONFLICT (tenant_id, catalog_item_key)
                         DO UPDATE SET
+                            product_id = EXCLUDED.product_id,
                             variant_id = EXCLUDED.variant_id,
                             sku = EXCLUDED.sku,
                             ean = EXCLUDED.ean,
@@ -717,6 +840,8 @@ def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
                         """,
                         {
                             **payload,
+                            "catalog_item_key": payload.get("catalog_item_key")
+                            or f"product:{payload.get('product_id')}",
                             "colors_normalized": to_jsonb(payload.get("colors_normalized") or []),
                             "aliases": to_jsonb(payload.get("aliases") or []),
                             "payload": to_jsonb(payload),

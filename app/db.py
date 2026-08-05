@@ -514,6 +514,7 @@ def ensure_tables() -> None:
 
                 CREATE TABLE IF NOT EXISTS public.ai_catalog_index (
                     tenant_id text NOT NULL DEFAULT 'newstore',
+                    catalog_item_key text NOT NULL DEFAULT '',
                     product_id text NOT NULL,
                     variant_id text NULL,
                     sku text NULL,
@@ -544,7 +545,7 @@ def ensure_tables() -> None:
                     factual_source text NOT NULL DEFAULT 'tray_search',
                     payload jsonb NOT NULL DEFAULT '{}'::jsonb,
                     updated_at timestamptz NOT NULL DEFAULT now(),
-                    PRIMARY KEY (tenant_id, product_id)
+                    UNIQUE (tenant_id, catalog_item_key)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_brand
@@ -560,6 +561,51 @@ def ensure_tables() -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_title
                 ON public.ai_catalog_index (tenant_id, title_normalized);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_tenant_product
+                ON public.ai_catalog_index (tenant_id, product_id);
+
+                CREATE TABLE IF NOT EXISTS public.instagram_story_products (
+                  id bigserial PRIMARY KEY,
+                  tenant_id text NOT NULL,
+                  provider text NOT NULL DEFAULT 'brevo',
+                  instagram_account_id text NOT NULL,
+                  story_media_id text NOT NULL,
+                  story_message_id text NULL,
+                  story_permalink text NULL,
+                  media_type text NOT NULL DEFAULT 'unknown',
+                  source_timestamp timestamptz NULL,
+                  story_expires_at timestamptz NULL,
+                  media_storage_path text NULL,
+                  media_sha256 text NULL,
+                  thumbnail_sha256 text NULL,
+                  catalog_item_key text NULL,
+                  product_id text NULL,
+                  variant_id text NULL,
+                  match_source text NOT NULL DEFAULT 'pending',
+                  match_status text NOT NULL DEFAULT 'pending',
+                  match_confidence numeric(6,5) NOT NULL DEFAULT 0,
+                  visual_analysis jsonb NOT NULL DEFAULT '{}'::jsonb,
+                  candidate_products jsonb NOT NULL DEFAULT '[]'::jsonb,
+                  match_explanation jsonb NOT NULL DEFAULT '{}'::jsonb,
+                  confirmed_by text NULL,
+                  confirmed_at timestamptz NULL,
+                  first_seen_at timestamptz NOT NULL DEFAULT now(),
+                  last_seen_at timestamptz NOT NULL DEFAULT now(),
+                  created_at timestamptz NOT NULL DEFAULT now(),
+                  updated_at timestamptz NOT NULL DEFAULT now(),
+                  UNIQUE (tenant_id, provider, instagram_account_id, story_media_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_instagram_story_products_lookup
+                ON public.instagram_story_products (
+                  tenant_id, instagram_account_id, story_media_id
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_instagram_story_products_status
+                ON public.instagram_story_products (
+                  tenant_id, match_status, updated_at DESC
+                );
                 """
             )
 

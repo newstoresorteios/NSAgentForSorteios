@@ -1,1 +1,1 @@
-# Scripts package (seed helpers, local tooling).
+# Package scripts for release tooling.

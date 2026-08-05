@@ -143,6 +143,7 @@ class CommerceConversationState(BaseModel):
     active_topic: str | None = None
     active_product: CommerceProductReference | None = None
     last_presented_products: list[PresentedCommerceProduct] = Field(default_factory=list)
+    last_story_product: dict[str, Any] | None = None
     # found_available | found_unknown | found_unavailable | plausible_matches | None
     product_resolution_state: str | None = None
     active_preferences: dict[str, Any] = Field(default_factory=dict)
@@ -840,6 +841,9 @@ def evolve_commerce_state(
                 )
     if metadata.get("presented_products") and compact_products:
         state.last_presented_products = compact_products
+    story_ref = metadata.get("last_story_product")
+    if isinstance(story_ref, dict) and story_ref.get("story_media_id"):
+        state.last_story_product = story_ref
     if metadata.get("activate_first_product") and compact_products:
         state.active_product = CommerceProductReference.model_validate(
             compact_products[0].model_dump(exclude={"position"})

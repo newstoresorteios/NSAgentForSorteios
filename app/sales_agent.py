@@ -2180,6 +2180,81 @@ async def _execute_compiled_product_retrieval(
 
     if retrieval_plan.mode == "recommendation":
         from .catalog_index import hybrid_rank_products, index_products_best_effort
+        from .catalog_index_repository import CatalogIndexRepository, row_to_product_dict
+
+        settings = get_settings()
+        if bool(getattr(settings, "agent_catalog_index_read_enabled", True)):
+            try:
+                repo = CatalogIndexRepository()
+                tenant_id = str(
+                    getattr(settings, "agent_persona_tenant_id", None) or "newstore"
+                )
+                query = " ".join(
+                    part
+                    for part in (
+                        getattr(interpretation.subject, "brand", None),
+                        getattr(interpretation.subject, "model", None),
+                        getattr(interpretation.subject, "query", None)
+                        or getattr(interpretation, "query", None),
+                    )
+                    if part
+                ).strip()
+                index_rows: list = []
+                ref = getattr(interpretation.subject, "reference", None)
+                ean = getattr(interpretation.subject, "ean", None)
+                if ean:
+                    index_rows = repo.search_exact(tenant_id=tenant_id, ean=str(ean))
+                elif ref:
+                    index_rows = repo.search_exact(
+                        tenant_id=tenant_id, reference=str(ref)
+                    )
+                elif query:
+                    index_rows = repo.search_lexical(
+                        tenant_id=tenant_id,
+                        query=query,
+                        brand=getattr(interpretation.subject, "brand", None),
+                    )
+                if index_rows:
+                    seen = {
+                        str(p.get("id"))
+                        for p in hard_filtered
+                        if isinstance(p, dict) and p.get("id") is not None
+                    }
+                    seeded = 0
+                    for row in index_rows:
+                        product = row_to_product_dict(row)
+                        pid = str(product.get("id") or "")
+                        if not pid or pid in seen:
+                            continue
+                        hard_filtered.append(product)
+                        seen.add(pid)
+                        seeded += 1
+                    if seeded:
+                        print(
+                            "[catalog.index.read]",
+                            {
+                                "tenant_id": tenant_id,
+                                "seeded": seeded,
+                                "fallback": "merged_with_tray_pool",
+                            },
+                        )
+                elif bool(
+                    getattr(settings, "agent_catalog_index_fallback_to_tray", True)
+                ):
+                    print(
+                        "[catalog.index.fallback]",
+                        {"reason": "catalog_index_empty_or_unavailable"},
+                    )
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    "[catalog.index.read.error]",
+                    {"error_type": type(exc).__name__},
+                )
+                if bool(getattr(settings, "agent_catalog_index_fallback_to_tray", True)):
+                    print(
+                        "[catalog.index.fallback]",
+                        {"reason": "catalog_index_fallback"},
+                    )
 
         # Hybrid hard/soft ranking over the filtered pool (no free LLM catalog search).
         hard_filtered = hybrid_rank_products(
@@ -2268,6 +2343,18 @@ async def _execute_compiled_product_retrieval(
             )
     result = _product_result("product_search", final_products)
     result.response_metadata["presented_products"] = True
+    try:
+        from .catalog_index import build_allowed_id_sets
+
+        allowed = build_allowed_id_sets(final_products)
+        result.response_metadata["allowed_id_sets"] = {
+            key: sorted(values) for key, values in allowed.items()
+        }
+        result.response_metadata["tenant_id"] = str(
+            getattr(get_settings(), "agent_persona_tenant_id", None) or "newstore"
+        )
+    except Exception:
+        pass
     if retrieval_plan.mode == "exact":
         result.response_metadata["product_resolution_state"] = (
             "found_available" if availability_state == "available" else "found_unknown"

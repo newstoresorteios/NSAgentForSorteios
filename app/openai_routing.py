@@ -13,15 +13,37 @@ ApiRoute = Literal["chat_completions", "responses"]
 
 
 def routing_key_from_turn() -> str | None:
+    """Sticky key = tenant_id + conversation_id (never raw phone alone)."""
     runtime = get_current_turn()
     if runtime is None:
         return None
-    key = (runtime.conversation_key or "").strip()
-    if key and key != "unresolved":
-        return key
+    tenant = ""
+    try:
+        from .config import get_settings
+
+        tenant = str(
+            getattr(get_settings(), "agent_persona_tenant_id", None) or "newstore"
+        ).strip()
+    except Exception:
+        tenant = "newstore"
+    conversation = (runtime.conversation_key or "").strip()
+    if conversation and conversation != "unresolved":
+        # Hash the conversation side so logs never need the raw id.
+        digest = hashlib.sha256(conversation.encode("utf-8")).hexdigest()[:16]
+        return f"{tenant}:{digest}"
     if runtime.inbound_id is not None:
-        return f"inbound:{runtime.inbound_id}"
-    return runtime.trace_id or None
+        return f"{tenant}:inbound:{runtime.inbound_id}"
+    if runtime.trace_id:
+        return f"{tenant}:trace:{runtime.trace_id}"
+    return None
+
+
+def sticky_routing_key(*, tenant_id: str, conversation_id: str) -> str:
+    """Public helper for canary sticky routing tests / ops."""
+    tenant = str(tenant_id or "newstore").strip() or "newstore"
+    conv = str(conversation_id or "").strip()
+    digest = hashlib.sha256(conv.encode("utf-8")).hexdigest()[:16]
+    return f"{tenant}:{digest}"
 
 
 def bucket_for_key(routing_key: str) -> int:

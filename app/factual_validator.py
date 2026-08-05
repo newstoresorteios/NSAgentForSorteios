@@ -13,6 +13,10 @@ from .fact_sources import (
     StructuredFact,
     infer_source_for_payload_key,
 )
+from .fact_authority import (
+    authorize_products_for_responder,
+    filter_commerce_safe_evidence,
+)
 from .models import AgentResult
 
 
@@ -446,6 +450,7 @@ def build_fact_pack(
         if state_payment is not None and pack.payment_confirmed is None:
             pack.payment_confirmed = state_payment
 
+    pack.evidence = filter_commerce_safe_evidence(pack.evidence)
     return pack
 
 
@@ -775,6 +780,25 @@ def apply_factual_validation(
         result.reply_audio_url = None
         result.safety_reason = "factual_validation_failed"
         report.fallback_applied = True
+
+    # Authorize commercial products for any downstream composer / metrics.
+    products = (result.commercial_data or {}).get("products")
+    if isinstance(products, list) and products:
+        tenant_id = str(
+            (result.response_metadata or {}).get("tenant_id")
+            or getattr(decision, "tenant_id", None)
+            or "newstore"
+        )
+        authorized, grounded = authorize_products_for_responder(
+            [p for p in products if isinstance(p, dict)],
+            tenant_id=tenant_id,
+        )
+        result.commercial_data = dict(result.commercial_data or {})
+        result.commercial_data["products"] = authorized
+        result.response_metadata["grounded_commerce_evidence"] = [
+            row.model_dump(mode="json") for row in grounded[:40]
+        ]
+        result.response_metadata["grounded_commerce_count"] = len(grounded)
 
     payload = report.model_dump(mode="json")
     result.response_metadata["factual_validation"] = payload

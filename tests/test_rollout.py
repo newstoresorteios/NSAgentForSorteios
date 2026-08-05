@@ -141,7 +141,9 @@ def test_rollout_status_includes_checklist():
     assert status["profile"] == "full"
     assert status["emergency"] is False
     assert "AGENT_EMERGENCY_ROLLBACK" in status["rollback_checklist"]
-    assert status["canary_steps"][0] == "canary_5"
+    assert status["canary_steps"][0] == "shadow"
+    assert "canary_5" in status["canary_steps"]
+    assert status["canary_steps"][-1] == "full"
 
 
 def test_fallback_alert_fires_when_window_breached():

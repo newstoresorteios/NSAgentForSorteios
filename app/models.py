@@ -197,6 +197,7 @@ class IncomingMessage(BaseModel):
     image_mime_type: str | None = None
     transcription_failed: bool = False
     channel_metadata: dict[str, Any] = Field(default_factory=dict)
+    instagram_story: Any | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 

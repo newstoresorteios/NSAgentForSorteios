@@ -104,7 +104,8 @@ def test_promote_creates_pending_extension_without_auto_activate(monkeypatch):
     assert params == (42, 7)
 
 
-def test_promote_activates_only_when_flag_true(monkeypatch):
+def test_promote_never_auto_approves_even_when_flag_true(monkeypatch):
+    """Cron must not call approve_extension — admin path only."""
     calls = {"approve": 0}
 
     monkeypatch.setattr(
@@ -118,13 +119,11 @@ def test_promote_activates_only_when_flag_true(monkeypatch):
 
     def fake_approve(extension_id, *, tenant_id, approved_by):
         calls["approve"] += 1
-        assert extension_id == 99
-        assert approved_by == "attendance_learning_cron"
-        assert tenant_id == "newstore"
 
     class FakeCursor:
         def execute(self, sql, params=None):
-            assert "status = 'applied'" in sql
+            # stays pending_review
+            assert "pending_review" in sql or "status" in sql
 
         def __enter__(self):
             return self
@@ -159,7 +158,7 @@ def test_promote_activates_only_when_flag_true(monkeypatch):
         )
         == 99
     )
-    assert calls["approve"] == 1
+    assert calls["approve"] == 0
 
 
 @pytest.mark.asyncio

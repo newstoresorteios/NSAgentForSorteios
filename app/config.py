@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     )
     # Etapa 12: progressive canary profile (overrides mode/traffic when canary_*|emergency).
     agent_rollout_profile: Literal[
+        "shadow",
         "full",
         "canary_5",
         "canary_25",
@@ -254,6 +255,11 @@ class Settings(BaseSettings):
         default=False,
         alias="AGENT_CONVERSATION_SUMMARY_IN_PROMPT_ENABLED",
     )
+    # off | shadow | enforce — shadow generates but does not inject into reply prompt.
+    agent_conversation_summary_mode: Literal["off", "shadow", "enforce"] = Field(
+        default="off",
+        alias="AGENT_CONVERSATION_SUMMARY_MODE",
+    )
     agent_prompt_compilation_audit_enabled: bool = Field(
         default=True,
         alias="AGENT_PROMPT_COMPILATION_AUDIT_ENABLED",
@@ -275,14 +281,14 @@ class Settings(BaseSettings):
         default=True,
         alias="AGENT_LLM_BUDGET_ENABLED",
     )
-    # Etapa 6: normal turns ≤2–3 (interpret + respond [+ rare gated critique]).
+    # Logical LLM ops: interpret + grounded reply (max 2); complex up to 4.
     agent_max_llm_calls_per_turn: int = Field(
-        default=3,
+        default=2,
         alias="AGENT_MAX_LLM_CALLS_PER_TURN",
         ge=0,
     )
     agent_max_llm_calls_per_turn_complex: int = Field(
-        default=5,
+        default=4,
         alias="AGENT_MAX_LLM_CALLS_PER_TURN_COMPLEX",
         ge=0,
     )
@@ -467,6 +473,26 @@ class Settings(BaseSettings):
         default=True,
         alias="AGENT_CATALOG_INDEX_WRITE_ENABLED",
     )
+    agent_catalog_index_read_enabled: bool = Field(
+        default=True,
+        alias="AGENT_CATALOG_INDEX_READ_ENABLED",
+    )
+    agent_catalog_index_fallback_to_tray: bool = Field(
+        default=True,
+        alias="AGENT_CATALOG_INDEX_FALLBACK_TO_TRAY",
+    )
+    agent_catalog_index_max_age_seconds: int = Field(
+        default=86_400,
+        alias="AGENT_CATALOG_INDEX_MAX_AGE_SECONDS",
+        ge=60,
+        le=2_592_000,
+    )
+    agent_catalog_index_candidate_limit: int = Field(
+        default=30,
+        alias="AGENT_CATALOG_INDEX_CANDIDATE_LIMIT",
+        ge=1,
+        le=100,
+    )
     agent_image_cache_ttl_seconds: float = Field(
         default=300.0,
         alias="AGENT_IMAGE_CACHE_TTL_SECONDS",
@@ -603,6 +629,108 @@ class Settings(BaseSettings):
     brevo_social_channels_enabled: bool = Field(
         default=True,
         alias="BREVO_SOCIAL_CHANNELS_ENABLED",
+    )
+
+    # Instagram Story ↔ product recognition (default off until real payload validated).
+    instagram_story_recognition_enabled: bool = Field(
+        default=False,
+        alias="INSTAGRAM_STORY_RECOGNITION_ENABLED",
+    )
+    instagram_story_payload_diagnostics: bool = Field(
+        default=False,
+        alias="INSTAGRAM_STORY_PAYLOAD_DIAGNOSTICS",
+    )
+    instagram_story_media_storage_enabled: bool = Field(
+        default=True,
+        alias="INSTAGRAM_STORY_MEDIA_STORAGE_ENABLED",
+    )
+    instagram_story_media_max_bytes: int = Field(
+        default=12_582_912,
+        alias="INSTAGRAM_STORY_MEDIA_MAX_BYTES",
+        ge=1024,
+        le=52_428_800,
+    )
+    instagram_story_media_timeout_seconds: float = Field(
+        default=10.0,
+        alias="INSTAGRAM_STORY_MEDIA_TIMEOUT_SECONDS",
+        ge=1.0,
+        le=60.0,
+    )
+    instagram_story_media_retention_days: int = Field(
+        default=7,
+        alias="INSTAGRAM_STORY_MEDIA_RETENTION_DAYS",
+        ge=1,
+        le=90,
+    )
+    instagram_story_allowed_hosts: str = Field(
+        default="",
+        alias="INSTAGRAM_STORY_ALLOWED_HOSTS",
+    )
+    instagram_story_video_frame_analysis_enabled: bool = Field(
+        default=True,
+        alias="INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED",
+    )
+    instagram_story_video_max_frames: int = Field(
+        default=3,
+        alias="INSTAGRAM_STORY_VIDEO_MAX_FRAMES",
+        ge=1,
+        le=5,
+    )
+    instagram_story_analysis_detail: Literal["low", "high", "auto"] = Field(
+        default="high",
+        alias="INSTAGRAM_STORY_ANALYSIS_DETAIL",
+    )
+    instagram_story_analysis_version: str = Field(
+        default="v1",
+        alias="INSTAGRAM_STORY_ANALYSIS_VERSION",
+    )
+    instagram_story_visual_cache_enabled: bool = Field(
+        default=True,
+        alias="INSTAGRAM_STORY_VISUAL_CACHE_ENABLED",
+    )
+    instagram_story_visual_cache_ttl_days: int = Field(
+        default=30,
+        alias="INSTAGRAM_STORY_VISUAL_CACHE_TTL_DAYS",
+        ge=1,
+        le=365,
+    )
+    instagram_story_auto_match_min_confidence: float = Field(
+        default=0.92,
+        alias="INSTAGRAM_STORY_AUTO_MATCH_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+    instagram_story_ambiguous_min_confidence: float = Field(
+        default=0.65,
+        alias="INSTAGRAM_STORY_AMBIGUOUS_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+    instagram_story_match_margin: float = Field(
+        default=0.12,
+        alias="INSTAGRAM_STORY_MATCH_MARGIN",
+        ge=0.0,
+        le=1.0,
+    )
+    instagram_story_max_candidates: int = Field(
+        default=10,
+        alias="INSTAGRAM_STORY_MAX_CANDIDATES",
+        ge=1,
+        le=20,
+    )
+    instagram_story_admin_api_enabled: bool = Field(
+        default=True,
+        alias="INSTAGRAM_STORY_ADMIN_API_ENABLED",
+    )
+    instagram_story_rollout_mode: Literal["off", "shadow", "canary", "full"] = Field(
+        default="off",
+        alias="INSTAGRAM_STORY_ROLLOUT_MODE",
+    )
+    instagram_story_canary_percent: float = Field(
+        default=5.0,
+        alias="INSTAGRAM_STORY_CANARY_PERCENT",
+        ge=0.0,
+        le=100.0,
     )
 
     max_reply_chars: int = Field(default=900, alias="MAX_REPLY_CHARS")

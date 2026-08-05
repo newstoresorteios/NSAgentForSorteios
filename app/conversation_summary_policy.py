@@ -10,7 +10,38 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from .memory_models import ConversationSummaryDelta
+
+
+class SummaryFact(BaseModel):
+    field: str
+    value: str
+    expired_commercial: bool = False
+
+
+class Preference(BaseModel):
+    key: str
+    value: str
+
+
+class ProductReference(BaseModel):
+    product_id: str | None = None
+    variant_id: str | None = None
+    label: str | None = None
+
+
+class ConversationSummary(BaseModel):
+    """Structured continuity summary — never factual authority for commerce."""
+
+    confirmed_facts: list[SummaryFact] = Field(default_factory=list)
+    customer_preferences: list[Preference] = Field(default_factory=list)
+    products_presented: list[ProductReference] = Field(default_factory=list)
+    confirmed_decisions: list[str] = Field(default_factory=list)
+    pending_questions: list[str] = Field(default_factory=list)
+    unresolved_hypotheses: list[str] = Field(default_factory=list)
+    expired_commercial_references: list[str] = Field(default_factory=list)
 
 
 _SENSITIVE_RE = re.compile(
@@ -213,3 +244,45 @@ def format_conversation_summary_block(row: dict[str, Any] | None) -> str:
         )
     lines.append("</conversation_summary>")
     return "\n".join(lines)
+
+
+def compare_summary_delta_to_facts(
+    delta: ConversationSummaryDelta | None,
+    *,
+    commercial_data: dict[str, Any] | None = None,
+) -> list[str]:
+    """Shadow-mode divergence codes — summary must not invent commerce facts."""
+    if delta is None:
+        return ["empty_delta"]
+    divergences: list[str] = []
+    blobs = [
+        delta.current_goal or "",
+        delta.last_failure or "",
+        *list(delta.resolved_points or []),
+        *list(delta.open_questions or []),
+        *list(delta.commitments or []),
+    ]
+    for blob in blobs:
+        codes = text_has_summary_safety_violation(str(blob))
+        if "commercial_volatile" in codes:
+            divergences.append("summary_asserts_commercial_fact")
+        if "url_blocked" in codes:
+            divergences.append("summary_asserts_url")
+    products = (commercial_data or {}).get("products") if commercial_data else None
+    if isinstance(products, list):
+        for product in products:
+            if not isinstance(product, dict):
+                continue
+            price = product.get("price") or product.get("current_price")
+            if price is not None and any(
+                str(price) in str(blob) for blob in blobs if blob
+            ):
+                divergences.append("summary_repeats_live_price")
+    # Deduplicate while preserving order.
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for code in divergences:
+        if code not in seen:
+            seen.add(code)
+            ordered.append(code)
+    return ordered

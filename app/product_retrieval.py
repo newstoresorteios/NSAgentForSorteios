@@ -1983,14 +1983,18 @@ async def revalidate_products(
 ) -> tuple[list[dict[str, Any]], bool]:
     refreshed: list[dict[str, Any]] = []
     failed = False
+    partial = False
     top_n = revalidate_top_n()
+    attempted = 0
     for product in products[:top_n]:
         product_id = product.get("id")
         if product_id is None:
             continue
+        attempted += 1
         result = await execute_tool("get_product", {"product_id": str(product_id)})
         if "error" in result:
             failed = True
+            partial = True
             continue
         # Revalidation is factual authority: overlay live Tray fields but never
         # invent price/stock when the live payload omits them.
@@ -2006,8 +2010,22 @@ async def revalidate_products(
             "revalidated": True,
         })
         refreshed.append(current)
+    if attempted and not refreshed:
+        failed = True
+        print("[sales.revalidate.total_failure]", {"attempted": attempted})
+    elif partial and refreshed:
+        print(
+            "[sales.revalidate.partial]",
+            {
+                "attempted": attempted,
+                "confirmed": len(refreshed),
+                "dropped_stale": attempted - len(refreshed),
+            },
+        )
     if refreshed:
         refreshed = await enrich_product_variants(refreshed, interpretation, execute_tool)
+    # Never present non-revalidated siblings when revalidation partially failed —
+    # only confirmed Tray rows may assert live price/stock.
     return refreshed, failed
 
 
@@ -2067,15 +2085,20 @@ async def rerank_products(
 
     # Cap what the LLM may see — never the whole catalog.
     pool = available_products[:pool_limit]
+    from .catalog_index import (
+        build_allowed_id_sets,
+        reject_unknown_rerank_ids,
+    )
+
     candidate_by_id = {
         str(product["id"]): product
         for product in pool
         if product.get("id") is not None
     }
-    allowed_ids = set(candidate_by_id)
+    allowed_sets = build_allowed_id_sets(pool)
+    allowed_ids = allowed_sets["allowed_product_ids"]
     prior_order = [str(p["id"]) for p in pool if p.get("id") is not None]
     try:
-        from .catalog_index import reject_unknown_rerank_ids
         from .openai_errors import OpenAIGatewayError
         from .openai_gateway import parse_structured_output
 
@@ -2103,6 +2126,10 @@ async def rerank_products(
                             token: sorted(expand_color_aliases(token))
                             for token in preference_color_tokens(interpretation)
                         },
+                        "ALLOWED_PRODUCT_IDS": sorted(allowed_ids),
+                        "ALLOWED_VARIANT_IDS": sorted(
+                            allowed_sets["allowed_variant_ids"]
+                        ),
                         "CANDIDATES": compact_candidates(pool, limit=pool_limit),
                     }, ensure_ascii=False),
                 },
@@ -2128,6 +2155,8 @@ async def rerank_products(
             "selection_limit": selection_limit,
             "prior_order_sample": prior_order[:5],
             "posterior_order_sample": ordered_ids[:5],
+            "allowed_product_ids": len(allowed_ids),
+            "allowed_variant_ids": len(allowed_sets["allowed_variant_ids"]),
         })
         return selected
     except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:

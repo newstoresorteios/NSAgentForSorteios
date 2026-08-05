@@ -8,7 +8,7 @@ factual validation.
 from __future__ import annotations
 
 import random
-from typing import Any
+from typing import Any, Literal
 
 from .config import get_settings
 from .models import AgentResult, IncomingMessage
@@ -145,9 +145,9 @@ def should_run_quality_judge(
 
 def resolve_turn_llm_budget(*, complex_turn: bool = False) -> dict[str, Any]:
     settings = get_settings()
-    base = int(getattr(settings, "agent_max_llm_calls_per_turn", 3) or 3)
+    base = int(getattr(settings, "agent_max_llm_calls_per_turn", 2) or 2)
     complex_cap = int(
-        getattr(settings, "agent_max_llm_calls_per_turn_complex", 5) or 5
+        getattr(settings, "agent_max_llm_calls_per_turn_complex", 4) or 4
     )
     max_calls = max(base, complex_cap) if complex_turn else base
     return {
@@ -155,3 +155,76 @@ def resolve_turn_llm_budget(*, complex_turn: bool = False) -> dict[str, Any]:
         "enforce": bool(getattr(settings, "agent_llm_budget_enabled", True)),
         "complex_turn": complex_turn,
     }
+
+
+ExecutionPath = Literal["fast", "normal", "complex", "critical"]
+
+
+def build_llm_call_budget(
+    *,
+    execution_path: ExecutionPath | str = "normal",
+    risk_signals: list[str] | None = None,
+    complex_turn: bool | None = None,
+) -> dict[str, Any]:
+    """Central budget for middleware + turn promotion (Etapa 7 / v6 fixes)."""
+    path = str(execution_path or "normal").strip().casefold()
+    signals = list(risk_signals or [])
+    promote = bool(complex_turn)
+    if any(
+        s in signals
+        for s in (
+            "image",
+            "multi_product",
+            "comparison",
+            "ambiguity",
+            "checkout_resume",
+            "integration_failure",
+            "revalidation_conflict",
+        )
+    ):
+        promote = True
+    if path in {"complex", "critical"}:
+        promote = True
+    if path == "fast" and not promote:
+        settings = get_settings()
+        return {
+            "max_calls": 1 if bool(getattr(settings, "agent_llm_budget_enabled", True)) else 0,
+            "enforce": bool(getattr(settings, "agent_llm_budget_enabled", True)),
+            "complex_turn": False,
+            "execution_path": "fast",
+            "logical_llm_calls": 0,
+            "openai_transport_attempts": 0,
+        }
+    budget = resolve_turn_llm_budget(complex_turn=promote)
+    budget["execution_path"] = "complex" if promote else (path or "normal")
+    budget["logical_llm_calls"] = 0
+    budget["openai_transport_attempts"] = 0
+    return budget
+
+
+def should_promote_to_complex(
+    *,
+    has_image: bool = False,
+    product_count: int = 0,
+    comparison: bool = False,
+    ambiguity: bool = False,
+    checkout_resume: bool = False,
+    integration_failure: bool = False,
+    revalidation_conflict: bool = False,
+) -> tuple[bool, list[str]]:
+    signals: list[str] = []
+    if has_image:
+        signals.append("image")
+    if product_count >= 2:
+        signals.append("multi_product")
+    if comparison:
+        signals.append("comparison")
+    if ambiguity:
+        signals.append("ambiguity")
+    if checkout_resume:
+        signals.append("checkout_resume")
+    if integration_failure:
+        signals.append("integration_failure")
+    if revalidation_conflict:
+        signals.append("revalidation_conflict")
+    return bool(signals), signals

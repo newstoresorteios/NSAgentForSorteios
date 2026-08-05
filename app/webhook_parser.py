@@ -617,6 +617,49 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
     if source_channel_ref:
         channel_metadata["source_channel_ref_present"] = True
 
+    instagram_story = None
+    if channel == "instagram":
+        try:
+            from .instagram_story_parser import (
+                extract_instagram_story_context,
+                maybe_log_story_payload_diagnostics,
+            )
+
+            maybe_log_story_payload_diagnostics(payload)
+            instagram_story = extract_instagram_story_context(
+                payload=payload,
+                message=effective_message if isinstance(effective_message, dict) else {},
+                channel=channel,
+                visitor=visitor_obj if isinstance(visitor_obj, dict) else {},
+            )
+            if instagram_story is not None:
+                channel_metadata["instagram_story"] = {
+                    "replied_to_story": instagram_story.replied_to_story,
+                    "mentioned_in_story": instagram_story.mentioned_in_story,
+                    "story_media_id_present": bool(instagram_story.story_media_id),
+                    "media_type": instagram_story.media_type,
+                    "media_url_present": bool(instagram_story.story_media_url),
+                }
+                from .observability import log_event
+
+                log_event(
+                    "instagram_story.context_parsed",
+                    {
+                        "replied_to_story": instagram_story.replied_to_story,
+                        "mentioned_in_story": instagram_story.mentioned_in_story,
+                        "media_type": instagram_story.media_type,
+                        "story_media_id_present": bool(instagram_story.story_media_id),
+                        "synthetic_id": str(
+                            instagram_story.story_media_id or ""
+                        ).startswith("synthetic:"),
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "[instagram.story.parse.error]",
+                {"error_type": type(exc).__name__},
+            )
+
     return IncomingMessage(
         provider="brevo",
         event_type=_first_non_empty(
@@ -648,6 +691,7 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
         image_url=image_url,
         image_mime_type=image_mime_type,
         channel_metadata=channel_metadata,
+        instagram_story=instagram_story,
         raw=payload,
     )
 

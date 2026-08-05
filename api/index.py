@@ -86,23 +86,38 @@ async def turn_runtime_middleware(request: Request, call_next):
     if not attach_turn:
         return await call_next(request)
 
+    from app.llm_call_policy import build_llm_call_budget
+
+    budget_cfg = build_llm_call_budget(execution_path="normal")
     context = TurnRuntimeContext(
         trace_id=_request_trace_id(request),
         llm_budget=LLMCallBudget(
-            max_calls=getattr(settings, "agent_max_llm_calls_per_turn", 3),
-            enforce=getattr(settings, "agent_llm_budget_enabled", False),
+            max_calls=int(budget_cfg.get("max_calls") or 2),
+            enforce=bool(budget_cfg.get("enforce", True)),
         ),
     )
+    context.execution_path = str(budget_cfg.get("execution_path") or "normal")
     context.start_stage("request")
     token = set_current_turn(context)
     status_code = 500
     try:
+        raw_query = str(request.url.query or "")
+        safe_query = None
+        if raw_query:
+            # Never log webhook/admin tokens even when http obs is on.
+            import re as _re
+
+            safe_query = _re.sub(
+                r"(?i)(token|secret|api_key|apikey|authorization)=([^&]*)",
+                r"\1=[REDACTED]",
+                raw_query,
+            )[:200]
         log_event(
             "http.request",
             {
                 "method": request.method,
                 "path": path,
-                "query": str(request.url.query or "")[:200] or None,
+                "query": safe_query,
                 "content_type": request.headers.get("content-type"),
                 "user_agent": (request.headers.get("user-agent") or "")[:120] or None,
                 "monitored_path": monitored_path,
@@ -1013,6 +1028,175 @@ async def brevo_whatsapp_webhook(
 async def admin_rollout_status():
     """Read-only rollout snapshot + rollback checklist (mutate via Vercel env)."""
     return {"ok": True, **build_rollout_status()}
+
+
+@app.get("/api/admin/instagram/stories", dependencies=[Depends(verify_admin_token)])
+async def admin_list_instagram_stories(
+    tenant_id: str = "newstore",
+    status: str | None = None,
+    instagram_account_id: str | None = None,
+    product_id: str | None = None,
+    limit: int = 50,
+):
+    from app.config import get_settings
+    from app.story_product_repository import StoryProductRepository
+
+    settings = get_settings()
+    if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
+        return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
+    rows = StoryProductRepository().list_stories(
+        tenant_id=tenant_id,
+        status=status,
+        instagram_account_id=instagram_account_id,
+        product_id=product_id,
+        limit=limit,
+    )
+    return {
+        "ok": True,
+        "items": [row.model_dump(mode="json") for row in rows],
+    }
+
+
+@app.get("/api/admin/instagram/stories/{row_id}", dependencies=[Depends(verify_admin_token)])
+async def admin_get_instagram_story(row_id: int, tenant_id: str = "newstore"):
+    from app.config import get_settings
+    from app.story_product_repository import StoryProductRepository
+
+    settings = get_settings()
+    if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
+        return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
+    row = StoryProductRepository().get_by_id(tenant_id=tenant_id, row_id=row_id)
+    if row is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    return {"ok": True, "item": row.model_dump(mode="json")}
+
+
+@app.post(
+    "/api/admin/instagram/stories/link-product",
+    dependencies=[Depends(verify_admin_token)],
+)
+async def admin_link_instagram_story_product(request: Request):
+    from app.config import get_settings
+    from app.story_publication_link_service import (
+        register_published_story,
+        validate_link_payload,
+    )
+
+    settings = get_settings()
+    if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
+        return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
+    try:
+        cleaned = validate_link_payload(body)
+        # Ignore any client-supplied price/stock keys by construction.
+        assoc = register_published_story(**cleaned)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"ok": False, "error": type(exc).__name__},
+            status_code=500,
+        )
+    return {"ok": True, "item": assoc.model_dump(mode="json")}
+
+
+@app.post(
+    "/api/admin/instagram/stories/{row_id}/confirm",
+    dependencies=[Depends(verify_admin_token)],
+)
+async def admin_confirm_instagram_story(row_id: int, request: Request):
+    from app.config import get_settings
+    from app.story_product_repository import StoryProductRepository
+
+    settings = get_settings()
+    if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
+        return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
+    tenant_id = str(body.get("tenant_id") or "newstore")
+    repo = StoryProductRepository()
+    existing = repo.get_by_id(tenant_id=tenant_id, row_id=row_id)
+    if existing is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    product_id = str(body.get("product_id") or "").strip()
+    catalog_item_key = str(body.get("catalog_item_key") or "").strip()
+    if not product_id or not catalog_item_key:
+        return JSONResponse({"ok": False, "error": "product_required"}, status_code=400)
+    confirmed = repo.confirm_match(
+        tenant_id=tenant_id,
+        provider=existing.provider,
+        instagram_account_id=existing.instagram_account_id,
+        story_media_id=existing.story_media_id,
+        catalog_item_key=catalog_item_key,
+        product_id=product_id,
+        variant_id=(
+            str(body["variant_id"]) if body.get("variant_id") not in (None, "") else None
+        ),
+        match_source="manual",
+        match_confidence=1.0,
+        match_status="manually_confirmed",
+        confirmed_by=str(body.get("confirmed_by") or "admin"),
+        explanation={
+            "reason": str(body.get("reason") or "manual_confirm")[:200],
+            "previous_product_id": existing.product_id,
+        },
+    )
+    return {"ok": True, "item": confirmed.model_dump(mode="json") if confirmed else None}
+
+
+@app.post(
+    "/api/admin/instagram/stories/{row_id}/unlink",
+    dependencies=[Depends(verify_admin_token)],
+)
+async def admin_unlink_instagram_story(row_id: int, request: Request):
+    from app.config import get_settings
+    from app.story_product_repository import StoryProductRepository
+
+    settings = get_settings()
+    if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
+        return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    tenant_id = str((body or {}).get("tenant_id") or "newstore")
+    row = StoryProductRepository().unlink(
+        tenant_id=tenant_id,
+        row_id=row_id,
+        confirmed_by=str((body or {}).get("confirmed_by") or "admin"),
+    )
+    if row is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    return {"ok": True, "item": row.model_dump(mode="json")}
+
+
+@app.post(
+    "/api/admin/instagram/stories/{row_id}/reprocess",
+    dependencies=[Depends(verify_admin_token)],
+)
+async def admin_reprocess_instagram_story(row_id: int, request: Request):
+    from app.config import get_settings
+    from app.story_product_repository import StoryProductRepository
+
+    settings = get_settings()
+    if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
+        return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    tenant_id = str((body or {}).get("tenant_id") or "newstore")
+    repo = StoryProductRepository()
+    existing = repo.get_by_id(tenant_id=tenant_id, row_id=row_id)
+    if existing is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    reset = repo.unlink(
+        tenant_id=tenant_id,
+        row_id=row_id,
+        confirmed_by=str((body or {}).get("confirmed_by") or "admin_reprocess"),
+    )
+    return {
+        "ok": True,
+        "item": reset.model_dump(mode="json") if reset else None,
+        "note": "Association reset to pending; next customer reply will re-analyze once.",
+    }
 
 
 @app.post("/api/test/agent")
