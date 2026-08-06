@@ -61,17 +61,18 @@ ON public.instagram_story_products (tenant_id, match_status, processing_expires_
 WHERE match_status = 'processing';
 
 -- Catalog: keep newest by freshness_at / updated_at (018 used ctid).
+-- ai_catalog_index has freshness_at + updated_at only (no created_at).
 DELETE FROM public.ai_catalog_index a
 USING public.ai_catalog_index b
 WHERE a.tenant_id = b.tenant_id
   AND a.catalog_item_key = b.catalog_item_key
   AND a.ctid <> b.ctid
   AND (
-        coalesce(a.freshness_at, a.updated_at, a.created_at)
-      < coalesce(b.freshness_at, b.updated_at, b.created_at)
+        coalesce(a.freshness_at, a.updated_at)
+      < coalesce(b.freshness_at, b.updated_at)
       OR (
-            coalesce(a.freshness_at, a.updated_at, a.created_at)
-          = coalesce(b.freshness_at, b.updated_at, b.created_at)
+            coalesce(a.freshness_at, a.updated_at)
+          = coalesce(b.freshness_at, b.updated_at)
         AND a.ctid < b.ctid
       )
   );
