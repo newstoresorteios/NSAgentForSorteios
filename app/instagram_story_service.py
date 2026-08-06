@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from .config import get_settings
-from .fact_authority import authorize_products_for_responder
+from .fact_authority import authorize_products_for_responder, catalog_item_key_for
 from .instagram_story_intent import (
     detect_story_question_type,
     should_route_story_question,
@@ -24,21 +25,19 @@ from .instagram_story_models import (
     StoryProductCandidate,
     StoryResolutionResult,
     StoryVisualUnderstanding,
+    VisualProductRegion,
 )
 from .models import AgentResult, IncomingMessage
 from .observability import log_event
 from .openai_routing import bucket_for_key
 from .story_product_matcher import classify_match, match_story_to_catalog
 from .story_product_repository import StoryProductRepository
+from .story_tenant import resolve_story_tenant
 from .story_visual_analyzer import (
     analyze_story_image,
     get_cached_visual_analysis,
     put_cached_visual_analysis,
 )
-
-
-def _tenant_id() -> str:
-    return str(getattr(get_settings(), "agent_persona_tenant_id", None) or "newstore")
 
 
 def story_rollout_allows(*, tenant_id: str, story: InstagramStoryContext) -> tuple[bool, str]:
@@ -56,7 +55,6 @@ def story_rollout_allows(*, tenant_id: str, story: InstagramStoryContext) -> tup
         percent = float(getattr(settings, "instagram_story_canary_percent", 5) or 5) / 100.0
         key = f"{tenant_id}:{story.instagram_account_id}:{story.story_media_id or ''}"
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        # Reuse sticky bucket helper (0..9999).
         in_canary = bucket_for_key(digest) < int(round(percent * 10_000))
         return in_canary, "canary" if in_canary else "canary_excluded"
     return False, "unknown_mode"
@@ -67,20 +65,106 @@ async def _revalidate_product(
     product_id: str,
     execute_tool: Any,
     variant_id: str | None = None,
-) -> tuple[dict[str, Any] | None, bool]:
+) -> tuple[dict[str, Any] | None, bool, str | None]:
+    """Revalidate on Tray. Returns (product, tray_failed, failure_code)."""
     try:
         result = await execute_tool("get_product", {"product_id": str(product_id)})
     except Exception:
-        return None, True
+        return None, True, "tray_unavailable"
     if not isinstance(result, dict) or result.get("error"):
-        return None, True
+        return None, True, "product_revalidation_failed"
     product = dict(result)
     product["id"] = str(product.get("id") or product_id)
-    if variant_id is not None:
-        product["variant_id"] = variant_id
+    if variant_id:
+        try:
+            variant = await execute_tool(
+                "get_product_variant",
+                {"product_id": str(product_id), "variant_id": str(variant_id)},
+            )
+        except Exception:
+            return None, True, "tray_unavailable"
+        if not isinstance(variant, dict) or variant.get("error"):
+            return None, True, "variant_revalidation_failed"
+        # Prefer variant commercial fields when present.
+        for key in (
+            "price",
+            "promotional_price",
+            "stock",
+            "available",
+            "url",
+            "sku",
+            "ean",
+            "name",
+        ):
+            if variant.get(key) is not None:
+                product[key] = variant.get(key)
+        product["variant_id"] = str(variant_id)
+        product["_variant_revalidated"] = True
     product["_revalidated"] = True
     product["_factual_source"] = "tray_live"
-    return product, False
+    return product, False, None
+
+
+async def _list_real_variants(
+    *,
+    product_id: str,
+    execute_tool: Any,
+) -> list[dict[str, Any]]:
+    try:
+        result = await execute_tool("list_product_variants", {"product_id": str(product_id)})
+    except Exception:
+        return []
+    if not isinstance(result, dict):
+        return []
+    variants = result.get("variants") or result.get("items") or []
+    if not isinstance(variants, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in variants:
+        if not isinstance(item, dict) or item.get("id") is None:
+            continue
+        out.append(item)
+    return out
+
+
+def _clarification_from_regions(
+    analysis: StoryVisualUnderstanding,
+) -> tuple[list[str], str]:
+    regions = list(analysis.product_regions or [])
+    options: list[str] = []
+    for region in regions[:4]:
+        if isinstance(region, VisualProductRegion):
+            bits = []
+            if region.label:
+                bits.append(region.label)
+            if region.dial_color:
+                bits.append(f"mostrador {region.dial_color}")
+            if region.position and region.position != "unknown":
+                bits.append(f"à {region.position}" if region.position in {"left", "right"} else region.position)
+            label = " — ".join(bits) if bits else f"produto {len(options) + 1}"
+            options.append(label)
+        elif isinstance(region, dict):
+            label = str(region.get("label") or "").strip()
+            dial = str(region.get("dial_color") or "").strip()
+            pos = str(region.get("position") or "").strip()
+            bits = [b for b in (label, f"mostrador {dial}" if dial else "", pos if pos and pos != "unknown" else "") if b]
+            options.append(" — ".join(bits) if bits else f"produto {len(options) + 1}")
+    if len(options) >= 2 and any("mostrador" in o or "left" in o or "right" in o or "esquerda" in o or "direita" in o for o in options):
+        reply = (
+            f"Nesse Story aparecem {len(options)} relógios. "
+            f"Você quer o {options[0]} ou o {options[1]}?"
+        )
+        return options, reply
+    if analysis.watch_count > 1 or analysis.multiple_products:
+        reply = (
+            "Nesse Story aparecem mais de um relógio. "
+            "Você quer saber do primeiro ou do segundo?"
+        )
+        return options or ["primeiro", "segundo"], reply
+    return options, (
+        "Nesse Story a identificação ficou parcial. "
+        "Pode me dizer a marca ou a referência?"
+    )
 
 
 def _compose_reply(
@@ -91,25 +175,20 @@ def _compose_reply(
     candidates: list[StoryProductCandidate],
     tray_failed: bool = False,
     expired: bool = False,
+    clarification_reply: str | None = None,
+    variant_lines: list[str] | None = None,
 ) -> str:
     if expired:
         return (
             "Não consegui mais acessar a imagem desse Story. "
             "Se você enviar um print, eu identifico o modelo e confirmo o valor."
         )
+    if clarification_reply:
+        return clarification_reply
     if status == "ambiguous" and candidates:
-        options = []
-        for candidate in candidates[:2]:
-            label = candidate.product_id
-            options.append(label)
-        if len(candidates) >= 2:
-            return (
-                "Quero confirmar o modelo para não passar o valor errado. "
-                "Você está falando do primeiro ou do segundo modelo parecido desse Story?"
-            )
         return (
-            "Nesse Story a identificação ficou parcial. "
-            "Pode me dizer a marca ou a cor do mostrador?"
+            "Quero confirmar o modelo para não passar o valor errado. "
+            "Você está falando do primeiro ou do segundo modelo parecido desse Story?"
         )
     if status in {"not_found", "failed"}:
         return (
@@ -120,6 +199,11 @@ def _compose_reply(
         name = str(product.get("name") or "o modelo")
         return (
             f"Identifiquei {name}, mas não consegui confirmar o preço atualizado agora. "
+            "Posso tentar novamente em instantes ou encaminhar para o atendimento."
+        )
+    if tray_failed and product is None:
+        return (
+            "Não consegui confirmar os dados comerciais atualizados na loja agora. "
             "Posso tentar novamente em instantes ou encaminhar para o atendimento."
         )
     if product is None:
@@ -142,9 +226,15 @@ def _compose_reply(
             )
         return f"Esse é o {name}. Consultei agora e ele está disponível neste momento."
     if question_type.value == "color_options":
+        if variant_lines:
+            listed = "; ".join(variant_lines[:5])
+            return (
+                f"Esse é o {name}. Consultei as variantes disponíveis agora: {listed}. "
+                "Qual você prefere?"
+            )
         return (
-            f"Esse é o {name}. Posso verificar outras cores/variantes dele no catálogo. "
-            "Qual cor você prefere?"
+            f"Esse é o {name}. Não encontrei outras cores/variantes listadas no catálogo agora. "
+            "Quer que eu confirme o valor deste modelo?"
         )
     if price is not None:
         try:
@@ -157,6 +247,53 @@ def _compose_reply(
             f"Ele {avail_txt} neste momento. Quer que eu envie o link?"
         )
     return f"Esse é o {name}. Quer que eu confirme o valor atualizado e o link?"
+
+
+def _reuse_assoc_result(
+    *,
+    assoc: Any,
+    media_id: str,
+    tenant: str,
+    question_type: Any,
+    shadow_only: bool,
+    metrics: dict[str, Any],
+    product: dict[str, Any] | None,
+    tray_failed: bool,
+    evidence: list[dict[str, Any]],
+    candidates: list[StoryProductCandidate] | None = None,
+    clarification_options: list[str] | None = None,
+    clarification_reply: str | None = None,
+    variant_lines: list[str] | None = None,
+) -> StoryResolutionResult:
+    status = assoc.match_status
+    return StoryResolutionResult(
+        resolved=bool(product) and not tray_failed and status in {"matched", "manually_confirmed"},
+        tenant_id=tenant,
+        story_media_id=media_id,
+        match_status=status,
+        catalog_item_key=assoc.catalog_item_key,
+        product_id=assoc.product_id,
+        variant_id=assoc.variant_id,
+        confidence=float(assoc.match_confidence or 0.0),
+        candidates=candidates or [],
+        needs_clarification=status in {"ambiguous", "not_found", "failed", "processing", "expired"},
+        clarification_options=clarification_options or [],
+        factual_evidence=evidence,
+        question_type=question_type,
+        product_payload=product,
+        reply_hint=_compose_reply(
+            question_type=question_type,
+            product=product,
+            status=status if status != "manually_confirmed" else "matched",
+            candidates=candidates or [],
+            tray_failed=tray_failed,
+            clarification_reply=clarification_reply,
+            variant_lines=variant_lines,
+        ),
+        shadow_only=shadow_only,
+        metrics=metrics,
+        resolved_at=datetime.now(timezone.utc),
+    )
 
 
 async def resolve_story_product_question(
@@ -172,7 +309,29 @@ async def resolve_story_product_question(
     story = incoming.instagram_story
     if not isinstance(story, InstagramStoryContext):
         return None
-    tenant = tenant_id or _tenant_id()
+
+    tenant_resolution = await resolve_story_tenant(
+        provider=story.provider or "brevo",
+        instagram_account_id=story.instagram_account_id or "",
+        integration_id=None,
+        explicit_tenant_id=tenant_id,
+    )
+    if not tenant_resolution.ok or not tenant_resolution.tenant_id:
+        log_event("story_tenant_resolution", {"ok": False, "code": "story_tenant_unresolved"})
+        return StoryResolutionResult(
+            resolved=False,
+            match_status="failed",
+            failure_reason="story_tenant_unresolved",
+            needs_clarification=True,
+            question_type=detect_story_question_type(incoming.text),
+            reply_hint=(
+                "Não consegui localizar o catálogo desta conta agora. "
+                "Posso encaminhar para o atendimento."
+            ),
+            metrics={"story_tenant_resolution": "failed"},
+        )
+
+    tenant = tenant_resolution.tenant_id
     allowed, rollout_reason = story_rollout_allows(tenant_id=tenant, story=story)
     if not allowed:
         return None
@@ -180,22 +339,29 @@ async def resolve_story_product_question(
     question_type = detect_story_question_type(incoming.text)
     metrics: dict[str, Any] = {
         "story_visual_analysis_calls": 0,
-        "story_rerank_calls": 0,
-        "story_cache_hits": 0,
+        "story_media_cache_hit": 0,
+        "story_db_analysis_cache_hit": 0,
         "story_deterministic_matches": 0,
         "story_ambiguous_matches": 0,
+        "story_tenant_resolution": tenant_resolution.source,
         "rollout": rollout_reason,
     }
     shadow_only = rollout_reason == "shadow"
     media_id = str(story.story_media_id or "")
     log_event(
-        "instagram_story.received",
+        "story_payload_detected",
         {
             "tenant_id": tenant,
             "media_type": story.media_type,
             "question_type": question_type.value,
             "rollout": rollout_reason,
             "story_media_id_hash": hashlib.sha256(media_id.encode()).hexdigest()[:12] if media_id else None,
+            "media_url_present": bool(story.operational_media_url()),
+            "media_log": (
+                story.story_media_log_reference.model_dump(mode="json")
+                if story.story_media_log_reference
+                else None
+            ),
         },
     )
 
@@ -206,6 +372,7 @@ async def resolve_story_product_question(
     if not media_id:
         return StoryResolutionResult(
             resolved=False,
+            tenant_id=tenant,
             match_status="failed",
             needs_clarification=True,
             failure_reason="story_media_id_missing",
@@ -240,8 +407,37 @@ async def resolve_story_product_question(
             story_expires_at=story.expires_at,
         )
 
+    async def _maybe_revalidate(product_id: str, variant_id: str | None):
+        if execute_tool is None:
+            return None, False, None, []
+        log_event("story_revalidation", {"product_id": product_id, "has_variant": bool(variant_id)})
+        product, tray_failed, code = await _revalidate_product(
+            product_id=product_id,
+            execute_tool=execute_tool,
+            variant_id=variant_id,
+        )
+        evidence: list[dict[str, Any]] = []
+        if product and not tray_failed:
+            authorized, grounded = authorize_products_for_responder(
+                [product],
+                tenant_id=tenant,
+            )
+            product = authorized[0] if authorized else product
+            evidence = [g.model_dump(mode="json") for g in grounded]
+        if tray_failed and code == "variant_revalidation_failed":
+            log_event("story_variant_revalidation", {"ok": False, "code": code})
+            repo.mark_failed(
+                tenant_id=tenant,
+                provider=provider,
+                instagram_account_id=account,
+                story_media_id=media_id,
+                explanation={"reason": code},
+                failure_code=code,
+            )
+        return product, tray_failed, code, evidence
+
+    # Already matched / manually confirmed → revalidate only (zero vision).
     if assoc and assoc.match_status in {"matched", "manually_confirmed"} and assoc.product_id:
-        log_event("instagram_story.association_found", {"status": assoc.match_status})
         metrics["story_deterministic_matches"] = 1
         repo.touch_last_seen(
             tenant_id=tenant,
@@ -249,79 +445,90 @@ async def resolve_story_product_question(
             instagram_account_id=account,
             story_media_id=media_id,
         )
-        product = None
-        tray_failed = False
-        if execute_tool is not None:
-            log_event("instagram_story.revalidation_started", {"product_id": assoc.product_id})
-            product, tray_failed = await _revalidate_product(
-                product_id=assoc.product_id,
-                execute_tool=execute_tool,
-                variant_id=assoc.variant_id,
+        product, tray_failed, _code, evidence = await _maybe_revalidate(
+            assoc.product_id, assoc.variant_id
+        )
+        variant_lines: list[str] | None = None
+        if (
+            question_type.value == "color_options"
+            and execute_tool is not None
+            and product is not None
+            and not tray_failed
+        ):
+            variants = await _list_real_variants(
+                product_id=assoc.product_id, execute_tool=execute_tool
             )
-            if tray_failed:
-                log_event("instagram_story.revalidation_failed", {"product_id": assoc.product_id})
-        evidence = []
-        if product:
-            authorized, grounded = authorize_products_for_responder(
-                [product],
-                tenant_id=tenant,
-            )
-            product = authorized[0] if authorized else product
-            evidence = [g.model_dump(mode="json") for g in grounded]
-        result = StoryResolutionResult(
-            resolved=product is not None and not tray_failed,
-            story_media_id=media_id,
-            match_status=assoc.match_status,
-            catalog_item_key=assoc.catalog_item_key,
-            product_id=assoc.product_id,
-            variant_id=assoc.variant_id,
-            confidence=float(assoc.match_confidence or 1.0),
-            factual_evidence=evidence,
+            variant_lines = []
+            for item in variants:
+                color = item.get("color") or item.get("name") or item.get("sku")
+                if color:
+                    avail = item.get("available")
+                    suffix = " (disponível)" if avail is not False else " (indisponível)"
+                    variant_lines.append(f"{color}{suffix}")
+            log_event("story_variant_revalidation", {"ok": True, "count": len(variant_lines)})
+        return _reuse_assoc_result(
+            assoc=assoc,
+            media_id=media_id,
+            tenant=tenant,
             question_type=question_type,
-            product_payload=product,
-            reply_hint=_compose_reply(
-                question_type=question_type,
-                product=product,
-                status="matched",
-                candidates=[],
-                tray_failed=tray_failed,
-            ),
             shadow_only=shadow_only,
             metrics=metrics,
+            product=product,
+            tray_failed=tray_failed,
+            evidence=evidence,
+            variant_lines=variant_lines,
         )
-        return result
 
-    if assoc and assoc.match_status == "processing":
-        # Soft wait — do not launch a second vision call.
-        for _ in range(3):
-            await asyncio.sleep(0.15)
-            assoc = repo.get_by_story(
-                tenant_id=tenant,
-                provider=provider,
-                instagram_account_id=account,
-                story_media_id=media_id,
+    if assoc and assoc.match_status == "ambiguous":
+        metrics["story_ambiguous_matches"] = 1
+        cands = [
+            StoryProductCandidate.model_validate(c)
+            for c in (assoc.candidate_products or [])
+            if isinstance(c, dict)
+        ]
+        analysis_payload = assoc.visual_analysis or {}
+        try:
+            analysis_obj = StoryVisualUnderstanding.model_validate(analysis_payload)
+            options, reply = _clarification_from_regions(analysis_obj)
+        except Exception:
+            options, reply = ["primeiro", "segundo"], (
+                "Nesse Story a identificação ficou parcial. "
+                "Você quer o primeiro ou o segundo modelo?"
             )
-            if assoc and assoc.match_status != "processing":
-                break
-        if assoc and assoc.match_status == "processing":
-            return StoryResolutionResult(
-                resolved=False,
-                story_media_id=media_id,
-                match_status="processing",
-                needs_clarification=True,
-                failure_reason="analysis_in_progress",
-                question_type=question_type,
-                reply_hint=(
-                    "Estou confirmando o modelo desse Story. "
-                    "Só um instante — ou me manda a cor/referência se preferir."
-                ),
-                shadow_only=shadow_only,
-                metrics=metrics,
-            )
+        log_event("story_clarification", {"source": "reuse_ambiguous"})
+        return _reuse_assoc_result(
+            assoc=assoc,
+            media_id=media_id,
+            tenant=tenant,
+            question_type=question_type,
+            shadow_only=shadow_only,
+            metrics=metrics,
+            product=None,
+            tray_failed=False,
+            evidence=[],
+            candidates=cands[:5],
+            clarification_options=options,
+            clarification_reply=reply,
+        )
+
+    if assoc and assoc.match_status == "not_found":
+        # Respect prior not_found — do not re-run vision on every message.
+        return _reuse_assoc_result(
+            assoc=assoc,
+            media_id=media_id,
+            tenant=tenant,
+            question_type=question_type,
+            shadow_only=shadow_only,
+            metrics=metrics,
+            product=None,
+            tray_failed=False,
+            evidence=[],
+        )
 
     if assoc and assoc.match_status == "expired":
         return StoryResolutionResult(
             resolved=False,
+            tenant_id=tenant,
             story_media_id=media_id,
             match_status="expired",
             needs_clarification=True,
@@ -338,188 +545,336 @@ async def resolve_story_product_question(
             metrics=metrics,
         )
 
-    # Claim processing lock.
+    if assoc and assoc.match_status == "processing":
+        # Soft wait — never launch a second vision call without the lease.
+        for _ in range(3):
+            await asyncio.sleep(0.15)
+            assoc = repo.get_by_story(
+                tenant_id=tenant,
+                provider=provider,
+                instagram_account_id=account,
+                story_media_id=media_id,
+            )
+            if assoc and assoc.match_status != "processing":
+                break
+        if assoc and assoc.match_status == "processing":
+            log_event("story_processing_lock", {"status": "busy"})
+            return StoryResolutionResult(
+                resolved=False,
+                tenant_id=tenant,
+                story_media_id=media_id,
+                match_status="processing",
+                needs_clarification=True,
+                failure_reason="analysis_in_progress",
+                question_type=question_type,
+                reply_hint=(
+                    "Estou confirmando o modelo desse Story. "
+                    "Só um instante — ou me manda a cor/referência se preferir."
+                ),
+                shadow_only=shadow_only,
+                metrics=metrics,
+            )
+        # Fall through to reuse matched/ambiguous after wait.
+        if assoc and assoc.match_status in {"matched", "manually_confirmed"} and assoc.product_id:
+            product, tray_failed, _code, evidence = await _maybe_revalidate(
+                assoc.product_id, assoc.variant_id
+            )
+            return _reuse_assoc_result(
+                assoc=assoc,
+                media_id=media_id,
+                tenant=tenant,
+                question_type=question_type,
+                shadow_only=shadow_only,
+                metrics=metrics,
+                product=product,
+                tray_failed=tray_failed,
+                evidence=evidence,
+            )
+
+    owner = f"story-{uuid.uuid4().hex[:12]}"
     claimed = repo.begin_processing(
         tenant_id=tenant,
         provider=provider,
         instagram_account_id=account,
         story_media_id=media_id,
+        owner=owner,
     )
-    if claimed is None and assoc and assoc.match_status not in {"pending", "failed", None}:
-        # Another worker owns it or already finished.
-        pass
-
-    analysis: StoryVisualUnderstanding | None = None
-    media_sha: str | None = None
-    storage_path: str | None = None
-    download_url = story.story_media_url or story.story_thumbnail_url
-
-    if download_url:
-        try:
-            media = await download_story_media(download_url)
-            media_sha = media.sha256
-            storage_path = media.storage_path
-            cached = get_cached_visual_analysis(tenant_id=tenant, media_sha256=media_sha)
-            if cached is not None:
-                analysis = cached
-                metrics["story_cache_hits"] = 1
-            else:
-                if media.content_type.startswith("video/"):
-                    frames = extract_video_frames_best_effort(
-                        media.content,
-                        max_frames=int(
-                            getattr(get_settings(), "instagram_story_video_max_frames", 3)
-                            or 3
-                        ),
-                    )
-                    if not frames and story.story_thumbnail_url:
-                        thumb = await download_story_media(story.story_thumbnail_url)
-                        analysis = await analyze_story_image(
-                            image_bytes=thumb.content,
-                            content_type=thumb.content_type,
-                            media_sha256=thumb.sha256,
-                            media_type="image",
-                        )
-                        metrics["story_visual_analysis_calls"] = 1
-                    elif frames:
-                        analysis = await analyze_story_image(
-                            image_bytes=frames[0],
-                            content_type="image/jpeg",
-                            media_sha256=media_sha,
-                            media_type="video",
-                        )
-                        metrics["story_visual_analysis_calls"] = 1
-                    else:
-                        repo.mark_failed(
-                            tenant_id=tenant,
-                            provider=provider,
-                            instagram_account_id=account,
-                            story_media_id=media_id,
-                            explanation={"reason": "video_decoder_unavailable"},
-                        )
-                        return StoryResolutionResult(
-                            resolved=False,
-                            story_media_id=media_id,
-                            match_status="failed",
-                            failure_reason="video_decoder_unavailable",
-                            needs_clarification=True,
-                            question_type=question_type,
-                            reply_hint=_compose_reply(
-                                question_type=question_type,
-                                product=None,
-                                status="failed",
-                                candidates=[],
-                                expired=True,
-                            ),
-                            shadow_only=shadow_only,
-                            metrics=metrics,
-                        )
-                else:
-                    analysis = await analyze_story_image(
-                        image_bytes=media.content,
-                        content_type=media.content_type,
-                        media_sha256=media_sha,
-                        media_type=story.media_type,
-                    )
-                    metrics["story_visual_analysis_calls"] = 1
-                if analysis is not None and media_sha:
-                    put_cached_visual_analysis(
-                        tenant_id=tenant,
-                        media_sha256=media_sha,
-                        analysis=analysis,
-                    )
-            # Hash association reuse (same tenant only).
-            if media_sha:
-                prior = repo.find_by_media_hash(tenant_id=tenant, media_sha256=media_sha)
-                if prior and prior.product_id:
-                    repo.confirm_match(
-                        tenant_id=tenant,
-                        provider=provider,
-                        instagram_account_id=account,
-                        story_media_id=media_id,
-                        catalog_item_key=prior.catalog_item_key or f"product:{prior.product_id}",
-                        product_id=prior.product_id,
-                        variant_id=prior.variant_id,
-                        match_source="visual_catalog_match",
-                        match_confidence=float(prior.match_confidence or 0.95),
-                        explanation={"via": "media_sha256"},
-                    )
-                    metrics["story_deterministic_matches"] = 1
-                    product = None
-                    tray_failed = False
-                    if execute_tool is not None:
-                        product, tray_failed = await _revalidate_product(
-                            product_id=prior.product_id,
-                            execute_tool=execute_tool,
-                            variant_id=prior.variant_id,
-                        )
-                    return StoryResolutionResult(
-                        resolved=bool(product) and not tray_failed,
-                        story_media_id=media_id,
-                        match_status="matched",
-                        catalog_item_key=prior.catalog_item_key,
-                        product_id=prior.product_id,
-                        variant_id=prior.variant_id,
-                        confidence=float(prior.match_confidence or 0.95),
-                        product_payload=product,
-                        question_type=question_type,
-                        reply_hint=_compose_reply(
-                            question_type=question_type,
-                            product=product,
-                            status="matched",
-                            candidates=[],
-                            tray_failed=tray_failed,
-                        ),
-                        shadow_only=shadow_only,
-                        metrics=metrics,
-                    )
-        except StoryMediaError as exc:
-            if exc.code in {"host_not_allowed", "scheme_not_https", "private_ip_blocked"}:
-                repo.mark_failed(
-                    tenant_id=tenant,
-                    provider=provider,
-                    instagram_account_id=account,
-                    story_media_id=media_id,
-                    explanation={"reason": exc.code},
-                )
-            else:
-                repo.mark_expired(
-                    tenant_id=tenant,
-                    provider=provider,
-                    instagram_account_id=account,
-                    story_media_id=media_id,
-                    explanation={"reason": exc.code},
-                )
+    if claimed is None:
+        current = repo.get_by_story(
+            tenant_id=tenant,
+            provider=provider,
+            instagram_account_id=account,
+            story_media_id=media_id,
+        )
+        log_event(
+            "story_processing_lock",
+            {"status": "not_claimed", "current": current.match_status if current else None},
+        )
+        if current and current.match_status == "processing":
             return StoryResolutionResult(
                 resolved=False,
+                tenant_id=tenant,
                 story_media_id=media_id,
-                match_status="expired" if "http" in exc.code or exc.code == "download_failed" else "failed",
-                failure_reason=exc.code,
+                match_status="processing",
                 needs_clarification=True,
+                failure_reason="analysis_in_progress",
                 question_type=question_type,
-                reply_hint=_compose_reply(
-                    question_type=question_type,
-                    product=None,
-                    status="failed",
-                    candidates=[],
-                    expired=True,
+                reply_hint=(
+                    "Estou confirmando o modelo desse Story. "
+                    "Só um instante — ou me manda a cor/referência se preferir."
                 ),
                 shadow_only=shadow_only,
                 metrics=metrics,
             )
-    else:
+        if current and current.match_status in {"matched", "manually_confirmed"} and current.product_id:
+            product, tray_failed, _code, evidence = await _maybe_revalidate(
+                current.product_id, current.variant_id
+            )
+            return _reuse_assoc_result(
+                assoc=current,
+                media_id=media_id,
+                tenant=tenant,
+                question_type=question_type,
+                shadow_only=shadow_only,
+                metrics=metrics,
+                product=product,
+                tray_failed=tray_failed,
+                evidence=evidence,
+            )
+        # Do not start vision without the lock.
+        return StoryResolutionResult(
+            resolved=False,
+            tenant_id=tenant,
+            story_media_id=media_id,
+            match_status=current.match_status if current else "processing",
+            needs_clarification=True,
+            failure_reason="analysis_in_progress",
+            question_type=question_type,
+            reply_hint=(
+                "Estou confirmando o modelo desse Story. "
+                "Só um instante."
+            ),
+            shadow_only=shadow_only,
+            metrics=metrics,
+        )
+
+    log_event("story_processing_lock", {"status": "claimed", "owner_prefix": owner[:8]})
+    if claimed.processing_attempts and claimed.processing_attempts > 1:
+        log_event("story_processing_recovery", {"attempts": claimed.processing_attempts})
+
+    analysis: StoryVisualUnderstanding | None = None
+    media_sha: str | None = None
+    storage_path: str | None = None
+    media_mime: str | None = None
+    media_bytes: int | None = None
+    download_url = story.operational_media_url() or story.operational_thumbnail_url()
+
+    if not download_url:
         repo.mark_expired(
             tenant_id=tenant,
             provider=provider,
             instagram_account_id=account,
             story_media_id=media_id,
             explanation={"reason": "media_url_missing"},
+            failure_code="media_url_missing",
         )
         return StoryResolutionResult(
             resolved=False,
+            tenant_id=tenant,
             story_media_id=media_id,
             match_status="expired",
             failure_reason="media_url_missing",
+            needs_clarification=True,
+            question_type=question_type,
+            reply_hint=_compose_reply(
+                question_type=question_type,
+                product=None,
+                status="failed",
+                candidates=[],
+                expired=True,
+            ),
+            shadow_only=shadow_only,
+            metrics=metrics,
+        )
+
+    try:
+        media = await download_story_media(download_url, tenant_id=tenant)
+        media_sha = media.sha256
+        storage_path = media.storage_path
+        media_mime = media.content_type
+        media_bytes = media.byte_count
+        log_event(
+            "story_media_download",
+            {
+                "bytes": media.byte_count,
+                "host": media.final_host,
+                "stored": bool(storage_path),
+                "sha_prefix": media_sha[:12],
+            },
+        )
+        log_event("story_media_bytes", {"bytes": media.byte_count})
+
+        # Order: hash → confirmed association → L1 → L2 → OpenAI
+        prior = repo.find_by_media_hash(tenant_id=tenant, media_sha256=media_sha)
+        if prior and prior.product_id:
+            metrics["story_media_cache_hit"] = 1
+            repo.confirm_match(
+                tenant_id=tenant,
+                provider=provider,
+                instagram_account_id=account,
+                story_media_id=media_id,
+                catalog_item_key=prior.catalog_item_key
+                or catalog_item_key_for(prior.product_id, prior.variant_id),
+                product_id=prior.product_id,
+                variant_id=prior.variant_id,
+                match_source="visual_catalog_match",
+                match_confidence=float(prior.match_confidence or 0.95),
+                explanation={"via": "media_sha256"},
+            )
+            metrics["story_deterministic_matches"] = 1
+            product, tray_failed, _code, evidence = await _maybe_revalidate(
+                prior.product_id, prior.variant_id
+            )
+            return StoryResolutionResult(
+                resolved=bool(product) and not tray_failed,
+                tenant_id=tenant,
+                story_media_id=media_id,
+                match_status="matched",
+                catalog_item_key=prior.catalog_item_key,
+                product_id=prior.product_id,
+                variant_id=prior.variant_id,
+                confidence=float(prior.match_confidence or 0.95),
+                product_payload=product,
+                factual_evidence=evidence,
+                question_type=question_type,
+                reply_hint=_compose_reply(
+                    question_type=question_type,
+                    product=product,
+                    status="matched",
+                    candidates=[],
+                    tray_failed=tray_failed,
+                ),
+                shadow_only=shadow_only,
+                metrics=metrics,
+                resolved_at=datetime.now(timezone.utc),
+            )
+
+        analysis = get_cached_visual_analysis(tenant_id=tenant, media_sha256=media_sha)
+        if analysis is not None:
+            metrics["story_media_cache_hit"] = 1
+        else:
+            analysis = repo.find_visual_analysis_by_hash(
+                tenant_id=tenant, media_sha256=media_sha
+            )
+            if analysis is not None:
+                metrics["story_db_analysis_cache_hit"] = 1
+                put_cached_visual_analysis(
+                    tenant_id=tenant, media_sha256=media_sha, analysis=analysis
+                )
+
+        if analysis is None:
+            if media.content_type.startswith("video/"):
+                frames = extract_video_frames_best_effort(
+                    media.content,
+                    max_frames=int(
+                        getattr(get_settings(), "instagram_story_video_max_frames", 3) or 3
+                    ),
+                )
+                thumb_url = story.operational_thumbnail_url()
+                if not frames and thumb_url:
+                    thumb = await download_story_media(thumb_url, tenant_id=tenant)
+                    analysis = await analyze_story_image(
+                        image_bytes=thumb.content,
+                        content_type=thumb.content_type,
+                        media_sha256=media_sha,
+                        media_type="image",
+                    )
+                    metrics["story_visual_analysis_calls"] = 1
+                elif frames:
+                    analysis = await analyze_story_image(
+                        image_bytes=frames[0],
+                        content_type="image/jpeg",
+                        media_sha256=media_sha,
+                        media_type="video",
+                        extra_frame_bytes=frames[1:],
+                    )
+                    metrics["story_visual_analysis_calls"] = 1
+                else:
+                    repo.mark_failed(
+                        tenant_id=tenant,
+                        provider=provider,
+                        instagram_account_id=account,
+                        story_media_id=media_id,
+                        explanation={"reason": "video_decoder_unavailable"},
+                        failure_code="video_decoder_unavailable",
+                    )
+                    return StoryResolutionResult(
+                        resolved=False,
+                        tenant_id=tenant,
+                        story_media_id=media_id,
+                        match_status="failed",
+                        failure_reason="video_decoder_unavailable",
+                        needs_clarification=True,
+                        question_type=question_type,
+                        reply_hint=_compose_reply(
+                            question_type=question_type,
+                            product=None,
+                            status="failed",
+                            candidates=[],
+                            expired=True,
+                        ),
+                        shadow_only=shadow_only,
+                        metrics=metrics,
+                    )
+            else:
+                analysis = await analyze_story_image(
+                    image_bytes=media.content,
+                    content_type=media.content_type,
+                    media_sha256=media_sha,
+                    media_type=story.media_type,
+                )
+                metrics["story_visual_analysis_calls"] = 1
+            if analysis is not None:
+                put_cached_visual_analysis(
+                    tenant_id=tenant, media_sha256=media_sha, analysis=analysis
+                )
+                log_event(
+                    "story_visual_analysis_calls",
+                    {"count": metrics["story_visual_analysis_calls"]},
+                )
+    except StoryMediaError as exc:
+        if exc.code in {
+            "host_not_allowed",
+            "scheme_not_https",
+            "private_ip_blocked",
+            "redirect_host_not_allowed",
+            "redirect_private_ip",
+        }:
+            repo.mark_failed(
+                tenant_id=tenant,
+                provider=provider,
+                instagram_account_id=account,
+                story_media_id=media_id,
+                explanation={"reason": exc.code},
+                failure_code=exc.code,
+            )
+            status = "failed"
+        else:
+            repo.mark_expired(
+                tenant_id=tenant,
+                provider=provider,
+                instagram_account_id=account,
+                story_media_id=media_id,
+                explanation={"reason": exc.code},
+                failure_code=exc.code,
+            )
+            status = "expired"
+        return StoryResolutionResult(
+            resolved=False,
+            tenant_id=tenant,
+            story_media_id=media_id,
+            match_status=status,
+            failure_reason=exc.code,
             needs_clarification=True,
             question_type=question_type,
             reply_hint=_compose_reply(
@@ -540,9 +895,11 @@ async def resolve_story_product_question(
             instagram_account_id=account,
             story_media_id=media_id,
             explanation={"reason": "visual_analysis_missing"},
+            failure_code="visual_analysis_missing",
         )
         return StoryResolutionResult(
             resolved=False,
+            tenant_id=tenant,
             story_media_id=media_id,
             match_status="failed",
             failure_reason="visual_analysis_missing",
@@ -566,33 +923,35 @@ async def resolve_story_product_question(
         visual_analysis=analysis.model_dump(mode="json"),
         media_sha256=media_sha,
         media_storage_path=storage_path,
+        media_mime=media_mime,
+        media_bytes=media_bytes,
     )
 
     if analysis.multiple_products or analysis.watch_count > 1:
+        options, reply = _clarification_from_regions(analysis)
         repo.mark_ambiguous(
             tenant_id=tenant,
             provider=provider,
             instagram_account_id=account,
             story_media_id=media_id,
-            explanation={"reason": "multiple_products_visible"},
+            explanation={"reason": "multiple_products_visible", "options": options},
             confidence=float(analysis.product_identity_confidence or 0.5),
         )
         metrics["story_ambiguous_matches"] = 1
-        log_event("instagram_story.ambiguous", {"reason": "multiple_products"})
+        log_event("story_clarification", {"reason": "multiple_products", "options": len(options)})
         return StoryResolutionResult(
             resolved=False,
+            tenant_id=tenant,
             story_media_id=media_id,
             match_status="ambiguous",
             needs_clarification=True,
-            clarification_options=["mostrador azul", "mostrador preto"],
+            clarification_options=options,
             confidence=float(analysis.product_identity_confidence or 0.5),
             question_type=question_type,
-            reply_hint=(
-                "Nesse Story aparecem mais de um relógio. "
-                "Você quer saber o valor de qual deles?"
-            ),
+            reply_hint=reply,
             shadow_only=shadow_only,
             metrics=metrics,
+            resolved_at=datetime.now(timezone.utc),
         )
 
     from .tray_tools import execute_tool as default_execute
@@ -602,6 +961,7 @@ async def resolve_story_product_question(
         tenant_id=tenant,
         analysis=analysis,
         execute_tool=tool,
+        media_bytes=None,  # visual neighbors use caption/OCR evidence
     )
     repo.save_candidates(
         tenant_id=tenant,
@@ -609,12 +969,30 @@ async def resolve_story_product_question(
         instagram_account_id=account,
         story_media_id=media_id,
         candidates=[c.model_dump(mode="json") for c in candidates],
-        explanation={"analysis_version": getattr(get_settings(), "instagram_story_analysis_version", "v1")},
+        explanation={
+            "analysis_version": getattr(
+                get_settings(), "instagram_story_analysis_version", "v2"
+            )
+        },
     )
     status, top = classify_match(
         candidates,
         multiple_products=bool(analysis.multiple_products),
     )
+    if candidates:
+        log_event(
+            "story_match_confidence",
+            {
+                "top": candidates[0].score,
+                "margin": (
+                    candidates[0].score - candidates[1].score if len(candidates) > 1 else None
+                ),
+                "source": candidates[0].source,
+                "count": len(candidates),
+            },
+        )
+        log_event("story_candidates", {"count": len(candidates)})
+        log_event("story_match_source", {"source": candidates[0].source})
 
     if status == "matched" and top is not None:
         repo.confirm_match(
@@ -633,28 +1011,12 @@ async def resolve_story_product_question(
             match_confidence=top.score,
             explanation={"reasons": top.match_reasons},
         )
-        log_event("instagram_story.matched", {"confidence": top.score})
-        product = None
-        tray_failed = False
-        if tool is not None:
-            log_event("instagram_story.revalidation_started", {"product_id": top.product_id})
-            product, tray_failed = await _revalidate_product(
-                product_id=top.product_id,
-                execute_tool=tool,
-                variant_id=top.variant_id,
-            )
-            if tray_failed:
-                log_event("instagram_story.revalidation_failed", {"product_id": top.product_id})
-        evidence = []
-        if product:
-            authorized, grounded = authorize_products_for_responder(
-                [product],
-                tenant_id=tenant,
-            )
-            product = authorized[0] if authorized else None
-            evidence = [g.model_dump(mode="json") for g in grounded]
+        product, tray_failed, _code, evidence = await _maybe_revalidate(
+            top.product_id, top.variant_id
+        )
         return StoryResolutionResult(
             resolved=bool(product) and not tray_failed,
+            tenant_id=tenant,
             story_media_id=media_id,
             match_status="matched",
             catalog_item_key=top.catalog_item_key,
@@ -674,9 +1036,13 @@ async def resolve_story_product_question(
             ),
             shadow_only=shadow_only,
             metrics=metrics,
+            resolved_at=datetime.now(timezone.utc),
         )
 
     if status == "ambiguous":
+        options = [
+            c.catalog_item_key or c.product_id for c in candidates[:3] if c.product_id
+        ]
         repo.mark_ambiguous(
             tenant_id=tenant,
             provider=provider,
@@ -686,12 +1052,14 @@ async def resolve_story_product_question(
             confidence=candidates[0].score if candidates else 0.0,
         )
         metrics["story_ambiguous_matches"] = 1
-        log_event("instagram_story.ambiguous", {"confidence": candidates[0].score if candidates else 0})
+        log_event("story_clarification", {"reason": "close_scores"})
         return StoryResolutionResult(
             resolved=False,
+            tenant_id=tenant,
             story_media_id=media_id,
             match_status="ambiguous",
             needs_clarification=True,
+            clarification_options=options,
             candidates=candidates[:5],
             confidence=candidates[0].score if candidates else 0.0,
             question_type=question_type,
@@ -703,6 +1071,7 @@ async def resolve_story_product_question(
             ),
             shadow_only=shadow_only,
             metrics=metrics,
+            resolved_at=datetime.now(timezone.utc),
         )
 
     repo.mark_not_found(
@@ -712,9 +1081,9 @@ async def resolve_story_product_question(
         story_media_id=media_id,
         explanation={"candidate_count": len(candidates)},
     )
-    log_event("instagram_story.not_found", {"candidate_count": len(candidates)})
     return StoryResolutionResult(
         resolved=False,
+        tenant_id=tenant,
         story_media_id=media_id,
         match_status="not_found",
         needs_clarification=True,
@@ -728,6 +1097,7 @@ async def resolve_story_product_question(
         ),
         shadow_only=shadow_only,
         metrics=metrics,
+        resolved_at=datetime.now(timezone.utc),
     )
 
 
@@ -739,20 +1109,22 @@ def story_result_to_agent_result(
     """Convert resolution into an AgentResult. Shadow mode returns None (no reply change)."""
     if resolution.shadow_only:
         log_event(
-            "instagram_story.reply_generated",
+            "story_reply_generated",
             {"shadow": True, "status": resolution.match_status},
         )
         return None
     reply = (resolution.reply_hint or "").strip()
     if not reply:
         return None
+    tenant = resolution.tenant_id
     metadata: dict[str, Any] = {
         "domain": "commerce",
         "instagram_story": True,
         "story_match_status": resolution.match_status,
         "story_confidence": resolution.confidence,
         "story_metrics": resolution.metrics,
-        "tenant_id": _tenant_id(),
+        "tenant_id": tenant,
+        "story_media_id": resolution.story_media_id,
     }
     commercial: dict[str, Any] = {}
     if resolution.product_payload:
@@ -761,34 +1133,43 @@ def story_result_to_agent_result(
         metadata["active_product"] = {
             "product_id": resolution.product_id,
             "variant_id": resolution.variant_id,
+            "catalog_item_key": resolution.catalog_item_key,
             "name": resolution.product_payload.get("name"),
             "url": resolution.product_payload.get("url"),
         }
         metadata["last_story_product"] = StoryConversationReference(
             story_media_id=resolution.story_media_id,
+            tenant_id=tenant,
             catalog_item_key=resolution.catalog_item_key,
             product_id=resolution.product_id,
             variant_id=resolution.variant_id,
             match_status=resolution.match_status,
             confidence=resolution.confidence,
-            resolved_at=datetime.now(timezone.utc),
+            resolved_at=resolution.resolved_at or datetime.now(timezone.utc),
         ).model_dump(mode="json")
+        metadata["last_presented_products"] = [
+            {
+                "product_id": resolution.product_id,
+                "variant_id": resolution.variant_id,
+                "catalog_item_key": resolution.catalog_item_key,
+            }
+        ]
         if resolution.factual_evidence:
             metadata["grounded_commerce_evidence"] = resolution.factual_evidence
-        allowed = {
+        metadata["allowed_id_sets"] = {
             "allowed_product_ids": [resolution.product_id] if resolution.product_id else [],
             "allowed_variant_ids": [resolution.variant_id] if resolution.variant_id else [],
             "allowed_catalog_item_keys": (
                 [resolution.catalog_item_key] if resolution.catalog_item_key else []
             ),
         }
-        metadata["allowed_id_sets"] = allowed
     log_event(
-        "instagram_story.reply_generated",
+        "story_reply_generated",
         {
             "status": resolution.match_status,
             "resolved": resolution.resolved,
             "question_type": resolution.question_type.value,
+            "tenant_present": bool(tenant),
         },
     )
     _ = incoming

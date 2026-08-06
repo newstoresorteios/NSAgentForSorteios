@@ -667,7 +667,7 @@ class Settings(BaseSettings):
         alias="INSTAGRAM_STORY_ALLOWED_HOSTS",
     )
     instagram_story_video_frame_analysis_enabled: bool = Field(
-        default=True,
+        default=False,
         alias="INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED",
     )
     instagram_story_video_max_frames: int = Field(
@@ -676,12 +676,16 @@ class Settings(BaseSettings):
         ge=1,
         le=5,
     )
+    instagram_story_vision_model: str = Field(
+        default="",
+        alias="INSTAGRAM_STORY_VISION_MODEL",
+    )
     instagram_story_analysis_detail: Literal["low", "high", "auto"] = Field(
         default="high",
         alias="INSTAGRAM_STORY_ANALYSIS_DETAIL",
     )
     instagram_story_analysis_version: str = Field(
-        default="v1",
+        default="v2",
         alias="INSTAGRAM_STORY_ANALYSIS_VERSION",
     )
     instagram_story_visual_cache_enabled: bool = Field(
@@ -695,8 +699,20 @@ class Settings(BaseSettings):
         le=365,
     )
     instagram_story_auto_match_min_confidence: float = Field(
-        default=0.92,
+        default=0.95,
         alias="INSTAGRAM_STORY_AUTO_MATCH_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+    instagram_story_exact_match_min_confidence: float = Field(
+        default=0.95,
+        alias="INSTAGRAM_STORY_EXACT_MATCH_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
+    instagram_story_visual_match_min_confidence: float = Field(
+        default=0.96,
+        alias="INSTAGRAM_STORY_VISUAL_MATCH_MIN_CONFIDENCE",
         ge=0.0,
         le=1.0,
     )
@@ -721,6 +737,14 @@ class Settings(BaseSettings):
     instagram_story_admin_api_enabled: bool = Field(
         default=True,
         alias="INSTAGRAM_STORY_ADMIN_API_ENABLED",
+    )
+    instagram_story_account_tenant_map: str = Field(
+        default="",
+        alias="INSTAGRAM_STORY_ACCOUNT_TENANT_MAP",
+    )
+    instagram_story_storage_bucket: str = Field(
+        default="",
+        alias="INSTAGRAM_STORY_STORAGE_BUCKET",
     )
     instagram_story_rollout_mode: Literal["off", "shadow", "canary", "full"] = Field(
         default="off",

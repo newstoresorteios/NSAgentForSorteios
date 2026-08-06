@@ -232,6 +232,8 @@ class CatalogIndexRepository:
     def _fetch(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         if not str(params.get("tenant_id") or "").strip():
             raise ValueError("tenant_id required")
+        settings = get_settings()
+        max_age = int(getattr(settings, "agent_catalog_index_max_age_seconds", 0) or 0)
         try:
             from .db import get_conn
 
@@ -239,7 +241,28 @@ class CatalogIndexRepository:
                 with conn.cursor() as cur:
                     cur.execute(sql, params)
                     rows = list(cur.fetchall() or [])
-            return [dict(row) for row in rows]
+            out = [dict(row) for row in rows]
+            if max_age > 0:
+                now = datetime.now(timezone.utc)
+                filtered: list[dict[str, Any]] = []
+                for row in out:
+                    freshness = row.get("freshness_at") or row.get("updated_at")
+                    if isinstance(freshness, str):
+                        try:
+                            freshness = datetime.fromisoformat(
+                                freshness.replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            freshness = None
+                    if isinstance(freshness, datetime):
+                        if freshness.tzinfo is None:
+                            freshness = freshness.replace(tzinfo=timezone.utc)
+                        age = (now - freshness).total_seconds()
+                        if age > max_age:
+                            continue
+                    filtered.append(row)
+                return filtered
+            return out
         except Exception as exc:
             print("[catalog.index.read.error]", {"error_type": type(exc).__name__})
             return []

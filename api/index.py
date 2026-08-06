@@ -1032,7 +1032,8 @@ async def admin_rollout_status():
 
 @app.get("/api/admin/instagram/stories", dependencies=[Depends(verify_admin_token)])
 async def admin_list_instagram_stories(
-    tenant_id: str = "newstore",
+    request: Request,
+    tenant_id: str | None = None,
     status: str | None = None,
     instagram_account_id: str | None = None,
     product_id: str | None = None,
@@ -1044,8 +1045,16 @@ async def admin_list_instagram_stories(
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
         return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
+    resolved_tenant = str(
+        tenant_id
+        or request.headers.get("x-tenant-id")
+        or getattr(settings, "agent_persona_tenant_id", "")
+        or ""
+    ).strip()
+    if not resolved_tenant:
+        return JSONResponse({"ok": False, "error": "tenant_required"}, status_code=400)
     rows = StoryProductRepository().list_stories(
-        tenant_id=tenant_id,
+        tenant_id=resolved_tenant,
         status=status,
         instagram_account_id=instagram_account_id,
         product_id=product_id,
@@ -1053,19 +1062,28 @@ async def admin_list_instagram_stories(
     )
     return {
         "ok": True,
+        "tenant_id": resolved_tenant,
         "items": [row.model_dump(mode="json") for row in rows],
     }
 
 
 @app.get("/api/admin/instagram/stories/{row_id}", dependencies=[Depends(verify_admin_token)])
-async def admin_get_instagram_story(row_id: int, tenant_id: str = "newstore"):
+async def admin_get_instagram_story(row_id: int, request: Request, tenant_id: str | None = None):
     from app.config import get_settings
     from app.story_product_repository import StoryProductRepository
 
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
         return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
-    row = StoryProductRepository().get_by_id(tenant_id=tenant_id, row_id=row_id)
+    resolved_tenant = str(
+        tenant_id
+        or request.headers.get("x-tenant-id")
+        or getattr(settings, "agent_persona_tenant_id", "")
+        or ""
+    ).strip()
+    if not resolved_tenant:
+        return JSONResponse({"ok": False, "error": "tenant_required"}, status_code=400)
+    row = StoryProductRepository().get_by_id(tenant_id=resolved_tenant, row_id=row_id)
     if row is None:
         return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
     return {"ok": True, "item": row.model_dump(mode="json")}
@@ -1088,9 +1106,14 @@ async def admin_link_instagram_story_product(request: Request):
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
+    actor = str(
+        request.headers.get("x-admin-actor")
+        or request.headers.get("x-admin-id")
+        or "admin_token"
+    ).strip()[:120]
     try:
         cleaned = validate_link_payload(body)
-        # Ignore any client-supplied price/stock keys by construction.
+        cleaned["confirmed_by"] = actor
         assoc = register_published_story(**cleaned)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
@@ -1108,7 +1131,10 @@ async def admin_link_instagram_story_product(request: Request):
 )
 async def admin_confirm_instagram_story(row_id: int, request: Request):
     from app.config import get_settings
+    from app.fact_authority import catalog_item_key_for
+    from app.catalog_index_repository import CatalogIndexRepository
     from app.story_product_repository import StoryProductRepository
+    from app.observability import log_event
 
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
@@ -1116,31 +1142,76 @@ async def admin_confirm_instagram_story(row_id: int, request: Request):
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
-    tenant_id = str(body.get("tenant_id") or "newstore")
+    resolved_tenant = str(
+        body.get("tenant_id")
+        or request.headers.get("x-tenant-id")
+        or getattr(settings, "agent_persona_tenant_id", "")
+        or ""
+    ).strip()
+    if not resolved_tenant:
+        return JSONResponse({"ok": False, "error": "tenant_required"}, status_code=400)
+    actor = str(
+        request.headers.get("x-admin-actor")
+        or request.headers.get("x-admin-id")
+        or "admin_token"
+    ).strip()[:120]
+    # Never trust body.confirmed_by
     repo = StoryProductRepository()
-    existing = repo.get_by_id(tenant_id=tenant_id, row_id=row_id)
+    existing = repo.get_by_id(tenant_id=resolved_tenant, row_id=row_id)
     if existing is None:
         return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
     product_id = str(body.get("product_id") or "").strip()
-    catalog_item_key = str(body.get("catalog_item_key") or "").strip()
-    if not product_id or not catalog_item_key:
+    if not product_id:
         return JSONResponse({"ok": False, "error": "product_required"}, status_code=400)
+    variant_id = (
+        str(body["variant_id"]).strip()
+        if body.get("variant_id") not in (None, "")
+        else None
+    )
+    # Backend builds catalog_item_key — ignore client-supplied key.
+    catalog_item_key = catalog_item_key_for(product_id, variant_id)
+    index_row = CatalogIndexRepository().get_by_product_and_variant(
+        tenant_id=resolved_tenant,
+        product_id=product_id,
+        variant_id=variant_id,
+    )
+    if index_row is None and bool(
+        getattr(settings, "agent_catalog_index_read_enabled", False)
+    ):
+        # Soft warning when index enabled but product missing — still allow if Tray later.
+        pass
+    if index_row is not None and str(index_row.get("tenant_id") or "") != resolved_tenant:
+        return JSONResponse({"ok": False, "error": "tenant_mismatch"}, status_code=403)
     confirmed = repo.confirm_match(
-        tenant_id=tenant_id,
+        tenant_id=resolved_tenant,
         provider=existing.provider,
         instagram_account_id=existing.instagram_account_id,
         story_media_id=existing.story_media_id,
         catalog_item_key=catalog_item_key,
         product_id=product_id,
-        variant_id=(
-            str(body["variant_id"]) if body.get("variant_id") not in (None, "") else None
-        ),
+        variant_id=variant_id,
         match_source="manual",
         match_confidence=1.0,
         match_status="manually_confirmed",
-        confirmed_by=str(body.get("confirmed_by") or "admin"),
+        confirmed_by=actor,
         explanation={
             "reason": str(body.get("reason") or "manual_confirm")[:200],
+            "previous_product_id": existing.product_id,
+            "previous_variant_id": existing.variant_id,
+            "previous_catalog_item_key": existing.catalog_item_key,
+            "admin_id": actor,
+            "tenant_id": resolved_tenant,
+            "story_row_id": row_id,
+        },
+    )
+    log_event(
+        "instagram_story.admin_confirm",
+        {
+            "tenant_id": resolved_tenant,
+            "story_row_id": row_id,
+            "admin_id": actor,
+            "product_id": product_id,
+            "variant_id": variant_id,
             "previous_product_id": existing.product_id,
         },
     )
@@ -1159,11 +1230,23 @@ async def admin_unlink_instagram_story(row_id: int, request: Request):
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
         return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    tenant_id = str((body or {}).get("tenant_id") or "newstore")
+    resolved_tenant = str(
+        (body or {}).get("tenant_id")
+        or request.headers.get("x-tenant-id")
+        or getattr(settings, "agent_persona_tenant_id", "")
+        or ""
+    ).strip()
+    if not resolved_tenant:
+        return JSONResponse({"ok": False, "error": "tenant_required"}, status_code=400)
+    actor = str(
+        request.headers.get("x-admin-actor")
+        or request.headers.get("x-admin-id")
+        or "admin_token"
+    ).strip()[:120]
     row = StoryProductRepository().unlink(
-        tenant_id=tenant_id,
+        tenant_id=resolved_tenant,
         row_id=row_id,
-        confirmed_by=str((body or {}).get("confirmed_by") or "admin"),
+        confirmed_by=actor,
     )
     if row is None:
         return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
@@ -1182,21 +1265,58 @@ async def admin_reprocess_instagram_story(row_id: int, request: Request):
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
         return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    tenant_id = str((body or {}).get("tenant_id") or "newstore")
+    resolved_tenant = str(
+        (body or {}).get("tenant_id")
+        or request.headers.get("x-tenant-id")
+        or getattr(settings, "agent_persona_tenant_id", "")
+        or ""
+    ).strip()
+    if not resolved_tenant:
+        return JSONResponse({"ok": False, "error": "tenant_required"}, status_code=400)
+    actor = str(
+        request.headers.get("x-admin-actor")
+        or request.headers.get("x-admin-id")
+        or "admin_token"
+    ).strip()[:120]
     repo = StoryProductRepository()
-    existing = repo.get_by_id(tenant_id=tenant_id, row_id=row_id)
+    existing = repo.get_by_id(tenant_id=resolved_tenant, row_id=row_id)
     if existing is None:
         return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
     reset = repo.unlink(
-        tenant_id=tenant_id,
+        tenant_id=resolved_tenant,
         row_id=row_id,
-        confirmed_by=str((body or {}).get("confirmed_by") or "admin_reprocess"),
+        confirmed_by=f"{actor}:reprocess",
     )
     return {
         "ok": True,
         "item": reset.model_dump(mode="json") if reset else None,
         "note": "Association reset to pending; next customer reply will re-analyze once.",
     }
+
+
+@app.post(
+    "/api/cron/instagram-story-media-retention",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def cron_instagram_story_media_retention():
+    from app.story_media_retention import cleanup_expired_story_media
+
+    result = await cleanup_expired_story_media(limit=200)
+    return {
+        "ok": True,
+        "scanned": result.scanned,
+        "deleted_storage": result.deleted_storage,
+        "cleared_paths": result.cleared_paths,
+        "failed": result.failed,
+    }
+
+
+@app.get(
+    "/api/cron/instagram-story-media-retention",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def cron_instagram_story_media_retention_get():
+    return await cron_instagram_story_media_retention()
 
 
 @app.post("/api/test/agent")

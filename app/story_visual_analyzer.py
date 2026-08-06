@@ -32,44 +32,59 @@ async def analyze_story_image(
     content_type: str = "image/jpeg",
     media_sha256: str | None = None,
     media_type: str = "image",
+    extra_frame_bytes: list[bytes] | None = None,
 ) -> StoryVisualUnderstanding:
     settings = get_settings()
     detail = str(getattr(settings, "instagram_story_analysis_detail", "high") or "high")
+    version = str(getattr(settings, "instagram_story_analysis_version", "v2") or "v2")
     mime = content_type if content_type.startswith("image/") else "image/jpeg"
     data_url = f"data:{mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+    # Model resolution: INSTAGRAM_STORY_VISION_MODEL → OPENAI_MAIN_MODEL → OPENAI_MODEL
+    model = (
+        str(getattr(settings, "instagram_story_vision_model", "") or "").strip()
+        or str(getattr(settings, "openai_main_model", "") or "").strip()
+        or str(settings.openai_model)
+    )
+    content_parts: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                "Analise esta mídia de Story. "
+                f"media_type_hint={media_type}. "
+                "Retorne somente evidências visuais. "
+                "Se houver múltiplos frames, use todos."
+            ),
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": data_url, "detail": detail},
+        },
+    ]
+    for frame in (extra_frame_bytes or [])[:2]:
+        if not frame:
+            continue
+        frame_url = f"data:image/jpeg;base64,{base64.b64encode(frame).decode('ascii')}"
+        content_parts.append(
+            {"type": "image_url", "image_url": {"url": frame_url, "detail": detail}}
+        )
     log_event(
         "instagram_story.visual_analysis_started",
         {
             "media_sha256_prefix": (media_sha256 or "")[:12] or None,
             "detail": detail,
             "bytes": len(image_bytes),
+            "model": model,
+            "analysis_version": version,
+            "extra_frames": len(extra_frame_bytes or []),
         },
     )
     started = time.perf_counter()
-    # Use configured main model without changing aliases / routing helpers.
-    model = settings.openai_model
     parse_result = await parse_structured_output(
         model=model,
         text_format=StoryVisualUnderstanding,
         messages=[
             {"role": "system", "content": STORY_VISION_INSTRUCTIONS},
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Analise esta mídia de Story. "
-                            f"media_type_hint={media_type}. "
-                            "Retorne somente evidências visuais."
-                        ),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": data_url, "detail": detail},
-                    },
-                ],
-            },
+            {"role": "user", "content": content_parts},
         ],
         call_type="story_visual_analysis",
         temperature=0.0,
@@ -78,7 +93,6 @@ async def analyze_story_image(
     parsed = parse_result.parsed
     if not isinstance(parsed, StoryVisualUnderstanding):
         raise ValueError("story_visual_schema_missing")
-    # Never trust model-invented commercial certainty.
     if parsed.visible_advertised_price:
         parsed.ambiguity_reasons = list(
             dict.fromkeys(
@@ -93,10 +107,23 @@ async def analyze_story_image(
             "latency_ms": latency_ms,
             "model": model,
             "detail": detail,
+            "analysis_version": version,
             "image_quality": parsed.image_quality,
             "multiple_products": parsed.multiple_products,
             "watch_count": parsed.watch_count,
             "identity_confidence": parsed.product_identity_confidence,
+            "input_tokens": getattr(metrics, "input_tokens", None) if metrics else None,
+            "output_tokens": getattr(metrics, "output_tokens", None) if metrics else None,
+            "success": True,
+        },
+    )
+    log_event(
+        "story_visual_latency",
+        {"latency_ms": latency_ms, "model": model, "analysis_version": version},
+    )
+    log_event(
+        "story_visual_tokens",
+        {
             "input_tokens": getattr(metrics, "input_tokens", None) if metrics else None,
             "output_tokens": getattr(metrics, "output_tokens", None) if metrics else None,
         },
