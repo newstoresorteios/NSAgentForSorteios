@@ -46,3 +46,10 @@ is covered by an automated test.
 - Operational download uses the full signed CDN URL (`SecretStr`).
 - Logs and admin responses use `SafeMediaReference` (host + path hash only).
 - `strip_signed_url()` is observability-only — never for download.
+
+## Security note
+
+If a past delivery ZIP ever included `.env.local` with `VERCEL_OIDC_TOKEN`,
+revoke/rotate that OIDC token in the Vercel dashboard. Never commit `.env.local`.
+Canary/full require `INSTAGRAM_STORY_REAL_PAYLOAD_VALIDATED=true` after a real
+sanitized payload is covered by tests.

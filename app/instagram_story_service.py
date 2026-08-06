@@ -29,7 +29,11 @@ from .instagram_story_models import (
 )
 from .models import AgentResult, IncomingMessage
 from .observability import log_event
-from .openai_routing import bucket_for_key
+from .request_principal import RequestPrincipal, principal_from_internal
+from .story_commercial_policy import (
+    evidence_from_tray_product,
+    validate_commercial_answer,
+)
 from .story_product_matcher import classify_match, match_story_to_catalog
 from .story_product_repository import StoryProductRepository
 from .story_tenant import resolve_story_tenant
@@ -40,22 +44,35 @@ from .story_visual_analyzer import (
 )
 
 
-def story_rollout_allows(*, tenant_id: str, story: InstagramStoryContext) -> tuple[bool, str]:
+def story_rollout_allows(
+    *,
+    tenant_id: str,
+    story: InstagramStoryContext,
+    conversation_id: str | None = None,
+) -> tuple[bool, str]:
     settings = get_settings()
     mode = str(getattr(settings, "instagram_story_rollout_mode", "off") or "off").casefold()
     if not bool(getattr(settings, "instagram_story_recognition_enabled", False)):
         return False, "recognition_disabled"
     if mode == "off":
         return False, "rollout_off"
+    if mode == "diagnostics":
+        return False, "diagnostics_only"
+    real_ok = bool(getattr(settings, "instagram_story_real_payload_validated", False))
+    if mode in {"canary", "full"} and not real_ok:
+        return False, "real_payload_not_validated"
     if mode == "full":
         return True, "full"
     if mode == "shadow":
         return True, "shadow"
     if mode == "canary":
-        percent = float(getattr(settings, "instagram_story_canary_percent", 5) or 5) / 100.0
-        key = f"{tenant_id}:{story.instagram_account_id}:{story.story_media_id or ''}"
+        percent = float(getattr(settings, "instagram_story_canary_percent", 5) or 5)
+        # Stable per conversation: hash(tenant + conversation) % 100
+        conv = str(conversation_id or story.story_message_id or story.story_media_id or "")
+        key = f"{tenant_id}:{conv}"
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        in_canary = bucket_for_key(digest) < int(round(percent * 10_000))
+        bucket = int(digest[:8], 16) % 100
+        in_canary = bucket < int(percent)
         return in_canary, "canary" if in_canary else "canary_excluded"
     return False, "unknown_mode"
 
@@ -302,6 +319,7 @@ async def resolve_story_product_question(
     tenant_id: str | None = None,
     customer_context: dict[str, Any] | None = None,
     execute_tool: Any | None = None,
+    principal: RequestPrincipal | None = None,
 ) -> StoryResolutionResult | None:
     _ = customer_context
     if not should_route_story_question(incoming):
@@ -310,18 +328,28 @@ async def resolve_story_product_question(
     if not isinstance(story, InstagramStoryContext):
         return None
 
+    # Server-supplied tenant_id must ride an internal principal — never a raw body field.
+    effective_principal = principal
+    if tenant_id and effective_principal is None:
+        effective_principal = principal_from_internal(
+            subject_id="agent_runtime",
+            tenant_id=str(tenant_id),
+            source="agent_runtime",
+        )
+
     tenant_resolution = await resolve_story_tenant(
         provider=story.provider or "brevo",
         instagram_account_id=story.instagram_account_id or "",
         integration_id=None,
         explicit_tenant_id=tenant_id,
+        principal=effective_principal,
     )
     if not tenant_resolution.ok or not tenant_resolution.tenant_id:
         log_event("story_tenant_resolution", {"ok": False, "code": "story_tenant_unresolved"})
         return StoryResolutionResult(
             resolved=False,
             match_status="failed",
-            failure_reason="story_tenant_unresolved",
+            failure_reason=tenant_resolution.failure_code or "story_tenant_unresolved",
             needs_clarification=True,
             question_type=detect_story_question_type(incoming.text),
             reply_hint=(
@@ -332,7 +360,11 @@ async def resolve_story_product_question(
         )
 
     tenant = tenant_resolution.tenant_id
-    allowed, rollout_reason = story_rollout_allows(tenant_id=tenant, story=story)
+    allowed, rollout_reason = story_rollout_allows(
+        tenant_id=tenant,
+        story=story,
+        conversation_id=getattr(incoming, "conversation_id", None),
+    )
     if not allowed:
         return None
 
@@ -1117,6 +1149,42 @@ def story_result_to_agent_result(
     if not reply:
         return None
     tenant = resolution.tenant_id
+    evidence = None
+    if resolution.product_payload and tenant:
+        try:
+            evidence = evidence_from_tray_product(
+                resolution.product_payload,
+                tenant_id=tenant,
+                confidence=float(resolution.confidence or 0.0),
+                source="tray_api",
+            )
+        except Exception:
+            evidence = None
+        violations = validate_commercial_answer(
+            reply,
+            resolution.product_payload,
+            evidence,
+            tenant,
+            min_confidence=float(
+                getattr(get_settings(), "instagram_story_ambiguous_min_confidence", 0.65)
+                or 0.65
+            ),
+        )
+        if violations:
+            log_event(
+                "story_commercial_blocked",
+                {"codes": violations, "status": resolution.match_status},
+            )
+            # Strip commercial certainty — ask for confirmation instead of inventing.
+            if any(
+                code.startswith("price_") or code.startswith("stock_") or "commercial" in code
+                for code in violations
+            ):
+                reply = (
+                    "Identifiquei um modelo possível, mas não posso confirmar o valor "
+                    "ou o estoque sem revalidação na loja. Posso tentar de novo ou "
+                    "encaminhar para o atendimento."
+                )
     metadata: dict[str, Any] = {
         "domain": "commerce",
         "instagram_story": True,
@@ -1127,7 +1195,7 @@ def story_result_to_agent_result(
         "story_media_id": resolution.story_media_id,
     }
     commercial: dict[str, Any] = {}
-    if resolution.product_payload:
+    if resolution.product_payload and evidence and evidence.authorizes_price():
         commercial["products"] = [resolution.product_payload]
         metadata["presented_products"] = True
         metadata["active_product"] = {
@@ -1135,7 +1203,7 @@ def story_result_to_agent_result(
             "variant_id": resolution.variant_id,
             "catalog_item_key": resolution.catalog_item_key,
             "name": resolution.product_payload.get("name"),
-            "url": resolution.product_payload.get("url"),
+            "url": resolution.product_payload.get("url") if evidence.authorizes_url() else None,
         }
         metadata["last_story_product"] = StoryConversationReference(
             story_media_id=resolution.story_media_id,
@@ -1163,6 +1231,16 @@ def story_result_to_agent_result(
                 [resolution.catalog_item_key] if resolution.catalog_item_key else []
             ),
         }
+        metadata["product_evidence"] = evidence.model_dump(mode="json")
+    elif resolution.product_payload:
+        # Identity without commercial authority — still keep reference for follow-ups.
+        metadata["active_product"] = {
+            "product_id": resolution.product_id,
+            "variant_id": resolution.variant_id,
+            "catalog_item_key": resolution.catalog_item_key,
+            "name": resolution.product_payload.get("name"),
+        }
+        commercial["products"] = [resolution.product_payload]
     log_event(
         "story_reply_generated",
         {

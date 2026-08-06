@@ -14,6 +14,16 @@ def make_catalog_item_key(product_id: str, variant_id: str | None = None) -> str
     return catalog_item_key_for(product_id, variant_id)
 
 
+def _ttl_cutoff() -> datetime | None:
+    settings = get_settings()
+    max_age = int(getattr(settings, "agent_catalog_index_max_age_seconds", 0) or 0)
+    if max_age <= 0:
+        return None
+    from datetime import timedelta
+
+    return datetime.now(timezone.utc) - timedelta(seconds=max_age)
+
+
 class CatalogIndexRepository:
     """All queries require explicit tenant_id."""
 
@@ -36,6 +46,12 @@ class CatalogIndexRepository:
             "tenant_id": tenant,
             "limit": max(1, min(int(limit), 100)),
         }
+        cutoff = _ttl_cutoff()
+        if cutoff is not None:
+            clauses.append(
+                "coalesce(freshness_at, updated_at) >= %(cutoff)s"
+            )
+            params["cutoff"] = cutoff
         if ean:
             clauses.append("ean = %(ean)s")
             params["ean"] = str(ean).strip()
@@ -87,6 +103,11 @@ class CatalogIndexRepository:
             "q": f"%{q.lower()}%",
             "limit": max(1, min(lim, 100)),
         }
+        ttl_sql = ""
+        cutoff = _ttl_cutoff()
+        if cutoff is not None:
+            ttl_sql = " AND coalesce(freshness_at, updated_at) >= %(cutoff)s"
+            params["cutoff"] = cutoff
         brand_sql = ""
         if brand:
             brand_sql = " AND lower(coalesce(brand, '')) = lower(%(brand)s)"
@@ -101,6 +122,7 @@ class CatalogIndexRepository:
                  OR lower(coalesce(reference, '')) LIKE %(q)s
               )
               {brand_sql}
+              {ttl_sql}
             ORDER BY freshness_at DESC NULLS LAST
             LIMIT %(limit)s
         """
@@ -124,6 +146,10 @@ class CatalogIndexRepository:
             "tenant_id": tenant,
             "limit": max(1, min(int(limit), 100)),
         }
+        cutoff = _ttl_cutoff()
+        if cutoff is not None:
+            clauses.append("coalesce(freshness_at, updated_at) >= %(cutoff)s")
+            params["cutoff"] = cutoff
         if brand:
             clauses.append("lower(coalesce(brand, '')) = lower(%(brand)s)")
             params["brand"] = str(brand).strip()
@@ -232,8 +258,6 @@ class CatalogIndexRepository:
     def _fetch(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         if not str(params.get("tenant_id") or "").strip():
             raise ValueError("tenant_id required")
-        settings = get_settings()
-        max_age = int(getattr(settings, "agent_catalog_index_max_age_seconds", 0) or 0)
         try:
             from .db import get_conn
 
@@ -241,28 +265,7 @@ class CatalogIndexRepository:
                 with conn.cursor() as cur:
                     cur.execute(sql, params)
                     rows = list(cur.fetchall() or [])
-            out = [dict(row) for row in rows]
-            if max_age > 0:
-                now = datetime.now(timezone.utc)
-                filtered: list[dict[str, Any]] = []
-                for row in out:
-                    freshness = row.get("freshness_at") or row.get("updated_at")
-                    if isinstance(freshness, str):
-                        try:
-                            freshness = datetime.fromisoformat(
-                                freshness.replace("Z", "+00:00")
-                            )
-                        except ValueError:
-                            freshness = None
-                    if isinstance(freshness, datetime):
-                        if freshness.tzinfo is None:
-                            freshness = freshness.replace(tzinfo=timezone.utc)
-                        age = (now - freshness).total_seconds()
-                        if age > max_age:
-                            continue
-                    filtered.append(row)
-                return filtered
-            return out
+            return [dict(row) for row in rows]
         except Exception as exc:
             print("[catalog.index.read.error]", {"error_type": type(exc).__name__})
             return []

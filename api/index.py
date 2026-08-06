@@ -1030,6 +1030,33 @@ async def admin_rollout_status():
     return {"ok": True, **build_rollout_status()}
 
 
+@app.get("/api/admin/instagram/stories/health", dependencies=[Depends(verify_admin_token)])
+async def admin_instagram_story_health():
+    from app.config import get_settings
+
+    settings = get_settings()
+    real_ok = bool(getattr(settings, "instagram_story_real_payload_validated", False))
+    mode = str(getattr(settings, "instagram_story_rollout_mode", "off") or "off")
+    canary_or_full_allowed = real_ok or mode in {"off", "diagnostics", "shadow"}
+    return {
+        "ok": True,
+        "recognition_enabled": bool(
+            getattr(settings, "instagram_story_recognition_enabled", False)
+        ),
+        "rollout_mode": mode,
+        "real_payload_validated": real_ok,
+        "video_frame_analysis_enabled": bool(
+            getattr(settings, "instagram_story_video_frame_analysis_enabled", False)
+        ),
+        "canary_full_gate_ok": canary_or_full_allowed,
+        "note": (
+            "Set INSTAGRAM_STORY_REAL_PAYLOAD_VALIDATED=true only after a real "
+            "sanitized Brevo Story payload is covered by tests. "
+            "If a past ZIP exposed VERCEL_OIDC_TOKEN, revoke it in Vercel."
+        ),
+    }
+
+
 @app.get("/api/admin/instagram/stories", dependencies=[Depends(verify_admin_token)])
 async def admin_list_instagram_stories(
     request: Request,
@@ -1040,19 +1067,33 @@ async def admin_list_instagram_stories(
     limit: int = 50,
 ):
     from app.config import get_settings
+    from app.request_principal import principal_from_admin_token
     from app.story_product_repository import StoryProductRepository
 
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
         return JSONResponse({"ok": False, "error": "admin_api_disabled"}, status_code=403)
+    # Tenant from server persona / validated header — never from unauthenticated body alone.
     resolved_tenant = str(
-        tenant_id
-        or request.headers.get("x-tenant-id")
+        request.headers.get("x-tenant-id")
         or getattr(settings, "agent_persona_tenant_id", "")
+        or tenant_id
         or ""
     ).strip()
     if not resolved_tenant:
         return JSONResponse({"ok": False, "error": "tenant_required"}, status_code=400)
+    principal = principal_from_admin_token(
+        subject_id=str(
+            request.headers.get("x-admin-actor")
+            or request.headers.get("x-admin-id")
+            or "admin_token"
+        ),
+        tenant_ids=[resolved_tenant, "*"],
+    )
+    try:
+        principal.require_tenant(resolved_tenant)
+    except PermissionError:
+        return JSONResponse({"ok": False, "error": "tenant_forbidden"}, status_code=403)
     rows = StoryProductRepository().list_stories(
         tenant_id=resolved_tenant,
         status=status,
@@ -1133,8 +1174,10 @@ async def admin_confirm_instagram_story(row_id: int, request: Request):
     from app.config import get_settings
     from app.fact_authority import catalog_item_key_for
     from app.catalog_index_repository import CatalogIndexRepository
+    from app.request_principal import principal_from_admin_token
     from app.story_product_repository import StoryProductRepository
     from app.observability import log_event
+    from app.db import ensure_tables, get_conn
 
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
@@ -1142,10 +1185,11 @@ async def admin_confirm_instagram_story(row_id: int, request: Request):
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
+    # Never trust body.confirmed_by / body.actor. Tenant from header/persona first.
     resolved_tenant = str(
-        body.get("tenant_id")
-        or request.headers.get("x-tenant-id")
+        request.headers.get("x-tenant-id")
         or getattr(settings, "agent_persona_tenant_id", "")
+        or body.get("tenant_id")
         or ""
     ).strip()
     if not resolved_tenant:
@@ -1155,7 +1199,14 @@ async def admin_confirm_instagram_story(row_id: int, request: Request):
         or request.headers.get("x-admin-id")
         or "admin_token"
     ).strip()[:120]
-    # Never trust body.confirmed_by
+    principal = principal_from_admin_token(
+        subject_id=actor,
+        tenant_ids=[resolved_tenant, "*"],
+    )
+    try:
+        principal.require_tenant(resolved_tenant)
+    except PermissionError:
+        return JSONResponse({"ok": False, "error": "tenant_forbidden"}, status_code=403)
     repo = StoryProductRepository()
     existing = repo.get_by_id(tenant_id=resolved_tenant, row_id=row_id)
     if existing is None:
@@ -1168,18 +1219,12 @@ async def admin_confirm_instagram_story(row_id: int, request: Request):
         if body.get("variant_id") not in (None, "")
         else None
     )
-    # Backend builds catalog_item_key — ignore client-supplied key.
     catalog_item_key = catalog_item_key_for(product_id, variant_id)
     index_row = CatalogIndexRepository().get_by_product_and_variant(
         tenant_id=resolved_tenant,
         product_id=product_id,
         variant_id=variant_id,
     )
-    if index_row is None and bool(
-        getattr(settings, "agent_catalog_index_read_enabled", False)
-    ):
-        # Soft warning when index enabled but product missing — still allow if Tray later.
-        pass
     if index_row is not None and str(index_row.get("tenant_id") or "") != resolved_tenant:
         return JSONResponse({"ok": False, "error": "tenant_mismatch"}, status_code=403)
     confirmed = repo.confirm_match(
@@ -1204,6 +1249,41 @@ async def admin_confirm_instagram_story(row_id: int, request: Request):
             "story_row_id": row_id,
         },
     )
+    try:
+        ensure_tables()
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.story_product_association_audit (
+                        tenant_id, story_row_id, story_media_id, actor_id, action,
+                        previous_product_id, previous_variant_id, previous_catalog_item_key,
+                        new_product_id, new_variant_id, new_catalog_item_key, reason
+                    ) VALUES (
+                        %s, %s, %s, %s, 'confirm',
+                        %s, %s, %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        resolved_tenant,
+                        row_id,
+                        existing.story_media_id,
+                        actor,
+                        existing.product_id,
+                        existing.variant_id,
+                        existing.catalog_item_key,
+                        product_id,
+                        variant_id,
+                        catalog_item_key,
+                        str(body.get("reason") or "manual_confirm")[:200],
+                    ),
+                )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        log_event(
+            "instagram_story.admin_audit_failed",
+            {"error_type": type(exc).__name__},
+        )
     log_event(
         "instagram_story.admin_confirm",
         {

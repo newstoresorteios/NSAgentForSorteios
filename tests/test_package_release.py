@@ -80,18 +80,34 @@ def test_build_zip_fails_on_secret_without_printing_value(
     assert not (tmp_path / "out.zip").exists()
 
 
-def test_build_zip_clean_tree(tmp_path: Path):
+def test_build_zip_excludes_forbidden_paths(tmp_path: Path):
     (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "a.py").write_text("print('hi')\n", encoding="utf-8")
-    (tmp_path / ".env.example").write_text("# no assignments of live secrets\nAPP=x\n", encoding="utf-8")
+    (tmp_path / "app" / "a.py").write_text("ok\n", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("OPENAI_API_KEY=\n", encoding="utf-8")
+    (tmp_path / ".env.local").write_text("VERCEL_OIDC_TOKEN=should-never-pack\n", encoding="utf-8")
+    (tmp_path / ".env.production").write_text("ADMIN_API_TOKEN=nope\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("x\n", encoding="utf-8")
+    (tmp_path / ".vercel").mkdir()
+    (tmp_path / ".vercel" / "project.json").write_text("{}\n", encoding="utf-8")
     out = tmp_path / "release.zip"
     path = build_zip(root=tmp_path, output=out)
-    assert path.exists()
     with zipfile.ZipFile(path) as zf:
         names = set(zf.namelist())
+    forbidden_prefixes = (
+        ".env.local",
+        ".env.production",
+        ".git/",
+        ".vercel/",
+        "__pycache__/",
+        ".pytest_cache/",
+    )
+    for name in names:
+        assert not name.startswith(forbidden_prefixes), name
+        assert not name.endswith(".pyc")
+        assert "VERCEL_OIDC_TOKEN" not in name
     assert "app/a.py" in names
     assert ".env.example" in names
-    assert ".env.local" not in names
 
 
 def test_validate_no_secrets_clean(tmp_path: Path):

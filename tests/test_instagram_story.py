@@ -200,7 +200,15 @@ def test_validate_media_url_blocks_unknown_host():
     assert exc.value.code == "host_not_allowed"
 
 
-def test_validate_media_url_preserves_signed_operational_url():
+def test_validate_media_url_preserves_signed_operational_url(monkeypatch):
+    import socket as socket_mod
+
+    def _gai(host, port, *args, **kwargs):
+        return [
+            (socket_mod.AF_INET, socket_mod.SOCK_STREAM, 0, "", ("157.240.0.1", 443))
+        ]
+
+    monkeypatch.setattr("app.instagram_story_media.socket.getaddrinfo", _gai)
     url = "https://scontent.cdninstagram.com/v/t51/x.jpg?oe=ABC&oh=SECRET"
     cleaned, _ips = validate_story_media_url(url)
     assert cleaned == url
@@ -361,6 +369,7 @@ async def test_resolve_story_already_matched_revalidates(monkeypatch):
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "full")
+    monkeypatch.setenv("INSTAGRAM_STORY_REAL_PAYLOAD_VALIDATED", "true")
     get_settings.cache_clear()
 
     assoc = StoryProductAssociation(
@@ -481,6 +490,7 @@ async def test_begin_processing_none_does_not_call_vision(monkeypatch):
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "full")
+    monkeypatch.setenv("INSTAGRAM_STORY_REAL_PAYLOAD_VALIDATED", "true")
     get_settings.cache_clear()
 
     pending = StoryProductAssociation(
@@ -537,6 +547,7 @@ async def test_tenant_unresolved_without_fallback(monkeypatch):
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "full")
+    monkeypatch.setenv("INSTAGRAM_STORY_REAL_PAYLOAD_VALIDATED", "true")
     get_settings.cache_clear()
 
     async def unresolved(**_kwargs):

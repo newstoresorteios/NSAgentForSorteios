@@ -2,6 +2,7 @@
 
 Never accept tenant_id from the customer message body.
 Never silently fall back to \"newstore\".
+explicit_tenant_id requires a RequestPrincipal with access.
 """
 
 from __future__ import annotations
@@ -12,12 +13,14 @@ from pydantic import BaseModel
 
 from .config import get_settings
 from .observability import log_event
+from .request_principal import RequestPrincipal
 
 
 class TenantResolution(BaseModel):
     ok: bool = False
     tenant_id: str | None = None
     source: Literal[
+        "principal",
         "explicit",
         "integration",
         "instagram_account_map",
@@ -26,9 +29,9 @@ class TenantResolution(BaseModel):
     ] = "unresolved"
     failure_code: str | None = None
     instagram_account_id: str | None = None
+    principal_subject: str | None = None
 
 
-# Optional static map: INSTAGRAM_STORY_ACCOUNT_TENANT_MAP=ig_biz_1:tenant_a,ig_biz_2:tenant_b
 def _account_tenant_map() -> dict[str, str]:
     settings = get_settings()
     raw = str(getattr(settings, "instagram_story_account_tenant_map", "") or "")
@@ -51,24 +54,61 @@ async def resolve_story_tenant(
     instagram_account_id: str,
     integration_id: str | None = None,
     explicit_tenant_id: str | None = None,
+    principal: RequestPrincipal | None = None,
 ) -> TenantResolution:
     """Resolve tenant for Story catalog / association lookups."""
     _ = provider
     account = str(instagram_account_id or "").strip()
     explicit = str(explicit_tenant_id or "").strip()
-    if explicit:
-        resolution = TenantResolution(
-            ok=True,
-            tenant_id=explicit,
-            source="explicit",
-            instagram_account_id=account or None,
-        )
+
+    # 1) Authenticated principal with a single tenant or explicit allowed tenant.
+    if principal is not None:
+        if explicit:
+            try:
+                tid = principal.require_tenant(explicit)
+            except PermissionError:
+                log_event(
+                    "story_tenant_resolution",
+                    {"ok": False, "source": "principal", "code": "tenant_forbidden"},
+                )
+                return TenantResolution(
+                    ok=False,
+                    failure_code="tenant_forbidden",
+                    source="unresolved",
+                    instagram_account_id=account or None,
+                    principal_subject=principal.subject_id,
+                )
+            return TenantResolution(
+                ok=True,
+                tenant_id=tid,
+                source="principal",
+                instagram_account_id=account or None,
+                principal_subject=principal.subject_id,
+            )
+        if len(principal.tenant_ids) == 1 and "*" not in principal.tenant_ids:
+            tid = next(iter(principal.tenant_ids))
+            return TenantResolution(
+                ok=True,
+                tenant_id=tid,
+                source="principal",
+                instagram_account_id=account or None,
+                principal_subject=principal.subject_id,
+            )
+
+    # 2) explicit only when principal already validated above; otherwise reject.
+    if explicit and principal is None:
         log_event(
             "story_tenant_resolution",
-            {"ok": True, "source": "explicit", "has_account": bool(account)},
+            {"ok": False, "source": "explicit", "code": "explicit_requires_principal"},
         )
-        return resolution
+        return TenantResolution(
+            ok=False,
+            failure_code="explicit_requires_principal",
+            source="unresolved",
+            instagram_account_id=account or None,
+        )
 
+    # 3) Instagram account → tenant map (server config)
     mapping = _account_tenant_map()
     if account and account in mapping:
         resolution = TenantResolution(
@@ -77,19 +117,17 @@ async def resolve_story_tenant(
             source="instagram_account_map",
             instagram_account_id=account,
         )
-        log_event(
-            "story_tenant_resolution",
-            {"ok": True, "source": "instagram_account_map"},
-        )
+        log_event("story_tenant_resolution", {"ok": True, "source": "instagram_account_map"})
         return resolution
 
+    # 4) Integration map reserved
     if integration_id:
-        # Reserved for future integration→tenant table; no silent default.
         log_event(
             "story_tenant_resolution",
             {"ok": False, "source": "integration", "code": "integration_map_missing"},
         )
 
+    # 5) Persona settings bound to this deployment/integration (not customer-supplied)
     settings = get_settings()
     persona_tenant = str(getattr(settings, "agent_persona_tenant_id", None) or "").strip()
     if persona_tenant:
@@ -99,10 +137,7 @@ async def resolve_story_tenant(
             source="persona_settings",
             instagram_account_id=account or None,
         )
-        log_event(
-            "story_tenant_resolution",
-            {"ok": True, "source": "persona_settings"},
-        )
+        log_event("story_tenant_resolution", {"ok": True, "source": "persona_settings"})
         return resolution
 
     log_event(

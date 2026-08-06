@@ -746,7 +746,9 @@ class Settings(BaseSettings):
         default="",
         alias="INSTAGRAM_STORY_STORAGE_BUCKET",
     )
-    instagram_story_rollout_mode: Literal["off", "shadow", "canary", "full"] = Field(
+    instagram_story_rollout_mode: Literal[
+        "off", "diagnostics", "shadow", "canary", "full"
+    ] = Field(
         default="off",
         alias="INSTAGRAM_STORY_ROLLOUT_MODE",
     )
@@ -755,6 +757,10 @@ class Settings(BaseSettings):
         alias="INSTAGRAM_STORY_CANARY_PERCENT",
         ge=0.0,
         le=100.0,
+    )
+    instagram_story_real_payload_validated: bool = Field(
+        default=False,
+        alias="INSTAGRAM_STORY_REAL_PAYLOAD_VALIDATED",
     )
 
     max_reply_chars: int = Field(default=900, alias="MAX_REPLY_CHARS")
