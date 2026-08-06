@@ -28,6 +28,10 @@
     {
       "path": "/api/cron/instagram-story-media-retention",
       "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/cron/process-inbox",
+      "schedule": "* * * * *"
     }
   ]
 }

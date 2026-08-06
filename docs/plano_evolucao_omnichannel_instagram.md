@@ -408,9 +408,11 @@ AGENT_IMAGE_SEARCH_ENABLED=true
 | Fase | Status |
 |------|--------|
 | Doc deste plano | feito |
-| FASE 0 — scan_secrets + CI workflow + doc OIDC | em andamento / parcial no repo |
-| FASE 1 — CI pytest no GitHub Actions | workflow `ci.yml` criado |
-| FASE 2+ | pendente |
+| FASE 0 — scan_secrets + CI workflow + doc OIDC | feito (`e009793`+) |
+| FASE 1 — CI pytest no GitHub Actions | feito (`.github/workflows/ci.yml`) |
+| FASE 2 — inbox/outbox SQL + cron + flag async | parcial (tabelas, enqueue, cron; worker ainda noop até processar agent turn) |
+| FASE 3 — Meta webhook verify/parse/send skeleton | parcial (adapter + `/api/webhooks/meta`; falta token prod + worker processar fila Meta) |
+| FASE 4+ | pendente |
 
 ---
 

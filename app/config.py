@@ -631,6 +631,40 @@ class Settings(BaseSettings):
         default=True,
         alias="BREVO_SOCIAL_CHANNELS_ENABLED",
     )
+    # FASE 2: validate → enqueue → 200; worker processes turns. Default off until canary.
+    agent_async_ingress_enabled: bool = Field(
+        default=False,
+        alias="AGENT_ASYNC_INGRESS_ENABLED",
+    )
+    agent_inbox_batch_size: int = Field(
+        default=5,
+        alias="AGENT_INBOX_BATCH_SIZE",
+        ge=1,
+        le=25,
+    )
+    agent_inbox_lease_seconds: int = Field(
+        default=120,
+        alias="AGENT_INBOX_LEASE_SECONDS",
+        ge=30,
+        le=600,
+    )
+
+    # Meta Instagram Messaging (FASE 3) — direct media, not Brevo CDN.
+    meta_webhook_enabled: bool = Field(
+        default=False,
+        alias="META_WEBHOOK_ENABLED",
+    )
+    meta_app_secret: str = Field(default="", alias="META_APP_SECRET")
+    meta_verify_token: str = Field(default="", alias="META_VERIFY_TOKEN")
+    meta_page_access_token: str = Field(default="", alias="META_PAGE_ACCESS_TOKEN")
+    meta_ig_business_account_id: str = Field(
+        default="",
+        alias="META_IG_BUSINESS_ACCOUNT_ID",
+    )
+    instagram_ingress_provider: Literal["meta", "brevo", "dual"] = Field(
+        default="meta",
+        alias="INSTAGRAM_INGRESS_PROVIDER",
+    )
 
     # Instagram Story ↔ product recognition (default off until real payload validated).
     instagram_story_recognition_enabled: bool = Field(

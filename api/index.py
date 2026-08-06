@@ -696,6 +696,30 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             reason="no_text",
         )
 
+    # FASE 2: optional durable enqueue — HTTP 200 before agent turn.
+    if bool(getattr(settings, "agent_async_ingress_enabled", False)):
+        from app.ingress.inbox import enqueue_inbound
+
+        created, inbox_id = enqueue_inbound(
+            provider=incoming.provider or "brevo",
+            channel=incoming.channel,
+            message_id=incoming.message_id,
+            conversation_key=incoming.conversation_id or incoming.sender_key,
+            visitor_id=incoming.visitor_id,
+            sender_key=incoming.sender_key,
+            event_name=event_name,
+            payload=payload if isinstance(payload, dict) else {},
+        )
+        return JSONResponse(
+            {
+                "ok": True,
+                "queued": True,
+                "created": created,
+                "inbox_id": inbox_id,
+                "async_ingress": True,
+            }
+        )
+
     # Cheap duplicate check before waiting on the conversation lock. Brevo often
     # redelivers the same fragment while Vision/catalog still holds the lock.
     if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
@@ -1126,6 +1150,89 @@ async def brevo_whatsapp_webhook(
     return await handle_brevo_conversations_webhook(request)
 
 
+@app.get("/api/webhooks/meta")
+async def meta_webhook_verify(request: Request):
+    """Meta hub challenge for Instagram Messaging subscriptions."""
+    from app.channels.meta_instagram import handle_meta_verify_challenge, meta_webhook_enabled
+
+    settings = get_settings()
+    if not meta_webhook_enabled():
+        raise HTTPException(status_code=404, detail={"error": "meta_webhook_disabled"})
+    params = request.query_params
+    challenge = handle_meta_verify_challenge(
+        mode=params.get("hub.mode"),
+        verify_token=params.get("hub.verify_token"),
+        challenge=params.get("hub.challenge"),
+        expected_token=str(getattr(settings, "meta_verify_token", "") or ""),
+    )
+    if challenge is None:
+        raise HTTPException(status_code=403, detail={"error": "meta_verify_failed"})
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse(challenge)
+
+
+@app.post("/api/webhooks/meta")
+async def meta_instagram_webhook(request: Request):
+    """Meta Instagram Messaging webhook → durable inbox (FASE 3)."""
+    from app.channels.meta_instagram import (
+        meta_webhook_enabled,
+        parse_meta_instagram_messaging,
+        verify_meta_signature,
+    )
+    from app.ingress.inbox import enqueue_inbound
+
+    settings = get_settings()
+    if not meta_webhook_enabled():
+        raise HTTPException(status_code=404, detail={"error": "meta_webhook_disabled"})
+
+    body = await request.body()
+    signature = request.headers.get("x-hub-signature-256") or request.headers.get(
+        "X-Hub-Signature-256"
+    )
+    secret = str(getattr(settings, "meta_app_secret", "") or "")
+    if not verify_meta_signature(
+        app_secret=secret,
+        body=body,
+        signature_header=signature,
+    ):
+        raise HTTPException(status_code=401, detail={"error": "invalid_meta_signature"})
+
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail={"error": "invalid_json"}) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail={"error": "invalid_payload"})
+
+    messages = parse_meta_instagram_messaging(payload)
+    queued: list[dict] = []
+    for incoming in messages:
+        created, inbox_id = enqueue_inbound(
+            provider="meta",
+            channel="instagram",
+            message_id=incoming.message_id,
+            conversation_key=incoming.conversation_id or incoming.sender_key,
+            visitor_id=incoming.visitor_id,
+            sender_key=incoming.sender_key,
+            event_name="meta_messaging",
+            payload={
+                "normalized": incoming.model_dump(mode="json"),
+                "raw": incoming.raw,
+            },
+        )
+        queued.append({"created": created, "inbox_id": inbox_id})
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "provider": "meta",
+            "messages": len(messages),
+            "queued": queued,
+        }
+    )
+
+
 @app.get("/api/admin/rollout", dependencies=[Depends(verify_admin_token)])
 async def admin_rollout_status():
     """Read-only rollout snapshot + rollback checklist (mutate via Vercel env)."""
@@ -1499,6 +1606,24 @@ async def cron_instagram_story_media_retention():
 )
 async def cron_instagram_story_media_retention_get():
     return await cron_instagram_story_media_retention()
+
+
+@app.post(
+    "/api/cron/process-inbox",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def cron_process_inbox():
+    from app.ingress.worker import process_inbox_batch
+
+    return await process_inbox_batch()
+
+
+@app.get(
+    "/api/cron/process-inbox",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def cron_process_inbox_get():
+    return await cron_process_inbox()
 
 
 @app.post("/api/test/agent")
