@@ -21,6 +21,7 @@ from app.webhook_parser import (
 from app.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
 from app.brevo_client import send_brevo_reply
+from app.models import AgentResult
 from app.db import (
     claim_inbound_message,
     has_successful_agent_response,
@@ -547,8 +548,111 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         },
     )
 
+    settings = get_settings()
+    allowed_channels = get_allowed_channels(settings)
+
     skip_reason = inbound_skip_reason(payload)
     if skip_reason:
+        # Brevo labels Instagram Story / unsupported IG media as an "agent"
+        # placeholder without attachment URL. Do not treat that as human takeover,
+        # and guide the visitor to resend a normal photo.
+        from app.brevo_instagram_media import (
+            UNVIEWABLE_MEDIA_GUIDE_REPLY,
+            is_brevo_unviewable_media_text,
+        )
+
+        if (
+            skip_reason in {"agent_message", "outbound_message"}
+            and is_brevo_unviewable_media_text(incoming.text)
+            and (incoming.channel or "").lower() == "instagram"
+            and "instagram" in allowed_channels
+            and bool(getattr(settings, "brevo_social_channels_enabled", True))
+        ):
+            log_event(
+                "brevo.instagram_media_unviewable",
+                {
+                    "event_name": event_name,
+                    "channel": incoming.channel,
+                    "conversation_id_present": bool(incoming.conversation_id),
+                    "visitor_id_present": bool(incoming.visitor_id),
+                    "message_id_present": bool(incoming.message_id),
+                    "skip_reason": skip_reason,
+                },
+            )
+            if incoming.message_id and inbound_message_exists(
+                incoming.provider, incoming.message_id
+            ):
+                return _skip_webhook_event(
+                    event_name=event_name,
+                    reason="instagram_media_unviewable_duplicate",
+                )
+            try:
+                claimed, inbound_id = claim_inbound_message(incoming.model_dump())
+            except Exception as exc:
+                log_exception(
+                    "brevo.webhook.unviewable_inbound_failed",
+                    exc,
+                    {"event_name": event_name},
+                )
+                return _skip_webhook_event(
+                    event_name=event_name,
+                    reason="instagram_media_unviewable",
+                )
+            if not claimed:
+                return _skip_webhook_event(
+                    event_name=event_name,
+                    reason="instagram_media_unviewable_duplicate",
+                )
+            guide = AgentResult(
+                reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY,
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="instagram_media_unviewable",
+                response_metadata={
+                    "domain": "commerce",
+                    "response_source": "deterministic_fallback",
+                    "fallback_reason": "brevo_instagram_media_unviewable",
+                },
+            )
+            send_result = await send_brevo_reply(incoming, guide)
+            try:
+                insert_agent_response(
+                    {
+                        "inbound_id": inbound_id,
+                        "channel": incoming.channel,
+                        "sender_key": incoming.sender_key,
+                        "sender_phone": incoming.sender_phone,
+                        "reply_text": guide.reply_text,
+                        "intent": guide.intent,
+                        "handoff_required": guide.handoff_required,
+                        "safety_reason": guide.safety_reason,
+                        "provider_send_ok": bool(send_result.ok),
+                        "provider_response": send_result.model_dump(),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                log_exception(
+                    "brevo.webhook.unviewable_response_persist_failed",
+                    exc,
+                    {"inbound_id": inbound_id},
+                )
+            log_event(
+                "brevo.webhook.unviewable_media_guided",
+                {
+                    "inbound_id": inbound_id,
+                    "send_ok": bool(send_result.ok),
+                    "channel": incoming.channel,
+                },
+            )
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "skipped": False,
+                    "reason": "instagram_media_unviewable_guided",
+                    "inbound_id": inbound_id,
+                }
+            )
+
         if skip_reason in {"agent_message", "outbound_message"}:
             try:
                 from app.human_takeover import touch_human_activity
@@ -565,8 +669,6 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             reason=skip_reason,
         )
 
-    settings = get_settings()
-    allowed_channels = get_allowed_channels(settings)
     if incoming.channel not in allowed_channels:
         return _skip_webhook_event(
             event_name=event_name,

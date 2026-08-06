@@ -19,6 +19,11 @@ async def _post(index, payload):
 @pytest.mark.asyncio
 async def test_instagram_without_phone_runs_pipeline_and_replies_to_visitor(monkeypatch):
     import api.index as index
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("BREVO_ALLOWED_CHANNELS", "whatsapp,instagram,facebook")
+    get_settings.cache_clear()
 
     persisted = []
     processed = []
@@ -85,6 +90,53 @@ async def test_instagram_without_phone_runs_pipeline_and_replies_to_visitor(monk
     assert sent[0][0].visitor_id == "brevo-visitor-instagram-001"
     assert synced[0][0].sender_key == "instagram:instagram-user-999"
     assert synced[0][1]["inbound_id"] == 91
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_instagram_channel_disabled_by_default(monkeypatch):
+    import api.index as index
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.delenv("BREVO_ALLOWED_CHANNELS", raising=False)
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(
+        index,
+        "claim_inbound_message",
+        lambda *_: (_ for _ in ()).throw(AssertionError("instagram must not be claimed")),
+    )
+    monkeypatch.setattr(
+        index,
+        "process_incoming_message",
+        lambda *_: (_ for _ in ()).throw(AssertionError("instagram must not be processed")),
+    )
+
+    response = await _post(index, {
+        "eventName": "conversationStarted",
+        "conversationId": "conv-instagram-off",
+        "message": {
+            "id": "msg-instagram-off",
+            "type": "visitor",
+            "text": "oi",
+            "createdAt": 1785700000000,
+        },
+        "visitor": {
+            "id": "brevo-visitor-instagram-off",
+            "source": "instagram",
+            "sourceConversationRef": "instagram-user-off",
+            "displayedName": "Cliente Instagram",
+        },
+    })
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "skipped": True,
+        "reason": "channel_not_allowed",
+    }
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

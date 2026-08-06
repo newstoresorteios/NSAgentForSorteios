@@ -3177,6 +3177,13 @@ async def _handle_sales_message_inner(
             image_search_eligible,
         )
         from .commerce_router import is_deictic_product_price_request
+        from .brevo_instagram_media import (
+            PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
+            UNVIEWABLE_MEDIA_GUIDE_REPLY,
+            is_bare_price_request,
+            is_brevo_unviewable_media_text,
+            should_guide_instagram_price_without_media,
+        )
 
         vague_refs = {
             None,
@@ -3186,6 +3193,51 @@ async def _handle_sales_message_inner(
             "previous_recommendation",
         }
         has_inbound_image = bool((message.image_url or "").strip())
+        if is_brevo_unviewable_media_text(message.text):
+            return _mark_sales_result(
+                AgentResult(
+                    reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY,
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="instagram_media_unviewable",
+                    response_metadata={"domain": "commerce"},
+                ),
+                interpretation=interpretation,
+                goal=interpretation.goal,
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason="brevo_instagram_media_unviewable",
+            )
+        # Instagram Story / unsupported IG media never arrives with image_url via
+        # Brevo. Bare "valor" after that must not invent a SKU or ask vaguely.
+        if (
+            not has_inbound_image
+            and should_guide_instagram_price_without_media(message)
+            and interpretation.reference_type in vague_refs
+            and interpretation.goal in {"inspect", "find", "discover", "recommend"}
+            and resolved_product is None
+            and state.active_product is None
+        ):
+            print("[sales.instagram.price_without_media]", {
+                "bare_price": is_bare_price_request(message.text),
+                "channel": message.channel,
+            })
+            return _mark_sales_result(
+                AgentResult(
+                    reply_text=PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="instagram_media_unviewable",
+                    response_metadata={"domain": "commerce"},
+                ),
+                interpretation=interpretation,
+                goal=interpretation.goal,
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason="instagram_price_without_media",
+            )
         # Brevo often splits photo+caption: text "qual o preço desse?" arrives
         # without image_url and would price the previous SKU (CW Rosa → Beaubleu).
         if (

@@ -40,6 +40,10 @@ is covered by an automated test.
 - Primary ingress: **Brevo Conversations** webhook (not Meta Graph direct).
 - Meta-shaped `reply_to.story` blobs may be forwarded inside Brevo messages.
 - Direct Meta Story reply support is optional and fixture-gated.
+- **Observed production blocker:** Story replies often arrive only as
+  `This message cannot be viewed in Brevo…` with **no media URL**. Vision cannot
+  run until the visitor resends a normal DM photo, or until Brevo/Meta expose a
+  CDN URL. See `app/brevo_instagram_media.py`.
 
 ## URL handling
 

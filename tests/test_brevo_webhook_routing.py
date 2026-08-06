@@ -404,3 +404,110 @@ async def test_photo_without_caption_still_processed(monkeypatch):
     assert response.status_code == 200
     assert len(processed) == 1
     assert processed[0].image_url == "https://cdn.example.com/solo.jpg"
+
+
+@pytest.mark.asyncio
+async def test_instagram_unviewable_media_guides_resend(monkeypatch):
+    """Brevo Story placeholder must guide resend, not touch human takeover."""
+    import api.index as index
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("BREVO_ALLOWED_CHANNELS", "whatsapp,instagram,facebook")
+    get_settings.cache_clear()
+
+    sent = []
+    takeover_touched = []
+
+    async def send(incoming, agent_result):
+        sent.append((incoming, agent_result))
+        return BrevoSendResult(
+            ok=True,
+            dry_run=True,
+            provider_response={"accepted": True},
+        )
+
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
+    monkeypatch.setattr(index, "claim_inbound_message", lambda _message: (True, 404))
+    monkeypatch.setattr(index, "insert_agent_response", lambda _data: None)
+    monkeypatch.setattr(index, "send_brevo_reply", send)
+    monkeypatch.setattr(
+        "app.human_takeover.touch_human_activity",
+        lambda incoming: takeover_touched.append(incoming),
+    )
+
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conversation-ig-story",
+        "messages": [
+            {
+                "type": "agent",
+                "id": "message-unviewable",
+                "text": (
+                    "⚠️ *This message cannot be viewed in Brevo.* "
+                    "Please go to Instagram app to view it."
+                ),
+            }
+        ],
+        "visitor": {
+            "id": "visitor-ig-1",
+            "source": "instagram",
+            "attributes": {"USERNAME": "cliente_teste"},
+        },
+    }
+
+    response = await _post_webhook(index, payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["reason"] == "instagram_media_unviewable_guided"
+    assert len(sent) == 1
+    assert "reenviar" in sent[0][1].reply_text.casefold()
+    assert takeover_touched == []
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_instagram_unviewable_media_skipped_when_channel_disabled(monkeypatch):
+    import api.index as index
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.delenv("BREVO_ALLOWED_CHANNELS", raising=False)
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(
+        index,
+        "send_brevo_reply",
+        lambda *_: (_ for _ in ()).throw(AssertionError("must not reply")),
+    )
+    monkeypatch.setattr(
+        index,
+        "claim_inbound_message",
+        lambda *_: (_ for _ in ()).throw(AssertionError("must not claim")),
+    )
+
+    payload = {
+        "eventName": "conversationFragment",
+        "conversationId": "conversation-ig-off",
+        "messages": [
+            {
+                "type": "agent",
+                "id": "message-unviewable-off",
+                "text": (
+                    "⚠️ *This message cannot be viewed in Brevo.* "
+                    "Please go to Instagram app to view it."
+                ),
+            }
+        ],
+        "visitor": {
+            "id": "visitor-ig-off",
+            "source": "instagram",
+        },
+    }
+
+    response = await _post_webhook(index, payload)
+    assert response.status_code == 200
+    assert response.json()["reason"] == "agent_message"
+    get_settings.cache_clear()

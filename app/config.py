@@ -623,7 +623,8 @@ class Settings(BaseSettings):
     brevo_agent_name: str = Field(default="NewStoreAgent", alias="BREVO_AGENT_NAME")
     brevo_received_from: str = Field(default="NewStoreAgent", alias="BREVO_RECEIVED_FROM")
     brevo_allowed_channels: str = Field(
-        default="whatsapp,instagram,facebook",
+        # Instagram temporarily off — re-add "instagram" when social DM is stable.
+        default="whatsapp,facebook",
         alias="BREVO_ALLOWED_CHANNELS",
     )
     brevo_social_channels_enabled: bool = Field(
@@ -906,7 +907,7 @@ def get_allowed_channels(settings: Settings) -> set[str]:
     return {
         channel.strip().lower()
         for channel in (
-            getattr(settings, "brevo_allowed_channels", "whatsapp,instagram,facebook") or ""
+            getattr(settings, "brevo_allowed_channels", "whatsapp,facebook") or ""
         ).split(",")
         if channel.strip()
     }

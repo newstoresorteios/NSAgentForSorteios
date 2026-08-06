@@ -9,11 +9,24 @@
 | Campos usados | `reply_to` / `replyTo` / `story` / `referral` / `attachments[].type=story_mention` |
 | URL operacional | `SecretStr` com query/assinatura preservada — só para download |
 | URL de log | `SafeMediaReference` (host + path hash) — `strip_signed_url` só para observabilidade |
-| Imagem | Suportada (streaming + magic bytes) |
+| Imagem | Suportada (streaming + magic bytes) **quando Brevo entrega URL** |
 | Vídeo | Flag `INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED=false` até decoder validado no deploy; fallback thumbnail/print |
 | Carousel | `StoryMediaItem[]` + media_type=carousel; não auto-confirma produto único |
 | Diagnostics | Ver `docs/instagram_story_payload_validation.md` |
 | Canary | **Bloqueado** até fixture de payload real sanitizado de produção estar coberta |
+
+### Limitação Brevo / Instagram (produção observada)
+
+Quando o visitante responde a um **Story** (ou envia certos anexos IG), o Brevo entrega
+apenas o placeholder:
+
+> `This message cannot be viewed in Brevo. Please go to Instagram app to view it.`
+
+- Sem `image_url` / attachment — visão e Story recognition **não rodam**
+- O placeholder chega com `role=agent` e era ignorado (e ainda tocava human takeover)
+- Mitigação atual: detectar o placeholder, **não** marcar takeover humano, responder
+  pedindo reenvio da foto como imagem normal no chat; em follow-up `"valor"` no
+  Instagram sem mídia, mesma orientação (`app/brevo_instagram_media.py`)
 
 > Se um ZIP legado trouxe `.env.local` com `VERCEL_OIDC_TOKEN`, **revogue o token externamente** (Vercel). O valor não deve ser commitado nem logado.
 

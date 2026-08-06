@@ -870,6 +870,54 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 used_tray=bool(image_result.response_metadata.get("used_tray")),
                 fallback_reason=image_result.safety_reason,
             )
+
+    # Brevo cannot deliver Instagram Story / some IG media URLs — guide resend.
+    try:
+        from .brevo_instagram_media import (
+            PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
+            UNVIEWABLE_MEDIA_GUIDE_REPLY,
+            is_brevo_unviewable_media_text,
+            should_guide_instagram_price_without_media,
+        )
+
+        if is_brevo_unviewable_media_text(message.text):
+            return _annotate_agent_result(
+                AgentResult(
+                    reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY,
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="instagram_media_unviewable",
+                ),
+                domain="commerce",
+                goal="inspect",
+                response_source="deterministic_fallback",
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason="brevo_instagram_media_unviewable",
+            )
+        if (
+            should_guide_instagram_price_without_media(message)
+            and getattr(commerce_state, "active_product", None) is None
+        ):
+            return _annotate_agent_result(
+                AgentResult(
+                    reply_text=PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="instagram_media_unviewable",
+                ),
+                domain="commerce",
+                goal="inspect",
+                response_source="deterministic_fallback",
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason="instagram_price_without_media",
+            )
+    except Exception as exc:  # noqa: BLE001
+        print("[brevo.instagram_media.guide.error]", {"error_type": type(exc).__name__})
+
     interpretation = await interpret_message(
         message,
         recent_turns=model_turns,
