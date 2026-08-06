@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from .instagram_story_models import InstagramStoryContext
+from .instagram_story_models import InstagramStoryContext, SafeMediaReference, StoryMediaItem
 from .observability import log_event, redact_text
 
 
@@ -28,7 +28,10 @@ _QUERY_SECRET_RE = re.compile(
 
 
 def strip_signed_url(url: str | None) -> str | None:
-    """Keep scheme+host+path only — drop query/fragment that often carry signatures."""
+    """Keep scheme+host+path only — for observability / SafeMediaReference.
+
+    NEVER use the result for CDN download (signatures live in the query string).
+    """
     if not url or not isinstance(url, str):
         return None
     text = url.strip()
@@ -41,6 +44,21 @@ def strip_signed_url(url: str | None) -> str | None:
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
     except Exception:
         return None
+
+
+def safe_media_reference(url: str | None) -> SafeMediaReference | None:
+    if not url or not str(url).strip():
+        return SafeMediaReference(present=False)
+    cleaned = strip_signed_url(url)
+    if not cleaned:
+        return SafeMediaReference(present=True, host=None, path_hash=None)
+    parsed = urlparse(cleaned)
+    path_hash = hashlib.sha256((parsed.path or "").encode("utf-8")).hexdigest()[:16]
+    return SafeMediaReference(
+        present=True,
+        host=parsed.hostname,
+        path_hash=path_hash,
+    )
 
 
 def sanitize_instagram_story_reference(payload: dict[str, Any]) -> dict[str, Any]:
@@ -307,14 +325,46 @@ def extract_instagram_story_context(
     if not story_media_id and not media_url and not (replied or mentioned):
         return None
 
+    from pydantic import SecretStr
+
+    items: list[StoryMediaItem] = []
+    if media_type == "carousel":
+        # Best-effort: Brevo may flatten carousel; keep primary as item 0.
+        items.append(
+            StoryMediaItem(
+                index=0,
+                media_id=story_media_id,
+                media_type="image",
+                media_url_private=SecretStr(media_url) if media_url else None,
+                thumbnail_url_private=SecretStr(thumb) if thumb else None,
+                media_log_reference=safe_media_reference(media_url),
+                thumbnail_log_reference=safe_media_reference(thumb),
+            )
+        )
+    elif media_url or thumb:
+        items.append(
+            StoryMediaItem(
+                index=0,
+                media_id=story_media_id,
+                media_type=media_type,
+                media_url_private=SecretStr(media_url) if media_url else None,
+                thumbnail_url_private=SecretStr(thumb) if thumb else None,
+                media_log_reference=safe_media_reference(media_url),
+                thumbnail_log_reference=safe_media_reference(thumb),
+            )
+        )
+
     return InstagramStoryContext(
         provider="brevo",
         instagram_account_id=str(account_id),
         story_media_id=story_media_id,
         story_message_id=_first(message.get("id"), message.get("messageId")),
         story_permalink=strip_signed_url(permalink) if permalink else None,
-        story_media_url=strip_signed_url(media_url) if media_url else None,
-        story_thumbnail_url=strip_signed_url(thumb) if thumb else None,
+        # CRITICAL: preserve full signed URL for download; never strip here.
+        story_media_url_private=SecretStr(media_url) if media_url else None,
+        story_thumbnail_url_private=SecretStr(thumb) if thumb else None,
+        story_media_log_reference=safe_media_reference(media_url),
+        story_thumbnail_log_reference=safe_media_reference(thumb),
         media_type=media_type,  # type: ignore[arg-type]
         replied_to_story=bool(replied or soft),
         mentioned_in_story=mentioned,
@@ -324,6 +374,7 @@ def extract_instagram_story_context(
             or message.get("timestamp")
         ),
         expires_at=_parse_ts(story_blob.get("expires_at") or story_blob.get("expiresAt")),
+        media_items=items,
         raw_reference=raw_ref,
     )
 
