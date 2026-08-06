@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .config import get_settings
 from .db import ensure_tables, get_conn, to_jsonb
-from .instagram_story_models import StoryProductAssociation
+from .instagram_story_models import StoryProductAssociation, StoryVisualUnderstanding
 
 
 def _row_to_association(row: dict[str, Any] | None) -> StoryProductAssociation | None:
@@ -26,6 +27,7 @@ def _row_to_association(row: dict[str, Any] | None) -> StoryProductAssociation |
         media_storage_path=row.get("media_storage_path"),
         media_sha256=row.get("media_sha256"),
         thumbnail_sha256=row.get("thumbnail_sha256"),
+        analysis_version=row.get("analysis_version"),
         catalog_item_key=row.get("catalog_item_key"),
         product_id=row.get("product_id"),
         variant_id=row.get("variant_id"),
@@ -37,6 +39,12 @@ def _row_to_association(row: dict[str, Any] | None) -> StoryProductAssociation |
         match_explanation=dict(row.get("match_explanation") or {}),
         confirmed_by=row.get("confirmed_by"),
         confirmed_at=row.get("confirmed_at"),
+        processing_started_at=row.get("processing_started_at"),
+        processing_owner=row.get("processing_owner"),
+        processing_attempts=int(row.get("processing_attempts") or 0),
+        processing_expires_at=row.get("processing_expires_at"),
+        last_failure_code=row.get("last_failure_code"),
+        next_retry_at=row.get("next_retry_at"),
         first_seen_at=row.get("first_seen_at"),
         last_seen_at=row.get("last_seen_at"),
     )
@@ -149,11 +157,19 @@ class StoryProductRepository:
         provider: str,
         instagram_account_id: str,
         story_media_id: str,
+        owner: str | None = None,
+        lease_seconds: int = 90,
     ) -> StoryProductAssociation | None:
-        """Atomic claim: only pending/failed → processing. Returns None if already claimed."""
+        """Atomic claim with lease. Reclaims stale processing leases.
+
+        Returns None when another worker holds a valid lease.
+        """
         if not tenant_id or not story_media_id:
             raise ValueError("tenant_scoped_write_required")
         ensure_tables()
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=max(15, int(lease_seconds)))
+        owner_id = (owner or "worker").strip()[:80] or "worker"
         try:
             with get_conn() as conn:
                 with conn.cursor() as cur:
@@ -161,20 +177,38 @@ class StoryProductRepository:
                         """
                         UPDATE public.instagram_story_products
                         SET match_status = 'processing',
+                            processing_started_at = %s,
+                            processing_owner = %s,
+                            processing_attempts = COALESCE(processing_attempts, 0) + 1,
+                            processing_expires_at = %s,
+                            last_failure_code = NULL,
                             updated_at = now(),
                             last_seen_at = now()
                         WHERE tenant_id = %s
                           AND provider = %s
                           AND instagram_account_id = %s
                           AND story_media_id = %s
-                          AND match_status IN ('pending', 'failed')
+                          AND (
+                                match_status IN ('pending', 'failed')
+                             OR (
+                                    match_status = 'processing'
+                                AND (
+                                        processing_expires_at IS NULL
+                                     OR processing_expires_at < %s
+                                )
+                             )
+                          )
                         RETURNING *
                         """,
                         (
+                            now,
+                            owner_id,
+                            expires,
                             str(tenant_id),
                             str(provider or "brevo"),
                             str(instagram_account_id),
                             str(story_media_id),
+                            now,
                         ),
                     )
                     row = cur.fetchone()
@@ -182,6 +216,49 @@ class StoryProductRepository:
             return _row_to_association(row)
         except Exception as exc:  # noqa: BLE001
             print("[story.repo.begin.error]", {"error_type": type(exc).__name__})
+            return None
+
+    def find_visual_analysis_by_hash(
+        self,
+        *,
+        tenant_id: str,
+        media_sha256: str,
+        analysis_version: str | None = None,
+    ) -> StoryVisualUnderstanding | None:
+        """L2 persistent visual cache — never includes price/stock authority."""
+        if not tenant_id or not media_sha256:
+            raise ValueError("tenant_scoped_lookup_required")
+        version = analysis_version or str(
+            getattr(get_settings(), "instagram_story_analysis_version", "v2") or "v2"
+        )
+        ensure_tables()
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT visual_analysis, analysis_version
+                        FROM public.instagram_story_products
+                        WHERE tenant_id = %s
+                          AND media_sha256 = %s
+                          AND analysis_version = %s
+                          AND visual_analysis IS NOT NULL
+                          AND visual_analysis <> '{}'::jsonb
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                        """,
+                        (str(tenant_id), str(media_sha256), str(version)),
+                    )
+                    row = cur.fetchone()
+            if not row:
+                return None
+            payload = dict(row.get("visual_analysis") or {})
+            payload.pop("price", None)
+            payload.pop("stock", None)
+            payload.pop("availability", None)
+            return StoryVisualUnderstanding.model_validate(payload)
+        except Exception as exc:  # noqa: BLE001
+            print("[story.repo.visual_cache.error]", {"error_type": type(exc).__name__})
             return None
 
     def touch_last_seen(
@@ -227,17 +304,37 @@ class StoryProductRepository:
         visual_analysis: dict[str, Any],
         media_sha256: str | None = None,
         media_storage_path: str | None = None,
+        analysis_version: str | None = None,
+        media_mime: str | None = None,
+        media_bytes: int | None = None,
     ) -> None:
+        settings = get_settings()
+        version = analysis_version or str(
+            getattr(settings, "instagram_story_analysis_version", "v2") or "v2"
+        )
+        retention_days = int(
+            getattr(settings, "instagram_story_media_retention_days", 7) or 7
+        )
+        fields: dict[str, Any] = {
+            "visual_analysis": to_jsonb(visual_analysis or {}),
+            "media_sha256": media_sha256,
+            "media_storage_path": media_storage_path,
+            "analysis_version": version,
+        }
+        if media_mime:
+            fields["media_mime"] = media_mime
+        if media_bytes is not None:
+            fields["media_bytes"] = int(media_bytes)
+        if media_storage_path:
+            fields["media_expires_at"] = datetime.now(timezone.utc) + timedelta(
+                days=retention_days
+            )
         self._update_fields(
             tenant_id=tenant_id,
             provider=provider,
             instagram_account_id=instagram_account_id,
             story_media_id=story_media_id,
-            fields={
-                "visual_analysis": to_jsonb(visual_analysis or {}),
-                "media_sha256": media_sha256,
-                "media_storage_path": media_storage_path,
-            },
+            fields=fields,
         )
 
     def save_candidates(
@@ -485,6 +582,7 @@ class StoryProductRepository:
         story_media_id: str,
         explanation: dict[str, Any] | None = None,
         confidence: float = 0.0,
+        failure_code: str | None = None,
     ) -> StoryProductAssociation | None:
         ensure_tables()
         try:
@@ -496,6 +594,12 @@ class StoryProductRepository:
                         SET match_status = %s,
                             match_confidence = %s,
                             match_explanation = COALESCE(%s::jsonb, match_explanation),
+                            last_failure_code = COALESCE(%s, last_failure_code),
+                            processing_expires_at = CASE
+                                WHEN %s IN ('pending', 'failed', 'expired', 'not_found', 'ambiguous', 'matched', 'manually_confirmed')
+                                THEN NULL
+                                ELSE processing_expires_at
+                            END,
                             updated_at = now(),
                             last_seen_at = now()
                         WHERE tenant_id = %s
@@ -508,6 +612,9 @@ class StoryProductRepository:
                             status,
                             float(confidence),
                             to_jsonb(explanation) if explanation is not None else None,
+                            failure_code
+                            or (str((explanation or {}).get("reason") or "")[:80] or None),
+                            status,
                             str(tenant_id),
                             str(provider or "brevo"),
                             str(instagram_account_id),

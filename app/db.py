@@ -606,6 +606,31 @@ def ensure_tables() -> None:
                 ON public.instagram_story_products (
                   tenant_id, match_status, updated_at DESC
                 );
+
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS analysis_version text NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS processing_started_at timestamptz NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS processing_owner text NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS processing_attempts integer NOT NULL DEFAULT 0;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS processing_expires_at timestamptz NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS last_failure_code text NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS next_retry_at timestamptz NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS media_mime text NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS media_bytes integer NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS media_deleted_at timestamptz NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS media_expires_at timestamptz NULL;
+                ALTER TABLE public.instagram_story_products
+                  ADD COLUMN IF NOT EXISTS media_items jsonb NOT NULL DEFAULT '[]'::jsonb;
                 """
             )
 
