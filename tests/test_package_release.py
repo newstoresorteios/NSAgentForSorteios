@@ -41,21 +41,32 @@ def test_excludes_env_local_and_caches(tmp_path: Path):
 
 def test_scan_reports_variable_name_not_value(tmp_path: Path):
     secret = tmp_path / "leak.txt"
-    secret.write_text("OPENAI_API_KEY=sk-secret-value-here\n", encoding="utf-8")
+    secret.write_text("OPENAI_API_KEY=sk-secret-value-here-long-enough\n", encoding="utf-8")
     hits = scan_file_for_secrets(secret, root=tmp_path)
     assert hits == [("leak.txt", "OPENAI_API_KEY")]
     # Ensure we never surface the value in the hit tuple
     assert all("sk-secret" not in part for hit in hits for part in hit)
 
 
+def test_env_example_empty_assignments_are_non_blocking(tmp_path: Path):
+    from scripts.package_release import classify_file_secrets
+
+    env = tmp_path / ".env.example"
+    env.write_text("OPENAI_API_KEY=\nDATABASE_URL=\nADMIN_API_TOKEN=\n", encoding="utf-8")
+    findings = classify_file_secrets(env, root=tmp_path)
+    assert findings
+    assert all(not f.blocking for f in findings)
+    assert all(f.classification == "placeholder" for f in findings)
+
+
 def test_build_zip_fails_on_secret_without_printing_value(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-    (tmp_path / "bad.env").write_text("DATABASE_URL=postgres://x\n", encoding="utf-8")
-    # Force include by naming without .env prefix exclusion — use docs note
     docs = tmp_path / "docs"
     docs.mkdir()
-    (docs / "note.md").write_text("DATABASE_URL=postgres://should-fail\n", encoding="utf-8")
+    (docs / "note.md").write_text(
+        "DATABASE_URL=postgres://user:pass@db.example/prod\n", encoding="utf-8"
+    )
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "a.py").write_text("ok\n", encoding="utf-8")
 
