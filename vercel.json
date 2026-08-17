@@ -31,7 +31,7 @@
     },
     {
       "path": "/api/cron/process-inbox",
-      "schedule": "* * * * *"
+      "schedule": "0 3 * * *"
     }
   ]
 }
