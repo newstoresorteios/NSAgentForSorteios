@@ -45,6 +45,11 @@ def _account_tenant_map() -> dict[str, str]:
         tenant_id = tenant.strip()
         if account_id and tenant_id:
             mapping[account_id] = tenant_id
+    # Single-store convenience: Meta IG business account → persona tenant.
+    ig_id = str(getattr(settings, "meta_ig_business_account_id", "") or "").strip()
+    default_tenant = str(getattr(settings, "agent_persona_tenant_id", "") or "").strip()
+    if ig_id and default_tenant and ig_id not in mapping:
+        mapping[ig_id] = default_tenant
     return mapping
 
 

@@ -1223,12 +1223,27 @@ async def meta_instagram_webhook(request: Request):
         )
         queued.append({"created": created, "inbox_id": inbox_id})
 
+    # Process immediately so Instagram DMs don't wait for the minute cron.
+    worker_result = None
+    if queued:
+        try:
+            from app.ingress.worker import process_inbox_batch
+
+            worker_result = await process_inbox_batch(limit=max(5, len(queued)))
+        except Exception as exc:  # noqa: BLE001
+            log_exception(
+                "meta.webhook.inline_worker_failed",
+                exc,
+                {"queued": len(queued)},
+            )
+
     return JSONResponse(
         {
             "ok": True,
             "provider": "meta",
             "messages": len(messages),
             "queued": queued,
+            "worker": worker_result,
         }
     )
 

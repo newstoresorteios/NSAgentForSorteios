@@ -410,9 +410,10 @@ AGENT_IMAGE_SEARCH_ENABLED=true
 | Doc deste plano | feito |
 | FASE 0 — scan_secrets + CI workflow + doc OIDC | feito (`e009793`+) |
 | FASE 1 — CI pytest no GitHub Actions | feito (`.github/workflows/ci.yml`) |
-| FASE 2 — inbox/outbox SQL + cron + flag async | parcial (tabelas, enqueue, cron; worker ainda noop até processar agent turn) |
-| FASE 3 — Meta webhook verify/parse/send skeleton | parcial (adapter + `/api/webhooks/meta`; falta token prod + worker processar fila Meta) |
-| FASE 4+ | pendente |
+| FASE 2 — inbox/outbox SQL + cron + flag async | feito (worker processa agente de verdade) |
+| FASE 3 — Meta webhook verify/parse/send + worker | feito (inline process após enqueue; send graph.instagram.com) |
+| FASE 4 — multimodal / Story live media bypass | parcial (`meta_live_media` + attach recent image) |
+| FASE 5+ | pendente |
 
 ---
 

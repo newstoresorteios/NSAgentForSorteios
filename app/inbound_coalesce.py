@@ -136,3 +136,58 @@ def is_caption_echo_of_recent_image(incoming: IncomingMessage) -> bool:
             "text_preview": (incoming.text or "")[:40],
         })
     return matched
+
+
+FOLLOWUP_IMAGE_WINDOW_SECONDS = 300
+
+
+def attach_recent_image_for_followup(
+    incoming: IncomingMessage,
+    *,
+    window_seconds: int = FOLLOWUP_IMAGE_WINDOW_SECONDS,
+) -> IncomingMessage:
+    """Bind a short price follow-up to the latest inbound image in-window.
+
+    Meta/Brevo often deliver photo and later "valor" as separate messages.
+    """
+    if (incoming.image_url or "").strip():
+        return incoming
+    from app.brevo_instagram_media import is_bare_price_request
+    from app.commerce_router import is_deictic_product_price_request
+
+    text = incoming.text or ""
+    if not (
+        is_bare_price_request(text)
+        or is_deictic_product_price_request(text)
+    ):
+        return incoming
+
+    recent = recent_image_inbound_for_echo(
+        conversation_id=incoming.conversation_id,
+        sender_key=incoming.sender_key,
+        sender_phone=incoming.sender_phone,
+        window_seconds=window_seconds,
+    )
+    if not recent:
+        return incoming
+    meta = _metadata_dict(recent.get("channel_metadata"))
+    image_url = str(meta.get("image_url") or "").strip()
+    if not image_url:
+        return incoming
+
+    incoming.image_url = image_url
+    incoming.attachment_type = incoming.attachment_type or "image"
+    modality = (incoming.input_modality or "text").lower()
+    if modality == "text":
+        incoming.input_modality = "text_with_image"
+    channel_metadata = dict(incoming.channel_metadata or {})
+    channel_metadata["image_url_present"] = True
+    channel_metadata["image_url"] = image_url
+    channel_metadata["attached_from_recent_inbound_id"] = recent.get("id")
+    incoming.channel_metadata = channel_metadata
+    print("[inbound.coalesce] attached_recent_image", {
+        "recent_inbound_id": recent.get("id"),
+        "channel": incoming.channel,
+        "text_preview": (incoming.text or "")[:40],
+    })
+    return incoming

@@ -76,3 +76,39 @@ def test_parse_meta_story_reply_attachment():
     assert msg.instagram_story is not None
     assert msg.instagram_story.replied_to_story is True
     assert msg.instagram_story.story_media_id == "story-99"
+
+
+def test_story_rollout_allows_meta_live_media(monkeypatch):
+    from app.config import get_settings
+    from app.instagram_story_models import InstagramStoryContext
+    from app.instagram_story_service import story_rollout_allows
+    from app.models import IncomingMessage
+    from pydantic import SecretStr
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("META_WEBHOOK_ENABLED", "true")
+    monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "false")
+    monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "off")
+    get_settings.cache_clear()
+
+    story = InstagramStoryContext(
+        provider="meta",
+        instagram_account_id="17841404241547355",
+        story_media_id="s1",
+        replied_to_story=True,
+        story_media_url_private=SecretStr("https://cdn.example/s.jpg"),
+    )
+    incoming = IncomingMessage(
+        provider="meta",
+        channel="instagram",
+        image_url="https://cdn.example/s.jpg",
+        instagram_story=story,
+    )
+    allowed, reason = story_rollout_allows(
+        tenant_id="newstore",
+        story=story,
+        incoming=incoming,
+    )
+    assert allowed is True
+    assert reason == "meta_live_media"
+    get_settings.cache_clear()

@@ -49,17 +49,32 @@ def story_rollout_allows(
     tenant_id: str,
     story: InstagramStoryContext,
     conversation_id: str | None = None,
+    incoming: IncomingMessage | None = None,
 ) -> tuple[bool, str]:
     settings = get_settings()
     mode = str(getattr(settings, "instagram_story_rollout_mode", "off") or "off").casefold()
+    meta_live = False
+    if incoming is not None and bool(getattr(settings, "meta_webhook_enabled", False)):
+        if (incoming.provider or "").lower() == "meta" and (
+            bool((incoming.image_url or "").strip())
+            or bool(story.operational_media_url())
+        ):
+            meta_live = True
+
     if not bool(getattr(settings, "instagram_story_recognition_enabled", False)):
+        if meta_live:
+            return True, "meta_live_media"
         return False, "recognition_disabled"
     if mode == "off":
+        if meta_live:
+            return True, "meta_live_media"
         return False, "rollout_off"
     if mode == "diagnostics":
         return False, "diagnostics_only"
     real_ok = bool(getattr(settings, "instagram_story_real_payload_validated", False))
     if mode in {"canary", "full"} and not real_ok:
+        if meta_live:
+            return True, "meta_live_media"
         return False, "real_payload_not_validated"
     if mode == "full":
         return True, "full"
@@ -364,6 +379,7 @@ async def resolve_story_product_question(
         tenant_id=tenant,
         story=story,
         conversation_id=getattr(incoming, "conversation_id", None),
+        incoming=incoming,
     )
     if not allowed:
         return None

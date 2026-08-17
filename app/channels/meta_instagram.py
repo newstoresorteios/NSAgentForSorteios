@@ -173,7 +173,7 @@ async def send_meta_instagram_reply(
     incoming: IncomingMessage,
     result: AgentResult,
 ) -> dict[str, Any]:
-    """Send text reply via Graph Send API."""
+    """Send text reply via Instagram Messaging Graph API."""
     import httpx
 
     settings = get_settings()
@@ -188,21 +188,73 @@ async def send_meta_instagram_reply(
     if not recipient_id:
         return {"ok": False, "error": "meta_recipient_missing"}
 
-    url = "https://graph.facebook.com/v21.0/me/messages"
+    ig_account_id = str(
+        getattr(settings, "meta_ig_business_account_id", "") or ""
+    ).strip()
+    text = (result.reply_text or "")[:2000]
     payload = {
         "recipient": {"id": recipient_id},
         "messaging_type": "RESPONSE",
-        "message": {"text": (result.reply_text or "")[:2000]},
+        "message": {"text": text},
     }
+
+    # Instagram Login tokens (IGAA...) use graph.instagram.com.
+    # Page tokens use graph.facebook.com/me/messages.
+    endpoints: list[str] = []
+    if token.startswith("IGAA") or ig_account_id:
+        if ig_account_id:
+            endpoints.append(
+                f"https://graph.instagram.com/v21.0/{ig_account_id}/messages"
+            )
+        endpoints.append("https://graph.instagram.com/v21.0/me/messages")
+    endpoints.append("https://graph.facebook.com/v21.0/me/messages")
+
+    last_body: dict[str, Any] = {}
+    last_status = 0
     async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(url, params={"access_token": token}, json=payload)
-    try:
-        body = resp.json()
-    except Exception:
-        body = {"raw": resp.text[:200]}
-    ok = resp.status_code < 300
+        for url in endpoints:
+            resp = await client.post(
+                url,
+                params={"access_token": token},
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            last_status = resp.status_code
+            try:
+                last_body = resp.json()
+            except Exception:
+                last_body = {"raw": (resp.text or "")[:200]}
+            if resp.status_code < 300:
+                log_event(
+                    "meta.instagram.send",
+                    {
+                        "ok": True,
+                        "status_code": resp.status_code,
+                        "endpoint_host": url.split("/")[2],
+                        "recipient_present": True,
+                    },
+                )
+                return {
+                    "ok": True,
+                    "status_code": resp.status_code,
+                    "provider_response": last_body,
+                    "endpoint": url.split("/v21.0/", 1)[-1],
+                }
+
     log_event(
         "meta.instagram.send",
-        {"ok": ok, "status_code": resp.status_code, "recipient_present": True},
+        {
+            "ok": False,
+            "status_code": last_status,
+            "recipient_present": True,
+            "error_code": (last_body or {}).get("error", {}).get("code")
+            if isinstance(last_body.get("error"), dict)
+            else None,
+        },
     )
-    return {"ok": ok, "status_code": resp.status_code, "provider_response": body}
+    return {
+        "ok": False,
+        "status_code": last_status,
+        "provider_response": last_body,
+        "error": "meta_send_failed",
+    }
