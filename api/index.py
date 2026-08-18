@@ -399,6 +399,15 @@ async def health():
             "remarketing_meta_window_hours",
             24,
         ),
+        "meta_webhook_enabled": bool(getattr(settings, "meta_webhook_enabled", False)),
+        "meta_app_secret_len": len(str(getattr(settings, "meta_app_secret", "") or "").strip()),
+        "meta_ig_app_secret_len": len(str(getattr(settings, "meta_ig_app_secret", "") or "").strip()),
+        "meta_verify_token_len": len(str(getattr(settings, "meta_verify_token", "") or "").strip()),
+        "meta_ig_secret_same_as_app_secret": (
+            bool(str(getattr(settings, "meta_ig_app_secret", "") or "").strip())
+            and str(getattr(settings, "meta_ig_app_secret", "") or "").strip()
+            == str(getattr(settings, "meta_app_secret", "") or "").strip()
+        ),
         "rollout": build_rollout_status(settings),
     }
 
@@ -1187,8 +1196,14 @@ async def meta_instagram_webhook(request: Request):
         raise HTTPException(status_code=404, detail={"error": "meta_webhook_disabled"})
 
     body = await request.body()
-    signature_sha256 = request.headers.get("x-hub-signature-256")
-    signature_sha1 = request.headers.get("x-hub-signature")
+    signature_sha256 = (
+        request.headers.get("x-hub-signature-256")
+        or request.headers.get("X-Hub-Signature-256")
+    )
+    signature_sha1 = (
+        request.headers.get("x-hub-signature")
+        or request.headers.get("X-Hub-Signature")
+    )
     secrets = [
         str(getattr(settings, "meta_app_secret", "") or ""),
         str(getattr(settings, "meta_ig_app_secret", "") or ""),
@@ -1199,21 +1214,25 @@ async def meta_instagram_webhook(request: Request):
         signature_header_sha256=signature_sha256,
         signature_header_sha1=signature_sha1,
     ):
-        log_event(
-            "meta.webhook.signature_rejected",
-            {
-                "has_sha256": bool((signature_sha256 or "").strip()),
-                "has_sha1": bool((signature_sha1 or "").strip()),
-                "secret_configured": any(bool((item or "").strip()) for item in secrets),
-                "secret_slots": sum(1 for item in secrets if (item or "").strip()),
-                "body_bytes": len(body),
-                "header_keys": [
-                    key
-                    for key in request.headers.keys()
-                    if "hub" in key.lower() or "sign" in key.lower()
-                ],
-            },
-        )
+        app_secret = str(getattr(settings, "meta_app_secret", "") or "").strip()
+        ig_secret = str(getattr(settings, "meta_ig_app_secret", "") or "").strip()
+        verify_token = str(getattr(settings, "meta_verify_token", "") or "").strip()
+        rejected = {
+            "has_sha256": bool((signature_sha256 or "").strip()),
+            "has_sha1": bool((signature_sha1 or "").strip()),
+            "sha256_prefix": (signature_sha256 or "")[:7],
+            "sha256_len": len((signature_sha256 or "").strip()),
+            "secret_slots": sum(1 for item in secrets if (item or "").strip()),
+            "app_secret_len": len(app_secret),
+            "ig_secret_len": len(ig_secret),
+            "ig_same_as_app": bool(ig_secret) and ig_secret == app_secret,
+            "ig_looks_like_verify_token": bool(ig_secret) and ig_secret == verify_token,
+            "ig_looks_like_igaa": ig_secret.startswith("IGAA"),
+            "body_bytes": len(body),
+            "header_keys": sorted(request.headers.keys()),
+        }
+        print("[meta.webhook.signature_rejected]", rejected)
+        log_event("meta.webhook.signature_rejected", rejected)
         raise HTTPException(status_code=401, detail={"error": "invalid_meta_signature"})
 
     try:
@@ -1272,6 +1291,29 @@ async def meta_instagram_webhook(request: Request):
                 exc,
                 {"queued": len(queued)},
             )
+
+    change_fields: list[str] = []
+    entry_keys: list[list[str]] = []
+    for entry in entries[:4]:
+        if not isinstance(entry, dict):
+            continue
+        entry_keys.append(sorted(str(key) for key in entry.keys()))
+        changes = entry.get("changes")
+        if isinstance(changes, list):
+            for change in changes[:6]:
+                if isinstance(change, dict):
+                    change_fields.append(str(change.get("field") or "")[:40])
+    result_log = {
+        "object": str(payload.get("object") or "")[:32],
+        "entries": len(entries),
+        "entry_keys": entry_keys,
+        "change_fields": change_fields,
+        "messages": len(messages),
+        "queued": queued,
+        "worker": worker_result,
+    }
+    print("[meta.webhook.result]", result_log)
+    log_event("meta.webhook.result", result_log)
 
     return JSONResponse(
         {

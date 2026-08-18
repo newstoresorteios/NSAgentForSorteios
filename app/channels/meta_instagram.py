@@ -56,28 +56,42 @@ def verify_meta_signatures(
 
     sha256_header = (signature_header_sha256 or "").strip()
     sha1_header = (signature_header_sha1 or "").strip()
-    provided_sha256 = (
-        sha256_header.split("=", 1)[1].strip()
-        if sha256_header.startswith("sha256=")
-        else sha256_header
-    )
-    provided_sha1 = (
-        sha1_header.split("=", 1)[1].strip()
-        if sha1_header.startswith("sha1=")
-        else sha1_header
-    )
+    provided_sha256 = _signature_digest(sha256_header, "sha256")
+    provided_sha1 = _signature_digest(sha1_header, "sha1")
 
     for secret in secrets:
         key = secret.encode("utf-8")
-        if provided_sha256:
-            digest = hmac.new(key, body, hashlib.sha256).hexdigest()
-            if hmac.compare_digest(digest, provided_sha256):
-                return True
-        if provided_sha1:
-            digest = hmac.new(key, body, hashlib.sha1).hexdigest()
-            if hmac.compare_digest(digest, provided_sha1):
-                return True
+        if provided_sha256 and _digests_match(
+            hmac.new(key, body, hashlib.sha256).hexdigest(),
+            provided_sha256,
+        ):
+            return True
+        if provided_sha1 and _digests_match(
+            hmac.new(key, body, hashlib.sha1).hexdigest(),
+            provided_sha1,
+        ):
+            return True
     return False
+
+
+def _signature_digest(header: str, algorithm: str) -> str:
+    if not header:
+        return ""
+    prefix = f"{algorithm}="
+    if header.lower().startswith(prefix):
+        return header.split("=", 1)[1].strip()
+    return header
+
+
+def _digests_match(expected_hex: str, provided: str) -> bool:
+    left = (expected_hex or "").strip().lower()
+    right = (provided or "").strip().lower()
+    if not left or not right or len(left) != len(right):
+        return False
+    try:
+        return hmac.compare_digest(left, right)
+    except ValueError:
+        return False
 
 
 def handle_meta_verify_challenge(
@@ -109,7 +123,7 @@ def _instagram_messaging_events(entry: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(change, dict):
             continue
         field = str(change.get("field") or "").strip().lower()
-        if field and field not in {"messages", "messaging", "standby"}:
+        if field and field not in {"messages", "messaging", "message", "standby"}:
             continue
         value = change.get("value")
         if isinstance(value, list):
@@ -120,9 +134,49 @@ def _instagram_messaging_events(entry: dict[str, Any]) -> list[dict[str, Any]]:
         nested = value.get("messaging") or value.get("standby")
         if isinstance(nested, list):
             events.extend(item for item in nested if isinstance(item, dict))
-        elif "sender" in value or "message" in value:
+        elif any(key in value for key in ("sender", "from", "message", "text")):
             events.append(value)
     return events
+
+
+def _normalize_instagram_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Map Messenger-style and Instagram Login payloads onto one shape."""
+    sender = event.get("sender") if isinstance(event.get("sender"), dict) else {}
+    if not sender and isinstance(event.get("from"), dict):
+        sender = event["from"]
+    recipient = event.get("recipient") if isinstance(event.get("recipient"), dict) else {}
+    if not recipient and isinstance(event.get("to"), dict):
+        recipient = event["to"]
+
+    raw_message = event.get("message")
+    if isinstance(raw_message, dict):
+        message = dict(raw_message)
+    elif isinstance(raw_message, str) and raw_message.strip():
+        message = {
+            "mid": str(event.get("id") or event.get("mid") or "").strip(),
+            "text": raw_message.strip(),
+        }
+    else:
+        message = {}
+        text = str(event.get("text") or "").strip()
+        if text:
+            message = {
+                "mid": str(event.get("id") or event.get("mid") or "").strip(),
+                "text": text,
+            }
+
+    if not message or message.get("is_echo"):
+        return None
+    sender_id = str(sender.get("id") or "").strip()
+    if not sender_id:
+        return None
+    return {
+        "sender": sender,
+        "recipient": recipient,
+        "message": message,
+        "sender_id": sender_id,
+        "recipient_id": str(recipient.get("id") or "").strip(),
+    }
 
 
 def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMessage]:
@@ -145,15 +199,14 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
         for event in messaging:
             if not isinstance(event, dict):
                 continue
-            sender = event.get("sender") if isinstance(event.get("sender"), dict) else {}
-            recipient = (
-                event.get("recipient") if isinstance(event.get("recipient"), dict) else {}
-            )
-            message = event.get("message") if isinstance(event.get("message"), dict) else {}
-            if not message or message.get("is_echo"):
+            normalized = _normalize_instagram_event(event)
+            if not normalized:
                 continue
-            sender_id = str(sender.get("id") or "").strip()
-            recipient_id = str(recipient.get("id") or "").strip() or account_id
+            sender = normalized["sender"]
+            recipient = normalized["recipient"]
+            message = normalized["message"]
+            sender_id = normalized["sender_id"]
+            recipient_id = normalized["recipient_id"] or account_id
             message_id = str(message.get("mid") or "").strip() or None
             text = str(message.get("text") or "").strip()
             image_url = None
@@ -326,17 +379,33 @@ async def send_meta_instagram_reply(
                     "endpoint": url.split("/v21.0/", 1)[-1],
                 }
 
-    log_event(
-        "meta.instagram.send",
-        {
-            "ok": False,
-            "status_code": last_status,
-            "recipient_present": True,
-            "error_code": (last_body or {}).get("error", {}).get("code")
-            if isinstance(last_body.get("error"), dict)
-            else None,
-        },
-    )
+            error_code = None
+            error_type = None
+            if isinstance(last_body.get("error"), dict):
+                error_code = last_body["error"].get("code")
+                error_type = str(last_body["error"].get("type") or "")[:40]
+            log_event(
+                "meta.instagram.send",
+                {
+                    "ok": False,
+                    "status_code": last_status,
+                    "recipient_present": True,
+                    "error_code": error_code,
+                    "error_type": error_type,
+                },
+            )
+            print(
+                "[meta.instagram.send]",
+                {
+                    "ok": False,
+                    "status_code": last_status,
+                    "error_code": error_code,
+                    "error_type": error_type,
+                    "error_message": str(
+                        (last_body.get("error") or {}).get("message") or ""
+                    )[:180],
+                },
+            )
     return {
         "ok": False,
         "status_code": last_status,

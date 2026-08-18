@@ -18,6 +18,10 @@ def test_meta_signature_roundtrip():
     assert not verify_meta_signature(
         app_secret=secret, body=body, signature_header="sha256=deadbeef"
     )
+    upper = "SHA256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest().upper()
+    assert verify_meta_signature(
+        app_secret=secret, body=body, signature_header=upper
+    )
 
 
 def test_meta_signature_accepts_instagram_secret():
@@ -87,7 +91,36 @@ def test_parse_meta_changes_field_messages():
     assert messages[0].provider == "meta"
 
 
+def test_parse_instagram_login_from_and_string_message():
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "ig-biz",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "from": {"id": "user-9", "username": "cliente"},
+                            "id": "mid-9",
+                            "message": "oi, quanto fica?",
+                            "timestamp": 1710000000,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    messages = parse_meta_instagram_messaging(payload)
+    assert len(messages) == 1
+    assert messages[0].text == "oi, quanto fica?"
+    assert messages[0].sender_external_id == "user-9"
+    assert messages[0].message_id == "mid-9"
+    assert messages[0].provider == "meta"
+
+
 def test_parse_meta_story_reply_attachment():
+    payload = {
         "object": "instagram",
         "entry": [
             {
