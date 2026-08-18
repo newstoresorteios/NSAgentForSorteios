@@ -655,6 +655,7 @@ class Settings(BaseSettings):
         alias="META_WEBHOOK_ENABLED",
     )
     meta_app_secret: str = Field(default="", alias="META_APP_SECRET")
+    meta_ig_app_secret: str = Field(default="", alias="META_IG_APP_SECRET")
     meta_verify_token: str = Field(default="", alias="META_VERIFY_TOKEN")
     meta_page_access_token: str = Field(default="", alias="META_PAGE_ACCESS_TOKEN")
     meta_ig_business_account_id: str = Field(
@@ -804,6 +805,8 @@ class Settings(BaseSettings):
         "openai_api_key", "admin_api_token", "brevo_webhook_secret", "brevo_api_key",
         "tray_adapter_token", "remarketing_cron_secret",
         "mp_access_token", "mercadopago_access_token",
+        "meta_app_secret", "meta_ig_app_secret", "meta_verify_token",
+        "meta_page_access_token",
         mode="before",
     )
     @classmethod

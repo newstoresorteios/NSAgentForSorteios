@@ -21,20 +21,63 @@ def meta_webhook_enabled() -> bool:
     return bool(getattr(settings, "meta_webhook_enabled", False))
 
 
+def _normalize_meta_secret(value: str | None) -> str:
+    cleaned = (value or "").strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned
+
+
 def verify_meta_signature(*, app_secret: str, body: bytes, signature_header: str | None) -> bool:
-    if not app_secret or not signature_header:
+    return verify_meta_signatures(
+        app_secrets=[app_secret],
+        body=body,
+        signature_header_sha256=signature_header,
+        signature_header_sha1=None,
+    )
+
+
+def verify_meta_signatures(
+    *,
+    app_secrets: list[str],
+    body: bytes,
+    signature_header_sha256: str | None,
+    signature_header_sha1: str | None = None,
+) -> bool:
+    """HMAC-verify Meta webhook signatures.
+
+    Instagram Login often signs with the Instagram app secret, which can differ
+    from the Facebook app secret. Also accept legacy X-Hub-Signature (sha1).
+    """
+    secrets = [_normalize_meta_secret(secret) for secret in app_secrets]
+    secrets = [secret for secret in secrets if secret]
+    if not secrets:
         return False
-    header = signature_header.strip()
-    if header.startswith("sha256="):
-        provided = header.split("=", 1)[1].strip()
-    else:
-        provided = header
-    digest = hmac.new(
-        app_secret.encode("utf-8"),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(digest, provided)
+
+    sha256_header = (signature_header_sha256 or "").strip()
+    sha1_header = (signature_header_sha1 or "").strip()
+    provided_sha256 = (
+        sha256_header.split("=", 1)[1].strip()
+        if sha256_header.startswith("sha256=")
+        else sha256_header
+    )
+    provided_sha1 = (
+        sha1_header.split("=", 1)[1].strip()
+        if sha1_header.startswith("sha1=")
+        else sha1_header
+    )
+
+    for secret in secrets:
+        key = secret.encode("utf-8")
+        if provided_sha256:
+            digest = hmac.new(key, body, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(digest, provided_sha256):
+                return True
+        if provided_sha1:
+            digest = hmac.new(key, body, hashlib.sha1).hexdigest()
+            if hmac.compare_digest(digest, provided_sha1):
+                return True
+    return False
 
 
 def handle_meta_verify_challenge(
@@ -51,6 +94,37 @@ def handle_meta_verify_challenge(
     return challenge or ""
 
 
+def _instagram_messaging_events(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Collect messaging events from Messenger-style and Instagram changes payloads."""
+    events: list[dict[str, Any]] = []
+    for key in ("messaging", "standby"):
+        block = entry.get(key)
+        if isinstance(block, list):
+            events.extend(item for item in block if isinstance(item, dict))
+
+    changes = entry.get("changes")
+    if not isinstance(changes, list):
+        return events
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        field = str(change.get("field") or "").strip().lower()
+        if field and field not in {"messages", "messaging", "standby"}:
+            continue
+        value = change.get("value")
+        if isinstance(value, list):
+            events.extend(item for item in value if isinstance(item, dict))
+            continue
+        if not isinstance(value, dict):
+            continue
+        nested = value.get("messaging") or value.get("standby")
+        if isinstance(nested, list):
+            events.extend(item for item in nested if isinstance(item, dict))
+        elif "sender" in value or "message" in value:
+            events.append(value)
+    return events
+
+
 def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMessage]:
     """Normalize Meta Instagram messaging webhooks into IncomingMessage list."""
     settings = get_settings()
@@ -58,14 +132,16 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
     messages: list[IncomingMessage] = []
     entries = payload.get("entry")
     if not isinstance(entries, list):
+        log_event(
+            "meta.instagram.parsed",
+            {"messages": 0, "entries": 0, "reason": "no_entry"},
+        )
         return messages
 
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        messaging = entry.get("messaging") or entry.get("standby") or []
-        if not isinstance(messaging, list):
-            continue
+        messaging = _instagram_messaging_events(entry)
         for event in messaging:
             if not isinstance(event, dict):
                 continue
@@ -164,7 +240,11 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
 
     log_event(
         "meta.instagram.parsed",
-        {"messages": len(messages), "entries": len(entries)},
+        {
+            "messages": len(messages),
+            "entries": len(entries),
+            "object": str(payload.get("object") or "")[:32],
+        },
     )
     return messages
 
@@ -198,14 +278,19 @@ async def send_meta_instagram_reply(
         "message": {"text": text},
     }
 
-    # Instagram Login tokens (IGAA...) use graph.instagram.com.
-    # Page tokens use graph.facebook.com/me/messages.
+    # Instagram Login tokens (IGAA...) use graph.instagram.com /me first.
+    # The dashboard IG Business ID (17841…) is not always the send path ID.
     endpoints: list[str] = []
-    if token.startswith("IGAA") or ig_account_id:
+    if token.startswith("IGAA"):
+        endpoints.append("https://graph.instagram.com/v21.0/me/messages")
         if ig_account_id:
             endpoints.append(
                 f"https://graph.instagram.com/v21.0/{ig_account_id}/messages"
             )
+    elif ig_account_id:
+        endpoints.append(
+            f"https://graph.instagram.com/v21.0/{ig_account_id}/messages"
+        )
         endpoints.append("https://graph.instagram.com/v21.0/me/messages")
     endpoints.append("https://graph.facebook.com/v21.0/me/messages")
 

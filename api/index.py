@@ -1178,7 +1178,7 @@ async def meta_instagram_webhook(request: Request):
     from app.channels.meta_instagram import (
         meta_webhook_enabled,
         parse_meta_instagram_messaging,
-        verify_meta_signature,
+        verify_meta_signatures,
     )
     from app.ingress.inbox import enqueue_inbound
 
@@ -1187,15 +1187,33 @@ async def meta_instagram_webhook(request: Request):
         raise HTTPException(status_code=404, detail={"error": "meta_webhook_disabled"})
 
     body = await request.body()
-    signature = request.headers.get("x-hub-signature-256") or request.headers.get(
-        "X-Hub-Signature-256"
-    )
-    secret = str(getattr(settings, "meta_app_secret", "") or "")
-    if not verify_meta_signature(
-        app_secret=secret,
+    signature_sha256 = request.headers.get("x-hub-signature-256")
+    signature_sha1 = request.headers.get("x-hub-signature")
+    secrets = [
+        str(getattr(settings, "meta_app_secret", "") or ""),
+        str(getattr(settings, "meta_ig_app_secret", "") or ""),
+    ]
+    if not verify_meta_signatures(
+        app_secrets=secrets,
         body=body,
-        signature_header=signature,
+        signature_header_sha256=signature_sha256,
+        signature_header_sha1=signature_sha1,
     ):
+        log_event(
+            "meta.webhook.signature_rejected",
+            {
+                "has_sha256": bool((signature_sha256 or "").strip()),
+                "has_sha1": bool((signature_sha1 or "").strip()),
+                "secret_configured": any(bool((item or "").strip()) for item in secrets),
+                "secret_slots": sum(1 for item in secrets if (item or "").strip()),
+                "body_bytes": len(body),
+                "header_keys": [
+                    key
+                    for key in request.headers.keys()
+                    if "hub" in key.lower() or "sign" in key.lower()
+                ],
+            },
+        )
         raise HTTPException(status_code=401, detail={"error": "invalid_meta_signature"})
 
     try:
@@ -1204,6 +1222,24 @@ async def meta_instagram_webhook(request: Request):
         raise HTTPException(status_code=400, detail={"error": "invalid_json"}) from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail={"error": "invalid_payload"})
+
+    entries = payload.get("entry") if isinstance(payload.get("entry"), list) else []
+    log_event(
+        "meta.webhook.received",
+        {
+            "object": str(payload.get("object") or "")[:32],
+            "entries": len(entries),
+            "has_messaging": any(
+                isinstance(entry, dict)
+                and (
+                    isinstance(entry.get("messaging"), list)
+                    or isinstance(entry.get("changes"), list)
+                )
+                for entry in entries
+            ),
+            "bytes": len(body),
+        },
+    )
 
     messages = parse_meta_instagram_messaging(payload)
     queued: list[dict] = []

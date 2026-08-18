@@ -20,6 +20,26 @@ def test_meta_signature_roundtrip():
     )
 
 
+def test_meta_signature_accepts_instagram_secret():
+    from app.channels.meta_instagram import verify_meta_signatures
+    import hashlib
+    import hmac
+
+    body = b'{"object":"instagram"}'
+    ig_secret = "instagram-app-secret"
+    sig = "sha256=" + hmac.new(ig_secret.encode(), body, hashlib.sha256).hexdigest()
+    assert verify_meta_signatures(
+        app_secrets=["facebook-app-secret", ig_secret],
+        body=body,
+        signature_header_sha256=sig,
+    )
+    assert not verify_meta_signatures(
+        app_secrets=["facebook-app-secret"],
+        body=body,
+        signature_header_sha256=sig,
+    )
+
+
 def test_meta_verify_challenge():
     assert (
         handle_meta_verify_challenge(
@@ -41,8 +61,33 @@ def test_meta_verify_challenge():
     )
 
 
-def test_parse_meta_story_reply_attachment():
+def test_parse_meta_changes_field_messages():
     payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "ig-biz",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "sender": {"id": "user-2"},
+                            "recipient": {"id": "ig-biz"},
+                            "message": {"mid": "m2", "text": "teste"},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    messages = parse_meta_instagram_messaging(payload)
+    assert len(messages) == 1
+    assert messages[0].text == "teste"
+    assert messages[0].sender_external_id == "user-2"
+    assert messages[0].provider == "meta"
+
+
+def test_parse_meta_story_reply_attachment():
         "object": "instagram",
         "entry": [
             {

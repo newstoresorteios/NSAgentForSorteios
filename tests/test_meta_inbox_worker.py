@@ -65,3 +65,50 @@ def test_attach_recent_image_for_valor(monkeypatch):
     assert updated.image_url == "https://cdn.example/watch.jpg"
     assert updated.attachment_type == "image"
     assert updated.input_modality == "text_with_image"
+
+
+def test_meta_provider_skips_human_takeover(monkeypatch):
+    import asyncio
+
+    from app.ingress import worker as worker_mod
+    from app.models import AgentResult
+
+    monkeypatch.setattr(
+        worker_mod,
+        "incoming_from_inbox_payload",
+        lambda *_args, **_kwargs: IncomingMessage(
+            provider="meta",
+            channel="instagram",
+            text="teste",
+            sender_key="instagram:user-1",
+            sender_external_id="user-1",
+            visitor_id="user-1",
+            conversation_id="ig:user-1",
+        ),
+    )
+    monkeypatch.setattr(worker_mod, "attach_recent_image_for_followup", lambda incoming: incoming)
+    monkeypatch.setattr(
+        "app.human_takeover.human_takeover_active",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(worker_mod, "claim_inbound_message", lambda *_args, **_kwargs: (True, 9))
+    monkeypatch.setattr(worker_mod, "has_successful_agent_response", lambda *_args, **_kwargs: False)
+
+    async def fake_process(*_args, **_kwargs):
+        return AgentResult(reply_text="ok", intent="greeting")
+
+    async def fake_send(*_args, **_kwargs):
+        return {"ok": True}
+
+    monkeypatch.setattr("app.message_pipeline.process_incoming_message", fake_process)
+    monkeypatch.setattr(worker_mod, "_send_reply", fake_send)
+    monkeypatch.setattr(worker_mod, "insert_agent_response", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker_mod, "mark_inbox_processed", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker_mod, "mark_inbox_failed", lambda *_args, **_kwargs: None)
+
+    result = asyncio.run(
+        worker_mod.process_inbox_row({"id": 1, "payload_json": {}, "attempts": 1})
+    )
+    assert result["ok"] is True
+    assert result.get("skipped") != "human_takeover"
+    assert result.get("inbound_id") == 9

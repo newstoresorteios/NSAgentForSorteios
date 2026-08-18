@@ -69,7 +69,11 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
     try:
         from app.human_takeover import human_takeover_active
 
-        if human_takeover_active(incoming):
+        # ChatBô takeover state is Brevo-only. Meta Instagram must not inherit
+        # assigned_to from old Conversations threads.
+        if (incoming.provider or "").lower() != "meta" and human_takeover_active(
+            incoming
+        ):
             mark_inbox_processed(inbox_id)
             log_event(
                 "inbox.skipped_human_takeover",
