@@ -1185,6 +1185,7 @@ async def meta_webhook_verify(request: Request):
 async def meta_instagram_webhook(request: Request):
     """Meta Instagram Messaging webhook → durable inbox (FASE 3)."""
     from app.channels.meta_instagram import (
+        messaging_event_shapes,
         meta_webhook_enabled,
         parse_meta_instagram_messaging,
         verify_meta_signatures,
@@ -1308,6 +1309,7 @@ async def meta_instagram_webhook(request: Request):
         "entries": len(entries),
         "entry_keys": entry_keys,
         "change_fields": change_fields,
+        "messaging_shapes": messaging_event_shapes(payload),
         "messages": len(messages),
         "queued": queued,
         "worker": worker_result,

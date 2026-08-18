@@ -108,6 +108,43 @@ def handle_meta_verify_challenge(
     return challenge or ""
 
 
+def messaging_event_shapes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """PII-free shape of Meta messaging events, for webhook diagnostics."""
+    shapes: list[dict[str, Any]] = []
+    entries = payload.get("entry")
+    if not isinstance(entries, list):
+        return shapes
+    for entry in entries[:4]:
+        if not isinstance(entry, dict):
+            continue
+        for event in _instagram_messaging_events(entry)[:8]:
+            raw_message = event.get("message")
+            text_len = 0
+            if isinstance(raw_message, dict):
+                text_len = len(str(raw_message.get("text") or ""))
+            elif isinstance(raw_message, str):
+                text_len = len(raw_message.strip())
+            else:
+                text_len = len(str(event.get("text") or "").strip())
+            sender = event.get("sender") if isinstance(event.get("sender"), dict) else {}
+            from_obj = event.get("from") if isinstance(event.get("from"), dict) else {}
+            shapes.append(
+                {
+                    "keys": sorted(str(key) for key in event.keys())[:16],
+                    "has_sender_id": bool(str(sender.get("id") or "").strip()),
+                    "has_from_id": bool(str(from_obj.get("id") or "").strip()),
+                    "message_type": type(raw_message).__name__,
+                    "is_echo": isinstance(raw_message, dict) and bool(raw_message.get("is_echo")),
+                    "text_len": text_len,
+                    "has_read": "read" in event,
+                    "has_delivery": "delivery" in event,
+                    "has_reaction": "reaction" in event,
+                    "has_postback": "postback" in event,
+                }
+            )
+    return shapes
+
+
 def _instagram_messaging_events(entry: dict[str, Any]) -> list[dict[str, Any]]:
     """Collect messaging events from Messenger-style and Instagram changes payloads."""
     events: list[dict[str, Any]] = []

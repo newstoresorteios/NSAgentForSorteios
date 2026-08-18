@@ -1,5 +1,6 @@
 from app.channels.meta_instagram import (
     handle_meta_verify_challenge,
+    messaging_event_shapes,
     parse_meta_instagram_messaging,
     verify_meta_signature,
 )
@@ -117,6 +118,29 @@ def test_parse_instagram_login_from_and_string_message():
     assert messages[0].sender_external_id == "user-9"
     assert messages[0].message_id == "mid-9"
     assert messages[0].provider == "meta"
+
+
+def test_messaging_event_shapes_marks_read_receipts():
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "ig-biz",
+                "messaging": [
+                    {
+                        "sender": {"id": "user-1"},
+                        "recipient": {"id": "ig-biz"},
+                        "timestamp": 1,
+                        "read": {"watermark": 1},
+                    }
+                ],
+            }
+        ],
+    }
+    shapes = messaging_event_shapes(payload)
+    assert shapes[0]["has_read"] is True
+    assert shapes[0]["text_len"] == 0
+    assert parse_meta_instagram_messaging(payload) == []
 
 
 def test_parse_meta_story_reply_attachment():
