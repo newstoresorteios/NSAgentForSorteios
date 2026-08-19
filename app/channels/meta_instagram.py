@@ -105,17 +105,25 @@ async def probe_instagram_graph_subscriptions() -> dict[str, Any]:
         return {"ok": False, "error": "meta_page_access_token_missing"}
     result: dict[str, Any] = {"ok": False}
     try:
+        headers = {"Authorization": f"Bearer {token}"}
         async with httpx.AsyncClient(timeout=6.0) as client:
             me = await client.get(
                 "https://graph.instagram.com/v21.0/me",
-                params={"fields": "id,user_id,username", "access_token": token},
+                params={"fields": "id,user_id,username"},
+                headers=headers,
             )
             subs = await client.get(
                 "https://graph.instagram.com/v21.0/me/subscribed_apps",
-                params={"access_token": token},
+                headers=headers,
+            )
+            convos = await client.get(
+                "https://graph.instagram.com/v21.0/me/conversations",
+                params={"fields": "id,updated_time", "limit": "3"},
+                headers=headers,
             )
         me_json = me.json() if me.content else {}
         subs_json = subs.json() if subs.content else {}
+        convos_json = convos.json() if convos.content else {}
         fields: list[str] = []
         app_ids: list[int] = []
         data = subs_json.get("data") if isinstance(subs_json, dict) else None
@@ -133,10 +141,17 @@ async def probe_instagram_graph_subscriptions() -> dict[str, Any]:
                     fields.extend(part.strip()[:48] for part in raw_fields.split(",")[:20])
         me_error = me_json.get("error") if isinstance(me_json, dict) else None
         subs_error = subs_json.get("error") if isinstance(subs_json, dict) else None
+        convo_error = convos_json.get("error") if isinstance(convos_json, dict) else None
+        convo_data = convos_json.get("data") if isinstance(convos_json, dict) else None
         result = {
             "ok": me.status_code == 200 and subs.status_code == 200,
             "me_status": me.status_code,
             "subs_status": subs.status_code,
+            "conversations_status": convos.status_code,
+            "conversations_count": len(convo_data) if isinstance(convo_data, list) else 0,
+            "conversations_error_code": (
+                convo_error.get("code") if isinstance(convo_error, dict) else None
+            ),
             "me_id_len": len(str(me_json.get("id") or "")) if isinstance(me_json, dict) else 0,
             "me_has_username": bool(
                 isinstance(me_json, dict) and str(me_json.get("username") or "").strip()
@@ -144,6 +159,8 @@ async def probe_instagram_graph_subscriptions() -> dict[str, Any]:
             "subscribed_fields": sorted(set(fields)),
             "subscribed_app_count": len(app_ids),
             "has_messages_field": "messages" in fields,
+            "has_standby_field": "standby" in fields,
+            "has_handover_field": "messaging_handover" in fields,
             "me_error_code": (
                 me_error.get("code") if isinstance(me_error, dict) else None
             ),
