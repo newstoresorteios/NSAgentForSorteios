@@ -436,7 +436,7 @@ class TrayAdapterClient:
             params={
                 "tokens": ",".join(cleaned),
                 "brand": brand,
-                "limit": min(max(limit, 1), 20),
+                "limit": min(max(limit, 1), 50),
                 "page": page,
             },
         )

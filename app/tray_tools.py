@@ -226,7 +226,7 @@ def _reduce(item: Any, fields: tuple[str, ...]) -> dict[str, Any]:
 
 
 def _reduce_products(payload: Any, limit: int = 5) -> dict[str, Any]:
-    safe_limit = min(max(int(limit), 1), 20)
+    safe_limit = min(max(int(limit), 1), 50)
     result = {
         "products": [
             _reduce(item, _PRODUCT_FIELDS)
@@ -362,7 +362,7 @@ async def search_products_by_tokens(
     limit: int = 20,
     page: int = 1,
 ) -> dict[str, Any]:
-    safe_limit = min(max(int(limit), 1), 20)
+    safe_limit = min(max(int(limit), 1), 50)
     if not tokens:
         return {"products": []}
     try:
@@ -414,9 +414,9 @@ async def search_products_by_tokens(
 async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, Any]:
     tokens = _parse_search_tokens(args.pop("tokens", None))
     brand = args.get("brand")
-    limit = min(max(int(args.get("limit", 5)), 1), 20)
     page = int(args.get("page") or 1)
     if tokens:
+        limit = min(max(int(args.get("limit", 20)), 1), 50)
         return await search_products_by_tokens(
             client,
             tokens=tokens,
@@ -424,6 +424,7 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
             limit=limit,
             page=page,
         )
+    limit = min(max(int(args.get("limit", 5)), 1), 20)
 
     query = (args.pop("query", None) or "").strip()
     supported = ("name", "reference", "ean", "brand", "category_id", "available", "available_in_store", "stock", "promotion", "page")

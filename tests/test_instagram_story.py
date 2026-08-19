@@ -38,6 +38,7 @@ from app.story_product_matcher import (
     match_story_to_catalog,
     reject_invented_rerank_ids,
     tokens_from_store_url,
+    tray_search_jobs,
     tray_search_plan,
 )
 from app.story_publication_link_service import validate_link_payload
@@ -666,6 +667,24 @@ def test_tray_search_plan_skips_generic_region_labels():
     assert "product" not in folded
 
 
+def test_tray_search_jobs_and_color_with_collection():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Citizen"],
+        collection_hypotheses=["Tsuyosa"],
+        dial_colors=["purple"],
+    )
+    jobs = tray_search_jobs(analysis)
+    assert any(
+        str(brand or "").casefold() == "citizen"
+        and any(str(t).casefold() == "tsuyosa" for t in tokens)
+        for brand, tokens in jobs
+    )
+    assert any(
+        any(str(t).casefold() == "roxo" for t in tokens)
+        for _brand, tokens in jobs
+    )
+
+
 @pytest.mark.asyncio
 async def test_story_matcher_picks_purple_tsuyosa_from_tray(monkeypatch):
     class EmptyRepo:
@@ -756,6 +775,93 @@ async def test_story_matcher_picks_purple_tsuyosa_from_tray(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_story_matcher_color_query_finds_purple_outside_first_page(monkeypatch):
+    class EmptyRepo:
+        def search_exact(self, **_kwargs):
+            return []
+
+        def search_lexical(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        "app.catalog_index_repository.CatalogIndexRepository",
+        lambda: EmptyRepo(),
+    )
+    monkeypatch.setattr(
+        "app.product_image_index.visual_search_from_caption",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *_a, **_k: 0,
+    )
+
+    blues = [
+        {
+            "id": str(idx),
+            "name": f"Relógio Citizen Tsuyosa Automático Azul NJ0151-{idx:02d}L",
+            "brand": "Citizen",
+            "price": 3990.0,
+            "available": True,
+            "url": f"https://www.newstorerj.com.br/relogios-citizen/tsuyosa-azul-{idx}",
+        }
+        for idx in range(20)
+    ]
+    purple = {
+        "id": "222",
+        "name": "Relógio Citizen Tsuyosa Automático Roxo NJ0200-50W",
+        "brand": "Citizen",
+        "price": 4290.0,
+        "available": True,
+        "url": (
+            "https://www.newstorerj.com.br/relogios-citizen/"
+            "relogio-citizen-tsuyosa-automatico-roxo-nj0200-50w"
+        ),
+    }
+
+    calls: list[int] = []
+
+    async def fake_tool(name, args):
+        assert name == "search_products"
+        folded = [str(t).casefold() for t in args.get("tokens") or []]
+        page = int(args.get("page") or 1)
+        calls.append(page)
+        if "roxo" in folded or "purple" in folded:
+            return {
+                "products": [],
+                "paging": {"total": 0, "page": page, "limit": 20},
+            }
+        if page == 1:
+            return {
+                "products": blues,
+                "paging": {"total": 21, "page": 1, "limit": 20},
+            }
+        return {
+            "products": [purple],
+            "paging": {"total": 21, "page": 2, "limit": 20},
+        }
+
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Citizen"],
+        collection_hypotheses=["Tsuyosa"],
+        dial_colors=["purple"],
+        watch_count=1,
+    )
+    candidates = await match_story_to_catalog(
+        tenant_id="newstore",
+        analysis=analysis,
+        execute_tool=fake_tool,
+    )
+    assert candidates
+    assert candidates[0].product_id == "222"
+    status, top = classify_match(candidates, multiple_products=False)
+    assert status == "matched"
+    assert top is not None
+    assert top.product_id == "222"
+    assert 2 in calls
+
+
+@pytest.mark.asyncio
 async def test_story_matcher_falls_back_to_tray_when_index_empty(monkeypatch):
     class EmptyRepo:
         def search_exact(self, **_kwargs):
@@ -781,7 +887,6 @@ async def test_story_matcher_falls_back_to_tray_when_index_empty(monkeypatch):
         assert name == "search_products"
         assert args.get("brand") == "Mido"
         assert "tokens" in args
-        assert "verde" not in [str(t).casefold() for t in args["tokens"]]
         return {
             "products": [
                 {
