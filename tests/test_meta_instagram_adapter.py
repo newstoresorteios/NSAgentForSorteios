@@ -144,10 +144,11 @@ def test_parse_message_edit_with_nested_sender_and_text():
     shapes = messaging_event_shapes(payload)
     assert shapes[0]["edit_text_len"] == 10
     assert shapes[0]["edit_has_sender"] is True
-    messages = parse_meta_instagram_messaging(payload)
-    assert len(messages) == 1
-    assert messages[0].text == "oi editado"
-    assert messages[0].sender_external_id == "user-edit"
+    assert parse_meta_instagram_messaging(payload) == []
+    assert (
+        instagram_event_skip_reason(payload["entry"][0]["messaging"][0])
+        == "message_edit_unparsed"
+    )
 
 
 def test_messaging_event_shapes_marks_read_receipts():

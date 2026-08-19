@@ -118,7 +118,7 @@ async def probe_instagram_graph_subscriptions() -> dict[str, Any]:
             )
             convos = await client.get(
                 "https://graph.instagram.com/v21.0/me/conversations",
-                params={"fields": "id,updated_time", "limit": "3"},
+                params={"fields": "id,updated_time", "limit": "3", "platform": "instagram"},
                 headers=headers,
             )
         me_json = me.json() if me.content else {}
@@ -363,7 +363,6 @@ def _normalize_instagram_event(event: dict[str, Any]) -> dict[str, Any] | None:
         recipient = event["to"]
 
     raw_message = event.get("message")
-    edit = event.get("message_edit") if isinstance(event.get("message_edit"), dict) else {}
     if isinstance(raw_message, dict):
         message = dict(raw_message)
     elif isinstance(raw_message, str) and raw_message.strip():
@@ -373,18 +372,12 @@ def _normalize_instagram_event(event: dict[str, Any]) -> dict[str, Any] | None:
         }
     else:
         message = {}
-        text = str(event.get("text") or edit.get("text") or "").strip()
+        text = str(event.get("text") or "").strip()
         if text:
             message = {
-                "mid": str(
-                    event.get("id") or event.get("mid") or edit.get("mid") or ""
-                ).strip(),
+                "mid": str(event.get("id") or event.get("mid") or "").strip(),
                 "text": text,
             }
-        if isinstance(edit.get("from"), dict) and not sender:
-            sender = edit["from"]
-        if isinstance(edit.get("sender"), dict) and not sender:
-            sender = edit["sender"]
 
     if not message or message.get("is_echo"):
         return None
