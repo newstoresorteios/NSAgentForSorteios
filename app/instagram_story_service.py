@@ -244,6 +244,17 @@ def _clarification_from_regions(
             "Você quer saber do primeiro ou do segundo?"
         )
         return options or ["primeiro", "segundo"], reply
+    brands = [
+        str(raw).strip()
+        for raw in (*(analysis.visible_brands or []), *(analysis.logo_hypotheses or []))
+        if str(raw or "").strip()
+    ]
+    if brands:
+        brand = brands[0]
+        return options, (
+            f"Identifiquei {brand} neste Story, mas não fechei o modelo exato no catálogo. "
+            "Me manda a referência ou o link do CONFIRA que eu confirmo o valor."
+        )
     return options, (
         "Nesse Story a identificação ficou parcial. "
         "Pode me dizer a marca ou a referência?"
@@ -330,6 +341,23 @@ def _compose_reply(
             f"Ele {avail_txt} neste momento. Quer que eu envie o link?"
         )
     return f"Esse é o {name}. Quer que eu confirme o valor atualizado e o link?"
+
+
+def _stored_vision_for_tray_retry(assoc: Any) -> StoryVisualUnderstanding | None:
+    payload = assoc.visual_analysis if isinstance(getattr(assoc, "visual_analysis", None), dict) else {}
+    try:
+        stored = StoryVisualUnderstanding.model_validate(payload)
+    except Exception:
+        return None
+    if (
+        stored.visible_brands
+        or stored.logo_hypotheses
+        or stored.model_hypotheses
+        or stored.visible_references
+        or stored.collection_hypotheses
+    ):
+        return stored
+    return None
 
 
 def _reuse_assoc_result(
@@ -503,13 +531,14 @@ async def _finalize_story_catalog_match(
         )
         metrics["story_ambiguous_matches"] = 1
         log_event("story_clarification", {"reason": "close_scores"})
+        clar_options, clar_reply = _clarification_from_regions(analysis)
         return StoryResolutionResult(
             resolved=False,
             tenant_id=tenant,
             story_media_id=media_id,
             match_status="ambiguous",
             needs_clarification=True,
-            clarification_options=options,
+            clarification_options=clar_options or options,
             candidates=candidates[:5],
             confidence=candidates[0].score if candidates else 0.0,
             question_type=question_type,
@@ -518,6 +547,7 @@ async def _finalize_story_catalog_match(
                 product=None,
                 status="ambiguous",
                 candidates=candidates,
+                clarification_reply=clar_reply,
             ),
             shadow_only=shadow_only,
             metrics=metrics,
@@ -531,6 +561,7 @@ async def _finalize_story_catalog_match(
         story_media_id=media_id,
         explanation={"candidate_count": len(candidates)},
     )
+    _, not_found_reply = _clarification_from_regions(analysis)
     return StoryResolutionResult(
         resolved=False,
         tenant_id=tenant,
@@ -544,6 +575,7 @@ async def _finalize_story_catalog_match(
             product=None,
             status="not_found",
             candidates=candidates,
+            clarification_reply=not_found_reply,
         ),
         shadow_only=shadow_only,
         metrics=metrics,
@@ -761,53 +793,17 @@ async def resolve_story_product_question(
             variant_lines=variant_lines,
         )
 
-    if assoc and assoc.match_status == "ambiguous":
-        metrics["story_ambiguous_matches"] = 1
-        cands = [
-            StoryProductCandidate.model_validate(c)
-            for c in (assoc.candidate_products or [])
-            if isinstance(c, dict)
-        ]
-        analysis_payload = assoc.visual_analysis or {}
-        try:
-            analysis_obj = StoryVisualUnderstanding.model_validate(analysis_payload)
-            options, reply = _clarification_from_regions(analysis_obj)
-        except Exception:
-            options, reply = ["primeiro", "segundo"], (
-                "Nesse Story a identificação ficou parcial. "
-                "Você quer o primeiro ou o segundo modelo?"
-            )
-        log_event("story_clarification", {"source": "reuse_ambiguous"})
-        return _reuse_assoc_result(
-            assoc=assoc,
-            media_id=media_id,
-            tenant=tenant,
-            question_type=question_type,
-            shadow_only=shadow_only,
-            metrics=metrics,
-            product=None,
-            tray_failed=False,
-            evidence=[],
-            candidates=cands[:5],
-            clarification_options=options,
-            clarification_reply=reply,
-        )
-
-    if assoc and assoc.match_status == "not_found":
+    if assoc and assoc.match_status in {"ambiguous", "not_found"}:
         # Re-query live Tray with stored vision; do not spend a second OpenAI vision call.
-        stored: StoryVisualUnderstanding | None = None
-        payload = assoc.visual_analysis if isinstance(assoc.visual_analysis, dict) else {}
-        try:
-            stored = StoryVisualUnderstanding.model_validate(payload)
-        except Exception:
-            stored = None
-        if stored is not None and (
-            stored.visible_brands
-            or stored.logo_hypotheses
-            or stored.model_hypotheses
-            or stored.visible_references
-        ):
-            log_event("story_not_found_tray_retry", {"story_media_id": media_id})
+        stored = _stored_vision_for_tray_retry(assoc)
+        if stored is not None:
+            log_event(
+                "story_catalog_tray_retry",
+                {
+                    "story_media_id": media_id,
+                    "prior_status": assoc.match_status,
+                },
+            )
             return await _finalize_story_catalog_match(
                 repo=repo,
                 tenant=tenant,
@@ -820,6 +816,37 @@ async def resolve_story_product_question(
                 metrics=metrics,
                 execute_tool=execute_tool,
                 store_url=story.story_link_sticker_url,
+            )
+        if assoc.match_status == "ambiguous":
+            metrics["story_ambiguous_matches"] = 1
+            cands = [
+                StoryProductCandidate.model_validate(c)
+                for c in (assoc.candidate_products or [])
+                if isinstance(c, dict)
+            ]
+            analysis_payload = assoc.visual_analysis or {}
+            try:
+                analysis_obj = StoryVisualUnderstanding.model_validate(analysis_payload)
+                options, reply = _clarification_from_regions(analysis_obj)
+            except Exception:
+                options, reply = ["primeiro", "segundo"], (
+                    "Nesse Story a identificação ficou parcial. "
+                    "Você quer o primeiro ou o segundo modelo?"
+                )
+            log_event("story_clarification", {"source": "reuse_ambiguous"})
+            return _reuse_assoc_result(
+                assoc=assoc,
+                media_id=media_id,
+                tenant=tenant,
+                question_type=question_type,
+                shadow_only=shadow_only,
+                metrics=metrics,
+                product=None,
+                tray_failed=False,
+                evidence=[],
+                candidates=cands[:5],
+                clarification_options=options,
+                clarification_reply=reply,
             )
         return _reuse_assoc_result(
             assoc=assoc,

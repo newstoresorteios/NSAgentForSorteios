@@ -668,6 +668,22 @@ def test_clarification_uses_real_regions_not_hardcoded():
     assert "mostrador azul" not in options or True  # real labels from regions
 
 
+def test_clarification_asks_reference_when_brand_already_known():
+    from app.instagram_story_service import _clarification_from_regions
+
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Bulova"],
+        watch_count=1,
+        visible_text=["BULOVA", "1875", "AUTOMATIC", "SWISS MADE"],
+        dial_colors=["black"],
+    )
+    _options, reply = _clarification_from_regions(analysis)
+    assert "Bulova" in reply
+    assert "referência" in reply.lower()
+    assert "CONFIRA" in reply
+    assert "a marca ou a referência" not in reply
+
+
 def test_visual_understanding_forbids_trusting_advertised_price_as_stock():
     analysis = StoryVisualUnderstanding(
         visual_description="relógio azul",
@@ -793,6 +809,29 @@ def test_tray_search_jobs_use_summer_and_laranja_not_english_orange():
     assert "summer" in first_tokens
     assert "laranja" in first_tokens
     assert first_tokens[0] == "summer"
+
+
+def test_tray_search_jobs_skip_brand_plus_color_without_collection():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Bulova"],
+        dial_colors=["black"],
+        watch_count=1,
+        visible_text=["BULOVA", "1875", "AUTOMATIC", "SWISS MADE", "CONFIRA"],
+    )
+    brand, tokens = tray_search_plan(analysis)
+    assert brand == "Bulova"
+    assert "1875" not in {t.casefold() for t in tokens}
+    jobs = tray_search_jobs(analysis)
+    assert jobs == []
+    url_jobs = tray_search_jobs(
+        analysis,
+        store_url="https://www.newstorerj.com.br/relogio-seminovo-bulova-classic-96A288",
+    )
+    assert url_jobs
+    assert any(
+        any("96a288" in str(token).casefold() for token in toks)
+        for _brand, toks in url_jobs
+    )
 
 
 @pytest.mark.asyncio
@@ -1178,3 +1217,72 @@ async def test_story_matcher_falls_back_to_tray_when_index_empty(monkeypatch):
     assert status == "matched"
     assert top is not None
     assert top.product_id == "9999"
+
+
+@pytest.mark.asyncio
+async def test_story_matcher_does_not_exact_match_random_black_bulova(monkeypatch):
+    class EmptyRepo:
+        def search_exact(self, **_kwargs):
+            return []
+
+        def search_lexical(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        "app.catalog_index_repository.CatalogIndexRepository",
+        lambda: EmptyRepo(),
+    )
+    monkeypatch.setattr(
+        "app.product_image_index.visual_search_from_caption",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *_a, **_k: 0,
+    )
+
+    called = {"n": 0}
+
+    async def fake_tool(name, args):
+        called["n"] += 1
+        return {
+            "products": [
+                {
+                    "id": "1051",
+                    "name": "Relógio Bulova Classic Automático Preto 96B...",
+                    "brand": "Bulova",
+                    "price": 1999.99,
+                    "available": True,
+                },
+                {
+                    "id": "2829",
+                    "name": "Relógio Bulova Marine Star Preto 98A273",
+                    "brand": "Bulova",
+                    "price": 4499.99,
+                    "available": True,
+                },
+            ]
+        }
+
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Bulova"],
+        dial_colors=["black"],
+        watch_count=1,
+        visible_text=["BULOVA", "1875", "AUTOMATIC", "SWISS MADE"],
+        model_hypotheses=[],
+        collection_hypotheses=[],
+        visible_references=[],
+    )
+    candidates = await match_story_to_catalog(
+        tenant_id="newstore",
+        analysis=analysis,
+        execute_tool=fake_tool,
+    )
+    assert called["n"] == 0
+    status, top = classify_match(candidates, multiple_products=False)
+    assert status == "not_found"
+    assert top is None
+    assert not any(
+        "tray_brand_model:" in " ".join(c.match_reasons)
+        for c in candidates
+    )

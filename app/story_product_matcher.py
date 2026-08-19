@@ -204,6 +204,12 @@ _GENERIC_AND_SKIP = {
     "motor",
     "reserva",
     "energia",
+    "swiss",
+    "made",
+    "confira",
+    "limitada",
+    "limitado",
+    "unidades",
 }
 
 # Common in many SKUs of the same brand. AND-searching these with a dial color
@@ -252,6 +258,32 @@ _COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _is_calendar_year_token(token: str) -> bool:
+    """Founding years on dials (Bulova 1875) are not catalog references."""
+    raw = str(token or "").strip()
+    if not raw.isdigit() or len(raw) != 4:
+        return False
+    year = int(raw)
+    return 1800 <= year <= 2100
+
+
+def _model_tokens_for_match(tokens: list[str], brand: str | None) -> list[str]:
+    brand_fold = _fold(brand)
+    out: list[str] = []
+    for token in tokens:
+        key = _fold(token)
+        if len(token) < 3:
+            continue
+        if key in _COLOR_AND_SKIP or key in _GENERIC_AND_SKIP or key in _WEAK_MODEL_TOKENS:
+            continue
+        if brand_fold and key == brand_fold:
+            continue
+        if _is_calendar_year_token(token):
+            continue
+        out.append(token)
+    return out
+
+
 def _is_sku_like(token: str) -> bool:
     raw = str(token or "").strip()
     if " " in raw or ":" in raw:
@@ -298,6 +330,8 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
                 continue
             if token.isdigit() and len(token) < 5:
                 continue
+            if _is_calendar_year_token(token):
+                continue
             key = _fold(token)
             if not key or key in seen or key == brand_fold or key in _COLOR_AND_SKIP:
                 continue
@@ -330,6 +364,7 @@ def distinctive_search_tokens(tokens: list[str]) -> list[str]:
         if _fold(token) not in _WEAK_MODEL_TOKENS
         and _fold(token) not in _COLOR_AND_SKIP
         and _fold(token) not in _GENERIC_AND_SKIP
+        and not _is_calendar_year_token(token)
     ]
     return strong or list(tokens)
 
@@ -427,11 +462,14 @@ def tray_search_jobs(
     seen: set[tuple[str, tuple[str, ...]]] = set()
 
     def _add(brand: str | None, tokens: list[str]) -> None:
-        key = (_fold(brand), tuple(_fold(t) for t in tokens))
-        if key in seen or (not brand and not tokens):
+        cleaned = [token for token in tokens if str(token or "").strip()]
+        if not cleaned:
+            return
+        key = (_fold(brand), tuple(_fold(t) for t in cleaned))
+        if key in seen or (not brand and not cleaned):
             return
         seen.add(key)
-        jobs.append((brand, tokens))
+        jobs.append((brand, cleaned))
 
     slug_brand, slug_tokens = tokens_from_store_url(store_url)
     brand, tokens = tray_search_plan(analysis)
@@ -441,11 +479,10 @@ def tray_search_jobs(
     for color in colors:
         if head:
             _add(brand, [head, color])
-        elif brand:
-            _add(brand, [color])
     if distinctive:
         _add(brand, distinctive)
-    _add(brand, tokens)
+    if tokens:
+        _add(brand, tokens)
     if brand and distinctive:
         _add(brand, distinctive[:1])
     elif brand and len(tokens) > 1:
@@ -847,28 +884,21 @@ async def match_story_to_catalog(
                             for marker in ("bronze", "titane", "titanium")
                             if marker in blob and marker not in evidence_blob
                         ]
+                        model_tokens = _model_tokens_for_match(tokens, brand)
+                        model_hits = sum(
+                            1
+                            for token in model_tokens
+                            if len(token) >= 3 and _fold(token) in blob
+                        )
                         if hits < 1 and not url_hit:
                             continue
                         strong = url_hit or (
                             brand_ok
-                            and hits
-                            >= min(
-                                2,
-                                max(
-                                    len(
-                                        [
-                                            t
-                                            for t in distinctive
-                                            if _fold(t) not in _COLOR_AND_SKIP
-                                        ]
-                                    ),
-                                    1,
-                                ),
-                            )
+                            and bool(model_tokens)
+                            and model_hits
+                            >= min(2, max(len(model_tokens), 1))
                             and (not color_required or color >= 0.8)
                         )
-                        if brand_ok and hits >= 1 and color >= 0.8:
-                            strong = True
                         if color_required and color < 0.8 and not url_hit:
                             strong = False
                         rank_penalty = ((page - 1) * page_size + idx) * 0.002
@@ -911,8 +941,13 @@ async def match_story_to_catalog(
                                 source="tray_search",
                             ),
                         )
-                        if color_required and color >= 0.8 and strong:
-                            distinctive_hit = not analysis_distinctive or all(
+                        if (
+                            color_required
+                            and color >= 0.8
+                            and strong
+                            and analysis_distinctive
+                        ):
+                            distinctive_hit = all(
                                 _fold(token) in blob
                                 for token in analysis_distinctive
                                 if len(token) >= 3
