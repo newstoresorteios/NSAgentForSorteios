@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from .catalog_index import build_allowed_id_sets, reject_unknown_rerank_ids
@@ -16,7 +17,9 @@ from .observability import log_event
 
 
 def _fold(value: Any) -> str:
-    return str(value or "").strip().casefold()
+    text = str(value or "").strip().casefold()
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
 def classify_match(
@@ -64,6 +67,16 @@ def classify_match(
             return "ambiguous", top1
         return "not_found", None
     threshold = exact_min if is_exact else visual_min
+    top1_listing = _candidate_listing_key(top1)
+    top2_listing = _candidate_listing_key(top2) if top2 else None
+    if (
+        top1_listing
+        and top2_listing
+        and top1_listing == top2_listing
+        and top1.score >= min(threshold, exact_min)
+        and top1.product_id
+    ):
+        return "matched", top1
     # Appearance-only must meet the stricter visual threshold.
     if top1.score >= threshold and gap >= margin and top1.product_id:
         # Never elevate confidence solely because there is a single result without evidence.
@@ -77,6 +90,13 @@ def classify_match(
     if top1.score >= amb_min:
         return "ambiguous", top1
     return "not_found", None
+
+
+def _candidate_listing_key(candidate: StoryProductCandidate) -> str | None:
+    for reason in candidate.match_reasons or []:
+        if str(reason).startswith("listing:"):
+            return str(reason)
+    return None
 
 
 def _score_components(
@@ -151,6 +171,18 @@ _COLOR_AND_SKIP = {
     "gold",
     "purple",
     "violet",
+    "laranja",
+    "orange",
+    "amarelo",
+    "yellow",
+    "marrom",
+    "brown",
+    "bege",
+    "beige",
+    "turquesa",
+    "turquoise",
+    "creme",
+    "cream",
 }
 
 _GENERIC_AND_SKIP = {
@@ -197,6 +229,26 @@ _COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
     "azul": ("azul", "blue"),
     "black": ("preto", "black"),
     "preto": ("preto", "black"),
+    "orange": ("laranja", "orange"),
+    "laranja": ("laranja", "orange"),
+    "yellow": ("amarelo", "yellow"),
+    "amarelo": ("amarelo", "yellow"),
+    "pink": ("rosa", "pink"),
+    "rosa": ("rosa", "pink"),
+    "white": ("branco", "white"),
+    "branco": ("branco", "white"),
+    "silver": ("prata", "silver"),
+    "prata": ("prata", "silver"),
+    "gold": ("dourado", "gold"),
+    "dourado": ("dourado", "gold"),
+    "brown": ("marrom", "brown"),
+    "marrom": ("marrom", "brown"),
+    "beige": ("bege", "beige"),
+    "bege": ("bege", "beige"),
+    "turquoise": ("turquesa", "turquoise"),
+    "turquesa": ("turquesa", "turquoise"),
+    "cream": ("creme", "cream"),
+    "creme": ("creme", "cream"),
 }
 
 
@@ -282,6 +334,29 @@ def distinctive_search_tokens(tokens: list[str]) -> list[str]:
     return strong or list(tokens)
 
 
+def collection_head_token(
+    analysis: StoryVisualUnderstanding,
+    tokens: list[str],
+) -> str | None:
+    """Last distinctive word of the model line: Summer, Leipzig — not Hermétique/Pilot."""
+    phrases = [
+        *(analysis.model_hypotheses or []),
+        *(analysis.collection_hypotheses or []),
+    ]
+    for phrase in phrases:
+        parts = [
+            part.strip().strip(":.,;")
+            for part in str(phrase or "").replace("/", " ").replace("-", " ").split()
+        ]
+        strong = distinctive_search_tokens(parts)
+        if strong:
+            return strong[-1]
+    distinctive = distinctive_search_tokens(tokens)
+    if distinctive:
+        return distinctive[-1]
+    return tokens[0] if tokens else None
+
+
 def tokens_from_store_url(url: str | None) -> tuple[str | None, list[str]]:
     from urllib.parse import urlparse
 
@@ -361,7 +436,7 @@ def tray_search_jobs(
     slug_brand, slug_tokens = tokens_from_store_url(store_url)
     brand, tokens = tray_search_plan(analysis)
     distinctive = distinctive_search_tokens(tokens)
-    head = distinctive[0] if distinctive else (tokens[0] if tokens else None)
+    head = collection_head_token(analysis, tokens)
     colors = _dial_color_search_tokens(analysis)
     for color in colors:
         if head:
@@ -797,6 +872,7 @@ async def match_story_to_catalog(
                         if color_required and color < 0.8 and not url_hit:
                             strong = False
                         rank_penalty = ((page - 1) * page_size + idx) * 0.002
+                        name_key = _fold(product.get("name") or product.get("title") or "")
                         reason = (
                             f"store_url:{slug[:80]}"
                             if url_hit
@@ -806,6 +882,9 @@ async def match_story_to_catalog(
                                 else f"tray_query_overlap:{' '.join(tokens)[:40]}"
                             )
                         )
+                        reasons = [reason]
+                        if name_key:
+                            reasons.append(f"listing:{name_key[:80]}")
                         _add_scored(
                             {**product, "tenant_id": product.get("tenant_id") or tenant_id},
                             _score_components(
@@ -827,7 +906,7 @@ async def match_story_to_catalog(
                                 color=color,
                                 quality_penalty=quality_penalty,
                                 conflict_penalty=0.35 if material_conflicts else 0.0,
-                                reasons=[reason],
+                                reasons=reasons,
                                 conflicts=material_conflicts,
                                 source="tray_search",
                             ),

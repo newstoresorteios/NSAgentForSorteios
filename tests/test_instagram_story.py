@@ -780,6 +780,93 @@ def test_tray_search_jobs_prefer_leipzig_over_generic_pilot():
     assert first_tokens[0] != "pilot"
 
 
+def test_tray_search_jobs_use_summer_and_laranja_not_english_orange():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["BALTIC"],
+        model_hypotheses=["Hermétique Summer"],
+        collection_hypotheses=["Hermétique Summer"],
+        dial_colors=["orange"],
+        visible_text=["BALTIC", "HERMÉTIQUE", "SUMMER", "Motor.Miyota 9039"],
+    )
+    jobs = tray_search_jobs(analysis)
+    first_tokens = [str(t).casefold() for t in jobs[0][1]]
+    assert "summer" in first_tokens
+    assert "laranja" in first_tokens
+    assert first_tokens[0] == "summer"
+
+
+@pytest.mark.asyncio
+async def test_story_matcher_picks_baltic_summer_orange_not_tourer(monkeypatch):
+    class EmptyRepo:
+        def search_exact(self, **_kwargs):
+            return []
+
+        def search_lexical(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        "app.catalog_index_repository.CatalogIndexRepository",
+        lambda: EmptyRepo(),
+    )
+    monkeypatch.setattr(
+        "app.product_image_index.visual_search_from_caption",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *_a, **_k: 0,
+    )
+
+    tourer_bronze = {
+        "id": "13014",
+        "name": "Relógio Baltic Hermetique Tourer Bronze Automático Azul",
+        "brand": "Baltic",
+        "price": 7999.99,
+        "available": True,
+    }
+    summer_orange = {
+        "id": "14314",
+        "name": "Relógio Baltic Hermetique Summer Automático Laranja",
+        "brand": "Baltic",
+        "price": 7699.99,
+        "available": True,
+    }
+    summer_orange_dup = {
+        "id": "14438",
+        "name": "Relógio Baltic Hermetique Summer Automático Laranja",
+        "brand": "Baltic",
+        "price": 7999.99,
+        "available": True,
+    }
+
+    async def fake_tool(name, args):
+        assert name == "search_products"
+        folded = [str(t).casefold() for t in args.get("tokens") or []]
+        if "summer" in folded or "laranja" in folded:
+            return {"products": [summer_orange, summer_orange_dup]}
+        return {"products": [tourer_bronze]}
+
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["BALTIC"],
+        model_hypotheses=["Hermétique Summer"],
+        collection_hypotheses=["Hermétique Summer"],
+        dial_colors=["orange"],
+        watch_count=1,
+        visible_text=["BALTIC", "HERMÉTIQUE", "SUMMER", "37 mm"],
+    )
+    candidates = await match_story_to_catalog(
+        tenant_id="newstore",
+        analysis=analysis,
+        execute_tool=fake_tool,
+    )
+    assert candidates
+    assert candidates[0].product_id in {"14314", "14438"}
+    status, top = classify_match(candidates, multiple_products=False)
+    assert status == "matched"
+    assert top is not None
+    assert top.product_id in {"14314", "14438"}
+
+
 @pytest.mark.asyncio
 async def test_story_matcher_does_not_lock_on_laco_pilot_aachen(monkeypatch):
     class EmptyRepo:
