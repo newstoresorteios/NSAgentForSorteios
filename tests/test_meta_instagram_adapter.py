@@ -1,7 +1,9 @@
 from app.channels.meta_instagram import (
     handle_meta_verify_challenge,
+    instagram_event_skip_reason,
     messaging_event_shapes,
     parse_meta_instagram_messaging,
+    payload_skeleton,
     verify_meta_signature,
 )
 
@@ -169,6 +171,9 @@ def test_messaging_event_shapes_marks_read_receipts():
     assert shapes[0]["has_read"] is True
     assert shapes[0]["text_len"] == 0
     assert parse_meta_instagram_messaging(payload) == []
+    assert instagram_event_skip_reason(payload["entry"][0]["messaging"][0]) == "read_receipt"
+    skeleton = payload_skeleton(payload)
+    assert "messaging" in skeleton["entry"][0]
 
 
 def test_parse_meta_story_reply_attachment():

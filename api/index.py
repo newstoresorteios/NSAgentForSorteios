@@ -262,6 +262,15 @@ async def read_request_payload(request: Request) -> dict:
     )
 
 
+async def _probe_meta_ig_graph() -> dict:
+    from app.channels.meta_instagram import probe_instagram_graph_subscriptions
+
+    try:
+        return await probe_instagram_graph_subscriptions()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": type(exc).__name__}
+
+
 @app.get("/")
 async def root():
     settings = get_settings()
@@ -408,6 +417,7 @@ async def health():
             and str(getattr(settings, "meta_ig_app_secret", "") or "").strip()
             == str(getattr(settings, "meta_app_secret", "") or "").strip()
         ),
+        "meta_ig_graph": await _probe_meta_ig_graph(),
         "rollout": build_rollout_status(settings),
     }
 
@@ -1188,6 +1198,8 @@ async def meta_instagram_webhook(request: Request):
         messaging_event_shapes,
         meta_webhook_enabled,
         parse_meta_instagram_messaging,
+        payload_skeleton,
+        probe_instagram_graph_subscriptions,
         verify_meta_signatures,
     )
     from app.ingress.inbox import enqueue_inbound
@@ -1257,6 +1269,11 @@ async def meta_instagram_webhook(request: Request):
                 )
                 for entry in entries
             ),
+            "has_standby": any(
+                isinstance(entry, dict) and isinstance(entry.get("standby"), list)
+                for entry in entries
+            ),
+            "payload_skeleton": payload_skeleton(payload),
             "bytes": len(body),
         },
     )
@@ -1310,10 +1327,16 @@ async def meta_instagram_webhook(request: Request):
         "entry_keys": entry_keys,
         "change_fields": change_fields,
         "messaging_shapes": messaging_event_shapes(payload),
+        "payload_skeleton": payload_skeleton(payload),
         "messages": len(messages),
         "queued": queued,
         "worker": worker_result,
     }
+    if not messages:
+        try:
+            result_log["graph_subscriptions"] = await probe_instagram_graph_subscriptions()
+        except Exception as exc:  # noqa: BLE001
+            result_log["graph_subscriptions"] = {"ok": False, "error": type(exc).__name__}
     print("[meta.webhook.result]", result_log)
     log_event("meta.webhook.result", result_log)
 

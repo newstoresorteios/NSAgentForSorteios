@@ -16,6 +16,157 @@ from app.models import AgentResult, IncomingMessage
 from app.observability import log_event
 
 
+def _agent_debug_log(
+    *,
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict[str, Any],
+) -> None:
+    # #region agent log
+    try:
+        import time
+        from pathlib import Path
+
+        payload = {
+            "sessionId": "38b290",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        Path("debug-38b290.log").open("a", encoding="utf-8").write(
+            json.dumps(payload, ensure_ascii=False) + "\n"
+        )
+        log_event(
+            "debug.meta",
+            {"hypothesisId": hypothesis_id, "message": message, **data},
+        )
+    except Exception:
+        pass
+    # #endregion
+
+
+def payload_skeleton(value: Any, *, depth: int = 0) -> Any:
+    """PII-free nested key/type map of a Meta webhook payload."""
+    if depth > 6:
+        return "max_depth"
+    if isinstance(value, dict):
+        return {
+            str(key)[:48]: payload_skeleton(item, depth=depth + 1)
+            for key, item in list(value.items())[:24]
+        }
+    if isinstance(value, list):
+        return [payload_skeleton(item, depth=depth + 1) for item in value[:8]]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit() and len(stripped) >= 6:
+            return f"id_len:{len(stripped)}"
+        return f"str:{len(stripped)}"
+    if value is None or isinstance(value, (bool, int, float)):
+        return type(value).__name__
+    return type(value).__name__
+
+
+def instagram_event_skip_reason(event: dict[str, Any]) -> str:
+    if _normalize_instagram_event(event):
+        return "parsed"
+    raw_message = event.get("message")
+    if isinstance(raw_message, dict) and raw_message.get("is_echo"):
+        return "echo"
+    if "read" in event and not event.get("message"):
+        return "read_receipt"
+    if "delivery" in event and not event.get("message"):
+        return "delivery"
+    edit = event.get("message_edit") if isinstance(event.get("message_edit"), dict) else {}
+    if edit:
+        has_text = bool(str(edit.get("text") or "").strip())
+        nested_sender = edit.get("sender") if isinstance(edit.get("sender"), dict) else {}
+        nested_from = edit.get("from") if isinstance(edit.get("from"), dict) else {}
+        has_sender = bool(str(nested_sender.get("id") or nested_from.get("id") or "").strip())
+        if not has_text:
+            return "message_edit_no_text"
+        if not has_sender:
+            return "message_edit_no_sender"
+        return "message_edit_unparsed"
+    if not event.get("message") and not str(event.get("text") or "").strip():
+        return "no_inbound_message"
+    return "missing_sender"
+
+
+async def probe_instagram_graph_subscriptions() -> dict[str, Any]:
+    """Runtime check: which webhook fields the IG token is subscribed to."""
+    import httpx
+
+    settings = get_settings()
+    token = str(getattr(settings, "meta_page_access_token", "") or "").strip()
+    if not token:
+        return {"ok": False, "error": "meta_page_access_token_missing"}
+    result: dict[str, Any] = {"ok": False}
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            me = await client.get(
+                "https://graph.instagram.com/v21.0/me",
+                params={"fields": "id,user_id,username", "access_token": token},
+            )
+            subs = await client.get(
+                "https://graph.instagram.com/v21.0/me/subscribed_apps",
+                params={"access_token": token},
+            )
+        me_json = me.json() if me.content else {}
+        subs_json = subs.json() if subs.content else {}
+        fields: list[str] = []
+        app_ids: list[int] = []
+        data = subs_json.get("data") if isinstance(subs_json, dict) else None
+        if isinstance(data, list):
+            for item in data[:6]:
+                if not isinstance(item, dict):
+                    continue
+                app_id = str(item.get("id") or "").strip()
+                if app_id:
+                    app_ids.append(len(app_id))
+                raw_fields = item.get("subscribed_fields")
+                if isinstance(raw_fields, list):
+                    fields.extend(str(field)[:48] for field in raw_fields[:20])
+                elif isinstance(raw_fields, str) and raw_fields.strip():
+                    fields.extend(part.strip()[:48] for part in raw_fields.split(",")[:20])
+        me_error = me_json.get("error") if isinstance(me_json, dict) else None
+        subs_error = subs_json.get("error") if isinstance(subs_json, dict) else None
+        result = {
+            "ok": me.status_code == 200 and subs.status_code == 200,
+            "me_status": me.status_code,
+            "subs_status": subs.status_code,
+            "me_id_len": len(str(me_json.get("id") or "")) if isinstance(me_json, dict) else 0,
+            "me_has_username": bool(
+                isinstance(me_json, dict) and str(me_json.get("username") or "").strip()
+            ),
+            "subscribed_fields": sorted(set(fields)),
+            "subscribed_app_count": len(app_ids),
+            "has_messages_field": "messages" in fields,
+            "me_error_code": (
+                me_error.get("code") if isinstance(me_error, dict) else None
+            ),
+            "subs_error_code": (
+                subs_error.get("code") if isinstance(subs_error, dict) else None
+            ),
+            "subs_error_type": (
+                str(subs_error.get("type") or "")[:48]
+                if isinstance(subs_error, dict)
+                else ""
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": type(exc).__name__}
+    _agent_debug_log(
+        hypothesis_id="B",
+        location="meta_instagram.py:probe_instagram_graph_subscriptions",
+        message="graph_subscribed_apps",
+        data=result,
+    )
+    return result
+
+
 def meta_webhook_enabled() -> bool:
     settings = get_settings()
     return bool(getattr(settings, "meta_webhook_enabled", False))
@@ -252,6 +403,19 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
         for event in messaging:
             if not isinstance(event, dict):
                 continue
+            skip_reason = instagram_event_skip_reason(event)
+            if skip_reason != "parsed":
+                _agent_debug_log(
+                    hypothesis_id="A",
+                    location="meta_instagram.py:parse_meta_instagram_messaging",
+                    message="event_skipped",
+                    data={
+                        "reason": skip_reason,
+                        "event_keys": sorted(str(key) for key in event.keys())[:16],
+                        "skeleton": payload_skeleton(event),
+                        "has_standby_entry": "standby" in entry,
+                    },
+                )
             normalized = _normalize_instagram_event(event)
             if not normalized:
                 continue
