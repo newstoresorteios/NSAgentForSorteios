@@ -442,6 +442,82 @@ async def test_resolve_story_already_matched_revalidates(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_finalize_story_match_revalidates_without_nameerror(monkeypatch):
+    """Regression: matched Tray SKU crashed on `_maybe_revalidate` NameError."""
+    from app.config import get_settings
+    from app import instagram_story_service as service
+    from app.instagram_story_models import StoryQuestionType
+
+    monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
+    monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "full")
+    monkeypatch.setenv("INSTAGRAM_STORY_REAL_PAYLOAD_VALIDATED", "true")
+    get_settings.cache_clear()
+
+    class FakeRepo:
+        def save_candidates(self, **_kwargs):
+            return None
+
+        def confirm_match(self, **_kwargs):
+            return None
+
+        def mark_failed(self, **_kwargs):
+            return None
+
+    async def fake_match(**_kwargs):
+        return [
+            StoryProductCandidate(
+                catalog_item_key="product:14140",
+                product_id="14140",
+                score=1.0,
+                match_reasons=["tray_brand_model:Citizen Tsuyosa roxo"],
+                source="tray_search",
+            )
+        ]
+
+    async def fake_tool(name, args):
+        if name == "get_product":
+            return {
+                "id": "14140",
+                "name": "Relógio Citizen Tsuyosa Automático Roxo NJ0200-50W",
+                "price": 4999.99,
+                "stock": 1,
+                "available": True,
+                "url": "https://www.newstorerj.com.br/relogio-citizen-tsuyosa-automatico-roxo-nj0200-50w",
+            }
+        return {"error": "not_needed"}
+
+    monkeypatch.setattr(service, "match_story_to_catalog", fake_match)
+    monkeypatch.setattr(
+        service,
+        "authorize_products_for_responder",
+        lambda products, tenant_id: (products, []),
+    )
+
+    result = await service._finalize_story_catalog_match(
+        repo=FakeRepo(),
+        tenant="newstore",
+        provider="meta",
+        account="ig",
+        media_id="17904117324517354",
+        analysis=StoryVisualUnderstanding(
+            visible_brands=["Citizen"],
+            collection_hypotheses=["Tsuyosa"],
+            dial_colors=["purple"],
+            watch_count=1,
+        ),
+        question_type=StoryQuestionType.PRICE,
+        shadow_only=False,
+        metrics={},
+        execute_tool=fake_tool,
+    )
+    assert result.match_status == "matched"
+    assert result.product_id == "14140"
+    assert result.product_payload is not None
+    assert "4999" in (result.reply_hint or "") or "4.999" in (result.reply_hint or "")
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
 async def test_shadow_mode_does_not_change_reply(monkeypatch):
     from app.config import get_settings
     from app import instagram_story_service as service

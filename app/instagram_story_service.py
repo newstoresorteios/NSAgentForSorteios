@@ -138,6 +138,56 @@ async def _revalidate_product(
     return product, False, None
 
 
+async def _revalidate_matched_story_product(
+    *,
+    product_id: str,
+    variant_id: str | None,
+    execute_tool: Any,
+    tenant_id: str,
+    repo: StoryProductRepository,
+    provider: str,
+    instagram_account_id: str,
+    story_media_id: str,
+) -> tuple[dict[str, Any] | None, bool, str | None, list[dict[str, Any]]]:
+    """Live Tray revalidation after a Story SKU match.
+
+    Kept at module scope so `_finalize_story_catalog_match` can call it.
+    A nested helper inside `resolve_story_product_question` caused NameError
+    after a successful catalog match, and the turn fell through to generic
+    image identification.
+    """
+    if execute_tool is None:
+        return None, False, None, []
+    log_event(
+        "story_revalidation",
+        {"product_id": product_id, "has_variant": bool(variant_id)},
+    )
+    product, tray_failed, code = await _revalidate_product(
+        product_id=product_id,
+        execute_tool=execute_tool,
+        variant_id=variant_id,
+    )
+    evidence: list[dict[str, Any]] = []
+    if product and not tray_failed:
+        authorized, grounded = authorize_products_for_responder(
+            [product],
+            tenant_id=tenant_id,
+        )
+        product = authorized[0] if authorized else product
+        evidence = [g.model_dump(mode="json") for g in grounded]
+    if tray_failed and code == "variant_revalidation_failed":
+        log_event("story_variant_revalidation", {"ok": False, "code": code})
+        repo.mark_failed(
+            tenant_id=tenant_id,
+            provider=provider,
+            instagram_account_id=instagram_account_id,
+            story_media_id=story_media_id,
+            explanation={"reason": code},
+            failure_code=code,
+        )
+    return product, tray_failed, code, evidence
+
+
 async def _list_real_variants(
     *,
     product_id: str,
@@ -404,8 +454,15 @@ async def _finalize_story_catalog_match(
             match_confidence=top.score,
             explanation={"reasons": top.match_reasons},
         )
-        product, tray_failed, _code, evidence = await _maybe_revalidate(
-            top.product_id, top.variant_id
+        product, tray_failed, _code, evidence = await _revalidate_matched_story_product(
+            product_id=top.product_id,
+            variant_id=top.variant_id,
+            execute_tool=tool,
+            tenant_id=tenant,
+            repo=repo,
+            provider=provider,
+            instagram_account_id=account,
+            story_media_id=media_id,
         )
         return StoryResolutionResult(
             resolved=bool(product) and not tray_failed,
@@ -650,33 +707,16 @@ async def resolve_story_product_question(
         )
 
     async def _maybe_revalidate(product_id: str, variant_id: str | None):
-        if execute_tool is None:
-            return None, False, None, []
-        log_event("story_revalidation", {"product_id": product_id, "has_variant": bool(variant_id)})
-        product, tray_failed, code = await _revalidate_product(
+        return await _revalidate_matched_story_product(
             product_id=product_id,
-            execute_tool=execute_tool,
             variant_id=variant_id,
+            execute_tool=execute_tool,
+            tenant_id=tenant,
+            repo=repo,
+            provider=provider,
+            instagram_account_id=account,
+            story_media_id=media_id,
         )
-        evidence: list[dict[str, Any]] = []
-        if product and not tray_failed:
-            authorized, grounded = authorize_products_for_responder(
-                [product],
-                tenant_id=tenant,
-            )
-            product = authorized[0] if authorized else product
-            evidence = [g.model_dump(mode="json") for g in grounded]
-        if tray_failed and code == "variant_revalidation_failed":
-            log_event("story_variant_revalidation", {"ok": False, "code": code})
-            repo.mark_failed(
-                tenant_id=tenant,
-                provider=provider,
-                instagram_account_id=account,
-                story_media_id=media_id,
-                explanation={"reason": code},
-                failure_code=code,
-            )
-        return product, tray_failed, code, evidence
 
     # Already matched / manually confirmed → revalidate only (zero vision).
     if assoc and assoc.match_status in {"matched", "manually_confirmed"} and assoc.product_id:

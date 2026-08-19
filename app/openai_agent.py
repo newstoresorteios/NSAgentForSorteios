@@ -812,6 +812,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
             used_tray=bool(result.response_metadata.get("used_tray")),
         )
     # Instagram Story reply → associated product (feature-flagged / rollout).
+    skip_generic_image = False
     try:
         from .instagram_story_intent import should_route_story_question
         from .instagram_story_service import (
@@ -820,6 +821,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         )
 
         if should_route_story_question(message):
+            skip_generic_image = True
             story_resolution = await resolve_story_product_question(
                 incoming=message,
                 execute_tool=execute_tool,
@@ -841,9 +843,35 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                         fallback_reason=story_resolution.failure_reason,
                     )
     except Exception as exc:  # noqa: BLE001
-        print("[instagram.story.route.error]", {"error_type": type(exc).__name__})
+        print(
+            "[instagram.story.route.error]",
+            {"error_type": type(exc).__name__, "error": str(exc)[:240]},
+        )
+        skip_generic_image = True
+        from .instagram_story_intent import should_route_story_question as _story_q
 
-    if image_search_eligible(message):
+        if _story_q(message):
+            return _annotate_agent_result(
+                AgentResult(
+                    reply_text=(
+                        "Identifiquei o Story, mas não consegui confirmar o valor "
+                        "agora. Posso tentar de novo em instantes."
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="story_route_error",
+                    response_metadata={"domain": "commerce", "instagram_story": True},
+                ),
+                domain="commerce",
+                goal="inspect",
+                response_source="instagram_story",
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason="story_route_error",
+            )
+
+    if not skip_generic_image and image_search_eligible(message):
         image_result = await handle_image_product_search(message)
         if image_result is not None:
             return _annotate_agent_result(
