@@ -72,6 +72,28 @@ def test_invented_external_url_is_rejected():
     assert report.violations[0].kind == "url"
 
 
+def test_official_pronta_entrega_catalog_url_is_accepted():
+    result = AgentResult(
+        reply_text=(
+            "Os itens a pronta entrega estão em "
+            "https://www.newstorerj.com/pronta-entrega"
+        ),
+        intent="commerce",
+        response_metadata={
+            "domain": "commerce",
+            "response_source": "openai",
+        },
+    )
+
+    report = validate_factual_response(
+        result,
+        decision=_decision(result),
+        mode="shadow",
+    )
+
+    assert report.valid is True
+
+
 def test_price_not_present_in_tool_facts_is_rejected():
     result = AgentResult(
         reply_text="O valor confirmado é R$ 299,90.",

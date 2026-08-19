@@ -310,7 +310,7 @@ class Settings(BaseSettings):
         alias="AGENT_FACTUAL_VALIDATION_MODE",
     )
     agent_trusted_fact_domains: str = Field(
-        default="sorteionewstore.com.br,newstoresorteios.com.br",
+        default="sorteionewstore.com.br,newstoresorteios.com.br,newstorerj.com,newstorerj.com.br",
         alias="AGENT_TRUSTED_FACT_DOMAINS",
     )
     agent_conversation_lock_enabled: bool = Field(
@@ -517,6 +517,10 @@ class Settings(BaseSettings):
 
     tray_adapter_url: str = Field(default="", alias="TRAY_ADAPTER_URL")
     tray_adapter_token: str = Field(default="", alias="TRAY_ADAPTER_TOKEN")
+    tray_ready_to_ship_category_ids: str = Field(
+        default="403",
+        alias="TRAY_READY_TO_SHIP_CATEGORY_IDS",
+    )
 
     audio_inbound_enabled: bool = Field(default=True, alias="AUDIO_INBOUND_ENABLED")
     audio_outbound_enabled: bool = Field(default=True, alias="AUDIO_OUTBOUND_ENABLED")

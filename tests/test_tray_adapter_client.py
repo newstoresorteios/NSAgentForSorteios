@@ -69,6 +69,19 @@ async def test_categories_and_variants_use_new_read_only_routes():
 
 
 @pytest.mark.asyncio
+async def test_list_categories_forwards_name_filter():
+    fake = FakeClient()
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+    await client.list_categories(limit=20, page=1, name="pronta entrega", id="403")
+    assert fake.calls[0][1]["params"] == {
+        "limit": 20,
+        "page": 1,
+        "name": "pronta entrega",
+        "id": "403",
+    }
+
+
+@pytest.mark.asyncio
 async def test_cart_uses_exact_adapter_contract_and_omits_optional_fields():
     fake = FakeClient(FakeResponse(payload={
         "cart_id": "C1",

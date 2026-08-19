@@ -18,6 +18,7 @@ from .fact_authority import (
     filter_commerce_safe_evidence,
 )
 from .models import AgentResult
+from .site_knowledge import STORE_PRONTA_ENTREGA_URL
 
 
 _URL_RE = re.compile(r"https?://[^\s<>()]+", flags=re.IGNORECASE)
@@ -405,6 +406,7 @@ def build_fact_pack(
         "outbound_image_url": metadata.get("outbound_image_url"),
     }
     pack = FactPack(source_payload=source_payload)
+    pack.trusted_urls.add(_clean_url(STORE_PRONTA_ENTREGA_URL))
     _collect_facts(source_payload, pack=pack, used_tray=used_tray)
 
     payment = (result.commercial_data or {}).get("payment")
@@ -524,7 +526,12 @@ def validate_factual_response(
         domain.lower().strip()
         for domain in (
             trusted_domains
-            or {"sorteionewstore.com.br", "newstoresorteios.com.br"}
+            or {
+                "sorteionewstore.com.br",
+                "newstoresorteios.com.br",
+                "newstorerj.com",
+                "newstorerj.com.br",
+            }
         )
         if domain.strip()
     }

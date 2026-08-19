@@ -624,12 +624,26 @@ class TrayAdapterClient:
     async def get_order_payment(self, order_id: str | int) -> Any:
         return await self._request("GET", f"/internal/orders/{order_id}/payment")
 
-    async def list_categories(self, *, limit: int = 50, page: int = 1) -> Any:
-        return await self._request(
-            "GET",
-            "/internal/categories",
-            params={"limit": min(max(limit, 1), 50), "page": max(page, 1)},
-        )
+    async def list_categories(
+        self,
+        *,
+        limit: int = 50,
+        page: int = 1,
+        name: str | None = None,
+        id: str | None = None,
+        parent_id: str | None = None,
+    ) -> Any:
+        params: dict[str, Any] = {
+            "limit": min(max(limit, 1), 50),
+            "page": max(page, 1),
+        }
+        if name:
+            params["name"] = name
+        if id:
+            params["id"] = id
+        if parent_id:
+            params["parent_id"] = parent_id
+        return await self._request("GET", "/internal/categories", params=params)
 
     async def get_category(self, category_id: str | int) -> Any:
         return await self._request("GET", f"/internal/categories/{category_id}")

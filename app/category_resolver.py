@@ -136,13 +136,16 @@ class CategoryResolver:
         seen: set[str] = set()
         records_loaded = 0
         for page in range(1, MAX_CATEGORY_PAGES + 1):
-            print("[sales.category.request]", {
+            arguments: dict[str, Any] = {
                 "page": page,
                 "limit": CATEGORY_PAGE_LIMIT,
-            })
+            }
+            if page == 1 and "pronta" in _fold(product_type):
+                arguments["name"] = product_type.strip()
+            print("[sales.category.request]", arguments)
             result = await self._execute_tool(
                 "list_categories",
-                {"limit": CATEGORY_PAGE_LIMIT, "page": page},
+                arguments,
             )
             if "error" in result:
                 return categories, str(

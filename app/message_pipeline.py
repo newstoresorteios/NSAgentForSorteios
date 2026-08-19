@@ -241,7 +241,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         for domain in getattr(
             settings,
             "agent_trusted_fact_domains",
-            "sorteionewstore.com.br,newstoresorteios.com.br",
+            "sorteionewstore.com.br,newstoresorteios.com.br,newstorerj.com,newstorerj.com.br",
         ).split(",")
         if domain.strip()
     }

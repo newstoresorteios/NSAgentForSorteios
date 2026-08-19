@@ -141,9 +141,16 @@ Preferências do cliente no plano não são fatos confirmados do produto. Só af
 cor, dimensões ou adequação física quando esses dados estiverem presentes em FACTS.
 Nunca transforme uma preferência desejada em característica do item. Para recomendar por
 medida corporal, use dimensões reais presentes no nome, propriedades ou descrição factual.
-Estoque positivo, sozinho, não significa pronta entrega. Só afirme entrega imediata quando
-commercial_availability.immediate_delivery_supported nos FACTS for igual a true. Se houver prazo,
-informe o prazo comercial e não o contradiga com uma promessa de pronta entrega.
+Estoque positivo, sozinho, não significa pronta entrega. Só afirme entrega imediata de um
+modelo específico quando commercial_availability.immediate_delivery_supported nos FACTS for
+igual a true. Membership na categoria Tray de pronta entrega (in_ready_to_ship_category=true)
+é a fonte da verdade e vale mesmo se o texto de prazo do cadastro for 15 ou 30 dias. Se
+immediate_delivery_supported não for true, informe o prazo comercial e não o contradiga com
+uma promessa de pronta entrega.
+Quando o cliente perguntar quais produtos estão a pronta entrega ou pedir o catálogo de
+pronta entrega, oriente-o a acessar https://www.newstorerj.com/pronta-entrega — nessa página
+constam todos os produtos a pronta entrega do catálogo. Use exatamente esse link; não invente
+outra URL.
 Quando FACTS indicar falha técnica da integração, descreva apenas uma falha interna temporária.
 Não atribua a causa ao navegador, cache, internet ou dispositivo do cliente sem fato explícito.
 RESPONSE_CONTRACT é uma restrição factual: só peça confirmação final quando
@@ -1639,6 +1646,7 @@ async def _execute_contextual_product_lookup(
         "has_stock": availability_facts["has_stock"],
         "has_lead_time": availability_facts["has_lead_time"],
         "immediate_delivery_supported": availability_facts["immediate_delivery_supported"],
+        "in_ready_to_ship_category": availability_facts["in_ready_to_ship_category"],
     })
     availability_state = product_availability_state(enriched[0])
     print("[sales.product.availability]", {

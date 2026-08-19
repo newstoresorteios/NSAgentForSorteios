@@ -2,6 +2,7 @@ from __future__ import annotations
 
 SITE_URL = "https://www.sorteionewstore.com.br/"
 STORE_URL = "https://www.newstorerj.com.br/"
+STORE_PRONTA_ENTREGA_URL = "https://www.newstorerj.com/pronta-entrega"
 NS_SALES_WHATSAPP = "+55 48 9949-0859"
 
 HUMAN_SUPPORT_MESSAGE = (

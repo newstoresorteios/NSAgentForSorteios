@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from collections.abc import Awaitable, Callable
@@ -1239,6 +1240,35 @@ def product_availability_state(
     return "unknown"
 
 
+def ready_to_ship_category_ids() -> set[str]:
+    raw = os.getenv("TRAY_READY_TO_SHIP_CATEGORY_IDS", "403")
+    return {part.strip() for part in str(raw).replace(";", ",").split(",") if part.strip()}
+
+
+def product_category_ids(product: dict[str, Any]) -> set[str]:
+    found: list[str] = []
+
+    def _collect(raw: Any) -> None:
+        if raw in (None, ""):
+            return
+        if isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                _collect(item)
+            return
+        if isinstance(raw, dict):
+            _collect(raw.get("id") or raw.get("category_id"))
+            return
+        found.append(str(raw).strip())
+
+    _collect(product.get("category_id"))
+    _collect(product.get("related_categories"))
+    return {item for item in found if item}
+
+
+def in_ready_to_ship_category(product: dict[str, Any]) -> bool:
+    return bool(product_category_ids(product) & ready_to_ship_category_ids())
+
+
 def commercial_availability_facts(product: dict[str, Any]) -> dict[str, Any]:
     settings = product.get("ProductSettings")
     settings = settings if isinstance(settings, dict) else {}
@@ -1278,6 +1308,10 @@ def commercial_availability_facts(product: dict[str, Any]) -> dict[str, Any]:
         immediate_delivery_supported: bool | None = lead_time_days == 0
     else:
         immediate_delivery_supported = immediate_flag
+    ready_to_ship = in_ready_to_ship_category(product)
+    if ready_to_ship:
+        immediate_delivery_supported = True
+        lead_time_days = 0
     stock = product.get("stock")
     return {
         "availability_state": product_availability_state(product),
@@ -1286,6 +1320,7 @@ def commercial_availability_facts(product: dict[str, Any]) -> dict[str, Any]:
         "has_lead_time": lead_time_days is not None,
         "lead_time_days": lead_time_days,
         "immediate_delivery_supported": immediate_delivery_supported,
+        "in_ready_to_ship_category": ready_to_ship,
     }
 
 
@@ -1444,6 +1479,7 @@ def compact_candidates(
                 "category": product.get("category"),
                 "category_name": product.get("category_name"),
                 "category_id": product.get("category_id"),
+                "related_categories": product.get("related_categories"),
                 "description": str(product.get("description") or "")[:240] or None,
                 "properties": _compact_property_evidence(
                     product.get("properties") or product.get("attributes")

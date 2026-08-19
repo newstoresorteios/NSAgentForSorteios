@@ -518,3 +518,19 @@ def test_explicit_zero_day_lead_time_supports_immediate_delivery():
     })
 
     assert facts["immediate_delivery_supported"] is True
+    assert facts["in_ready_to_ship_category"] is False
+
+
+def test_pronta_entrega_category_overrides_stale_lead_time():
+    facts = commercial_availability_facts({
+        "stock": 38,
+        "available": True,
+        "order_days_availability": 30,
+        "category_id": "289",
+        "related_categories": ["403", "289", "291"],
+        "availability": "Disponível em 30 dias úteis",
+    })
+
+    assert facts["in_ready_to_ship_category"] is True
+    assert facts["immediate_delivery_supported"] is True
+    assert facts["lead_time_days"] == 0
