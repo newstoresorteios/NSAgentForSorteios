@@ -26,6 +26,7 @@ from app.openai_gateway import (
     ChatCompletionsGateway,
     FallbackOpenAIGateway,
     ResponsesGateway,
+    apply_temperature_param,
     build_openai_gateway,
     extract_usage_metrics,
     model_capabilities,
@@ -181,9 +182,22 @@ def test_resolve_openai_model_main_and_fast(responses_settings):
 def test_model_capabilities_reasoning_models():
     caps = model_capabilities("o3-mini")
     assert caps.supports_reasoning_effort is True
+    assert caps.supports_temperature is False
     caps_std = model_capabilities("gpt-4.1-mini")
     assert caps_std.supports_reasoning_effort is False
+    assert caps_std.supports_temperature is True
     assert caps_std.supports_text_verbosity is True
+    caps_gpt5 = model_capabilities("gpt-5.4-mini")
+    assert caps_gpt5.supports_reasoning_effort is True
+    assert caps_gpt5.supports_temperature is False
+
+
+def test_gpt5_skips_temperature_param():
+    kwargs: dict = {}
+    apply_temperature_param(kwargs, temperature=0.3, model="gpt-5.4-mini")
+    assert "temperature" not in kwargs
+    apply_temperature_param(kwargs, temperature=0.3, model="gpt-4.1-mini")
+    assert kwargs["temperature"] == 0.3
 
 
 def test_extract_usage_metrics_includes_cache_and_reasoning():

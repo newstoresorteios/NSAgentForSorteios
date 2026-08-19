@@ -51,6 +51,7 @@ class ModelCapabilities:
     supports_reasoning_effort: bool = False
     supports_text_verbosity: bool = False
     supports_parallel_tool_calls: bool = True
+    supports_temperature: bool = True
 
 
 @dataclass
@@ -183,16 +184,18 @@ def model_capabilities(model: str | None = None) -> ModelCapabilities:
 
     if name in overrides:
         row = overrides[name]
+        reasoning = bool(row.get("supports_reasoning_effort", False))
         return ModelCapabilities(
             supports_responses=bool(row.get("supports_responses", True)),
             supports_structured_outputs=bool(
                 row.get("supports_structured_outputs", True)
             ),
-            supports_reasoning_effort=bool(row.get("supports_reasoning_effort", False)),
+            supports_reasoning_effort=reasoning,
             supports_text_verbosity=bool(row.get("supports_text_verbosity", False)),
             supports_parallel_tool_calls=bool(
                 row.get("supports_parallel_tool_calls", True)
             ),
+            supports_temperature=bool(row.get("supports_temperature", not reasoning)),
         )
 
     # Known families (conservative).
@@ -207,7 +210,30 @@ def model_capabilities(model: str | None = None) -> ModelCapabilities:
         supports_reasoning_effort=reasoning,
         supports_text_verbosity=verbosity,
         supports_parallel_tool_calls=True,
+        supports_temperature=not reasoning,
     )
+
+
+def apply_temperature_param(
+    kwargs: dict[str, Any],
+    *,
+    temperature: float | None,
+    model: str,
+) -> None:
+    """Attach temperature only when the model family accepts it."""
+    if temperature is None:
+        return
+    if not model_capabilities(model).supports_temperature:
+        print(
+            "[openai.control.skipped]",
+            {
+                "param": "temperature",
+                "reason": "model_capability_not_declared",
+                "model": model,
+            },
+        )
+        return
+    kwargs["temperature"] = temperature
 
 
 def apply_responses_controls_report(
@@ -577,8 +603,7 @@ class ChatCompletionsGateway:
             "messages": chat_messages,
             "response_format": text_format,
         }
-        if temperature is not None:
-            kwargs["temperature"] = temperature
+        apply_temperature_param(kwargs, temperature=temperature, model=model)
         started = time.perf_counter()
         try:
             response = await execute_openai_call(
@@ -629,8 +654,7 @@ class ChatCompletionsGateway:
             input_items=input_items,
         )
         kwargs: dict[str, Any] = {"model": model, "messages": chat_messages}
-        if temperature is not None:
-            kwargs["temperature"] = temperature
+        apply_temperature_param(kwargs, temperature=temperature, model=model)
         started = time.perf_counter()
         try:
             response = await execute_openai_call(
@@ -699,8 +723,7 @@ class ChatCompletionsGateway:
                 "tools": chat_tools,
                 "tool_choice": "auto",
             }
-            if temperature is not None:
-                kwargs["temperature"] = temperature
+            apply_temperature_param(kwargs, temperature=temperature, model=model)
             if not parallel_tool_calls:
                 kwargs["parallel_tool_calls"] = False
             try:
@@ -821,8 +844,7 @@ class ResponsesGateway:
             kwargs["instructions"] = resolved_instructions
         if resolved_input is not None:
             kwargs["input"] = resolved_input
-        if temperature is not None:
-            kwargs["temperature"] = temperature
+        apply_temperature_param(kwargs, temperature=temperature, model=model)
         _apply_responses_controls(kwargs, model=model)
         started = time.perf_counter()
         call_id = uuid.uuid4().hex
@@ -882,8 +904,7 @@ class ResponsesGateway:
             kwargs["instructions"] = resolved_instructions
         if resolved_input is not None:
             kwargs["input"] = resolved_input
-        if temperature is not None:
-            kwargs["temperature"] = temperature
+        apply_temperature_param(kwargs, temperature=temperature, model=model)
         _apply_responses_controls(kwargs, model=model)
         started = time.perf_counter()
         call_id = uuid.uuid4().hex
@@ -972,8 +993,7 @@ class ResponsesGateway:
             }
             if resolved_instructions:
                 kwargs["instructions"] = resolved_instructions
-            if temperature is not None:
-                kwargs["temperature"] = temperature
+            apply_temperature_param(kwargs, temperature=temperature, model=model)
             _apply_responses_controls(kwargs, model=model)
             try:
                 response = await execute_openai_call(
@@ -1786,8 +1806,7 @@ def generate_text_sync(
     })
     client = get_sync_openai_client()
     kwargs: dict[str, Any] = {"model": model, "messages": messages}
-    if temperature is not None:
-        kwargs["temperature"] = temperature
+    apply_temperature_param(kwargs, temperature=temperature, model=model)
     started = time.perf_counter()
     try:
         response = execute_openai_call_sync(

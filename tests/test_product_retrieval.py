@@ -490,6 +490,29 @@ def test_compact_product_lines_omit_long_payment_dump():
     assert "Preço:" in compact
     assert "Condições comerciais" not in compact
     assert "Condições comerciais" in full
+    assert "Link:" not in compact
+    assert "Estoque:" not in compact
+
+
+def test_compact_product_lines_omit_url_and_stock():
+    from app.commerce_router import _product_lines
+
+    products = [
+        {
+            "id": "1",
+            "name": "Relógio Tissot Seastar",
+            "reference": "T120",
+            "current_price": 4990,
+            "url": "https://www.newstorerj.com.br/relogios-tissot/seastar",
+            "stock": 4,
+        }
+    ]
+    compact = _product_lines(products, compact=True)[0]
+    full = _product_lines(products, compact=False)[0]
+    assert "Link:" not in compact
+    assert "Estoque:" not in compact
+    assert "Link:" in full
+    assert "Estoque:" in full
 
 
 @pytest.mark.asyncio

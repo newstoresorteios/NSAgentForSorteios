@@ -1367,6 +1367,18 @@ async def test_site_channel_cannot_start_whatsapp_shipping():
 
 
 @pytest.mark.asyncio
+async def test_shipping_without_cart_gives_leadtime_guidance():
+    async def never(*_args):
+        raise AssertionError("informational shipping must not call Tray")
+
+    state = CommerceConversationState(checkout_channel_preference=None)
+    result = await quote_shipping(state=state, zipcode="", execute=never)
+    assert result.safety_reason == "shipping_guidance_without_cart"
+    assert "CEP" in result.reply_text
+    assert "WhatsApp" not in result.reply_text
+
+
+@pytest.mark.asyncio
 async def test_sales_agent_orchestrates_whatsapp_flow_without_real_openai(monkeypatch):
     import app.sales_agent as sales_agent
 

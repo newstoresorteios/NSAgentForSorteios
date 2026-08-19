@@ -52,7 +52,7 @@ def _clarification_turn(content: str) -> dict:
     }
 
 
-async def _run_sales(monkeypatch, interpretation, recent_turns):
+async def _run_sales(monkeypatch, interpretation, recent_turns, *, text: str = "continuação comercial"):
     import app.sales_agent as sales_agent
 
     calls = []
@@ -74,7 +74,7 @@ async def _run_sales(monkeypatch, interpretation, recent_turns):
     monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings())
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     result = await sales_agent.handle_sales_message(
-        IncomingMessage(text="continuação comercial"),
+        IncomingMessage(text=text),
         {"primary_intent": "commerce"},
         {},
         interpretation,
@@ -265,3 +265,28 @@ async def test_catalog_request_interpretation_reaches_retrieval_without_clarific
 
     assert [call for call in calls if call[0] == "search_products"] == [("search_products", {"name": "acessório", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
     assert result.safety_reason != "commerce_clarification"
+
+
+@pytest.mark.asyncio
+async def test_brand_comparison_without_model_asks_instead_of_searching(monkeypatch):
+    interpretation = _interpretation(
+        product_type="relógio",
+        goal="compare",
+        needs_clarification=False,
+        enough=True,
+        ready=True,
+        clarification_question=None,
+    )
+
+    result, calls = await _run_sales(
+        monkeypatch,
+        interpretation,
+        [],
+        text="Hamilton ou Baltic?",
+    )
+
+    assert calls == []
+    assert result.safety_reason == "commerce_clarification"
+    assert "Hamilton" in result.reply_text
+    assert "Baltic" in result.reply_text
+    assert "newstorerj.com.br" not in result.reply_text

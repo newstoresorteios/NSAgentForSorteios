@@ -15,4 +15,6 @@ def test_default_safe_handoff_includes_sales_contact():
 def test_detect_human_support_request():
     assert detect_human_support_request("Quero falar com um atendente")
     assert detect_human_support_request("Qual o contato de vendas?")
+    assert detect_human_support_request("quero falar com um ser humano")
+    assert detect_human_support_request("estou falando com um robô")
     assert not detect_human_support_request("qual meu saldo")

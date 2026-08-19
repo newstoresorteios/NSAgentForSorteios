@@ -1116,9 +1116,68 @@ def _known_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
     return known
 
 
+def _specific_product_lock(interpretation: SalesInterpretation) -> bool:
+    subject = interpretation.subject
+    return any((subject.model, subject.reference, subject.ean))
+
+
 def _subject_identifiable(interpretation: SalesInterpretation) -> bool:
     subject = interpretation.subject
     return any((subject.product_type, subject.brand, subject.model, subject.reference, subject.ean))
+
+
+def _comparison_needs_qualification(interpretation: SalesInterpretation) -> bool:
+    return interpretation.goal == "compare" and not _specific_product_lock(interpretation)
+
+
+def _mentioned_watch_brands(text: str | None) -> list[str]:
+    folded = unicodedata.normalize("NFKD", (text or "").casefold())
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    known = (
+        "hamilton",
+        "baltic",
+        "tissot",
+        "citizen",
+        "seiko",
+        "omega",
+        "longines",
+        "oris",
+        "certina",
+        "tudor",
+        "zenith",
+        "breitling",
+        "panerai",
+        "iwc",
+        "rolex",
+        "tag heuer",
+        "christopher ward",
+    )
+    found: list[str] = []
+    for brand in known:
+        if brand in folded and brand not in found:
+            found.append(brand.title() if brand != "tag heuer" else "TAG Heuer")
+    return found
+
+
+def _comparison_clarification_question(message: IncomingMessage, interpretation: SalesInterpretation) -> str:
+    brands = _mentioned_watch_brands(message.text)
+    if interpretation.subject.brand and interpretation.subject.brand not in brands:
+        brands.insert(0, interpretation.subject.brand)
+    if len(brands) >= 2:
+        labeled = " e ".join(brands[:2])
+        return (
+            f"Beleza, {labeled}. Qual modelo de cada um voc\u00ea tem em mente, "
+            "ou o que mais pesa agora: estilo, or\u00e7amento ou uso?"
+        )
+    if brands:
+        return (
+            f"Beleza, {brands[0]}. Qual modelo voc\u00ea quer comparar, "
+            "ou o que mais pesa: estilo, or\u00e7amento ou uso?"
+        )
+    return (
+        "Qual modelo voc\u00ea quer comparar, ou o que mais pesa agora: "
+        "estilo, or\u00e7amento ou uso?"
+    )
 
 
 def _discovery_state(
@@ -1131,11 +1190,16 @@ def _discovery_state(
     known_preferences_count = len(known_preferences) + len(explicit_no_preferences)
     subject_identifiable = _subject_identifiable(interpretation)
     enough_information = interpretation.enough_information_to_search
-    force_retrieval = subject_identifiable and any((
-        enough_information,
-        interpretation.ready_for_retrieval,
-        interpretation.stop_clarification,
-    ))
+    comparison_without_sku = _comparison_needs_qualification(interpretation)
+    force_retrieval = (
+        subject_identifiable
+        and not comparison_without_sku
+        and any((
+            enough_information,
+            interpretation.ready_for_retrieval,
+            interpretation.stop_clarification,
+        ))
+    )
     recent_questions = [
         str(turn.get("content") or "").strip()
         for turn in recent_turns or []
@@ -1157,6 +1221,7 @@ def _discovery_state(
         "recent_questions": recent_questions,
         "subject_identifiable": subject_identifiable,
         "force_retrieval": force_retrieval,
+        "comparison_without_sku": comparison_without_sku,
     }
 
 
@@ -1171,6 +1236,9 @@ def _needs_clarification_before_retrieval(
         return True
     if interpretation.needs_clarification or interpretation.goal == "discover":
         return True
+    if _comparison_needs_qualification(interpretation) or plan.get("intent") == "product_comparison":
+        if not _specific_product_lock(interpretation):
+            return True
     if plan.get("intent") not in {"purchase_intent", "recommendation"}:
         return False
     return not discovery_state["subject_identifiable"]
@@ -1186,11 +1254,16 @@ async def generate_clarification_reply(
     discovery_state: dict[str, Any] | None = None,
 ) -> AgentResult:
     settings = get_settings()
-    deterministic_question = (
-        interpretation.clarification_question
-        or "Qual característica ou preferência é mais importante para você?"
-    )
-    if interpretation._source == "openai" and interpretation.clarification_question:
+    deterministic_question = interpretation.clarification_question
+    if not deterministic_question or _comparison_needs_qualification(interpretation):
+        if _comparison_needs_qualification(interpretation):
+            deterministic_question = _comparison_clarification_question(message, interpretation)
+        else:
+            deterministic_question = (
+                interpretation.clarification_question
+                or "Qual caracter\u00edstica ou prefer\u00eancia \u00e9 mais importante para voc\u00ea?"
+            )
+    if interpretation._source == "openai" and interpretation.clarification_question and not _comparison_needs_qualification(interpretation):
         return _mark_sales_result(
             AgentResult(
                 reply_text=html.unescape(interpretation.clarification_question.strip()),
@@ -1373,15 +1446,25 @@ async def _sales_response_with_openai(
             from .memory_models import AgentTurnEnvelope
             from .openai_gateway import parse_structured_output
 
-            parse_result = await parse_structured_output(
-                model=settings.openai_model,
-                text_format=AgentTurnEnvelope,
-                messages=responder_messages,
-                temperature=0.3,
-                call_type="response_composition_envelope",
-            )
-            envelope = parse_result.parsed
-            content = getattr(envelope, "reply", None) if envelope is not None else None
+            try:
+                parse_result = await parse_structured_output(
+                    model=settings.openai_model,
+                    text_format=AgentTurnEnvelope,
+                    messages=responder_messages,
+                    temperature=0.3,
+                    call_type="response_composition_envelope",
+                )
+                envelope = parse_result.parsed
+                content = getattr(envelope, "reply", None) if envelope is not None else None
+            except (APIError, OpenAIGatewayError, BadRequestError, ValueError, TypeError):
+                print("[sales.responder] envelope_failed_fallback_text")
+                text_result = await generate_text_output(
+                    model=settings.openai_model,
+                    messages=responder_messages,
+                    temperature=0.3,
+                    call_type="response_composition",
+                )
+                content = text_result.text
         else:
             text_result = await generate_text_output(
                 model=settings.openai_model,
@@ -4564,6 +4647,13 @@ async def _handle_sales_message_inner(
     print("[sales.agent] responder", {"source": "openai" if final else "deterministic_fallback"})
     if final:
         return final
+    if interpretation is not None and _comparison_needs_qualification(interpretation):
+        return await generate_clarification_reply(
+            message=message,
+            interpretation=interpretation,
+            recent_turns=recent_turns,
+            discovery_state=discovery_state,
+        )
     technical_failure = tray_result.safety_reason in {
         "tray_adapter_unavailable",
         "product_match_failed",

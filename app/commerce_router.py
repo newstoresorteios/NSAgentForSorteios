@@ -189,7 +189,11 @@ def _product_lines(
             or product.get("product_url")
             or product.get("link")
         )
-        if isinstance(product_url, str) and product_url.strip():
+        if (
+            not compact
+            and isinstance(product_url, str)
+            and product_url.strip()
+        ):
             parts.append(f"Link: {product_url.strip()}")
         if not compact:
             payment = _payment_label(
@@ -197,7 +201,7 @@ def _product_lines(
             ) or _payment_label(product.get("payment_option"))
             if payment:
                 parts.append(f"Condi\u00e7\u00f5es comerciais: {payment}")
-        if inventory:
+        if inventory and not compact:
             if inventory.get("stock") is not None:
                 parts.append(f"Estoque: {inventory['stock']}")
             if inventory.get("availability"):
@@ -205,7 +209,7 @@ def _product_lines(
             for key, label in (("available_for_purchase", "Dispon\u00edvel para compra"), ("upon_request", "Sob consulta")):
                 if inventory.get(key) is not None:
                     parts.append(f"{label}: {inventory[key]}")
-        elif product.get("stock") is not None:
+        elif product.get("stock") is not None and not compact:
             parts.append(f"Estoque: {product['stock']}")
         lines.append(" | ".join(parts))
     return lines

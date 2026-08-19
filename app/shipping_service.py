@@ -107,6 +107,14 @@ def _parse_quote(option: dict[str, Any]) -> ShippingQuote | None:
         return None
 
 
+SHIPPING_LEADTIME_GUIDANCE = (
+    "Prazo para RS (incluindo Porto Alegre) depende do modelo e do CEP. "
+    "Em geral o pedido sai em poucos dias \u00fateis depois da confirma\u00e7\u00e3o. "
+    "Me passa o CEP com 8 d\u00edgitos e qual rel\u00f3gio voc\u00ea tem em mente "
+    "que eu te oriento melhor \u2014 a cota\u00e7\u00e3o em reais sai no checkout."
+)
+
+
 async def quote_shipping(
     *,
     state: CommerceConversationState,
@@ -114,6 +122,15 @@ async def quote_shipping(
     execute: ToolExecutor,
     cart_snapshot: dict[str, Any] | None = None,
 ) -> AgentResult:
+    has_cart = bool(state.cart_items or state.cart_session_id)
+    if not has_cart:
+        return AgentResult(
+            reply_text=SHIPPING_LEADTIME_GUIDANCE,
+            intent="commerce",
+            safety_reason="shipping_guidance_without_cart",
+            commercial_data={"success": False, "stage": "shipping_guidance"},
+            response_metadata={"domain": "commerce", "used_tray": False},
+        )
     if state.checkout_channel_preference != "whatsapp":
         return AgentResult(
             reply_text="O canal WhatsApp e necessario para cotar frete pelo agente.",
