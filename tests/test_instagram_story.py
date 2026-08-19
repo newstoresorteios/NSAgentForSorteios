@@ -640,7 +640,110 @@ def test_tray_search_plan_skips_color_and_keeps_model_tokens():
     assert "green" not in folded
 
 
-def test_tokens_from_store_url_extracts_laco_pilot():
+def test_tray_search_plan_skips_generic_region_labels():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Citizen"],
+        collection_hypotheses=["Tsuyosa"],
+        model_hypotheses=[],
+        dial_colors=["purple"],
+        product_regions=[
+            VisualProductRegion(
+                position="right",
+                label="main watch product",
+                brand_hypothesis="Citizen",
+                reference_hypothesis="Tsuyosa",
+                dial_color="purple",
+            )
+        ],
+        visible_text=["CITIZEN", "TSUYOSA", "37 mm", "Automático"],
+    )
+    brand, tokens = tray_search_plan(analysis)
+    assert brand == "Citizen"
+    folded = {t.casefold() for t in tokens}
+    assert "tsuyosa" in folded
+    assert "main" not in folded
+    assert "watch" not in folded
+    assert "product" not in folded
+
+
+@pytest.mark.asyncio
+async def test_story_matcher_picks_purple_tsuyosa_from_tray(monkeypatch):
+    class EmptyRepo:
+        def search_exact(self, **_kwargs):
+            return []
+
+        def search_lexical(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        "app.catalog_index_repository.CatalogIndexRepository",
+        lambda: EmptyRepo(),
+    )
+    monkeypatch.setattr(
+        "app.product_image_index.visual_search_from_caption",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *_a, **_k: 0,
+    )
+
+    async def fake_tool(name, args):
+        assert name == "search_products"
+        assert args.get("brand") == "Citizen"
+        folded = [str(t).casefold() for t in args.get("tokens") or []]
+        assert "tsuyosa" in folded
+        assert "main" not in folded
+        return {
+            "products": [
+                {
+                    "id": "111",
+                    "name": "Relógio Citizen Tsuyosa Automático Azul NJ0151-53L",
+                    "brand": "Citizen",
+                    "price": 3990.0,
+                    "available": True,
+                    "url": "https://www.newstorerj.com.br/relogios-citizen/relogio-citizen-tsuyosa-azul",
+                },
+                {
+                    "id": "222",
+                    "name": "Relógio Citizen Tsuyosa Automático Roxo NJ0200-50W",
+                    "brand": "Citizen",
+                    "price": 4290.0,
+                    "available": True,
+                    "url": (
+                        "https://www.newstorerj.com.br/relogios-citizen/"
+                        "relogio-citizen-tsuyosa-automatico-roxo-nj0200-50w"
+                    ),
+                },
+            ]
+        }
+
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Citizen"],
+        collection_hypotheses=["Tsuyosa"],
+        dial_colors=["purple"],
+        watch_count=1,
+        product_regions=[
+            VisualProductRegion(
+                position="right",
+                label="main watch product",
+                brand_hypothesis="Citizen",
+                reference_hypothesis="Tsuyosa",
+                dial_color="purple",
+            )
+        ],
+    )
+    candidates = await match_story_to_catalog(
+        tenant_id="newstore",
+        analysis=analysis,
+        execute_tool=fake_tool,
+    )
+    assert candidates
+    assert candidates[0].product_id == "222"
+    status, top = classify_match(candidates, multiple_products=False)
+    assert status == "matched"
+    assert top is not None
+    assert top.product_id == "222"
     brand, tokens = tokens_from_store_url(
         "https://www.newstorerj.com/relogios/relogios-laco/"
         "relogio-laco-pilot-leipzig-mecanico-preto"

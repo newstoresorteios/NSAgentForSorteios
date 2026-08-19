@@ -141,13 +141,74 @@ _COLOR_AND_SKIP = {
     "dourado",
     "rose",
     "rosa",
+    "roxo",
+    "lilas",
     "green",
     "blue",
     "black",
     "white",
     "silver",
     "gold",
+    "purple",
+    "violet",
 }
+
+_GENERIC_AND_SKIP = {
+    "main",
+    "watch",
+    "product",
+    "relogio",
+    "relogios",
+    "modelo",
+    "mostra",
+    "mostrador",
+    "pulseira",
+    "caixa",
+    "automatico",
+    "mecanico",
+    "quartz",
+    "seminovo",
+    "novo",
+    "motor",
+    "reserva",
+    "energia",
+}
+
+_COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "purple": ("roxo", "purple", "violet"),
+    "violet": ("roxo", "purple", "violet"),
+    "roxo": ("roxo", "purple", "violet"),
+    "green": ("verde", "green"),
+    "verde": ("verde", "green"),
+    "blue": ("azul", "blue"),
+    "azul": ("azul", "blue"),
+    "black": ("preto", "black"),
+    "preto": ("preto", "black"),
+}
+
+
+def _is_sku_like(token: str) -> bool:
+    compact = str(token or "").replace("-", "").replace(".", "")
+    if len(compact) < 5 or len(compact) > 16:
+        return False
+    has_letter = any(ch.isalpha() for ch in compact)
+    has_digit = any(ch.isdigit() for ch in compact)
+    return has_letter and has_digit
+
+
+def _dial_color_score(analysis: StoryVisualUnderstanding, blob: str) -> float:
+    wanted: set[str] = set()
+    for raw in analysis.dial_colors or []:
+        wanted.update(_COLOR_SYNONYMS.get(_fold(raw), (_fold(raw),)))
+    for region in analysis.product_regions or []:
+        dial = _fold(getattr(region, "dial_color", None))
+        if dial:
+            wanted.update(_COLOR_SYNONYMS.get(dial, (dial,)))
+    if not wanted:
+        return 0.0
+    if any(token in blob for token in wanted if token):
+        return 0.9
+    return 0.0
 
 
 def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, list[str]]:
@@ -162,7 +223,7 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
     seen: set[str] = set()
     brand_fold = _fold(brand)
 
-    def _add_phrase(raw: Any) -> None:
+    def _add_phrase(raw: Any, *, allow_generic: bool = False) -> None:
         for part in str(raw or "").replace("/", " ").replace("-", " ").split():
             token = part.strip()
             if len(token) < 3:
@@ -170,19 +231,25 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
             key = _fold(token)
             if not key or key in seen or key == brand_fold or key in _COLOR_AND_SKIP:
                 continue
+            if not allow_generic and key in _GENERIC_AND_SKIP:
+                continue
             seen.add(key)
             tokens.append(token)
 
-    for model in analysis.model_hypotheses or []:
-        _add_phrase(model)
-    for ref in analysis.visible_references or []:
-        _add_phrase(ref)
     for sku in analysis.visible_skus or []:
         _add_phrase(sku)
+    for ref in analysis.visible_references or []:
+        _add_phrase(ref)
+    for text in analysis.visible_text or []:
+        if _is_sku_like(str(text)):
+            _add_phrase(text)
+    for model in analysis.model_hypotheses or []:
+        _add_phrase(model)
+    for collection in analysis.collection_hypotheses or []:
+        _add_phrase(collection)
     for region in analysis.product_regions or []:
         _add_phrase(getattr(region, "reference_hypothesis", None))
-        _add_phrase(getattr(region, "label", None))
-    return brand, tokens[:8]
+    return brand, tokens[:3]
 
 
 def tokens_from_store_url(url: str | None) -> tuple[str | None, list[str]]:
@@ -245,17 +312,8 @@ def tray_search_jobs(
     _add(slug_brand, slug_tokens)
     brand, tokens = tray_search_plan(analysis)
     _add(brand, tokens)
-    for region in analysis.product_regions or []:
-        region_brand = str(getattr(region, "brand_hypothesis", None) or "").strip() or None
-        extra: list[str] = []
-        for raw in (
-            getattr(region, "reference_hypothesis", None),
-            getattr(region, "label", None),
-        ):
-            for part in str(raw or "").replace("-", " ").split():
-                if len(part) >= 3 and _fold(part) not in _COLOR_AND_SKIP:
-                    extra.append(part)
-        _add(region_brand, extra[:8] or tokens)
+    if brand and len(tokens) > 1:
+        _add(brand, tokens[:1])
     return jobs[:4]
 
 
@@ -551,9 +609,20 @@ async def match_story_to_catalog(
                         if len(token) >= 3 and _fold(token) in name_l
                     )
                     url_hit = bool(slug) and len(slug) >= 8 and slug in url_l
+                    blob = f"{name_l} {url_l}"
+                    color = _dial_color_score(analysis, blob)
                     if hits < 1 and not url_hit:
                         continue
-                    strong = url_hit or (brand_ok and hits >= min(2, len(distinctive) or 1))
+                    color_required = bool(analysis.dial_colors)
+                    strong = url_hit or (
+                        brand_ok
+                        and hits >= min(2, len(distinctive) or 1)
+                        and (not color_required or color >= 0.8)
+                    )
+                    if brand_ok and hits >= 1 and color >= 0.8:
+                        strong = True
+                    if color_required and color < 0.8 and not url_hit:
+                        strong = False
                     rank_penalty = idx * 0.04
                     reason = (
                         f"store_url:{slug[:80]}"
@@ -574,6 +643,7 @@ async def match_story_to_catalog(
                             lexical=min(0.6, 0.2 * max(hits, 1) - rank_penalty),
                             brand=0.85 if brand_ok else 0.2,
                             model=min(0.8, 0.25 * hits),
+                            color=color,
                             quality_penalty=quality_penalty,
                             reasons=[reason],
                             source="tray_search",
