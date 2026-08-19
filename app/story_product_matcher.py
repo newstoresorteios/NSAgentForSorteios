@@ -48,7 +48,7 @@ def classify_match(
     reasons = " ".join(top1.match_reasons).casefold()
     is_exact = any(
         token in reasons
-        for token in ("ean:", "sku:", "reference:", "hash:")
+        for token in ("ean:", "sku:", "reference:", "hash:", "tray_brand_model:")
     )
     threshold = exact_min if is_exact else visual_min
     # Appearance-only must meet the stricter visual threshold.
@@ -117,6 +117,56 @@ def _score_components(
         conflicts=list(conflicts or []),
         source=source,
     )
+
+
+_COLOR_AND_SKIP = {
+    "verde",
+    "azul",
+    "preto",
+    "branco",
+    "prata",
+    "dourado",
+    "rose",
+    "rosa",
+    "green",
+    "blue",
+    "black",
+    "white",
+    "silver",
+    "gold",
+}
+
+
+def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, list[str]]:
+    """Brand + distinctive model tokens for TRAYadaptor AND search (no stock filter)."""
+    brand: str | None = None
+    for raw in (*(analysis.visible_brands or []), *(analysis.logo_hypotheses or [])):
+        text = str(raw or "").strip()
+        if text:
+            brand = text
+            break
+    tokens: list[str] = []
+    seen: set[str] = set()
+    brand_fold = _fold(brand)
+
+    def _add_phrase(raw: Any) -> None:
+        for part in str(raw or "").replace("/", " ").replace("-", " ").split():
+            token = part.strip()
+            if len(token) < 3:
+                continue
+            key = _fold(token)
+            if not key or key in seen or key == brand_fold or key in _COLOR_AND_SKIP:
+                continue
+            seen.add(key)
+            tokens.append(token)
+
+    for model in analysis.model_hypotheses or []:
+        _add_phrase(model)
+    for ref in analysis.visible_references or []:
+        _add_phrase(ref)
+    for sku in analysis.visible_skus or []:
+        _add_phrase(sku)
+    return brand, tokens[:8]
 
 
 async def match_story_to_catalog(
@@ -251,6 +301,42 @@ async def match_story_to_catalog(
                             source="lexical",
                         ),
                     )
+        for brand in analysis.visible_brands or analysis.logo_hypotheses:
+            for model in (analysis.model_hypotheses or [])[:2]:
+                query = f"{brand} {model}".strip()
+                if len(query) < 4:
+                    continue
+                rows = repo.search_lexical(
+                    tenant_id=tenant_id,
+                    query=model.strip() or brand,
+                    brand=brand,
+                )
+                for row in rows[:5]:
+                    product = row_to_product_dict(row)
+                    pid = str(product["id"])
+                    vid = str(product["variant_id"]) if product.get("variant_id") else None
+                    name_l = _fold(product.get("name") or product.get("title"))
+                    model_hits = sum(
+                        1
+                        for part in str(model).replace("-", " ").split()
+                        if len(part) >= 3 and _fold(part) in name_l
+                    )
+                    if model_hits < 1:
+                        continue
+                    _add_scored(
+                        product,
+                        _score_components(
+                            catalog_item_key=catalog_item_key_for(pid, vid),
+                            product_id=pid,
+                            variant_id=vid,
+                            lexical=0.6,
+                            brand=0.8,
+                            model=min(0.8, 0.3 * model_hits),
+                            quality_penalty=quality_penalty,
+                            reasons=[f"brand_model:{query[:60]}"],
+                            source="lexical",
+                        ),
+                    )
     except Exception as exc:  # noqa: BLE001
         print("[story.matcher.index.error]", {"error_type": type(exc).__name__})
 
@@ -323,22 +409,30 @@ async def match_story_to_catalog(
     except Exception as exc:  # noqa: BLE001
         print("[story.matcher.visual.error]", {"error_type": type(exc).__name__})
 
-    # Level 3 — Tray complementary search (evidence-based score, never flat 0.7).
-    if execute_tool is not None and len(candidates) < 3:
-        query_bits = [
-            *analysis.visible_brands[:1],
-            *analysis.model_hypotheses[:1],
-            *analysis.visible_references[:1],
-            *analysis.dial_colors[:1],
-        ]
-        query = " ".join(str(x) for x in query_bits if x).strip()
-        if query:
+    # Level 3 — live TRAYadaptor when the local index has no exact identifier hit.
+    # ai_catalog_index is a cache of previously retrieved SKUs, not the full store.
+    has_exact = any(str(c.source or "").startswith("exact_") for c in candidates)
+    if execute_tool is not None and not has_exact:
+        brand, tokens = tray_search_plan(analysis)
+        if brand or tokens:
             try:
-                result = await execute_tool(
-                    "search_products", {"query": query, "limit": limit}
-                )
+                arguments: dict[str, Any] = {"limit": limit}
+                if tokens:
+                    arguments["tokens"] = tokens
+                if brand:
+                    arguments["brand"] = brand
+                result = await execute_tool("search_products", arguments)
                 products = result.get("products") if isinstance(result, dict) else None
-                if isinstance(products, list):
+                if isinstance(products, list) and products:
+                    try:
+                        from .catalog_index import index_products_best_effort
+
+                        index_products_best_effort(
+                            products,
+                            factual_source="tray_search",
+                        )
+                    except Exception:
+                        pass
                     for idx, product in enumerate(products[:limit]):
                         pid = str(product.get("id") or "")
                         if not pid:
@@ -348,15 +442,24 @@ async def match_story_to_catalog(
                             if product.get("variant_id") is not None
                             else None
                         )
-                        # Decay by rank; require lexical overlap for non-trivial score.
                         name_l = _fold(product.get("name") or product.get("title"))
-                        overlap = 0.0
-                        for token in query.casefold().split():
-                            if len(token) >= 3 and token in name_l:
-                                overlap += 0.15
-                        lexical = min(0.6, overlap)
-                        if lexical <= 0:
+                        product_brand = _fold(product.get("brand"))
+                        brand_ok = bool(brand) and (
+                            _fold(brand) in name_l or product_brand == _fold(brand)
+                        )
+                        distinctive = tokens or [
+                            part
+                            for part in (brand or "").split()
+                            if len(part) >= 3
+                        ]
+                        hits = sum(
+                            1
+                            for token in distinctive
+                            if len(token) >= 3 and _fold(token) in name_l
+                        )
+                        if hits < 1:
                             continue
+                        strong = brand_ok and hits >= min(2, len(distinctive) or 1)
                         rank_penalty = idx * 0.04
                         _add_scored(
                             {**product, "tenant_id": product.get("tenant_id") or tenant_id},
@@ -364,9 +467,18 @@ async def match_story_to_catalog(
                                 catalog_item_key=catalog_item_key_for(pid, vid),
                                 product_id=pid,
                                 variant_id=vid,
-                                lexical=max(0.0, lexical - rank_penalty),
+                                exact=0.92 if strong else 0.0,
+                                lexical=min(0.6, 0.2 * hits - rank_penalty),
+                                brand=0.85 if brand_ok else 0.2,
+                                model=min(0.8, 0.25 * hits),
                                 quality_penalty=quality_penalty,
-                                reasons=[f"tray_query_overlap:{query[:40]}"],
+                                reasons=[
+                                    (
+                                        f"tray_brand_model:{brand or ''} {' '.join(tokens)}".strip()
+                                        if strong
+                                        else f"tray_query_overlap:{' '.join(tokens)[:40]}"
+                                    )
+                                ],
                                 source="tray_search",
                             ),
                         )

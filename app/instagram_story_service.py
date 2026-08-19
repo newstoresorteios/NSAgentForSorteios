@@ -328,6 +328,169 @@ def _reuse_assoc_result(
     )
 
 
+async def _finalize_story_catalog_match(
+    *,
+    repo: StoryProductRepository,
+    tenant: str,
+    provider: str,
+    account: str,
+    media_id: str,
+    analysis: StoryVisualUnderstanding,
+    question_type: Any,
+    shadow_only: bool,
+    metrics: dict[str, Any],
+    execute_tool: Any | None,
+) -> StoryResolutionResult:
+    from .tray_tools import execute_tool as default_execute
+
+    tool = execute_tool or default_execute
+    candidates = await match_story_to_catalog(
+        tenant_id=tenant,
+        analysis=analysis,
+        execute_tool=tool,
+        media_bytes=None,
+    )
+    repo.save_candidates(
+        tenant_id=tenant,
+        provider=provider,
+        instagram_account_id=account,
+        story_media_id=media_id,
+        candidates=[c.model_dump(mode="json") for c in candidates],
+        explanation={
+            "analysis_version": getattr(
+                get_settings(), "instagram_story_analysis_version", "v2"
+            )
+        },
+    )
+    status, top = classify_match(
+        candidates,
+        multiple_products=bool(analysis.multiple_products),
+    )
+    if candidates:
+        log_event(
+            "story_match_confidence",
+            {
+                "top": candidates[0].score,
+                "margin": (
+                    candidates[0].score - candidates[1].score if len(candidates) > 1 else None
+                ),
+                "source": candidates[0].source,
+                "count": len(candidates),
+            },
+        )
+        log_event("story_candidates", {"count": len(candidates)})
+        log_event("story_match_source", {"source": candidates[0].source})
+
+    if status == "matched" and top is not None:
+        repo.confirm_match(
+            tenant_id=tenant,
+            provider=provider,
+            instagram_account_id=account,
+            story_media_id=media_id,
+            catalog_item_key=top.catalog_item_key,
+            product_id=top.product_id,
+            variant_id=top.variant_id,
+            match_source=(
+                "visual_exact_reference"
+                if any(
+                    r.startswith(("ean:", "sku:", "reference:", "tray_brand_model:"))
+                    for r in top.match_reasons
+                )
+                else "visual_similarity"
+            ),
+            match_confidence=top.score,
+            explanation={"reasons": top.match_reasons},
+        )
+        product, tray_failed, _code, evidence = await _maybe_revalidate(
+            top.product_id, top.variant_id
+        )
+        return StoryResolutionResult(
+            resolved=bool(product) and not tray_failed,
+            tenant_id=tenant,
+            story_media_id=media_id,
+            match_status="matched",
+            catalog_item_key=top.catalog_item_key,
+            product_id=top.product_id,
+            variant_id=top.variant_id,
+            confidence=top.score,
+            candidates=candidates[:5],
+            factual_evidence=evidence,
+            product_payload=product,
+            question_type=question_type,
+            reply_hint=_compose_reply(
+                question_type=question_type,
+                product=product,
+                status="matched",
+                candidates=candidates,
+                tray_failed=tray_failed,
+            ),
+            shadow_only=shadow_only,
+            metrics=metrics,
+            resolved_at=datetime.now(timezone.utc),
+        )
+
+    if status == "ambiguous":
+        options = [
+            c.catalog_item_key or c.product_id for c in candidates[:3] if c.product_id
+        ]
+        repo.mark_ambiguous(
+            tenant_id=tenant,
+            provider=provider,
+            instagram_account_id=account,
+            story_media_id=media_id,
+            explanation={"top": candidates[0].model_dump(mode="json") if candidates else {}},
+            confidence=candidates[0].score if candidates else 0.0,
+        )
+        metrics["story_ambiguous_matches"] = 1
+        log_event("story_clarification", {"reason": "close_scores"})
+        return StoryResolutionResult(
+            resolved=False,
+            tenant_id=tenant,
+            story_media_id=media_id,
+            match_status="ambiguous",
+            needs_clarification=True,
+            clarification_options=options,
+            candidates=candidates[:5],
+            confidence=candidates[0].score if candidates else 0.0,
+            question_type=question_type,
+            reply_hint=_compose_reply(
+                question_type=question_type,
+                product=None,
+                status="ambiguous",
+                candidates=candidates,
+            ),
+            shadow_only=shadow_only,
+            metrics=metrics,
+            resolved_at=datetime.now(timezone.utc),
+        )
+
+    repo.mark_not_found(
+        tenant_id=tenant,
+        provider=provider,
+        instagram_account_id=account,
+        story_media_id=media_id,
+        explanation={"candidate_count": len(candidates)},
+    )
+    return StoryResolutionResult(
+        resolved=False,
+        tenant_id=tenant,
+        story_media_id=media_id,
+        match_status="not_found",
+        needs_clarification=True,
+        candidates=candidates[:5],
+        question_type=question_type,
+        reply_hint=_compose_reply(
+            question_type=question_type,
+            product=None,
+            status="not_found",
+            candidates=candidates,
+        ),
+        shadow_only=shadow_only,
+        metrics=metrics,
+        resolved_at=datetime.now(timezone.utc),
+    )
+
+
 async def resolve_story_product_question(
     *,
     incoming: IncomingMessage,
@@ -560,7 +723,32 @@ async def resolve_story_product_question(
         )
 
     if assoc and assoc.match_status == "not_found":
-        # Respect prior not_found — do not re-run vision on every message.
+        # Re-query live Tray with stored vision; do not spend a second OpenAI vision call.
+        stored: StoryVisualUnderstanding | None = None
+        payload = assoc.visual_analysis if isinstance(assoc.visual_analysis, dict) else {}
+        try:
+            stored = StoryVisualUnderstanding.model_validate(payload)
+        except Exception:
+            stored = None
+        if stored is not None and (
+            stored.visible_brands
+            or stored.logo_hypotheses
+            or stored.model_hypotheses
+            or stored.visible_references
+        ):
+            log_event("story_not_found_tray_retry", {"story_media_id": media_id})
+            return await _finalize_story_catalog_match(
+                repo=repo,
+                tenant=tenant,
+                provider=provider,
+                account=account,
+                media_id=media_id,
+                analysis=stored,
+                question_type=question_type,
+                shadow_only=shadow_only,
+                metrics=metrics,
+                execute_tool=execute_tool,
+            )
         return _reuse_assoc_result(
             assoc=assoc,
             media_id=media_id,
@@ -1002,150 +1190,17 @@ async def resolve_story_product_question(
             resolved_at=datetime.now(timezone.utc),
         )
 
-    from .tray_tools import execute_tool as default_execute
-
-    tool = execute_tool or default_execute
-    candidates = await match_story_to_catalog(
-        tenant_id=tenant,
+    return await _finalize_story_catalog_match(
+        repo=repo,
+        tenant=tenant,
+        provider=provider,
+        account=account,
+        media_id=media_id,
         analysis=analysis,
-        execute_tool=tool,
-        media_bytes=None,  # visual neighbors use caption/OCR evidence
-    )
-    repo.save_candidates(
-        tenant_id=tenant,
-        provider=provider,
-        instagram_account_id=account,
-        story_media_id=media_id,
-        candidates=[c.model_dump(mode="json") for c in candidates],
-        explanation={
-            "analysis_version": getattr(
-                get_settings(), "instagram_story_analysis_version", "v2"
-            )
-        },
-    )
-    status, top = classify_match(
-        candidates,
-        multiple_products=bool(analysis.multiple_products),
-    )
-    if candidates:
-        log_event(
-            "story_match_confidence",
-            {
-                "top": candidates[0].score,
-                "margin": (
-                    candidates[0].score - candidates[1].score if len(candidates) > 1 else None
-                ),
-                "source": candidates[0].source,
-                "count": len(candidates),
-            },
-        )
-        log_event("story_candidates", {"count": len(candidates)})
-        log_event("story_match_source", {"source": candidates[0].source})
-
-    if status == "matched" and top is not None:
-        repo.confirm_match(
-            tenant_id=tenant,
-            provider=provider,
-            instagram_account_id=account,
-            story_media_id=media_id,
-            catalog_item_key=top.catalog_item_key,
-            product_id=top.product_id,
-            variant_id=top.variant_id,
-            match_source=(
-                "visual_exact_reference"
-                if any(r.startswith(("ean:", "sku:", "reference:")) for r in top.match_reasons)
-                else "visual_similarity"
-            ),
-            match_confidence=top.score,
-            explanation={"reasons": top.match_reasons},
-        )
-        product, tray_failed, _code, evidence = await _maybe_revalidate(
-            top.product_id, top.variant_id
-        )
-        return StoryResolutionResult(
-            resolved=bool(product) and not tray_failed,
-            tenant_id=tenant,
-            story_media_id=media_id,
-            match_status="matched",
-            catalog_item_key=top.catalog_item_key,
-            product_id=top.product_id,
-            variant_id=top.variant_id,
-            confidence=top.score,
-            candidates=candidates[:5],
-            factual_evidence=evidence,
-            product_payload=product,
-            question_type=question_type,
-            reply_hint=_compose_reply(
-                question_type=question_type,
-                product=product,
-                status="matched",
-                candidates=candidates,
-                tray_failed=tray_failed,
-            ),
-            shadow_only=shadow_only,
-            metrics=metrics,
-            resolved_at=datetime.now(timezone.utc),
-        )
-
-    if status == "ambiguous":
-        options = [
-            c.catalog_item_key or c.product_id for c in candidates[:3] if c.product_id
-        ]
-        repo.mark_ambiguous(
-            tenant_id=tenant,
-            provider=provider,
-            instagram_account_id=account,
-            story_media_id=media_id,
-            explanation={"top": candidates[0].model_dump(mode="json") if candidates else {}},
-            confidence=candidates[0].score if candidates else 0.0,
-        )
-        metrics["story_ambiguous_matches"] = 1
-        log_event("story_clarification", {"reason": "close_scores"})
-        return StoryResolutionResult(
-            resolved=False,
-            tenant_id=tenant,
-            story_media_id=media_id,
-            match_status="ambiguous",
-            needs_clarification=True,
-            clarification_options=options,
-            candidates=candidates[:5],
-            confidence=candidates[0].score if candidates else 0.0,
-            question_type=question_type,
-            reply_hint=_compose_reply(
-                question_type=question_type,
-                product=None,
-                status="ambiguous",
-                candidates=candidates,
-            ),
-            shadow_only=shadow_only,
-            metrics=metrics,
-            resolved_at=datetime.now(timezone.utc),
-        )
-
-    repo.mark_not_found(
-        tenant_id=tenant,
-        provider=provider,
-        instagram_account_id=account,
-        story_media_id=media_id,
-        explanation={"candidate_count": len(candidates)},
-    )
-    return StoryResolutionResult(
-        resolved=False,
-        tenant_id=tenant,
-        story_media_id=media_id,
-        match_status="not_found",
-        needs_clarification=True,
-        candidates=candidates[:5],
         question_type=question_type,
-        reply_hint=_compose_reply(
-            question_type=question_type,
-            product=None,
-            status="not_found",
-            candidates=candidates,
-        ),
         shadow_only=shadow_only,
         metrics=metrics,
-        resolved_at=datetime.now(timezone.utc),
+        execute_tool=execute_tool,
     )
 
 

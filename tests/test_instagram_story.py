@@ -33,7 +33,12 @@ from app.instagram_story_parser import (
     strip_signed_url,
 )
 from app.models import IncomingMessage
-from app.story_product_matcher import classify_match, reject_invented_rerank_ids
+from app.story_product_matcher import (
+    classify_match,
+    match_story_to_catalog,
+    reject_invented_rerank_ids,
+    tray_search_plan,
+)
 from app.story_publication_link_service import validate_link_payload
 from app.webhook_parser import parse_brevo_conversations_payload
 
@@ -617,3 +622,82 @@ def test_package_release_classifies_placeholders():
 @pytest.mark.offline_eval
 def test_story_offline_eval_marker_smoke():
     assert detect_story_question_type("quanto custa esse?").value == "price"
+
+
+def test_tray_search_plan_skips_color_and_keeps_model_tokens():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Mido"],
+        model_hypotheses=["Ocean Star 200C verde"],
+        dial_colors=["green"],
+    )
+    brand, tokens = tray_search_plan(analysis)
+    assert brand == "Mido"
+    folded = {t.casefold() for t in tokens}
+    assert "ocean" in folded
+    assert "star" in folded
+    assert "verde" not in folded
+    assert "green" not in folded
+
+
+@pytest.mark.asyncio
+async def test_story_matcher_falls_back_to_tray_when_index_empty(monkeypatch):
+    class EmptyRepo:
+        def search_exact(self, **_kwargs):
+            return []
+
+        def search_lexical(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        "app.catalog_index_repository.CatalogIndexRepository",
+        lambda: EmptyRepo(),
+    )
+    monkeypatch.setattr(
+        "app.product_image_index.visual_search_from_caption",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *_a, **_k: 0,
+    )
+
+    async def fake_tool(name, args):
+        assert name == "search_products"
+        assert args.get("brand") == "Mido"
+        assert "tokens" in args
+        assert "verde" not in [str(t).casefold() for t in args["tokens"]]
+        return {
+            "products": [
+                {
+                    "id": "9999",
+                    "name": (
+                        "Relógio Seminovo Mido Ocean Star 200C Automático Verde "
+                        "M042.430.11.091.00"
+                    ),
+                    "brand": "Mido",
+                    "price": 7699.99,
+                    "available": False,
+                    "url": "https://www.newstorerj.com/relogios/relogios-mido/exemplo",
+                }
+            ]
+        }
+
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Mido"],
+        model_hypotheses=["Ocean Star 200C"],
+        logo_hypotheses=["Mido"],
+        dial_colors=["green"],
+        watch_count=1,
+    )
+    candidates = await match_story_to_catalog(
+        tenant_id="newstore",
+        analysis=analysis,
+        execute_tool=fake_tool,
+    )
+    assert candidates
+    assert candidates[0].product_id == "9999"
+    assert any("tray_brand_model:" in r for r in candidates[0].match_reasons)
+    status, top = classify_match(candidates, multiple_products=False)
+    assert status == "matched"
+    assert top is not None
+    assert top.product_id == "9999"
