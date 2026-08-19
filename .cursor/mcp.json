@@ -6,6 +6,12 @@
     "Meta Developer Tools": {
       "url": "https://mcp.facebook.com/devtools",
       "type": "http"
+    },
+    "render": {
+      "url": "https://mcp.render.com/mcp",
+      "auth": {
+        "CLIENT_ID": "cursor"
+      }
     }
   }
 }
