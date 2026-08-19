@@ -174,6 +174,19 @@ _GENERIC_AND_SKIP = {
     "energia",
 }
 
+# Common in many SKUs of the same brand. AND-searching these with a dial color
+# returns Aachen/Basic first and color-locks before Leipzig/Tsuyosa variants.
+_WEAK_MODEL_TOKENS = {
+    "pilot",
+    "sport",
+    "navy",
+    "basic",
+    "classic",
+    "automatic",
+    "mecanico",
+    "quartz",
+}
+
 _COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
     "purple": ("roxo", "purple", "violet"),
     "violet": ("roxo", "purple", "violet"),
@@ -188,7 +201,10 @@ _COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
 
 
 def _is_sku_like(token: str) -> bool:
-    compact = str(token or "").replace("-", "").replace(".", "")
+    raw = str(token or "").strip()
+    if " " in raw or ":" in raw:
+        return False
+    compact = raw.replace("-", "").replace(".", "")
     if len(compact) < 5 or len(compact) > 16:
         return False
     has_letter = any(ch.isalpha() for ch in compact)
@@ -225,8 +241,10 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
 
     def _add_phrase(raw: Any, *, allow_generic: bool = False) -> None:
         for part in str(raw or "").replace("/", " ").replace("-", " ").split():
-            token = part.strip()
+            token = part.strip().strip(":.,;")
             if len(token) < 3:
+                continue
+            if token.isdigit() and len(token) < 5:
                 continue
             key = _fold(token)
             if not key or key in seen or key == brand_fold or key in _COLOR_AND_SKIP:
@@ -250,6 +268,18 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
     for region in analysis.product_regions or []:
         _add_phrase(getattr(region, "reference_hypothesis", None))
     return brand, tokens[:3]
+
+
+def distinctive_search_tokens(tokens: list[str]) -> list[str]:
+    """Prefer collection names (Leipzig, Tsuyosa) over shared line words (Pilot)."""
+    strong = [
+        token
+        for token in tokens
+        if _fold(token) not in _WEAK_MODEL_TOKENS
+        and _fold(token) not in _COLOR_AND_SKIP
+        and _fold(token) not in _GENERIC_AND_SKIP
+    ]
+    return strong or list(tokens)
 
 
 def tokens_from_store_url(url: str | None) -> tuple[str | None, list[str]]:
@@ -330,14 +360,20 @@ def tray_search_jobs(
 
     slug_brand, slug_tokens = tokens_from_store_url(store_url)
     brand, tokens = tray_search_plan(analysis)
+    distinctive = distinctive_search_tokens(tokens)
+    head = distinctive[0] if distinctive else (tokens[0] if tokens else None)
     colors = _dial_color_search_tokens(analysis)
     for color in colors:
-        if tokens:
-            _add(brand, [tokens[0], color])
+        if head:
+            _add(brand, [head, color])
         elif brand:
             _add(brand, [color])
+    if distinctive:
+        _add(brand, distinctive)
     _add(brand, tokens)
-    if brand and len(tokens) > 1:
+    if brand and distinctive:
+        _add(brand, distinctive[:1])
+    elif brand and len(tokens) > 1:
         _add(brand, tokens[:1])
     _add(slug_brand, slug_tokens)
     return jobs[:6]
@@ -642,6 +678,24 @@ async def match_story_to_catalog(
         color_required = bool(analysis.dial_colors)
         color_locked = any(_candidate_has_dial_color_lock(c) for c in candidates)
         page_size = _STORY_TRAY_PAGE_SIZE
+        _, planned_tokens = tray_search_plan(analysis)
+        analysis_distinctive = [
+            token
+            for token in distinctive_search_tokens(planned_tokens)
+            if _fold(token) not in _COLOR_AND_SKIP
+        ]
+        evidence_blob = _fold(
+            " ".join(
+                [
+                    *(analysis.visible_text or []),
+                    *(analysis.visible_brands or []),
+                    *(analysis.model_hypotheses or []),
+                    *(analysis.collection_hypotheses or []),
+                    *(analysis.visible_skus or []),
+                    *(analysis.visible_references or []),
+                ]
+            )
+        )
         for brand, tokens in tray_search_jobs(analysis, store_url=store_url):
             if color_locked:
                 break
@@ -713,6 +767,11 @@ async def match_story_to_catalog(
                         )
                         url_hit = bool(slug) and len(slug) >= 8 and slug in blob
                         color = _dial_color_score(analysis, blob)
+                        material_conflicts = [
+                            f"unseen_material:{marker}"
+                            for marker in ("bronze", "titane", "titanium")
+                            if marker in blob and marker not in evidence_blob
+                        ]
                         if hits < 1 and not url_hit:
                             continue
                         strong = url_hit or (
@@ -753,18 +812,34 @@ async def match_story_to_catalog(
                                 catalog_item_key=catalog_item_key_for(pid, vid),
                                 product_id=pid,
                                 variant_id=vid,
-                                exact=0.96 if url_hit else (0.92 if strong else 0.0),
+                                exact=(
+                                    0.96
+                                    if url_hit
+                                    else (
+                                        0.7
+                                        if material_conflicts
+                                        else (0.92 if strong else 0.0)
+                                    )
+                                ),
                                 lexical=min(0.6, 0.2 * max(hits, 1) - rank_penalty),
                                 brand=0.85 if brand_ok else 0.2,
                                 model=min(0.8, 0.25 * hits),
                                 color=color,
                                 quality_penalty=quality_penalty,
+                                conflict_penalty=0.35 if material_conflicts else 0.0,
                                 reasons=[reason],
+                                conflicts=material_conflicts,
                                 source="tray_search",
                             ),
                         )
                         if color_required and color >= 0.8 and strong:
-                            color_locked = True
+                            distinctive_hit = not analysis_distinctive or all(
+                                _fold(token) in blob
+                                for token in analysis_distinctive
+                                if len(token) >= 3
+                            )
+                            if distinctive_hit:
+                                color_locked = True
                     log_event(
                         "story_tray_search_page",
                         {

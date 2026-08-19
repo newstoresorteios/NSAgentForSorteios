@@ -761,6 +761,99 @@ def test_tray_search_jobs_and_color_with_collection():
     )
 
 
+def test_tray_search_jobs_prefer_leipzig_over_generic_pilot():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Laco"],
+        model_hypotheses=["Pilot Leipzig"],
+        collection_hypotheses=["Pilot Leipzig"],
+        dial_colors=["black"],
+        visible_text=["LACO", "PILOT LEIPZIG", "Motor: Laco 210", "18863"],
+    )
+    brand, tokens = tray_search_plan(analysis)
+    assert brand == "Laco"
+    folded = {t.casefold() for t in tokens}
+    assert "leipzig" in folded
+    assert "motor" not in folded
+    jobs = tray_search_jobs(analysis)
+    first_tokens = [str(t).casefold() for t in jobs[0][1]]
+    assert "leipzig" in first_tokens
+    assert first_tokens[0] != "pilot"
+
+
+@pytest.mark.asyncio
+async def test_story_matcher_does_not_lock_on_laco_pilot_aachen(monkeypatch):
+    class EmptyRepo:
+        def search_exact(self, **_kwargs):
+            return []
+
+        def search_lexical(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        "app.catalog_index_repository.CatalogIndexRepository",
+        lambda: EmptyRepo(),
+    )
+    monkeypatch.setattr(
+        "app.product_image_index.visual_search_from_caption",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *_a, **_k: 0,
+    )
+
+    aachen = {
+        "id": "11619",
+        "name": "Relógio Laco Pilot Basic Augsburg 39 Automático Preto 861988",
+        "brand": "Laco",
+        "price": 4499.99,
+        "available": True,
+    }
+    leipzig = {
+        "id": "14238",
+        "name": "Relógio Laco Pilot Leipzig Mecânico Preto 861747",
+        "brand": "Laco",
+        "price": 10999.99,
+        "available": True,
+    }
+    bronze = {
+        "id": "14382",
+        "name": "Relógio Laco Pilot Leipzig Bronze Mecânico Preto 862152",
+        "brand": "Laco",
+        "price": 18999.99,
+        "available": True,
+    }
+
+    async def fake_tool(name, args):
+        assert name == "search_products"
+        folded = [str(t).casefold() for t in args.get("tokens") or []]
+        if "leipzig" in folded:
+            return {"products": [leipzig, bronze]}
+        if "pilot" in folded:
+            return {"products": [aachen]}
+        return {"products": []}
+
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Laco"],
+        model_hypotheses=["Pilot Leipzig"],
+        collection_hypotheses=["Pilot Leipzig"],
+        dial_colors=["black"],
+        watch_count=1,
+        visible_text=["LACO", "PILOT LEIPZIG", "42mm", "Mecânico"],
+    )
+    candidates = await match_story_to_catalog(
+        tenant_id="newstore",
+        analysis=analysis,
+        execute_tool=fake_tool,
+    )
+    assert candidates
+    assert candidates[0].product_id == "14238"
+    status, top = classify_match(candidates, multiple_products=False)
+    assert status == "matched"
+    assert top is not None
+    assert top.product_id == "14238"
+
+
 @pytest.mark.asyncio
 async def test_story_matcher_picks_purple_tsuyosa_from_tray(monkeypatch):
     class EmptyRepo:
