@@ -120,6 +120,34 @@ def test_parse_instagram_login_from_and_string_message():
     assert messages[0].provider == "meta"
 
 
+def test_parse_message_edit_with_nested_sender_and_text():
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "ig-biz",
+                "messaging": [
+                    {
+                        "timestamp": 1,
+                        "message_edit": {
+                            "mid": "m-edit",
+                            "text": "oi editado",
+                            "from": {"id": "user-edit"},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    shapes = messaging_event_shapes(payload)
+    assert shapes[0]["edit_text_len"] == 10
+    assert shapes[0]["edit_has_sender"] is True
+    messages = parse_meta_instagram_messaging(payload)
+    assert len(messages) == 1
+    assert messages[0].text == "oi editado"
+    assert messages[0].sender_external_id == "user-edit"
+
+
 def test_messaging_event_shapes_marks_read_receipts():
     payload = {
         "object": "instagram",

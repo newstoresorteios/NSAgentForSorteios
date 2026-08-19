@@ -119,6 +119,7 @@ def messaging_event_shapes(payload: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         for event in _instagram_messaging_events(entry)[:8]:
             raw_message = event.get("message")
+            edit = event.get("message_edit") if isinstance(event.get("message_edit"), dict) else {}
             text_len = 0
             if isinstance(raw_message, dict):
                 text_len = len(str(raw_message.get("text") or ""))
@@ -126,8 +127,11 @@ def messaging_event_shapes(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 text_len = len(raw_message.strip())
             else:
                 text_len = len(str(event.get("text") or "").strip())
+            edit_text_len = len(str(edit.get("text") or "").strip())
             sender = event.get("sender") if isinstance(event.get("sender"), dict) else {}
             from_obj = event.get("from") if isinstance(event.get("from"), dict) else {}
+            edit_from = edit.get("from") if isinstance(edit.get("from"), dict) else {}
+            edit_sender = edit.get("sender") if isinstance(edit.get("sender"), dict) else {}
             shapes.append(
                 {
                     "keys": sorted(str(key) for key in event.keys())[:16],
@@ -136,6 +140,11 @@ def messaging_event_shapes(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "message_type": type(raw_message).__name__,
                     "is_echo": isinstance(raw_message, dict) and bool(raw_message.get("is_echo")),
                     "text_len": text_len,
+                    "edit_keys": sorted(str(key) for key in edit.keys())[:12],
+                    "edit_text_len": edit_text_len,
+                    "edit_has_sender": bool(
+                        str(edit_sender.get("id") or edit_from.get("id") or "").strip()
+                    ),
                     "has_read": "read" in event,
                     "has_delivery": "delivery" in event,
                     "has_reaction": "reaction" in event,
@@ -186,6 +195,7 @@ def _normalize_instagram_event(event: dict[str, Any]) -> dict[str, Any] | None:
         recipient = event["to"]
 
     raw_message = event.get("message")
+    edit = event.get("message_edit") if isinstance(event.get("message_edit"), dict) else {}
     if isinstance(raw_message, dict):
         message = dict(raw_message)
     elif isinstance(raw_message, str) and raw_message.strip():
@@ -195,12 +205,18 @@ def _normalize_instagram_event(event: dict[str, Any]) -> dict[str, Any] | None:
         }
     else:
         message = {}
-        text = str(event.get("text") or "").strip()
+        text = str(event.get("text") or edit.get("text") or "").strip()
         if text:
             message = {
-                "mid": str(event.get("id") or event.get("mid") or "").strip(),
+                "mid": str(
+                    event.get("id") or event.get("mid") or edit.get("mid") or ""
+                ).strip(),
                 "text": text,
             }
+        if isinstance(edit.get("from"), dict) and not sender:
+            sender = edit["from"]
+        if isinstance(edit.get("sender"), dict) and not sender:
+            sender = edit["sender"]
 
     if not message or message.get("is_echo"):
         return None
