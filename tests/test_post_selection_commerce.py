@@ -469,6 +469,155 @@ async def test_price_on_plausible_matches_asks_which_not_kingfisher(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_photo_request_of_listed_models_does_not_swap_brands(monkeypatch):
+    from app import sales_agent
+
+    async def execute(tool, arguments):
+        product_id = arguments["product_id"]
+        names = {
+            "B1": "Relógio Bulova Classic Automático Rose 98A177",
+            "B2": "Relógio Bulova Aerojet Automático Preto 96A199",
+            "B3": "Relógio Bulova Futuro Automatico Azul 96A204",
+        }
+        return {
+            "id": product_id,
+            "name": names[product_id],
+            "brand": "Bulova",
+            "primary_image_url": f"https://cdn.tray.example/{product_id}.jpg",
+        }
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    state = CommerceConversationState(
+        active_domain="commerce",
+        product_resolution_state="plausible_matches",
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "B1",
+                "name": "Relógio Bulova Classic Automático Rose 98A177",
+                "brand": "Bulova",
+            },
+            {
+                "position": 2,
+                "product_id": "B2",
+                "name": "Relógio Bulova Aerojet Automático Preto 96A199",
+                "brand": "Bulova",
+            },
+            {
+                "position": 3,
+                "product_id": "B3",
+                "name": "Relógio Bulova Futuro Automatico Azul 96A204",
+                "brand": "Bulova",
+            },
+        ],
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="manda a foto dos três"),
+        {},
+        {},
+        _interpretation(
+            goal="inspect",
+            purchase_action=None,
+            image_request=False,
+            reference_type="previous_recommendation",
+        ),
+        commerce_state=state,
+    )
+
+    assert result is not None
+    text = result.reply_text or ""
+    assert "Bulova" in text
+    assert "Tissot" not in text
+    assert "Citizen" not in text
+    assert "modelo exato da foto" not in text.casefold()
+    assert result.response_metadata.get("outbound_image_url") == (
+        "https://cdn.tray.example/B1.jpg"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pronta_entrega_follow_up_stays_on_listed_models(monkeypatch):
+    from app import sales_agent
+
+    async def execute(tool, arguments):
+        product_id = arguments["product_id"]
+        names = {
+            "B1": "Relógio Bulova Military Automático 96A245",
+            "B2": "Relógio Bulova Military Hack Automatic Black 98A255",
+            "B3": "Relógio Bulova Marine Star Automático Prata 98A226",
+        }
+        return {
+            "id": product_id,
+            "name": names[product_id],
+            "brand": "Bulova",
+            "related_categories": ["403"],
+            "order_days_availability": 0,
+            "available": True,
+        }
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    state = CommerceConversationState(
+        active_domain="commerce",
+        product_resolution_state="plausible_matches",
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "B1",
+                "name": "Relógio Bulova Military Automático 96A245",
+                "brand": "Bulova",
+            },
+            {
+                "position": 2,
+                "product_id": "B2",
+                "name": "Relógio Bulova Military Hack Automatic Black 98A255",
+                "brand": "Bulova",
+            },
+            {
+                "position": 3,
+                "product_id": "B3",
+                "name": "Relógio Bulova Marine Star Automático Prata 98A226",
+                "brand": "Bulova",
+            },
+        ],
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="todos a pronta entrega?"),
+        {},
+        {},
+        _interpretation(
+            goal="inspect",
+            purchase_action=None,
+            image_request=False,
+            reference_type="previous_recommendation",
+            references_previous_context=True,
+        ),
+        commerce_state=state,
+    )
+
+    assert result is not None
+    text = result.reply_text or ""
+    assert "Bulova" in text
+    assert "Tissot" not in text
+    assert "Citizen" not in text
+    assert "modelo exato da foto" not in text.casefold()
+    assert "pronta entrega" in text.casefold()
+
+
+@pytest.mark.asyncio
 async def test_deictic_price_without_image_ignores_stale_active(monkeypatch):
     """Caption-only 'qual o preço desse?' must not quote the previous watch."""
     from app import sales_agent

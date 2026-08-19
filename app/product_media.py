@@ -162,3 +162,69 @@ async def resolve_product_image(
             "used_tray": True,
         },
     )
+
+
+async def resolve_presented_product_images(
+    *,
+    product_references: list[CommerceProductReference],
+    execute: ToolExecutor,
+) -> AgentResult:
+    if not product_references:
+        return AgentResult(
+            reply_text="Não tenho os modelos da lista anterior para enviar a foto.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="product_context_missing",
+            response_metadata={"domain": "commerce"},
+        )
+    if len(product_references) == 1:
+        return await resolve_product_image(
+            product_reference=product_references[0],
+            execute=execute,
+        )
+    lines: list[str] = []
+    products: list[dict[str, Any]] = []
+    image_urls: list[str] = []
+    technical_failure = False
+    for index, reference in enumerate(product_references[:3], start=1):
+        one = await resolve_product_image(product_reference=reference, execute=execute)
+        payload = (one.commercial_data or {}).get("products") or []
+        product = payload[0] if payload and isinstance(payload[0], dict) else {}
+        if product:
+            products.append(product)
+        name = str(product.get("name") or reference.name or f"opção {index}")
+        image_url = (one.response_metadata or {}).get("outbound_image_url")
+        if one.safety_reason == "product_media_technical_failure":
+            technical_failure = True
+            lines.append(f"{index}. {name}: não consegui consultar a imagem agora.")
+            continue
+        if isinstance(image_url, str) and image_url.strip():
+            image_urls.append(image_url)
+            lines.append(f"{index}. {name}\n{image_url}")
+            continue
+        lines.append(f"{index}. {name}: a Tray não informou uma imagem oficial.")
+    first_url = image_urls[0] if image_urls else None
+    safety = None
+    if not image_urls:
+        safety = (
+            "product_media_technical_failure"
+            if technical_failure
+            else "product_image_not_available"
+        )
+    return AgentResult(
+        reply_text="Estas são as fotos oficiais dos modelos que listei:\n" + "\n".join(lines),
+        intent="commerce",
+        handoff_required=False,
+        safety_reason=safety,
+        commercial_data={"products": products, "images": image_urls},
+        response_metadata={
+            "domain": "commerce",
+            "presented_products": True,
+            "outbound_image_url": first_url,
+            "outbound_image_urls": image_urls,
+            "image_url_found": bool(first_url),
+            "media_send_supported": False,
+            "media_send_failed": False,
+            "used_tray": True,
+        },
+    )

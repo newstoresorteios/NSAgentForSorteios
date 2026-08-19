@@ -79,7 +79,7 @@ from .order_service import (
     get_order_facts,
     prepare_order,
 )
-from .product_media import resolve_product_image
+from .product_media import resolve_presented_product_images, resolve_product_image
 from .product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
     commercial_availability_facts,
@@ -319,7 +319,9 @@ Para comprar vários produtos, preencha purchase_items com uma entrada para cada
 preservando referência semântica e quantidade. Não invente IDs. Use list_position para
 itens numerados, current_product para o produto ativo e explicit_product com o nome citado.
 Defina image_request=true SOMENTE quando o cliente pedir que a loja envie a foto/imagem
-oficial de um produto ja identificado (ex.: "manda a foto desse", "quero ver a imagem").
+oficial de um produto ja identificado (ex.: "manda a foto desse", "quero ver a imagem",
+"manda a foto dos três"). Se houver uma lista numerada na conversa e o cliente pedir as
+fotos desses itens, image_request=true e nao inicie uma busca nova.
 Se o cliente ENVIOU uma foto e pergunta preco/nome/modelo ("qual o preco do relogio da foto?",
 "o que e esse relogio?"), isso NAO e image_request: use goal=find (ou inspect de preco apos
 identificar), ready_for_retrieval=true quando houver marca/modelo, e image_request=false.
@@ -2452,6 +2454,8 @@ async def _execute_compiled_product_retrieval(
         )
         if result.commercial_data is not None:
             result.commercial_data["availability_state"] = availability_state
+    elif not result.response_metadata.get("product_resolution_state"):
+        result.response_metadata["product_resolution_state"] = "options_presented"
     return result
 
 
@@ -2849,6 +2853,58 @@ def _pending_product_references(
     ]
 
 
+async def _inspect_listed_products(
+    state: CommerceConversationState,
+) -> AgentResult:
+    products: list[dict[str, Any]] = []
+    for item in state.last_presented_products[:3]:
+        raw = await execute_tool("get_product", {"product_id": item.product_id})
+        if "error" in raw:
+            continue
+        product = dict(raw)
+        product["id"] = product.get("id") or item.product_id
+        product["name"] = product.get("name") or item.name
+        product["brand"] = product.get("brand") or item.brand
+        product["commercial_availability"] = commercial_availability_facts(product)
+        products.append(product)
+    if not products:
+        return AgentResult(
+            reply_text="Não consegui consultar agora os modelos que acabei de listar.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="tray_adapter_unavailable",
+            response_metadata={"domain": "commerce"},
+        )
+    lines = []
+    for position, product in enumerate(products, start=1):
+        facts = product.get("commercial_availability") or {}
+        if facts.get("in_ready_to_ship_category") or facts.get(
+            "immediate_delivery_supported"
+        ):
+            status = "pronta entrega"
+        elif facts.get("lead_time_days"):
+            status = f"sob encomenda, cerca de {facts['lead_time_days']} dias úteis"
+        else:
+            status = str(product.get("availability") or "prazo sob consulta")
+        name = product.get("name") or f"opção {position}"
+        lines.append(f"{position}. {name} — {status}")
+    return AgentResult(
+        reply_text=(
+            "Sobre os modelos que acabei de listar:\n"
+            + "\n".join(lines)
+        ),
+        intent="commerce",
+        handoff_required=False,
+        commercial_data={"products": products},
+        response_metadata={
+            "domain": "commerce",
+            "presented_products": True,
+            "product_resolution_state": "options_presented",
+            "used_tray": True,
+        },
+    )
+
+
 def _pending_action_rejected_result(
     interpretation: SalesInterpretation,
     state: CommerceConversationState,
@@ -2934,6 +2990,14 @@ async def _handle_sales_message_inner(
             interpretation,
             message_text=message.text,
         )
+    from .commerce_router import (
+        is_listed_catalog_follow_up,
+        is_outbound_catalog_image_request,
+        wants_all_listed_product_images,
+    )
+
+    if interpretation is not None and is_outbound_catalog_image_request(message.text):
+        interpretation = interpretation.model_copy(update={"image_request": True})
     state = commerce_state or CommerceConversationState()
     deterministic_confirmation = _confirmation_text_kind(state, message.text)
     if deterministic_confirmation == "confirm":
@@ -3407,8 +3471,39 @@ async def _handle_sales_message_inner(
                     fallback_reason=image_result.safety_reason,
                 )
         # Soft nearby siblings are not a confirmed product for "qual o preço?".
+        # Follow-ups about the listed models (pronta entrega, todos, desses)
+        # must stay on that list — never dump a stale photo-match catalog.
         if (
-            state.product_resolution_state == "plausible_matches"
+            not interpretation.image_request
+            and not is_outbound_catalog_image_request(message.text)
+            and is_listed_catalog_follow_up(message.text)
+            and state.last_presented_products
+            and not (message.image_url or "").strip()
+        ):
+            inspect_result = await _inspect_listed_products(state)
+            final = await _sales_response_with_openai(
+                message,
+                plan,
+                inspect_result,
+                interpretation,
+                state=state,
+            )
+            if final:
+                return final
+            return _mark_sales_result(
+                inspect_result,
+                interpretation=interpretation,
+                goal=interpretation.goal,
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=True,
+                fallback_reason=inspect_result.safety_reason,
+            )
+        if (
+            not interpretation.image_request
+            and not is_outbound_catalog_image_request(message.text)
+            and not is_listed_catalog_follow_up(message.text)
+            and state.product_resolution_state == "plausible_matches"
             and interpretation.goal == "inspect"
             and interpretation.reference_type in vague_refs
             and state.last_presented_products
@@ -3431,8 +3526,8 @@ async def _handle_sales_message_inner(
             return _mark_sales_result(
                 AgentResult(
                     reply_text=(
-                        "Ainda não confirmei o modelo exato da foto. Destes "
-                        "próximos, qual você quer o preço?\n"
+                        "Ainda não confirmei o modelo exato. Destes que listei, "
+                        "qual você quer o preço?\n"
                         + "\n".join(numbered)
                     ),
                     intent="commerce",
@@ -3947,15 +4042,70 @@ async def _handle_sales_message_inner(
             fallback_reason=channel_result.safety_reason,
         )
     if interpretation is not None and interpretation.image_request:
+        listed_refs = [
+            CommerceProductReference.model_validate(
+                item.model_dump(exclude={"position"})
+            )
+            for item in state.last_presented_products[:3]
+        ]
+        send_listed = False
+        if interpretation.reference_position is not None:
+            positioned = [
+                CommerceProductReference.model_validate(
+                    item.model_dump(exclude={"position"})
+                )
+                for item in state.last_presented_products
+                if item.position == interpretation.reference_position
+            ]
+            if positioned:
+                listed_refs = positioned
+                send_listed = True
+        elif listed_refs and not (message.image_url or "").strip() and (
+            wants_all_listed_product_images(message.text)
+            or resolved_product is None
+        ):
+            send_listed = True
         print("[sales.action.guard]", {
             "action": "show_images",
-            "target_count": 1 if resolved_product is not None else 0,
-            "allowed": resolved_product is not None,
+            "target_count": (
+                len(listed_refs)
+                if send_listed
+                else (1 if resolved_product is not None else 0)
+            ),
+            "allowed": send_listed or resolved_product is not None,
             "blocking_reason": (
-                None if resolved_product is not None else "product_target_missing"
+                None
+                if send_listed or resolved_product is not None
+                else "product_target_missing"
             ),
             "inbound_image": bool((message.image_url or "").strip()),
         })
+        if send_listed:
+            media_result = await resolve_presented_product_images(
+                product_references=listed_refs,
+                execute=execute_tool,
+            )
+            final = await _sales_response_with_openai(
+                message,
+                plan,
+                media_result,
+                interpretation,
+            )
+            if final:
+                return final
+            return _mark_sales_result(
+                media_result,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source=(
+                    "technical_fallback"
+                    if media_result.safety_reason == "product_media_technical_failure"
+                    else "deterministic_fallback"
+                ),
+                used_openai_responder=False,
+                used_tray=True,
+                fallback_reason=media_result.safety_reason,
+            )
         if resolved_product is None:
             # Customer sent a product photo — identify it, don't ask for the name first.
             from .image_product_id import (

@@ -18,6 +18,26 @@ def test_resolve_commerce_actions():
     assert resolve_commerce_action("Tem algum cupom disponível?") == "coupon_search"
 
 
+def test_outbound_catalog_image_request_is_not_inbound_photo_price():
+    from app.commerce_router import (
+        is_deictic_product_price_request,
+        is_outbound_catalog_image_request,
+        wants_all_listed_product_images,
+    )
+
+    assert is_outbound_catalog_image_request("manda a foto dos três") is True
+    assert wants_all_listed_product_images("manda a foto dos três") is True
+    assert is_outbound_catalog_image_request("qual o preço do relógio da foto?") is False
+    assert is_deictic_product_price_request("qual o preço desse?") is True
+
+
+def test_listed_catalog_follow_up_detects_pronta_entrega():
+    from app.commerce_router import is_listed_catalog_follow_up
+
+    assert is_listed_catalog_follow_up("todos a pronta entrega?") is True
+    assert is_listed_catalog_follow_up("manda a foto dos três") is False
+
+
 @pytest.mark.asyncio
 async def test_product_search_is_deterministic_and_does_not_need_openai(monkeypatch):
     calls = []

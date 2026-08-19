@@ -503,7 +503,11 @@ def apply_search_products_to_result(
             commerce_state.active_product = CommerceProductReference.model_validate(
                 compact[0].model_dump(exclude={"position"})
             )
-            commerce_state.product_resolution_state = "plausible_matches"
+            commerce_state.product_resolution_state = (
+                commerce_state.product_resolution_state
+                if commerce_state.product_resolution_state == "options_presented"
+                else "plausible_matches"
+            )
         else:
             commerce_state.active_product = None
             commerce_state.product_resolution_state = "not_found"

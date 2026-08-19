@@ -67,6 +67,104 @@ def _is_follow_up_without_product(query: str) -> bool:
     } or normalized in {"estoque", "disponibilidade", "disponivel", "pix", "no pix", "e no pix", "quanto fica", "quanto fica no pix", "parcelamento", "parcelar", "promocao"}
 
 
+def _fold_request_text(text: str | None) -> str:
+    import unicodedata
+
+    folded = "".join(
+        char
+        for char in unicodedata.normalize("NFKD", str(text or "").casefold())
+        if not unicodedata.combining(char)
+    )
+    return " ".join(folded.split())
+
+
+def is_outbound_catalog_image_request(text: str | None) -> bool:
+    """True when the customer wants official photos of already listed products."""
+    normalized = _fold_request_text(text)
+    if not normalized:
+        return False
+    inbound_photo = (
+        "da foto",
+        "na foto",
+        "dessa foto",
+        "nessa foto",
+        "do relogio da foto",
+        "da imagem que enviei",
+        "da imagem que mandei",
+    )
+    if any(marker in normalized for marker in inbound_photo):
+        return False
+    has_photo = any(
+        token in normalized
+        for token in ("foto", "fotos", "imagem", "imagens")
+    )
+    if not has_photo:
+        return False
+    ask_to_send = any(
+        token in normalized
+        for token in (
+            "manda",
+            "envie",
+            "envia",
+            "mostra",
+            "mostrar",
+            "mandar",
+            "quero ver",
+            "pode mandar",
+            "me manda",
+            "me envia",
+        )
+    )
+    return ask_to_send
+
+
+def wants_all_listed_product_images(text: str | None) -> bool:
+    normalized = _fold_request_text(text)
+    return any(
+        token in normalized
+        for token in (
+            "os tres",
+            "os 3",
+            "dos tres",
+            "dos 3",
+            "as tres",
+            "as 3",
+            "todos",
+            "todas",
+            "desses",
+            "destes",
+            "deles",
+        )
+    )
+
+
+def is_listed_catalog_follow_up(text: str | None) -> bool:
+    """Follow-up about the models just listed — not a new catalog search."""
+    if is_outbound_catalog_image_request(text):
+        return False
+    normalized = _fold_request_text(text)
+    if not normalized:
+        return False
+    return any(
+        token in normalized
+        for token in (
+            "pronta entrega",
+            "sob encomenda",
+            "por encomenda",
+            "prazo",
+            "estoque",
+            "disponivel",
+            "todos",
+            "todas",
+            "desses",
+            "destes",
+            "deles",
+            "os tres",
+            "os 3",
+        )
+    )
+
+
 def is_deictic_product_price_request(text: str | None) -> bool:
     """True for 'qual o preço desse/da foto' — must not reuse a stale SKU."""
     normalized = (text or "").casefold()

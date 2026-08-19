@@ -841,6 +841,8 @@ def evolve_commerce_state(
                 )
     if metadata.get("presented_products") and compact_products:
         state.last_presented_products = compact_products
+    elif len(compact_products) >= 2:
+        state.last_presented_products = compact_products
     story_ref = metadata.get("last_story_product")
     if isinstance(story_ref, dict) and story_ref.get("story_media_id"):
         state.last_story_product = story_ref
