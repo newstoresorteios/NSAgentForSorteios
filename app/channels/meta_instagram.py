@@ -184,6 +184,86 @@ async def probe_instagram_graph_subscriptions() -> dict[str, Any]:
     return result
 
 
+def looks_like_video_url(url: str | None) -> bool:
+    lowered = str(url or "").casefold()
+    if not lowered:
+        return False
+    return any(
+        token in lowered
+        for token in (".mp4", ".mov", ".m4v", "/video", "video/mp4", "video_dash")
+    )
+
+
+def infer_story_media_type(*, url: str | None, explicit: str | None = None) -> str:
+    raw = str(explicit or "").strip().casefold()
+    if "video" in raw or "reel" in raw:
+        return "video"
+    if "carousel" in raw or "album" in raw:
+        return "carousel"
+    if "image" in raw or "photo" in raw:
+        return "image"
+    if looks_like_video_url(url):
+        return "video"
+    if str(url or "").strip():
+        return "image"
+    return "unknown"
+
+
+async def fetch_instagram_media_graph(media_id: str) -> dict[str, Any]:
+    """Refresh Story CDN URLs (media + thumbnail) from Graph. Never logs the token."""
+    import httpx
+
+    settings = get_settings()
+    token = str(getattr(settings, "meta_page_access_token", "") or "").strip()
+    mid = str(media_id or "").strip()
+    if not token or not mid:
+        return {"ok": False, "error": "missing_token_or_media_id"}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                f"https://graph.instagram.com/v21.0/{mid}",
+                params={"fields": "id,media_type,media_url,thumbnail_url,permalink"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        payload = response.json() if response.content else {}
+        if response.status_code >= 400 or not isinstance(payload, dict):
+            err = payload.get("error") if isinstance(payload, dict) else None
+            log_event(
+                "instagram_story.graph_media",
+                {
+                    "ok": False,
+                    "status": response.status_code,
+                    "error_code": err.get("code") if isinstance(err, dict) else None,
+                },
+            )
+            return {"ok": False, "status": response.status_code}
+        media_url = str(payload.get("media_url") or "").strip() or None
+        thumb = str(payload.get("thumbnail_url") or "").strip() or None
+        media_type = infer_story_media_type(
+            url=media_url or thumb,
+            explicit=str(payload.get("media_type") or ""),
+        )
+        log_event(
+            "instagram_story.graph_media",
+            {
+                "ok": True,
+                "media_type": media_type,
+                "has_media_url": bool(media_url),
+                "has_thumbnail": bool(thumb),
+            },
+        )
+        return {
+            "ok": True,
+            "media_type": media_type,
+            "media_url": media_url,
+            "thumbnail_url": thumb,
+            "permalink": str(payload.get("permalink") or "").strip() or None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        log_event("instagram_story.graph_media", {"ok": False, "error": type(exc).__name__})
+        return {"ok": False, "error": type(exc).__name__}
+
+
 def meta_webhook_enabled() -> bool:
     settings = get_settings()
     return bool(getattr(settings, "meta_webhook_enabled", False))
@@ -473,6 +553,12 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
 
                 story = reply_to["story"]
                 story_url = str(story.get("url") or "").strip() or None
+                thumb_url = str(story.get("thumbnail_url") or "").strip() or None
+                link_sticker = str(story.get("link_sticker_url") or "").strip() or None
+                media_kind = infer_story_media_type(
+                    url=story_url,
+                    explicit=str(story.get("media_type") or ""),
+                )
                 story_ctx = InstagramStoryContext(
                     replied_to_story=True,
                     mentioned_in_story=False,
@@ -480,17 +566,26 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                     story_media_url_private=(
                         SecretStr(story_url) if story_url else None
                     ),
+                    story_thumbnail_url_private=(
+                        SecretStr(thumb_url) if thumb_url else None
+                    ),
                     story_media_log_reference=(
                         safe_media_reference(story_url) if story_url else None
                     ),
-                    media_type="image",
+                    story_thumbnail_log_reference=(
+                        safe_media_reference(thumb_url) if thumb_url else None
+                    ),
+                    media_type=media_kind,  # type: ignore[arg-type]
                     provider="meta",
                     instagram_account_id=recipient_id or "",
+                    story_link_sticker_url=link_sticker,
                     raw_reference={"reply_to": reply_to},
                 )
                 if story_url and not image_url:
                     image_url = story_url
-                    attachment_type = attachment_type or "image"
+                    attachment_type = (
+                        "video" if media_kind == "video" else (attachment_type or "image")
+                    )
                     input_modality = "text_with_image" if text else "image"
 
             if not text and not image_url:

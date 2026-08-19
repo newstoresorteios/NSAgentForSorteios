@@ -37,6 +37,7 @@ from app.story_product_matcher import (
     classify_match,
     match_story_to_catalog,
     reject_invented_rerank_ids,
+    tokens_from_store_url,
     tray_search_plan,
 )
 from app.story_publication_link_service import validate_link_payload
@@ -637,6 +638,18 @@ def test_tray_search_plan_skips_color_and_keeps_model_tokens():
     assert "star" in folded
     assert "verde" not in folded
     assert "green" not in folded
+
+
+def test_tokens_from_store_url_extracts_laco_pilot():
+    brand, tokens = tokens_from_store_url(
+        "https://www.newstorerj.com/relogios/relogios-laco/"
+        "relogio-laco-pilot-leipzig-mecanico-preto"
+    )
+    assert brand and brand.casefold() == "laco"
+    folded = {t.casefold() for t in tokens}
+    assert "pilot" in folded
+    assert "leipzig" in folded
+    assert "preto" not in folded
 
 
 @pytest.mark.asyncio

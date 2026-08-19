@@ -189,7 +189,7 @@ class StoryProductRepository:
                           AND instagram_account_id = %s
                           AND story_media_id = %s
                           AND (
-                                match_status IN ('pending', 'failed')
+                                match_status IN ('pending', 'failed', 'expired')
                              OR (
                                     match_status = 'processing'
                                 AND (

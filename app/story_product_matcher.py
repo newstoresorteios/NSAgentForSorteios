@@ -37,9 +37,7 @@ def classify_match(
         getattr(settings, "instagram_story_ambiguous_min_confidence", 0.65) or 0.65
     )
     margin = float(getattr(settings, "instagram_story_match_margin", 0.12) or 0.12)
-    if not candidates or multiple_products:
-        if candidates and candidates[0].score >= amb_min:
-            return "ambiguous", candidates[0]
+    if not candidates:
         return "not_found", None
     ordered = sorted(candidates, key=lambda c: (-c.score, c.product_id))
     top1 = ordered[0]
@@ -48,8 +46,23 @@ def classify_match(
     reasons = " ".join(top1.match_reasons).casefold()
     is_exact = any(
         token in reasons
-        for token in ("ean:", "sku:", "reference:", "hash:", "tray_brand_model:")
+        for token in ("ean:", "sku:", "reference:", "hash:", "tray_brand_model:", "store_url:")
     )
+    if multiple_products:
+        exactish = [
+            cand
+            for cand in ordered
+            if any(
+                token in " ".join(cand.match_reasons).casefold()
+                for token in ("ean:", "sku:", "reference:", "tray_brand_model:", "store_url:")
+            )
+        ]
+        unique_ids = {cand.product_id for cand in exactish[:4] if cand.product_id}
+        if len(unique_ids) == 1 and exactish[0].score >= exact_min:
+            return "matched", exactish[0]
+        if top1.score >= amb_min:
+            return "ambiguous", top1
+        return "not_found", None
     threshold = exact_min if is_exact else visual_min
     # Appearance-only must meet the stricter visual threshold.
     if top1.score >= threshold and gap >= margin and top1.product_id:
@@ -166,7 +179,84 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
         _add_phrase(ref)
     for sku in analysis.visible_skus or []:
         _add_phrase(sku)
+    for region in analysis.product_regions or []:
+        _add_phrase(getattr(region, "reference_hypothesis", None))
+        _add_phrase(getattr(region, "label", None))
     return brand, tokens[:8]
+
+
+def tokens_from_store_url(url: str | None) -> tuple[str | None, list[str]]:
+    from urllib.parse import urlparse
+
+    raw = str(url or "").strip()
+    if not raw:
+        return None, []
+    path = urlparse(raw).path.replace("_", "-")
+    slug = path.rstrip("/").split("/")[-1]
+    skip = {
+        "relogio",
+        "relogios",
+        "seminovo",
+        "automatico",
+        "mecanico",
+        "quartz",
+        "www",
+        "http",
+        "https",
+    }
+    tokens: list[str] = []
+    brand: str | None = None
+    for part in slug.replace("-", " ").split():
+        key = _fold(part)
+        if len(key) < 3 or key in skip or key in _COLOR_AND_SKIP:
+            continue
+        if brand is None and key in {
+            "mido",
+            "laco",
+            "bulova",
+            "seiko",
+            "tissot",
+            "orient",
+            "casio",
+            "citizen",
+        }:
+            brand = part
+            continue
+        tokens.append(part)
+    return brand, tokens[:8]
+
+
+def tray_search_jobs(
+    analysis: StoryVisualUnderstanding,
+    *,
+    store_url: str | None = None,
+) -> list[tuple[str | None, list[str]]]:
+    jobs: list[tuple[str | None, list[str]]] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+
+    def _add(brand: str | None, tokens: list[str]) -> None:
+        key = (_fold(brand), tuple(_fold(t) for t in tokens))
+        if key in seen or (not brand and not tokens):
+            return
+        seen.add(key)
+        jobs.append((brand, tokens))
+
+    slug_brand, slug_tokens = tokens_from_store_url(store_url)
+    _add(slug_brand, slug_tokens)
+    brand, tokens = tray_search_plan(analysis)
+    _add(brand, tokens)
+    for region in analysis.product_regions or []:
+        region_brand = str(getattr(region, "brand_hypothesis", None) or "").strip() or None
+        extra: list[str] = []
+        for raw in (
+            getattr(region, "reference_hypothesis", None),
+            getattr(region, "label", None),
+        ):
+            for part in str(raw or "").replace("-", " ").split():
+                if len(part) >= 3 and _fold(part) not in _COLOR_AND_SKIP:
+                    extra.append(part)
+        _add(region_brand, extra[:8] or tokens)
+    return jobs[:4]
 
 
 async def match_story_to_catalog(
@@ -175,6 +265,7 @@ async def match_story_to_catalog(
     analysis: StoryVisualUnderstanding,
     execute_tool: Any | None = None,
     media_bytes: bytes | None = None,
+    store_url: str | None = None,
 ) -> list[StoryProductCandidate]:
     """Build candidates from exact identifiers → visual index → lexical → Tray.
 
@@ -413,8 +504,7 @@ async def match_story_to_catalog(
     # ai_catalog_index is a cache of previously retrieved SKUs, not the full store.
     has_exact = any(str(c.source or "").startswith("exact_") for c in candidates)
     if execute_tool is not None and not has_exact:
-        brand, tokens = tray_search_plan(analysis)
-        if brand or tokens:
+        for brand, tokens in tray_search_jobs(analysis, store_url=store_url):
             try:
                 arguments: dict[str, Any] = {"limit": limit}
                 if tokens:
@@ -423,65 +513,72 @@ async def match_story_to_catalog(
                     arguments["brand"] = brand
                 result = await execute_tool("search_products", arguments)
                 products = result.get("products") if isinstance(result, dict) else None
-                if isinstance(products, list) and products:
-                    try:
-                        from .catalog_index import index_products_best_effort
+                if not isinstance(products, list) or not products:
+                    continue
+                try:
+                    from .catalog_index import index_products_best_effort
 
-                        index_products_best_effort(
-                            products,
-                            factual_source="tray_search",
+                    index_products_best_effort(
+                        products,
+                        factual_source="tray_search",
+                    )
+                except Exception:
+                    pass
+                slug = _fold((store_url or "").rstrip("/").split("/")[-1])
+                for idx, product in enumerate(products[:limit]):
+                    pid = str(product.get("id") or "")
+                    if not pid:
+                        continue
+                    vid = (
+                        str(product["variant_id"])
+                        if product.get("variant_id") is not None
+                        else None
+                    )
+                    name_l = _fold(product.get("name") or product.get("title"))
+                    url_l = _fold(product.get("url") or product.get("link"))
+                    product_brand = _fold(product.get("brand"))
+                    brand_ok = bool(brand) and (
+                        _fold(brand) in name_l or product_brand == _fold(brand)
+                    )
+                    distinctive = tokens or [
+                        part
+                        for part in (brand or "").split()
+                        if len(part) >= 3
+                    ]
+                    hits = sum(
+                        1
+                        for token in distinctive
+                        if len(token) >= 3 and _fold(token) in name_l
+                    )
+                    url_hit = bool(slug) and len(slug) >= 8 and slug in url_l
+                    if hits < 1 and not url_hit:
+                        continue
+                    strong = url_hit or (brand_ok and hits >= min(2, len(distinctive) or 1))
+                    rank_penalty = idx * 0.04
+                    reason = (
+                        f"store_url:{slug[:80]}"
+                        if url_hit
+                        else (
+                            f"tray_brand_model:{brand or ''} {' '.join(tokens)}".strip()
+                            if strong
+                            else f"tray_query_overlap:{' '.join(tokens)[:40]}"
                         )
-                    except Exception:
-                        pass
-                    for idx, product in enumerate(products[:limit]):
-                        pid = str(product.get("id") or "")
-                        if not pid:
-                            continue
-                        vid = (
-                            str(product["variant_id"])
-                            if product.get("variant_id") is not None
-                            else None
-                        )
-                        name_l = _fold(product.get("name") or product.get("title"))
-                        product_brand = _fold(product.get("brand"))
-                        brand_ok = bool(brand) and (
-                            _fold(brand) in name_l or product_brand == _fold(brand)
-                        )
-                        distinctive = tokens or [
-                            part
-                            for part in (brand or "").split()
-                            if len(part) >= 3
-                        ]
-                        hits = sum(
-                            1
-                            for token in distinctive
-                            if len(token) >= 3 and _fold(token) in name_l
-                        )
-                        if hits < 1:
-                            continue
-                        strong = brand_ok and hits >= min(2, len(distinctive) or 1)
-                        rank_penalty = idx * 0.04
-                        _add_scored(
-                            {**product, "tenant_id": product.get("tenant_id") or tenant_id},
-                            _score_components(
-                                catalog_item_key=catalog_item_key_for(pid, vid),
-                                product_id=pid,
-                                variant_id=vid,
-                                exact=0.92 if strong else 0.0,
-                                lexical=min(0.6, 0.2 * hits - rank_penalty),
-                                brand=0.85 if brand_ok else 0.2,
-                                model=min(0.8, 0.25 * hits),
-                                quality_penalty=quality_penalty,
-                                reasons=[
-                                    (
-                                        f"tray_brand_model:{brand or ''} {' '.join(tokens)}".strip()
-                                        if strong
-                                        else f"tray_query_overlap:{' '.join(tokens)[:40]}"
-                                    )
-                                ],
-                                source="tray_search",
-                            ),
-                        )
+                    )
+                    _add_scored(
+                        {**product, "tenant_id": product.get("tenant_id") or tenant_id},
+                        _score_components(
+                            catalog_item_key=catalog_item_key_for(pid, vid),
+                            product_id=pid,
+                            variant_id=vid,
+                            exact=0.96 if url_hit else (0.92 if strong else 0.0),
+                            lexical=min(0.6, 0.2 * max(hits, 1) - rank_penalty),
+                            brand=0.85 if brand_ok else 0.2,
+                            model=min(0.8, 0.25 * hits),
+                            quality_penalty=quality_penalty,
+                            reasons=[reason],
+                            source="tray_search",
+                        ),
+                    )
             except Exception as exc:  # noqa: BLE001
                 print("[story.matcher.tray.error]", {"error_type": type(exc).__name__})
 

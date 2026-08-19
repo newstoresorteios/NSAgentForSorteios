@@ -214,6 +214,45 @@ def test_parse_meta_story_reply_attachment():
     assert msg.instagram_story.story_media_id == "story-99"
 
 
+def test_parse_meta_video_story_and_link_sticker():
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": "ig-biz",
+                "messaging": [
+                    {
+                        "sender": {"id": "user-1"},
+                        "recipient": {"id": "ig-biz"},
+                        "message": {
+                            "mid": "m-video",
+                            "text": "valor",
+                            "reply_to": {
+                                "story": {
+                                    "id": "story-video",
+                                    "url": "https://scontent.cdninstagram.com/v/t50.2886-16/x.mp4?oe=ABC",
+                                    "thumbnail_url": "https://scontent.cdninstagram.com/v/t51/thumb.jpg?oe=ABC",
+                                    "link_sticker_url": (
+                                        "https://www.newstorerj.com/relogios/"
+                                        "relogios-laco/relogio-laco-pilot-leipzig-mecanico-preto"
+                                    ),
+                                }
+                            },
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    messages = parse_meta_instagram_messaging(payload)
+    assert len(messages) == 1
+    story = messages[0].instagram_story
+    assert story is not None
+    assert story.media_type == "video"
+    assert story.operational_thumbnail_url() is not None
+    assert story.story_link_sticker_url and "laco-pilot" in story.story_link_sticker_url
+
+
 def test_story_rollout_allows_meta_live_media(monkeypatch):
     from app.config import get_settings
     from app.instagram_story_models import InstagramStoryContext

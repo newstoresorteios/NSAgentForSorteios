@@ -27,6 +27,7 @@ from .instagram_story_models import (
     StoryVisualUnderstanding,
     VisualProductRegion,
 )
+from .instagram_story_parser import safe_media_reference
 from .models import AgentResult, IncomingMessage
 from .observability import log_event
 from .request_principal import RequestPrincipal, principal_from_internal
@@ -340,6 +341,7 @@ async def _finalize_story_catalog_match(
     shadow_only: bool,
     metrics: dict[str, Any],
     execute_tool: Any | None,
+    store_url: str | None = None,
 ) -> StoryResolutionResult:
     from .tray_tools import execute_tool as default_execute
 
@@ -349,6 +351,7 @@ async def _finalize_story_catalog_match(
         analysis=analysis,
         execute_tool=tool,
         media_bytes=None,
+        store_url=store_url,
     )
     repo.save_candidates(
         tenant_id=tenant,
@@ -489,6 +492,34 @@ async def _finalize_story_catalog_match(
         metrics=metrics,
         resolved_at=datetime.now(timezone.utc),
     )
+
+
+async def _hydrate_story_media(story: InstagramStoryContext) -> InstagramStoryContext:
+    media_id = str(story.story_media_id or "").strip()
+    if (story.provider or "").lower() != "meta" or not media_id:
+        return story
+    from pydantic import SecretStr
+
+    from .channels.meta_instagram import fetch_instagram_media_graph
+
+    graph = await fetch_instagram_media_graph(media_id)
+    if not graph.get("ok"):
+        return story
+    updates: dict[str, Any] = {}
+    media_url = str(graph.get("media_url") or "").strip()
+    thumb = str(graph.get("thumbnail_url") or "").strip()
+    media_type = str(graph.get("media_type") or story.media_type or "unknown")
+    if media_url:
+        updates["story_media_url_private"] = SecretStr(media_url)
+        updates["story_media_log_reference"] = safe_media_reference(media_url)
+    if thumb:
+        updates["story_thumbnail_url_private"] = SecretStr(thumb)
+        updates["story_thumbnail_log_reference"] = safe_media_reference(thumb)
+    if media_type in {"image", "video", "carousel", "unknown"}:
+        updates["media_type"] = media_type
+    if not updates:
+        return story
+    return story.model_copy(update=updates)
 
 
 async def resolve_story_product_question(
@@ -748,6 +779,7 @@ async def resolve_story_product_question(
                 shadow_only=shadow_only,
                 metrics=metrics,
                 execute_tool=execute_tool,
+                store_url=story.story_link_sticker_url,
             )
         return _reuse_assoc_result(
             assoc=assoc,
@@ -762,23 +794,16 @@ async def resolve_story_product_question(
         )
 
     if assoc and assoc.match_status == "expired":
-        return StoryResolutionResult(
-            resolved=False,
-            tenant_id=tenant,
-            story_media_id=media_id,
-            match_status="expired",
-            needs_clarification=True,
-            failure_reason="story_expired",
-            question_type=question_type,
-            reply_hint=_compose_reply(
-                question_type=question_type,
-                product=None,
-                status="failed",
-                candidates=[],
-                expired=True,
-            ),
-            shadow_only=shadow_only,
-            metrics=metrics,
+        log_event("story_expired_retry", {"story_media_id": media_id})
+        # Fall through: Graph can refresh CDN URLs / thumbnails.
+
+    if assoc and assoc.match_status == "failed" and not (assoc.visual_analysis or {}):
+        log_event(
+            "story_failed_retry",
+            {
+                "story_media_id": media_id,
+                "code": assoc.last_failure_code,
+            },
         )
 
     if assoc and assoc.match_status == "processing":
@@ -903,9 +928,32 @@ async def resolve_story_product_question(
     storage_path: str | None = None
     media_mime: str | None = None
     media_bytes: int | None = None
-    download_url = story.operational_media_url() or story.operational_thumbnail_url()
+    story = await _hydrate_story_media(story)
+    from .channels.meta_instagram import looks_like_video_url
+
+    prefer_thumbnail = story.media_type == "video" or looks_like_video_url(
+        story.operational_media_url()
+    )
+    if prefer_thumbnail and story.operational_thumbnail_url():
+        download_url = story.operational_thumbnail_url()
+    else:
+        download_url = story.operational_media_url() or story.operational_thumbnail_url()
 
     if not download_url:
+        if story.story_link_sticker_url:
+            return await _finalize_story_catalog_match(
+                repo=repo,
+                tenant=tenant,
+                provider=provider,
+                account=account,
+                media_id=media_id,
+                analysis=StoryVisualUnderstanding(),
+                question_type=question_type,
+                shadow_only=shadow_only,
+                metrics=metrics,
+                execute_tool=execute_tool,
+                store_url=story.story_link_sticker_url,
+            )
         repo.mark_expired(
             tenant_id=tenant,
             provider=provider,
@@ -1036,32 +1084,55 @@ async def resolve_story_product_question(
                     )
                     metrics["story_visual_analysis_calls"] = 1
                 else:
-                    repo.mark_failed(
-                        tenant_id=tenant,
-                        provider=provider,
-                        instagram_account_id=account,
-                        story_media_id=media_id,
-                        explanation={"reason": "video_decoder_unavailable"},
-                        failure_code="video_decoder_unavailable",
-                    )
-                    return StoryResolutionResult(
-                        resolved=False,
-                        tenant_id=tenant,
-                        story_media_id=media_id,
-                        match_status="failed",
-                        failure_reason="video_decoder_unavailable",
-                        needs_clarification=True,
-                        question_type=question_type,
-                        reply_hint=_compose_reply(
+                    story = await _hydrate_story_media(story)
+                    thumb_url = story.operational_thumbnail_url()
+                    if thumb_url and thumb_url != download_url:
+                        thumb = await download_story_media(thumb_url, tenant_id=tenant)
+                        analysis = await analyze_story_image(
+                            image_bytes=thumb.content,
+                            content_type=thumb.content_type,
+                            media_sha256=media_sha,
+                            media_type="image",
+                        )
+                        metrics["story_visual_analysis_calls"] = 1
+                    elif story.story_link_sticker_url:
+                        return await _finalize_story_catalog_match(
+                            repo=repo,
+                            tenant=tenant,
+                            provider=provider,
+                            account=account,
+                            media_id=media_id,
+                            analysis=StoryVisualUnderstanding(),
                             question_type=question_type,
-                            product=None,
-                            status="failed",
-                            candidates=[],
-                            expired=True,
-                        ),
-                        shadow_only=shadow_only,
-                        metrics=metrics,
-                    )
+                            shadow_only=shadow_only,
+                            metrics=metrics,
+                            execute_tool=execute_tool,
+                            store_url=story.story_link_sticker_url,
+                        )
+                    else:
+                        repo.mark_failed(
+                            tenant_id=tenant,
+                            provider=provider,
+                            instagram_account_id=account,
+                            story_media_id=media_id,
+                            explanation={"reason": "video_decoder_unavailable"},
+                            failure_code="video_decoder_unavailable",
+                        )
+                        return StoryResolutionResult(
+                            resolved=False,
+                            tenant_id=tenant,
+                            story_media_id=media_id,
+                            match_status="failed",
+                            failure_reason="video_decoder_unavailable",
+                            needs_clarification=True,
+                            question_type=question_type,
+                            reply_hint=(
+                                "Esse Story veio como vídeo e não consegui extrair um frame nítido. "
+                                "Se você enviar um print do relógio, eu identifico o modelo e confirmo o valor."
+                            ),
+                            shadow_only=shadow_only,
+                            metrics=metrics,
+                        )
             else:
                 analysis = await analyze_story_image(
                     image_bytes=media.content,
@@ -1163,33 +1234,6 @@ async def resolve_story_product_question(
         media_bytes=media_bytes,
     )
 
-    if analysis.multiple_products or analysis.watch_count > 1:
-        options, reply = _clarification_from_regions(analysis)
-        repo.mark_ambiguous(
-            tenant_id=tenant,
-            provider=provider,
-            instagram_account_id=account,
-            story_media_id=media_id,
-            explanation={"reason": "multiple_products_visible", "options": options},
-            confidence=float(analysis.product_identity_confidence or 0.5),
-        )
-        metrics["story_ambiguous_matches"] = 1
-        log_event("story_clarification", {"reason": "multiple_products", "options": len(options)})
-        return StoryResolutionResult(
-            resolved=False,
-            tenant_id=tenant,
-            story_media_id=media_id,
-            match_status="ambiguous",
-            needs_clarification=True,
-            clarification_options=options,
-            confidence=float(analysis.product_identity_confidence or 0.5),
-            question_type=question_type,
-            reply_hint=reply,
-            shadow_only=shadow_only,
-            metrics=metrics,
-            resolved_at=datetime.now(timezone.utc),
-        )
-
     return await _finalize_story_catalog_match(
         repo=repo,
         tenant=tenant,
@@ -1201,6 +1245,7 @@ async def resolve_story_product_question(
         shadow_only=shadow_only,
         metrics=metrics,
         execute_tool=execute_tool,
+        store_url=story.story_link_sticker_url,
     )
 
 

@@ -93,6 +93,8 @@ class InstagramStoryContext(BaseModel):
     expires_at: datetime | None = None
     media_items: list[StoryMediaItem] = Field(default_factory=list)
     raw_reference: dict[str, Any] = Field(default_factory=dict)
+    # Public storefront URL from a Story link sticker, if Meta sends it.
+    story_link_sticker_url: str | None = None
 
     # Backward-compatible aliases used by older call sites (never expose secrets).
     @property
