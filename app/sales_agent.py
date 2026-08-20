@@ -1965,6 +1965,9 @@ async def _execute_compiled_product_retrieval(
     specific_resolution = None
     used_brand_candidates = False
     used_category_candidates = False
+    catalog_index_primary = False
+    catalog_index_strategy: str | None = None
+    catalog_index_seeded = 0
     search_term_count = len(specific_product_search_terms(interpretation))
     catalog_discovered_count = 0
     discovery_strategies = {"brand_candidates", "category_candidates"}
@@ -2058,7 +2061,80 @@ async def _execute_compiled_product_retrieval(
         result = await execute_tool("search_products", arguments)
         return request, result
 
-    if probe_requests:
+    # IQ-06: durable catalog index first for recommendations; Tray only refreshes
+    # when the index pool is empty or too thin after hard constraints.
+    if retrieval_plan.mode == "recommendation":
+        from .catalog_index_primary import (
+            fetch_primary_index_candidates,
+            index_pool_is_sufficient,
+        )
+
+        index_products, catalog_index_strategy = fetch_primary_index_candidates(
+            interpretation,
+            limit=max(
+                retrieval_plan.candidate_limit,
+                int(
+                    getattr(
+                        get_settings(),
+                        "agent_catalog_index_candidate_limit",
+                        30,
+                    )
+                    or 30
+                ),
+            ),
+        )
+        if index_products:
+            _absorb_products(index_products)
+            catalog_index_seeded = len(index_products)
+            _refresh_hard_filtered()
+            catalog_index_primary = index_pool_is_sufficient(
+                hard_filtered,
+                candidate_limit=retrieval_plan.candidate_limit,
+            )
+            print(
+                "[catalog.index.primary]",
+                {
+                    "strategy": catalog_index_strategy,
+                    "seeded": catalog_index_seeded,
+                    "hard_filtered": len(hard_filtered),
+                    "sufficient": catalog_index_primary,
+                    "skip_tray_fanout": catalog_index_primary,
+                },
+            )
+        elif bool(getattr(get_settings(), "agent_catalog_index_read_enabled", True)):
+            print(
+                "[catalog.index.primary]",
+                {
+                    "strategy": None,
+                    "seeded": 0,
+                    "hard_filtered": 0,
+                    "sufficient": False,
+                    "skip_tray_fanout": False,
+                    "reason": "catalog_index_empty_or_unavailable",
+                },
+            )
+
+    if catalog_index_primary:
+        print(
+            "[catalog.index.primary.skip_tray]",
+            {
+                "probe_count": 0,
+                "discovery_count": 0,
+                "candidate_count": len(candidates),
+                "hard_filtered_count": len(hard_filtered),
+            },
+        )
+    elif probe_requests:
+        if catalog_index_seeded:
+            print(
+                "[catalog.index.refresh]",
+                {
+                    "reason": "index_insufficient_or_stale",
+                    "prior_seeded": catalog_index_seeded,
+                    "prior_hard_filtered": len(hard_filtered),
+                    "strategy": catalog_index_strategy,
+                },
+            )
         probe_results = await asyncio.gather(
             *[_run_probe(request) for request in probe_requests]
         )
@@ -2324,7 +2400,8 @@ async def _execute_compiled_product_retrieval(
 
     # Merge durable brand catalog cache before preference ranking.
     if (
-        retrieval_plan.mode == "recommendation"
+        not catalog_index_primary
+        and retrieval_plan.mode == "recommendation"
         and interpretation.subject.brand
     ):
         candidates = await ensure_brand_pool_in_candidates(
@@ -2500,91 +2577,65 @@ async def _execute_compiled_product_retrieval(
 
     if retrieval_plan.mode == "recommendation":
         from .catalog_index import hybrid_rank_products, index_products_best_effort
-        from .catalog_index_repository import CatalogIndexRepository, row_to_product_dict
 
-        settings = get_settings()
-        if bool(getattr(settings, "agent_catalog_index_read_enabled", True)):
-            try:
-                repo = CatalogIndexRepository()
-                tenant_id = str(
-                    getattr(settings, "agent_persona_tenant_id", None) or "newstore"
-                )
-                query = " ".join(
-                    part
-                    for part in (
-                        getattr(interpretation.subject, "brand", None),
-                        getattr(interpretation.subject, "model", None),
-                        getattr(interpretation.subject, "query", None)
-                        or getattr(interpretation, "query", None),
+        # Late index merge only when we did not already seed from the durable index.
+        if (
+            not catalog_index_seeded
+            and bool(getattr(get_settings(), "agent_catalog_index_read_enabled", True))
+        ):
+            from .catalog_index_primary import fetch_primary_index_candidates
+
+            index_rows, late_strategy = fetch_primary_index_candidates(
+                interpretation,
+                limit=int(
+                    getattr(
+                        get_settings(),
+                        "agent_catalog_index_candidate_limit",
+                        30,
                     )
-                    if part
-                ).strip()
-                index_rows: list = []
-                ref = getattr(interpretation.subject, "reference", None)
-                ean = getattr(interpretation.subject, "ean", None)
-                if ean:
-                    index_rows = repo.search_exact(tenant_id=tenant_id, ean=str(ean))
-                elif ref:
-                    index_rows = repo.search_exact(
-                        tenant_id=tenant_id, reference=str(ref)
-                    )
-                elif query:
-                    index_rows = repo.search_lexical(
-                        tenant_id=tenant_id,
-                        query=query,
-                        brand=getattr(interpretation.subject, "brand", None),
-                    )
-                if index_rows:
-                    seen = {
-                        str(p.get("id"))
-                        for p in hard_filtered
-                        if isinstance(p, dict) and p.get("id") is not None
-                    }
-                    seeded = 0
-                    for row in index_rows:
-                        product = row_to_product_dict(row)
-                        pid = str(product.get("id") or "")
-                        if not pid or pid in seen:
-                            continue
-                        hard_filtered.append(product)
-                        seen.add(pid)
-                        seeded += 1
-                    if seeded:
-                        print(
-                            "[catalog.index.read]",
-                            {
-                                "tenant_id": tenant_id,
-                                "seeded": seeded,
-                                "fallback": "merged_with_tray_pool",
-                            },
-                        )
-                elif bool(
-                    getattr(settings, "agent_catalog_index_fallback_to_tray", True)
-                ):
+                    or 30
+                ),
+            )
+            if index_rows:
+                before = len(candidates)
+                _absorb_products(index_rows)
+                _refresh_hard_filtered()
+                seeded = len(candidates) - before
+                if seeded:
+                    catalog_index_seeded = seeded
+                    catalog_index_strategy = late_strategy or catalog_index_strategy
                     print(
-                        "[catalog.index.fallback]",
-                        {"reason": "catalog_index_empty_or_unavailable"},
+                        "[catalog.index.read]",
+                        {
+                            "strategy": catalog_index_strategy,
+                            "seeded": seeded,
+                            "fallback": "merged_with_tray_pool",
+                        },
                     )
-            except Exception as exc:  # noqa: BLE001
+            elif bool(
+                getattr(get_settings(), "agent_catalog_index_fallback_to_tray", True)
+            ):
                 print(
-                    "[catalog.index.read.error]",
-                    {"error_type": type(exc).__name__},
+                    "[catalog.index.fallback]",
+                    {"reason": "catalog_index_empty_or_unavailable"},
                 )
-                if bool(getattr(settings, "agent_catalog_index_fallback_to_tray", True)):
-                    print(
-                        "[catalog.index.fallback]",
-                        {"reason": "catalog_index_fallback"},
-                    )
 
+        factual_source = (
+            "catalog_index" if catalog_index_primary else "tray_search"
+        )
         # Hybrid hard/soft ranking over the filtered pool (no free LLM catalog search).
         hard_filtered = hybrid_rank_products(
             hard_filtered,
             interpretation,
             mode="recommendation",
-            factual_source="tray_search",
+            factual_source=factual_source,
         )
         if bool(getattr(get_settings(), "agent_catalog_index_write_enabled", True)):
-            index_products_best_effort(hard_filtered, factual_source="tray_search")
+            # Refresh durable index from Tray results (or reaffirm index hits).
+            index_products_best_effort(
+                hard_filtered,
+                factual_source=factual_source,
+            )
         enriched = await enrich_product_variants(
             hard_filtered,
             interpretation,
