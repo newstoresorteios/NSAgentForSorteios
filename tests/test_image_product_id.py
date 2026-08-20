@@ -977,6 +977,51 @@ def test_prospex_diver_dial_maps_to_sea_samurai_catalog_name():
     assert any(name and "Sea Samurai" in name for name in names)
 
 
+def test_citizen_navihawk_mislabel_maps_to_sky_pilot():
+    """Vision often says Navihawk for Promaster Sky Pilot Eco-Drive ana-digi."""
+    from app.product_retrieval import (
+        ProductRetrievalCompiler,
+        catalog_match_tokens,
+        commercial_model_aliases,
+        extract_reference_code,
+        normalize_pt_catalog_query,
+    )
+
+    assert "Sky Pilot" in normalize_pt_catalog_query(
+        "Promaster Navihawk azul Cronógrafo"
+    )
+    assert extract_reference_code("JV2000-51L") == "JV2000-51L"
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Citizen",
+        model="Promaster Navihawk azul Cronógrafo",
+        color="azul",
+        case_finish="aço/prata",
+        features=["eco-drive", "Cronógrafo", "multifunção"],
+        confidence=0.94,
+    )
+    interpretation = interpretation_from_identification(identified)
+    model = interpretation.subject.model or ""
+    assert "Sky Pilot" in model
+    assert "Navihawk" not in model
+    aliases = commercial_model_aliases(
+        "Promaster Navihawk",
+        brand="Citizen",
+    )
+    assert any("JV2000" in alias for alias in aliases)
+    tokens = catalog_match_tokens(interpretation)
+    assert "navihawk" not in tokens
+    assert "sky" in tokens or "pilot" in tokens
+    assert "citizen" in tokens
+    plan = ProductRetrievalCompiler.compile(interpretation)
+    token_sets = [req.tokens for req in plan.requests if req.tokens]
+    assert token_sets
+    assert any("sky" in tokens or "pilot" in tokens for tokens in token_sets)
+    assert any(
+        req.name and "Sky Pilot" in req.name for req in plan.requests if req.name
+    )
+
+
 def test_products_match_mergulho_accepts_sea_samurai_title():
     products = [
         {

@@ -269,6 +269,25 @@ _PROSPEX_DIVER_COMMERCIAL_ALIASES: tuple[str, ...] = (
     "King Turtle",
     "Prospex King Turtle",
 )
+# Citizen Promaster aviation ana-digi (JV2000) — Vision often says Navihawk.
+_PROMASTER_SKY_PILOT_ALIASES: tuple[str, ...] = (
+    "Sky Pilot",
+    "Promaster Sky Pilot",
+    "Promaster Sky Pilot Eco Drive",
+    "Citizen Promaster Sky Pilot",
+    "JV2000-51L",
+    "JV2000",
+)
+_PROMASTER_SKY_MISLABELS = frozenset(
+    {
+        "navihawk",
+        "navi hawk",
+        "blueangels",
+        "blue angels",
+        "skyhawk",
+        "sky hawk",
+    }
+)
 # Strap/case materials from Vision — useful for ranking, never AND-required.
 # Catalog titles usually only carry dial color (Branco/Rosa), not "pulseira bege".
 _ACCESSORY_COLOR_TOKENS = frozenset(
@@ -354,6 +373,9 @@ _ACCESSORY_NAME_TOKENS = frozenset(
 )
 _REFERENCE_CODE_RE = re.compile(
     r"\b("
+    # Citizen/Seiko style: JV2000-51L, SRPE37K1-A (letter+digits with one hyphen+)
+    r"[A-Z]{1,4}\d{2,}[A-Z0-9]*(?:-[A-Z0-9]{1,})+"
+    r"|"
     r"[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,}"
     r"|"
     r"[A-Z0-9]{2,}(?:\.[A-Z0-9]{2,}){2,}"
@@ -601,6 +623,13 @@ def normalize_pt_catalog_query(text: str | None) -> str:
     if is_prospex_diver_ask(updated) and "samurai" not in folded and "turtle" not in folded:
         auto = " Automático" if "automatico" in folded else ""
         return f"Prospex Sea Samurai{auto}".strip()
+    # Citizen Promaster aviation ana-digi → Sky Pilot (not Navihawk).
+    if is_promaster_sky_pilot_ask(updated) and "sky" not in folded:
+        hue = " Azul" if any(token in folded for token in ("azul", "blue", "navy")) else ""
+        return f"Promaster Sky Pilot{hue}".strip()
+    if any(label in folded for label in _PROMASTER_SKY_MISLABELS):
+        hue = " Azul" if any(token in folded for token in ("azul", "blue", "navy")) else ""
+        return f"Promaster Sky Pilot{hue}".strip()
     return updated
 
 
@@ -715,6 +744,36 @@ def is_prospex_diver_ask(text: str | None) -> bool:
     )
 
 
+def is_promaster_sky_pilot_ask(text: str | None) -> bool:
+    """Citizen Promaster aviation ana-digi / Eco-Drive often mislabeled Navihawk."""
+    folded = _fold(text)
+    if not folded:
+        return False
+    if any(label in folded for label in _PROMASTER_SKY_MISLABELS):
+        return True
+    if "sky" in folded and "pilot" in folded:
+        return True
+    if "jv2000" in folded:
+        return True
+    promasterish = "promaster" in folded or "citizen" in folded
+    if not promasterish:
+        return False
+    digitalish = any(
+        token in folded
+        for token in (
+            "eco drive",
+            "ecodrive",
+            "digital",
+            "ana digi",
+            "anadigi",
+            "calendar",
+            "slide rule",
+            "regua",
+        )
+    )
+    return digitalish
+
+
 def commercial_model_aliases(
     model: str | None,
     *,
@@ -722,9 +781,21 @@ def commercial_model_aliases(
 ) -> tuple[str, ...]:
     """Tray commercial names for dial-only Vision labels."""
     probe = " ".join(part for part in (brand, model) if part).strip() or (model or "")
+    folded = _fold(model)
+    brand_fold = _fold(brand)
+    if is_promaster_sky_pilot_ask(probe) or is_promaster_sky_pilot_ask(model) or (
+        brand_fold == "citizen" and is_promaster_sky_pilot_ask(f"{brand} {model}")
+    ):
+        if "sky" in folded and "pilot" in folded and "navihawk" not in folded:
+            # Still probe JV2000 when Vision already said Sky Pilot.
+            return tuple(
+                alias
+                for alias in _PROMASTER_SKY_PILOT_ALIASES
+                if "jv2000" in _fold(alias)
+            )
+        return _PROMASTER_SKY_PILOT_ALIASES
     if not is_prospex_diver_ask(probe) and not is_prospex_diver_ask(model):
         return ()
-    folded = _fold(model)
     # Already a commercial line — do not expand to siblings.
     if "samurai" in folded or "turtle" in folded:
         return ()
@@ -1044,6 +1115,40 @@ class ProductRetrievalCompiler:
                         limit=PRODUCT_PAGE_LIMIT,
                     )
                 )
+                # Soften AND when Vision invents a rare sibling name (Navihawk)
+                # or piles color+movement onto an already long identity.
+                color_set = set(preference_color_tokens(interpretation))
+                without_color = tuple(
+                    token for token in match_tokens if token not in color_set
+                )
+                if without_color and without_color != match_tokens:
+                    requests.append(
+                        ProductRetrievalRequest(
+                            strategy="token_and_search_no_color",
+                            brand=subject.brand,
+                            tokens=without_color,
+                            limit=PRODUCT_PAGE_LIMIT,
+                        )
+                    )
+                # Brand + first few identity tokens (sky/pilot/promaster…).
+                brand_fold = _fold(subject.brand)
+                core_only = tuple(
+                    token
+                    for token in without_color or match_tokens
+                    if token != brand_fold
+                )[:4]
+                if subject.brand and core_only:
+                    short = (brand_fold, *core_only) if brand_fold else core_only
+                    short = tuple(dict.fromkeys(t for t in short if t))
+                    if short != match_tokens and short != without_color:
+                        requests.append(
+                            ProductRetrievalRequest(
+                                strategy="token_and_search_short",
+                                brand=subject.brand,
+                                tokens=short,
+                                limit=PRODUCT_PAGE_LIMIT,
+                            )
+                        )
 
             def _add_probe(
                 strategy: str,

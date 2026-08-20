@@ -42,6 +42,10 @@ Regras:
     Monster / GMT no mostrador): use model="Prospex Sea Samurai" — esse é o nome
     de catálogo (ex.: SRPL13K1). Coloque Mergulho/Automático em features.
   * Se "King Turtle" / "Turtle" / "Samurai" estiver escrito/legível, use esse nome.
+  * Citizen Promaster com Eco-Drive + mostrador ana-digi (janela digital /
+    CALENDAR) + luneta com régua de cálculo (slide rule): use
+    model="Promaster Sky Pilot" (catálogo JV2000-51L etc.). NÃO use Navihawk
+    salvo se "NAVIHAWK" estiver escrito de forma legível no mostrador.
   * Se vir só "AUTOMATIC" / "DIVER'S 200m" / "CHRONO" e NÃO souber a linha comercial,
     ainda assim inclua a função em features — não descarte.
 - Se houver submostradores ou botões de cronógrafo, features DEVE incluir "cronógrafo".

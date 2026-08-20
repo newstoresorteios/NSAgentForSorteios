@@ -184,6 +184,7 @@ async def execute_compiled_product_retrieval(
     seen_ids: set[str] = set()
     hard_filtered: list[dict[str, Any]] = []
     product_lookup_failed = False
+    catalog_probe_ok = False
     specific_resolution = None
     used_brand_candidates = False
     used_category_candidates = False
@@ -364,6 +365,7 @@ async def execute_compiled_product_retrieval(
             if "error" in result:
                 product_lookup_failed = True
                 continue
+            catalog_probe_ok = True
             raw_products = (
                 result.get("products")
                 if isinstance(result.get("products"), list)
@@ -423,6 +425,7 @@ async def execute_compiled_product_retrieval(
                 if "error" in result:
                     product_lookup_failed = True
                     break
+                catalog_probe_ok = True
                 raw_products = (
                     result.get("products")
                     if isinstance(result.get("products"), list)
@@ -572,6 +575,7 @@ async def execute_compiled_product_retrieval(
                 if "error" in result:
                     product_lookup_failed = True
                     continue
+                catalog_probe_ok = True
                 raw_products = (
                     result.get("products")
                     if isinstance(result.get("products"), list)
@@ -601,6 +605,7 @@ async def execute_compiled_product_retrieval(
                     if "error" in result:
                         product_lookup_failed = True
                         break
+                    catalog_probe_ok = True
                     raw_products = (
                         result.get("products")
                         if isinstance(result.get("products"), list)
@@ -697,7 +702,7 @@ async def execute_compiled_product_retrieval(
                 handoff_required=False,
                 safety_reason=category_failure,
             )
-        if product_lookup_failed:
+        if product_lookup_failed and not catalog_probe_ok:
             print("[sales.retrieval.empty]", {"reason": "catalog_lookup_failed"})
             return AgentResult(
                 reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
@@ -706,7 +711,7 @@ async def execute_compiled_product_retrieval(
                 safety_reason="tray_adapter_unavailable",
             )
         reason = "exact_product_not_found" if retrieval_plan.mode == "exact" else "catalog_empty"
-        print("[sales.retrieval.empty]", {"reason": reason})
+        print("[sales.retrieval.empty]", {"reason": reason, "had_catalog_ok": catalog_probe_ok})
         if retrieval_plan.mode == "exact":
             return AgentResult(
                 reply_text="Não encontrei esse produto no catálogo agora.",
@@ -724,7 +729,7 @@ async def execute_compiled_product_retrieval(
         reason = "exact_product_not_found" if retrieval_plan.mode == "exact" else "hard_filter_empty"
         print("[sales.retrieval.empty]", {"reason": reason})
         if retrieval_plan.mode == "exact":
-            if product_lookup_failed:
+            if product_lookup_failed and not catalog_probe_ok:
                 return AgentResult(
                     reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
                     intent="commerce",
