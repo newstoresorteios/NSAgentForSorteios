@@ -124,7 +124,16 @@ def _clean_url(value: str) -> str:
 def _money_decimal(value: Any) -> Decimal | None:
     if value is None or isinstance(value, bool):
         return None
-    text = str(value).strip().replace("R$", "").strip()
+    if isinstance(value, Decimal):
+        try:
+            return value.quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            return None
+    if isinstance(value, float):
+        # Avoid binary float noise (5184.989999…) breaking Pix grounding.
+        text = f"{value:.2f}"
+    else:
+        text = str(value).strip().replace("R$", "").strip()
     if not text:
         return None
     if "," in text:
@@ -393,6 +402,53 @@ def _collect_facts(
         )
 
 
+def _ground_catalog_display_pix(
+    pack: FactPack,
+    result: AgentResult,
+    *,
+    used_tray: bool,
+) -> None:
+    """Ground Pix/cash amounts shown in shortlists from verified list prices.
+
+    Compact listings derive à-vista Pix (persona %) when Tray omits it. Those
+    amounts must be fact-pack evidence or enforce replaces the whole reply.
+    """
+    products = (result.commercial_data or {}).get("products")
+    if not isinstance(products, list) or not products:
+        return
+    try:
+        from .commerce_router import _list_price, _payment_details, _pix_cash_price
+    except Exception:  # noqa: BLE001
+        return
+    source = FactSource.TRAY_LIVE if used_tray else FactSource.TRAY_ADAPTER
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        if _list_price(product) is None and product.get("pix_price") is None:
+            continue
+        pid = str(product.get("id") or product.get("product_id") or "").strip() or None
+        pix = product.get("pix_price")
+        if pix is None:
+            pix = _pix_cash_price(product, _payment_details(product))
+        amount = _money_decimal(pix)
+        if amount is None:
+            continue
+        product["pix_price"] = float(amount)
+        pack.monetary_values.add(amount)
+        revalidated = bool(product.get("_revalidated")) or used_tray
+        _append_evidence(
+            pack,
+            source=source,
+            entity_type="price",
+            key="pix_price",
+            value=str(amount),
+            entity_id=pid,
+            confidence=0.95 if revalidated else 0.75,
+            revalidation_status="revalidated" if revalidated else "pending",
+            metadata={"derived_display_pix": True},
+        )
+
+
 def build_fact_pack(
     result: AgentResult,
     *,
@@ -408,6 +464,7 @@ def build_fact_pack(
     pack = FactPack(source_payload=source_payload)
     pack.trusted_urls.add(_clean_url(STORE_PRONTA_ENTREGA_URL))
     _collect_facts(source_payload, pack=pack, used_tray=used_tray)
+    _ground_catalog_display_pix(pack, result, used_tray=used_tray)
 
     payment = (result.commercial_data or {}).get("payment")
     if isinstance(payment, dict):
@@ -590,7 +647,8 @@ def validate_factual_response(
             not in {FactSource.APPROVED_PERSONA, FactSource.CUSTOMER_MEMORY}
         }
         safe_money.discard(None)
-        trusted_amounts = safe_money or pack.monetary_values
+        trusted_amounts = set(safe_money) | set(pack.monetary_values)
+        trusted_amounts.discard(None)
         for amount_text in _MONEY_RE.findall(text):
             amount = _money_decimal(amount_text)
             if amount is None:
@@ -778,8 +836,7 @@ def apply_factual_validation(
             or ""
         ).strip()
         result.reply_text = fallback or (
-            "Não consegui validar com segurança todos os dados desta resposta. "
-            "Vou consultar novamente antes de confirmar."
+            "Só mais um pouco, estou tentando encontrar exatamente qual relógio é esse."
         )
         result.reply_modality = "text"
         result.reply_audio_bytes = None

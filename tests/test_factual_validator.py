@@ -195,6 +195,73 @@ def test_enforce_mode_uses_deterministic_factual_fallback():
     assert validated.response_metadata["factual_validation"]["risk_level"] == "high"
 
 
+def test_enforce_default_fallback_is_customer_friendly():
+    result = AgentResult(
+        reply_text="Pague em https://inventado.example/pix",
+        intent="commerce",
+        commercial_data={"products": [{"id": "1", "url": "https://evil.example/x"}]},
+        response_metadata={"domain": "commerce", "used_tray": True},
+    )
+    validated = apply_factual_validation(
+        result,
+        decision=_decision(result),
+        mode="enforce",
+    )
+    assert validated.safety_reason == "factual_validation_failed"
+    assert "Só mais um pouco" in validated.reply_text
+    assert "encontrar exatamente qual relógio" in validated.reply_text
+
+
+def test_derived_pix_from_list_price_is_grounded():
+    """Shortlists print 15% Pix off list; enforce must not wipe the reply."""
+    result = AgentResult(
+        reply_text=(
+            "Pela foto, parece Prospex Sea Samurai.\n"
+            "1. Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1\n"
+            "A prazo: R$ 6.099,99\n"
+            "À vista no Pix: R$ 5.184,99\n"
+            "Link: https://www.newstorerj.com.br/relogios/seiko/srpl13k1"
+        ),
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "11989",
+                    "name": "Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1",
+                    "current_price": 6099.99,
+                    "price": 6099.99,
+                    "url": "https://www.newstorerj.com.br/relogios/seiko/srpl13k1",
+                    "_revalidated": True,
+                    "_factual_source": "tray_live",
+                }
+            ]
+        },
+        response_metadata={
+            "domain": "commerce",
+            "used_tray": True,
+            "response_source": "image_vision",
+        },
+    )
+    report = validate_factual_response(
+        result,
+        decision=_decision(result),
+        mode="enforce",
+    )
+    assert report.valid is True
+    assert report.fallback_required is False
+    assert not any(
+        claim.claim == "5184.99" for claim in report.unsupported_claims
+    )
+
+    validated = apply_factual_validation(
+        result,
+        decision=_decision(result),
+        mode="enforce",
+    )
+    assert "5.184,99" in validated.reply_text
+    assert validated.safety_reason != "factual_validation_failed"
+
+
 def test_promo_without_promotional_price_is_unsupported():
     result = AgentResult(
         reply_text="Temos promoção especial neste modelo.",
