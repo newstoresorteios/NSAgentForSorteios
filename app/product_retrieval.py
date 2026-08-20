@@ -347,13 +347,17 @@ _COLOR_ALIAS_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"preto", "black"}),
     frozenset({"branco", "white"}),
     frozenset({"verde", "green"}),
-    frozenset({"vermelho", "red"}),
+    frozenset({"vermelho", "red", "vermelha", "amora"}),
     frozenset({"rosa", "pink", "rose"}),
     frozenset({"amarelo", "yellow"}),
     frozenset({"laranja", "orange"}),
     frozenset({"cinza", "gray", "grey"}),
     frozenset({"dourado", "gold", "golden"}),
     frozenset({"prata", "silver"}),
+)
+# When Vision asserts dial hue X, reject titles that assert a different hue family.
+_DIAL_COLOR_RIVAL_TOKENS: frozenset[str] = frozenset(
+    token for group in _COLOR_ALIAS_GROUPS for token in group
 )
 _ACCESSORY_NAME_TOKENS = frozenset(
     {
@@ -885,6 +889,56 @@ def product_matches_color_tokens(
         if not any(alias in text for alias in aliases):
             return False
     return True
+
+
+def product_conflicts_dial_color(
+    product: dict[str, Any],
+    color_tokens: tuple[str, ...],
+) -> bool:
+    """True when catalog title asserts a rival dial hue (rosa vs amora/verde)."""
+    if not color_tokens:
+        return False
+    if product_matches_color_tokens(product, color_tokens):
+        return False
+    text = _product_text(product)
+    allowed: set[str] = set()
+    for token in color_tokens:
+        allowed |= set(expand_color_aliases(token))
+    rivals = _DIAL_COLOR_RIVAL_TOKENS - allowed
+    # Word-boundary-ish: rival token appears as its own catalog hue word.
+    return any(
+        re.search(rf"\b{re.escape(rival)}\b", text)
+        for rival in rivals
+    )
+
+
+def rank_products_for_dial_color(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    *,
+    limit: int = CUSTOMER_RESULT_LIMIT,
+) -> list[dict[str, Any]]:
+    """Prefer dial-color matches; never surface rival hues when color is known."""
+    color_tokens = preference_color_tokens(interpretation)
+    if not color_tokens:
+        return products[:limit]
+    compatible = [
+        product
+        for product in products
+        if product_matches_color_tokens(product, color_tokens)
+        and not product_conflicts_dial_color(product, color_tokens)
+    ]
+    if compatible:
+        ranked = score_catalog_candidates(
+            compatible,
+            interpretation,
+            require_color=True,
+            allow_movement_mismatch=False,
+            limit=limit,
+        )
+        return ranked or compatible[:limit]
+    # No color lock in pool — do not invent amora/verde as "próximas" of rosa.
+    return []
 
 
 def model_excludes_gmt(model: str | None) -> bool:

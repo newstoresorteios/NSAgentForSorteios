@@ -1040,9 +1040,68 @@ def test_soft_line_interpretation_strips_color_and_forces_recommend():
     assert soft.subject.brand == "TAG Heuer"
     assert soft.subject.model
     assert "Carrera" in soft.subject.model
-    assert "prateado" not in (soft.subject.model or "").casefold()
     plan = ProductRetrievalCompiler.compile(soft)
     assert plan.mode == "recommendation"
+
+
+def test_dial_color_lock_rejects_amora_for_sealander_rosa():
+    """Vision rosa must not surface Amora Vermelha / Verde as nearby options."""
+    from app.image_product_id import select_products_for_identified_dial
+    from app.product_retrieval import (
+        product_conflicts_dial_color,
+        rank_products_for_dial_color,
+    )
+    from app.models import SalesInterpretation
+
+    products = [
+        {
+            "id": "amora",
+            "name": (
+                "Relógio Christopher Ward C63 Sealander Automático "
+                "Amora Vermelha C63-36ADA3-S00R3-B0"
+            ),
+            "reference": "C63-36ADA3-S00R3-B0",
+        },
+        {
+            "id": "verde",
+            "name": (
+                "Relógio Christopher Ward C63 Sealander Automático Verde "
+                "C63-39ADA3-S00V1-HKO"
+            ),
+            "reference": "C63-39ADA3-S00V1-HKO",
+        },
+        {
+            "id": "rosa",
+            "name": (
+                "Relógio Christopher Ward C63 Sealander Automático Rosa "
+                "C63-36ADA4-S00P0-B0 36 mm"
+            ),
+            "reference": "C63-36ADA4-S00P0-B0",
+        },
+    ]
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Christopher Ward",
+        model="Sealander",
+        color="rosa",
+        confidence=0.95,
+    )
+    shown = select_products_for_identified_dial(products, identified, limit=2)
+    assert [p["id"] for p in shown] == ["rosa"]
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"brand": "Christopher Ward", "model": "Sealander Rosa"},
+        preferences={"color": "rosa"},
+        references_previous_context=False,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    assert product_conflicts_dial_color(products[0], ("rosa",)) is True
+    ranked = rank_products_for_dial_color(products, interpretation, limit=2)
+    assert [p["id"] for p in ranked] == ["rosa"]
 
 
 def test_products_match_mergulho_accepts_sea_samurai_title():

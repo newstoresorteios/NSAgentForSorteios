@@ -392,12 +392,21 @@ def soft_line_interpretation_from_identification(
     if not line_label:
         raw = (identified.model or "").strip()
         line_label = raw.split()[0] if raw else None
+    # Keep dial hue on the probe model (Sealander Rosa) so Tray tokens/name
+    # search can lock color — soft mode still avoids hard exact failure.
+    color_label = (base.preferences.color or "").strip()
+    if color_label and line_label and color_label.casefold() not in line_label.casefold():
+        # One dial word only (rosa), not "rosa claro (mostrador)".
+        hue = color_label.split()[0]
+        probe_model = f"{line_label} {hue}".strip()
+    else:
+        probe_model = line_label
     soft = base.model_copy(
         update={
             "goal": "recommend",
             "subject": base.subject.model_copy(
                 update={
-                    "model": line_label,
+                    "model": probe_model,
                     "reference": None,
                 }
             ),
@@ -409,6 +418,31 @@ def soft_line_interpretation_from_identification(
     soft._force_recommendation_mode = True
     return soft
 
+
+def color_locked_line_interpretation(
+    identified: ImageProductIdentification,
+) -> SalesInterpretation:
+    """Stage C/D: force line + dial color tokens (sealander + rosa)."""
+    soft = soft_line_interpretation_from_identification(identified)
+    soft._source = "image_vision_color_lock"
+    return soft
+
+
+def select_products_for_identified_dial(
+    products: list[dict[str, Any]],
+    identified: ImageProductIdentification,
+    *,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """OCR double-check: keep only catalog rows compatible with Vision dial hue."""
+    from .product_retrieval import rank_products_for_dial_color
+
+    interpretation = interpretation_from_identification(identified)
+    return rank_products_for_dial_color(
+        products,
+        interpretation,
+        limit=limit,
+    )
 
 def _nearby_line_preferences(identified: ImageProductIdentification) -> dict[str, Any]:
     soft = soft_line_interpretation_from_identification(identified)
@@ -991,8 +1025,8 @@ async def handle_image_product_search(
             if isinstance(tray_result.commercial_data, dict):
                 tray_result.commercial_data["match_status"] = "ambiguous"
         else:
-            # Exact miss — immediately search the line (don't ask "quer que eu
-            # mostre?" and then forget the photo on "sim").
+            # Exact miss — staged nearby recovery:
+            # C) soft line search, D) dial-color lock on shortlist / second probe.
             soft_interpretation = soft_line_interpretation_from_identification(
                 identified
             )
@@ -1004,10 +1038,33 @@ async def handle_image_product_search(
                 if soft_result and isinstance(soft_result.commercial_data, dict)
                 else None
             )
+            shown: list[dict[str, Any]] = []
             if isinstance(soft_products, list) and soft_products:
+                shown = select_products_for_identified_dial(
+                    soft_products,
+                    identified,
+                    limit=2,
+                )
+            if not shown:
+                color_interp = color_locked_line_interpretation(identified)
+                color_result = await _execute_compiled_product_retrieval(color_interp)
+                color_products = (
+                    (color_result.commercial_data or {}).get("products")
+                    if color_result and isinstance(color_result.commercial_data, dict)
+                    else None
+                )
+                if isinstance(color_products, list) and color_products:
+                    shown = select_products_for_identified_dial(
+                        color_products,
+                        identified,
+                        limit=2,
+                    )
+                    if shown:
+                        soft_result = color_result
+                        soft_interpretation = color_interp
+            if shown and soft_result is not None:
                 from .commerce_router import _product_lines
 
-                shown = soft_products[:2]
                 numbered_lines = [
                     f"{position}. {line}"
                     for position, line in enumerate(
@@ -1026,9 +1083,15 @@ async def handle_image_product_search(
                     **(tray_result.commercial_data or {}),
                     "products": shown,
                     "match_status": "ambiguous",
+                    "dial_color_locked": True,
                 }
                 tray_result.safety_reason = None
                 interpretation = soft_interpretation
+                print("[sales.image.color_lock]", {
+                    "shown": len(shown),
+                    "ids": [str(p.get("id")) for p in shown],
+                    "color": identified.color,
+                })
             else:
                 line_hint = soft_interpretation.subject.model or label
                 tray_result.reply_text = (
