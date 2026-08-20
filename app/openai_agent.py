@@ -616,10 +616,15 @@ async def _generate_agent_reply_async_inner(
     except (TypeError, ValueError):
         inbound_id = None
     settings = get_settings()
-    from .history_window import count_user_assistant_turns, select_model_history_turns
+    from .history_window import (
+        count_user_assistant_turns,
+        resolve_history_hard_cap,
+        resolve_model_history_limit,
+        select_model_history_turns,
+    )
 
-    history_limit = int(getattr(settings, "agent_history_limit", 12))
-    history_hard_cap = int(getattr(settings, "agent_history_hard_cap", 80))
+    history_limit = resolve_model_history_limit(settings)
+    history_hard_cap = resolve_history_hard_cap(settings)
     history_lookup = {
         "conversation_id": message.conversation_id,
         "sender_phone": message.sender_phone,

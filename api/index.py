@@ -282,7 +282,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v15"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v16"
 
 
 @app.get("/api/health")
@@ -344,7 +344,9 @@ async def health():
             "agent_critique_max_retries",
             2,
         ),
-        "agent_history_limit": getattr(settings, "agent_history_limit", 80),
+        "agent_history_limit": getattr(settings, "agent_history_limit", 12),
+        "agent_history_hard_cap": getattr(settings, "agent_history_hard_cap", 80),
+        "agent_max_recent_turns": getattr(settings, "agent_max_recent_turns", 12),
         "agent_send_idempotency_enabled": getattr(
             settings,
             "agent_send_idempotency_enabled",

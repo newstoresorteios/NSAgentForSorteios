@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from .channel_profiles import get_channel_profile
 from .config import get_settings
+from .history_window import resolve_model_history_limit
 from .models import IncomingMessage
 from .persona_repository import (
     DEFAULT_PERSONA_KEY,
@@ -365,7 +366,7 @@ def compile_agent_prompt(
         )
 
     recent_window = (recent_turns or [])[
-        - int(getattr(settings, "agent_max_recent_turns", 8) or 8) :
+        - resolve_model_history_limit(settings) :
     ]
     for turn in recent_window:
         if not isinstance(turn, dict):

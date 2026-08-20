@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.history_window import count_user_assistant_turns, select_model_history_turns
+from app.history_window import (
+    count_user_assistant_turns,
+    resolve_history_hard_cap,
+    resolve_model_history_limit,
+    select_model_history_turns,
+)
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 
 
@@ -28,6 +33,25 @@ def test_count_user_assistant_turns():
         ]
     )
     assert counts == {"total": 3, "user": 2, "assistant": 1}
+
+
+def test_resolve_model_history_limit_prefers_history_limit():
+    settings = SimpleNamespace(
+        agent_history_limit=12,
+        agent_max_recent_turns=8,
+        agent_history_hard_cap=80,
+    )
+    assert resolve_model_history_limit(settings) == 12
+    assert resolve_history_hard_cap(settings) == 80
+
+
+def test_resolve_model_history_limit_falls_back_to_max_recent():
+    settings = SimpleNamespace(
+        agent_history_limit=None,
+        agent_max_recent_turns=10,
+        agent_history_hard_cap=80,
+    )
+    assert resolve_model_history_limit(settings) == 10
 
 
 @pytest.mark.asyncio
@@ -75,6 +99,7 @@ async def test_agent_loads_hard_cap_but_sends_model_window(monkeypatch):
         lambda: SimpleNamespace(
             agent_history_limit=12,
             agent_history_hard_cap=80,
+            agent_max_recent_turns=12,
             openai_api_key="k",
             tray_adapter_url="https://tray.example",
             tray_adapter_token="t",

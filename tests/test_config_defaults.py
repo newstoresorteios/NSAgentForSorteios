@@ -16,7 +16,10 @@ def test_pix_direct_defaults_are_safe_off():
 def test_history_window_defaults_separate_model_and_recovery():
     assert Settings.model_fields["agent_history_limit"].default == 12
     assert Settings.model_fields["agent_history_hard_cap"].default == 80
-    assert Settings.model_fields["agent_max_recent_turns"].default == 8
+    assert Settings.model_fields["agent_max_recent_turns"].default == 12
+    assert Settings.model_fields["agent_max_recent_turns"].default == (
+        Settings.model_fields["agent_history_limit"].default
+    )
 
 
 def test_legacy_history_limit_200_does_not_crash_and_coerces_to_model_window(monkeypatch):
@@ -30,6 +33,19 @@ def test_legacy_history_limit_200_does_not_crash_and_coerces_to_model_window(mon
         get_settings.cache_clear()
     assert settings.agent_history_limit == 12
     assert settings.agent_history_hard_cap == 80
+    assert settings.agent_max_recent_turns == 12
+
+
+def test_max_recent_turns_syncs_to_history_limit(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("AGENT_HISTORY_LIMIT", "12")
+    monkeypatch.setenv("AGENT_MAX_RECENT_TURNS", "8")
+    try:
+        settings = Settings()
+    finally:
+        get_settings.cache_clear()
+    assert settings.agent_history_limit == 12
+    assert settings.agent_max_recent_turns == 12
 
 
 def test_llm_budget_defaults_are_conservative_etapa6():

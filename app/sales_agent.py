@@ -1278,7 +1278,9 @@ async def _sales_response_with_openai(
                 f"{responder_instructions}\n\n{MEMORY_POLICY_PROMPT}"
             )
 
-        model_history_limit = int(getattr(settings, "agent_history_limit", 12) or 12)
+        from .history_window import resolve_model_history_limit
+
+        model_history_limit = resolve_model_history_limit(settings)
         responder_messages = [
             {"role": "system", "content": responder_instructions},
             *history[-model_history_limit:],

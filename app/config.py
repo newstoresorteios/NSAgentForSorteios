@@ -175,8 +175,9 @@ class Settings(BaseSettings):
         default="newstore_commercial",
         alias="AGENT_PERSONA_KEY",
     )
+    # Deprecated alias of AGENT_HISTORY_LIMIT (IQ-09). Synced in model_validator.
     agent_max_recent_turns: int = Field(
-        default=8,
+        default=12,
         alias="AGENT_MAX_RECENT_TURNS",
         ge=1,
         le=40,
@@ -919,6 +920,7 @@ class Settings(BaseSettings):
         - hard_cap remains the DB recovery bound
         - values above 40 are treated as legacy "load size" and coerced to the
           intended model window (12)
+        - IQ-09: AGENT_MAX_RECENT_TURNS is an alias of AGENT_HISTORY_LIMIT
         """
         hard_cap = int(self.agent_history_hard_cap)
         limit = int(self.agent_history_limit)
@@ -938,7 +940,18 @@ class Settings(BaseSettings):
                 },
             )
             limit = 12
+        recent = int(self.agent_max_recent_turns)
+        if recent != limit:
+            print(
+                "[config.history]",
+                {
+                    "event": "sync_max_recent_turns_to_history_limit",
+                    "from": recent,
+                    "to": limit,
+                },
+            )
         object.__setattr__(self, "agent_history_limit", limit)
+        object.__setattr__(self, "agent_max_recent_turns", limit)
         return self
 
     def resolved_mp_access_token(self) -> str:

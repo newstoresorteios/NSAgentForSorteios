@@ -269,24 +269,29 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     judge_mode = resolve_effective_judge_mode(settings)
     if judge_mode not in {"off", "shadow", "enforce"}:
         judge_mode = "off"
-    from .history_window import select_model_history_turns
+    from .history_window import (
+        resolve_history_hard_cap,
+        resolve_model_history_limit,
+        select_model_history_turns,
+    )
     from .llm_call_policy import should_run_quality_judge
 
     model_turns = customer_context.get("_model_conversation_turns")
     if not model_turns:
         operational_turns = customer_context.get("_conversation_turns")
         if not operational_turns:
+            hard_cap = resolve_history_hard_cap(settings)
             operational_turns = load_recent_conversation_turns(
                 conversation_id=incoming.conversation_id,
                 sender_phone=incoming.sender_phone,
                 before_inbound_id=inbound_id,
-                limit=int(getattr(settings, "agent_history_hard_cap", 80)),
+                limit=hard_cap,
                 sender_key=incoming.sender_key,
-                hard_cap=int(getattr(settings, "agent_history_hard_cap", 80)),
+                hard_cap=hard_cap,
             )
         model_turns = select_model_history_turns(
             operational_turns,
-            limit=int(getattr(settings, "agent_history_limit", 12)),
+            limit=resolve_model_history_limit(settings),
         )
     factual_ok = bool(validation.get("valid", True))
     openai_calls = runtime.openai_call_count if runtime else 0
