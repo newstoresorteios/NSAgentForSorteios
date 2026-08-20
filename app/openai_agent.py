@@ -72,6 +72,17 @@ from .sales_agent import (
 from .greeting_policy import choose_greeting_reply
 
 
+PERSONA_GREETING_OPERATIONAL = """\
+<greeting_contract>
+O cliente enviou apenas uma saudação.
+Use a identidade, tom e saudação da persona ativa (Crono New Store).
+Apresente-se como Crono quando fizer sentido e pergunte como pode ajudar.
+Não invente produtos, preços, estoque, pedidos ou links.
+Resposta curta, natural, em português do Brasil.
+</greeting_contract>
+""".strip()
+
+
 SYSTEM_INSTRUCTIONS = f"""
 Você é o NewStoreAgent, atendente virtual da New Store Sorteios.
 
@@ -230,6 +241,78 @@ Mensagem recebida via {channel_label}:
 Responda de forma natural, objetiva e correta.
 Use WORKING_MEMORY só internamente; não ofereça pedido/link/dados sem o cliente pedir.
 """.strip()
+
+
+async def generate_persona_greeting_reply(
+    message: IncomingMessage,
+    customer_context: dict,
+    *,
+    recent_turns: list[dict] | None = None,
+    conversation_state: CommerceConversationState | None = None,
+) -> AgentResult:
+    """Answer pure greetings with the compiled DB persona (Crono) as authority."""
+    settings = get_settings()
+    if not (
+        bool(getattr(settings, "agent_db_persona_enabled", False))
+        and settings.openai_api_key
+    ):
+        return AgentResult(
+            reply_text=choose_greeting_reply(recent_turns),
+            intent="general",
+            handoff_required=False,
+            safety_reason="persona_greeting_unavailable",
+        )
+
+    from .prompt_compiler import resolve_system_instructions
+
+    facts = gather_customer_facts(message, customer_context)
+    facts["scope_domain"] = "greeting"
+    facts["primary_intent"] = "greeting"
+    facts["intents"] = [*facts.get("intents", []), "greeting"]
+    system_instructions = resolve_system_instructions(
+        fallback_instructions=PERSONA_GREETING_OPERATIONAL,
+        incoming=message,
+        conversation_state=conversation_state,
+        recent_turns=recent_turns,
+    )
+    messages = [
+        {"role": "system", "content": system_instructions},
+        {"role": "user", "content": build_agent_input(message, customer_context, facts)},
+    ]
+    try:
+        from .openai_errors import OpenAIGatewayError
+        from .openai_gateway import generate_text_output
+
+        text_result = await generate_text_output(
+            model=settings.openai_model,
+            messages=messages,
+            temperature=0.4,
+            call_type="persona_greeting",
+        )
+        content = (text_result.text or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        print("[openai.agent.persona_greeting.error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:160],
+        })
+        return AgentResult(
+            reply_text=choose_greeting_reply(recent_turns),
+            intent="general",
+            handoff_required=False,
+            safety_reason=f"persona_greeting_error:{type(exc).__name__}",
+        )
+    if not content:
+        return AgentResult(
+            reply_text=choose_greeting_reply(recent_turns),
+            intent="general",
+            handoff_required=False,
+            safety_reason="persona_greeting_empty",
+        )
+    return AgentResult(
+        reply_text=_truncate(content, settings.max_reply_chars),
+        intent="general",
+        handoff_required=False,
+    )
 
 
 def generate_openai_reply(
@@ -992,6 +1075,7 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
         and has_resumable_commerce(commerce_state)
     ):
         if has_resumable_commerce(commerce_state):
+            # Keep soft: don't dump order/payment; still use Crono greeting text.
             resume = build_contextual_greeting(commerce_state)
             return _annotate_agent_result(
                 resume,
@@ -1005,6 +1089,30 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 used_tray=False,
                 fallback_reason=interpretation._fallback_reason,
             )
+        settings = get_settings()
+        # Crono (DB persona) is the attendance reference — greet via the compiled
+        # persona prompt, not canned local phrases.
+        if (
+            bool(getattr(settings, "agent_db_persona_enabled", False))
+            and settings.openai_api_key
+        ):
+            persona_reply = await generate_persona_greeting_reply(
+                message,
+                customer_context,
+                recent_turns=recent_turns,
+                conversation_state=commerce_state,
+            )
+            if persona_reply and not persona_reply.safety_reason:
+                return _annotate_agent_result(
+                    persona_reply,
+                    domain="greeting",
+                    goal=interpretation.goal,
+                    response_source="openai",
+                    used_openai_interpreter=used_openai_interpreter,
+                    used_openai_responder=True,
+                    used_tray=False,
+                    fallback_reason=interpretation._fallback_reason,
+                )
         return _annotate_agent_result(
             AgentResult(
                 reply_text=choose_greeting_reply(recent_turns),
