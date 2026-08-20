@@ -14,6 +14,7 @@ from .instagram_story_models import (
     StoryVisualUnderstanding,
 )
 from .observability import log_event
+from .story_match_decider import rerank_candidates_with_consensus, try_resolve_tied_candidates
 
 
 def _fold(value: Any) -> str:
@@ -26,6 +27,7 @@ def classify_match(
     candidates: list[StoryProductCandidate],
     *,
     multiple_products: bool,
+    analysis: StoryVisualUnderstanding | None = None,
 ) -> tuple[str, StoryProductCandidate | None]:
     settings = get_settings()
     exact_min = float(
@@ -46,6 +48,10 @@ def classify_match(
     top1 = ordered[0]
     top2 = ordered[1] if len(ordered) > 1 else None
     gap = top1.score - (top2.score if top2 else 0.0)
+    if analysis is not None and top2 is not None and gap < margin:
+        resolved = try_resolve_tied_candidates(ordered, analysis, margin=margin)
+        if resolved is not None:
+            return "matched", resolved
     reasons = " ".join(top1.match_reasons).casefold()
     is_exact = any(
         token in reasons
@@ -345,8 +351,14 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
     for ref in analysis.visible_references or []:
         _add_phrase(ref)
     for text in analysis.visible_text or []:
-        if _is_sku_like(str(text)):
-            _add_phrase(text)
+        raw = str(text or "").strip()
+        if _is_sku_like(raw):
+            _add_phrase(raw)
+            continue
+        # Title block on Story art (e.g. CHRISTOPHER WARD C63 SEALANDER ROCKS).
+        word_count = len([p for p in raw.replace("/", " ").split() if len(p.strip()) >= 2])
+        if len(raw) >= 12 and word_count >= 2:
+            _add_phrase(raw)
     for model in analysis.model_hypotheses or []:
         _add_phrase(model)
     for collection in analysis.collection_hypotheses or []:
@@ -483,12 +495,29 @@ def tray_search_jobs(
         _add(brand, distinctive)
     if tokens:
         _add(brand, tokens)
+    for line in _title_lines_for_search(analysis):
+        parts = distinctive_search_tokens(
+            [
+                part.strip().strip(":.,;")
+                for part in str(line).replace("/", " ").replace("-", " ").split()
+            ]
+        )
+        if len(parts) >= 2:
+            _add(brand, parts[:3])
+        elif len(parts) == 1:
+            _add(brand, parts)
     if brand and distinctive:
         _add(brand, distinctive[:1])
     elif brand and len(tokens) > 1:
         _add(brand, tokens[:1])
     _add(slug_brand, slug_tokens)
-    return jobs[:6]
+    return jobs[:8]
+
+
+def _title_lines_for_search(analysis: StoryVisualUnderstanding) -> list[str]:
+    from .story_match_decider import _title_like_lines
+
+    return _title_like_lines(analysis)
 
 
 _STORY_TRAY_PAGE_SIZE = 20
@@ -991,6 +1020,8 @@ async def match_story_to_catalog(
                 print("[story.matcher.tray.error]", {"error_type": type(exc).__name__})
 
     ordered = sorted(candidates, key=lambda c: (-c.score, c.product_id))[:limit]
+    if analysis is not None and ordered:
+        ordered = rerank_candidates_with_consensus(ordered, analysis)[:limit]
     log_event(
         "instagram_story.candidates_found",
         {

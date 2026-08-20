@@ -446,6 +446,7 @@ async def _finalize_story_catalog_match(
     status, top = classify_match(
         candidates,
         multiple_products=bool(analysis.multiple_products),
+        analysis=analysis,
     )
     if candidates:
         log_event(
