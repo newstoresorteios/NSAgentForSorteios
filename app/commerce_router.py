@@ -228,6 +228,27 @@ def _products(result: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in products[:3] if isinstance(item, dict)] if isinstance(products, list) else []
 
 
+def _as_money(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        # Accept "3569.99" or "3.569,99"
+        if "," in text and "." in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif "," in text:
+            text = text.replace(",", ".")
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
 def _price(product: dict[str, Any]) -> Any:
     for key in ("current_price", "promotional_price", "price"):
         if product.get(key) is not None:
@@ -235,12 +256,136 @@ def _price(product: dict[str, Any]) -> Any:
     return None
 
 
+def _list_price(product: dict[str, Any]) -> float | None:
+    """Shelf / a-prazo price (not the Pix cash amount)."""
+    for key in ("current_price", "price"):
+        money = _as_money(product.get(key))
+        if money is not None and money > 0:
+            return money
+    return _as_money(product.get("promotional_price"))
+
+
 def _price_label(value: Any) -> str | None:
+    money = _as_money(value)
+    if money is not None:
+        return f"R$ {money:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     if value is None:
         return None
-    if isinstance(value, (int, float)):
-        return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return str(value)
+
+
+def _payment_details(product: dict[str, Any]) -> dict[str, Any] | None:
+    for key in ("payment_option_details", "payment_option"):
+        value = product.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _pix_option_cash_value(pix: Any) -> float | None:
+    if not isinstance(pix, dict):
+        return None
+    direct = _as_money(pix.get("value"))
+    if direct is not None and direct > 0:
+        return direct
+    for key in ("application_value", "order_total", "total_base"):
+        money = _as_money(pix.get(key))
+        if money is not None and money > 0:
+            # Prefer discounted application when present.
+            if key == "total_base":
+                discount = _as_money(pix.get("discount_value")) or 0.0
+                if discount > 0:
+                    return max(money - discount, 0.0)
+            return money
+    plots = pix.get("plots")
+    if isinstance(plots, list):
+        for plot in plots:
+            if not isinstance(plot, dict):
+                continue
+            money = _as_money(plot.get("value") or plot.get("order_total"))
+            if money is not None and money > 0:
+                return money
+    return None
+
+
+def _pix_discount_percent() -> int:
+    try:
+        from .persona_runtime import DEFAULT_PIX_DISCOUNT_PERCENT, get_persona_runtime
+
+        runtime = get_persona_runtime()
+        if runtime is not None:
+            return int(
+                getattr(runtime, "pix_discount_percent", None)
+                or DEFAULT_PIX_DISCOUNT_PERCENT
+            )
+        return int(DEFAULT_PIX_DISCOUNT_PERCENT)
+    except Exception:  # noqa: BLE001
+        return 15
+
+
+def _pix_cash_price(product: dict[str, Any], payment: dict[str, Any] | None) -> float | None:
+    if payment:
+        pix_value = _pix_option_cash_value(payment.get("pix"))
+        if pix_value is not None:
+            return pix_value
+    list_price = _list_price(product)
+    promo = _as_money(product.get("promotional_price"))
+    if list_price is not None and promo is not None and 0 < promo < list_price:
+        return promo
+    if list_price is None:
+        return promo
+    percent = _pix_discount_percent()
+    if percent <= 0 or percent >= 100:
+        return None
+    return round(list_price * (100 - percent) / 100.0, 2)
+
+
+def _installment_lines(
+    payment: dict[str, Any] | None,
+    *,
+    limit: int = 2,
+) -> list[str]:
+    if not payment:
+        return []
+    installments = payment.get("installments")
+    if not isinstance(installments, list):
+        return []
+    parsed: list[tuple[bool, int, float]] = []
+    for item in installments:
+        if not isinstance(item, dict):
+            continue
+        count = item.get("count")
+        amount = _as_money(item.get("value"))
+        if not isinstance(count, int) or count < 2 or amount is None:
+            continue
+        parsed.append((bool(item.get("interest")), count, amount))
+    if not parsed:
+        return []
+    # Prefer the best interest-free offer, then one with interest.
+    no_interest = sorted(
+        [row for row in parsed if not row[0]],
+        key=lambda row: row[1],
+        reverse=True,
+    )
+    with_interest = sorted(
+        [row for row in parsed if row[0]],
+        key=lambda row: row[1],
+        reverse=True,
+    )
+    chosen: list[tuple[bool, int, float]] = []
+    if no_interest:
+        chosen.append(no_interest[0])
+    if with_interest and len(chosen) < limit:
+        chosen.append(with_interest[0])
+    if not chosen:
+        chosen = parsed[:limit]
+    lines: list[str] = []
+    for interest, count, amount in chosen[:limit]:
+        interest_label = " com juros" if interest else " sem juros"
+        amount_label = _price_label(amount)
+        if amount_label:
+            lines.append(f"{count}x de {amount_label}{interest_label}")
+    return lines
 
 
 def _payment_label(value: Any, *, compact: bool = False) -> str | None:
@@ -251,9 +396,9 @@ def _payment_label(value: Any, *, compact: bool = False) -> str | None:
     if not isinstance(value, dict):
         return None
     parts: list[str] = []
-    pix = value.get("pix")
-    if isinstance(pix, dict) and pix.get("value") is not None:
-        parts.append(f"Pix: {_price_label(pix['value'])}")
+    pix_value = _pix_option_cash_value(value.get("pix"))
+    if pix_value is not None:
+        parts.append(f"Pix: {_price_label(pix_value)}")
     installments = value.get("installments")
     if isinstance(installments, list):
         limit = 1 if compact else 3
@@ -276,36 +421,65 @@ def _product_lines(
     lines: list[str] = []
     for product in products:
         name = product.get("name") or "Produto encontrado"
-        parts = [str(name)]
-        if product.get("reference"):
-            parts.append(f"Ref.: {product['reference']}")
-        price = _price(product)
-        if price is not None:
-            parts.append(f"Pre\u00e7o: {_price_label(price)}")
+        payment = _payment_details(product)
+        list_price = _list_price(product)
+        pix_price = _pix_cash_price(product, payment)
         product_url = (
             product.get("url")
             or product.get("product_url")
             or product.get("link")
         )
-        # Always surface the storefront link in shortlists — customers use it
-        # instead of asking for photos. Keep payment/stock out of compact mode.
+        if compact:
+            block: list[str] = [str(name)]
+            if product.get("reference"):
+                block.append(f"Ref.: {product['reference']}")
+            if list_price is not None:
+                block.append(f"A prazo: {_price_label(list_price)}")
+            if pix_price is not None and (
+                list_price is None or abs(pix_price - list_price) >= 0.01
+            ):
+                block.append(f"À vista no Pix: {_price_label(pix_price)}")
+            for installment in _installment_lines(payment, limit=2):
+                block.append(installment)
+            if isinstance(product_url, str) and product_url.strip():
+                block.append(f"Link: {product_url.strip()}")
+            lines.append("\n".join(block))
+            continue
+
+        parts = [str(name)]
+        if product.get("reference"):
+            parts.append(f"Ref.: {product['reference']}")
+        if list_price is not None:
+            parts.append(f"A prazo: {_price_label(list_price)}")
+        elif (legacy := _price(product)) is not None:
+            parts.append(f"Preço: {_price_label(legacy)}")
+        if pix_price is not None and (
+            list_price is None or abs(pix_price - list_price) >= 0.01
+        ):
+            parts.append(f"À vista no Pix: {_price_label(pix_price)}")
         if isinstance(product_url, str) and product_url.strip():
             parts.append(f"Link: {product_url.strip()}")
-        if not compact:
-            payment = _payment_label(
-                product.get("payment_option_details")
-            ) or _payment_label(product.get("payment_option"))
-            if payment:
-                parts.append(f"Condi\u00e7\u00f5es comerciais: {payment}")
-        if inventory and not compact:
+        payment_text = _payment_label(payment) or _payment_label(
+            product.get("payment_option")
+        )
+        if payment_text:
+            parts.append(f"Condições comerciais: {payment_text}")
+        for installment in _installment_lines(payment, limit=3):
+            # Avoid duplicating installment text already covered by payment_text.
+            if installment.split(" de ")[0] not in (payment_text or ""):
+                parts.append(installment)
+        if inventory:
             if inventory.get("stock") is not None:
                 parts.append(f"Estoque: {inventory['stock']}")
             if inventory.get("availability"):
                 parts.append(f"Disponibilidade: {inventory['availability']}")
-            for key, label in (("available_for_purchase", "Dispon\u00edvel para compra"), ("upon_request", "Sob consulta")):
+            for key, label in (
+                ("available_for_purchase", "Disponível para compra"),
+                ("upon_request", "Sob consulta"),
+            ):
                 if inventory.get(key) is not None:
                     parts.append(f"{label}: {inventory[key]}")
-        elif product.get("stock") is not None and not compact:
+        elif product.get("stock") is not None:
             parts.append(f"Estoque: {product['stock']}")
         lines.append(" | ".join(parts))
     return lines
@@ -324,7 +498,7 @@ def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
     ]
     suffix = "\n\nÉ algum desses?" if action == "product_disambiguation" else ""
     return AgentResult(
-        reply_text=prefix + "\n" + "\n".join(numbered_lines) + suffix,
+        reply_text=prefix + "\n\n" + "\n\n".join(numbered_lines) + suffix,
         intent="commerce",
         handoff_required=False,
         commercial_data={"products": products},

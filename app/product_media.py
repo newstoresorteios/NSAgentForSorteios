@@ -475,7 +475,8 @@ async def resolve_presented_product_images(
     else:
         reply_text = (
             "Estas são as fotos oficiais dos modelos que listei:\n\n" + body
-        )    return AgentResult(
+        )
+    return AgentResult(
         reply_text=reply_text,
         intent="commerce",
         handoff_required=False,

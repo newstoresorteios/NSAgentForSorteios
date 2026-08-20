@@ -467,6 +467,57 @@ def test_infer_family_codes_prefers_c63_not_reference_fragments():
     assert infer_family_codes_from_candidates(products, interpretation) == ("C63",)
 
 
+def test_compact_product_lines_include_cash_and_installments():
+    from app.commerce_router import _product_lines, _product_result
+
+    products = [
+        {
+            "id": "1",
+            "name": "Relógio Seiko King Turtle SRPE05",
+            "reference": "SRPE05K1",
+            "current_price": 4199.99,
+            "url": "https://www.newstorerj.com.br/relogios/relogio-seiko-king-turtle-srpe05k1",
+            "payment_option_details": {
+                "pix": {
+                    "name": "Pix - Vindi",
+                    "plots": [{"count": 1, "value": 3569.99, "interest": False}],
+                },
+                "installments": [
+                    {"count": 12, "value": 350.00, "interest": False},
+                    {"count": 21, "value": 227.80, "interest": True},
+                ],
+            },
+        }
+    ]
+    compact = _product_lines(products, compact=True)[0]
+    assert "A prazo: R$ 4.199,99" in compact
+    assert "À vista no Pix: R$ 3.569,99" in compact
+    assert "12x de R$ 350,00 sem juros" in compact
+    assert "21x de R$ 227,80 com juros" in compact
+    assert "Link: https://www.newstorerj.com.br/relogios/relogio-seiko-king-turtle-srpe05k1" in compact
+    assert "Estoque:" not in compact
+    reply = _product_result("product_search", products).reply_text
+    assert "1. Relógio Seiko King Turtle SRPE05\nRef.: SRPE05K1\nA prazo:" in reply
+
+
+def test_compact_product_lines_derive_pix_when_payment_details_missing():
+    from app.commerce_router import _product_lines
+
+    products = [
+        {
+            "id": "1",
+            "name": "Relógio Seiko King Turtle SRPE05",
+            "reference": "SRPE05K1",
+            "current_price": 4199.99,
+            "url": "https://www.newstorerj.com.br/relogios/seiko-turtle",
+        }
+    ]
+    compact = _product_lines(products, compact=True)[0]
+    assert "A prazo: R$ 4.199,99" in compact
+    assert "À vista no Pix: R$ 3.569,99" in compact
+    assert "Link: https://www.newstorerj.com.br/relogios/seiko-turtle" in compact
+
+
 def test_compact_product_lines_omit_long_payment_dump():
     from app.commerce_router import _product_lines
 
@@ -478,21 +529,22 @@ def test_compact_product_lines_omit_long_payment_dump():
             "current_price": 13004.99,
             "url": "https://www.newstorerj.com.br/relogios-cw/sealander",
             "payment_option_details": {
-                "pix": {"value": 13004.99},
+                "pix": {"value": 11054.24},
                 "installments": [
                     {"count": 12, "value": 1275, "interest": False},
                     {"count": 21, "value": 829.84, "interest": True},
                 ],
             },
+            "stock": 2,
         }
     ]
     compact = _product_lines(products, compact=True)[0]
     full = _product_lines(products, compact=False)[0]
-    assert "Preço:" in compact
-    assert "Condições comerciais" not in compact
-    assert "Condições comerciais" in full
-    assert "Link: https://www.newstorerj.com.br/relogios-cw/sealander" in compact
+    assert "A prazo: R$ 13.004,99" in compact
+    assert "À vista no Pix: R$ 11.054,24" in compact
     assert "Estoque:" not in compact
+    assert "Estoque:" in full
+    assert "Condições comerciais" in full
 
 
 def test_compact_product_lines_keep_url_omit_stock():
