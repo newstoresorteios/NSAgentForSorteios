@@ -147,6 +147,48 @@ def test_explicit_no_preference_is_not_an_unknown_question_candidate():
     assert state["enough_information_to_search"] is False
 
 
+def test_persona_qualification_blocks_brand_only_force_retrieval(monkeypatch):
+    import app.persona_runtime as persona_runtime
+    import app.sales_agent as sales_agent
+
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Qual faixa de investimento você tem em mente?",
+            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
+        ],
+    )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="find",
+            subject={"product_type": "relógio", "brand": "Seiko"},
+            preferences={},
+            information_needed=["catalog"],
+            references_previous_context=False,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            confidence=0.9,
+        )
+        state = sales_agent._discovery_state(interpretation, [])
+        assert state["persona_qualification_required"] is True
+        assert state["force_retrieval"] is False
+        assert sales_agent._needs_clarification_before_retrieval(
+            interpretation,
+            {"intent": "product_search"},
+            state,
+        )
+        question = sales_agent._persona_qualification_question(interpretation, state)
+        assert question and "investimento" in question.casefold()
+    finally:
+        persona_runtime.reset_persona_runtime(token)
+
+
 @pytest.mark.asyncio
 async def test_clarification_receives_known_preferences_and_recent_questions(monkeypatch):
     import app.sales_agent as sales_agent

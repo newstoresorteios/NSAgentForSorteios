@@ -53,6 +53,8 @@ class PersonaRuntimeConfig(BaseModel):
     site_price_is_final: bool = True
     require_cart_for_informational_payment: bool = False
     require_product_before_checkout: bool = True
+    require_qualification_before_catalog: bool = True
+    qualification_prompts: list[str] = Field(default_factory=list)
     negotiation_beyond_pix: Literal["deny", "human_handoff"] = "human_handoff"
     policy_source: str = "defaults"
     load_error: str | None = None
@@ -93,6 +95,10 @@ class PersonaRuntimeConfig(BaseModel):
                 self.require_cart_for_informational_payment
             ),
             "require_product_before_checkout": self.require_product_before_checkout,
+            "require_qualification_before_catalog": (
+                self.require_qualification_before_catalog
+            ),
+            "qualification_prompt_count": len(self.qualification_prompts),
             "negotiation_beyond_pix": self.negotiation_beyond_pix,
             "policy_source": self.policy_source,
             "chatbo_persona_id": self.chatbo_persona_id,
@@ -111,9 +117,16 @@ class PersonaRuntimeConfig(BaseModel):
             f"{self.require_cart_for_informational_payment}\n"
             f"- require_product_before_checkout: "
             f"{self.require_product_before_checkout}\n"
+            f"- require_qualification_before_catalog: "
+            f"{self.require_qualification_before_catalog}\n"
             f"- negotiation_beyond_pix: {self.negotiation_beyond_pix}\n"
             "- Use o perfil ChatBo completo no system prompt "
             "(saudação, objeções, recomendação, handoff).\n"
+            "- Se require_qualification_before_catalog=true e o cliente só "
+            "citou marca/categoria sem estilo, orçamento, ocasião ou urgência, "
+            "use goal=discover, needs_clarification=true e "
+            "ready_for_retrieval=false (uma pergunta curta).\n"
+            "- Modelo/referência explícitos liberam busca imediata.\n"
             "- Perguntas de desconto/PIX sem fechar compra = "
             "payment_request_kind=informational e purchase_action=null.\n"
             "- Nunca prometa desconto acima de max_pix_discount_percent.\n"
@@ -146,6 +159,8 @@ class PersonaRuntimeConfig(BaseModel):
                 "Consulta informativa de pagamento/desconto "
                 f"{'exige' if self.require_cart_for_informational_payment else 'não exige'} "
                 "carrinho.",
+                "Antes de listar catálogo: "
+                f"{'pergunte preferências da qualificação ChatBo' if self.require_qualification_before_catalog else 'pode buscar se o cliente pedir opções'}.",
                 f"Negociação além do PIX oficial: {negotiation}.",
                 "Siga o bloco <persona_knowledge> / persona ChatBo completo.",
                 "</persona_runtime_policy>",
@@ -305,6 +320,22 @@ def apply_policy_overrides(
     )
 
 
+def _as_prompt_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                out.append(text)
+        return out
+    return []
+
+
 def _enrich_from_chatbo_profile(
     config: PersonaRuntimeConfig,
     chatbo_profile: dict[str, Any] | None,
@@ -334,6 +365,11 @@ def _enrich_from_chatbo_profile(
     address = str(chatbo_profile.get("customer_address_style") or "").strip()
     if address:
         updates["customer_address_style"] = address
+    qualification_prompts = _as_prompt_list(chatbo_profile.get("qualification_rules"))
+    if qualification_prompts:
+        updates["qualification_prompts"] = qualification_prompts
+        # ChatBo qualification list is an executable discovery gate, not just prose.
+        updates["require_qualification_before_catalog"] = True
     if not updates:
         return config
     enriched = config.model_copy(update=updates)

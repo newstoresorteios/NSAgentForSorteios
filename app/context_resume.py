@@ -60,6 +60,42 @@ def has_resumable_commerce(
     return commerce_state_resumable_score(state) >= 20
 
 
+def _presented_product_ids(products: Any) -> set[str]:
+    ids: set[str] = set()
+    if not isinstance(products, list):
+        return ids
+    for item in products:
+        if not isinstance(item, dict):
+            continue
+        product_id = str(item.get("product_id") or "").strip()
+        if product_id:
+            ids.add(product_id)
+    return ids
+
+
+def _prefer_latest_presentation(merged: dict[str, Any], latest: dict[str, Any]) -> dict[str, Any]:
+    """Keep the newest numbered shortlist so \"1\"/\"2\"/\"3\" match what the customer saw."""
+    latest_presented = latest.get("last_presented_products")
+    if not isinstance(latest_presented, list) or not latest_presented:
+        return merged
+
+    merged["last_presented_products"] = latest_presented
+    if latest.get("product_resolution_state"):
+        merged["product_resolution_state"] = latest["product_resolution_state"]
+    if latest.get("active_topic"):
+        merged["active_topic"] = latest["active_topic"]
+
+    # Stale active_product from an older cart must not shadow a fresh shortlist.
+    active = merged.get("active_product")
+    active_id = ""
+    if isinstance(active, dict):
+        active_id = str(active.get("product_id") or "").strip()
+    presented_ids = _presented_product_ids(latest_presented)
+    if active_id and presented_ids and active_id not in presented_ids:
+        merged["active_product"] = None
+    return merged
+
+
 def merge_commerce_states(
     primary: dict[str, Any] | None,
     fallback: dict[str, Any] | None,
@@ -106,7 +142,8 @@ def merge_commerce_states(
             ):
                 base["pending_action"] = "awaiting_payment"
         return base
-    return donor
+    # Richer cart/order donor wins, but never discard the latest product shortlist.
+    return _prefer_latest_presentation(dict(donor), base)
 
 
 def is_short_affirmation(text: str | None) -> bool:

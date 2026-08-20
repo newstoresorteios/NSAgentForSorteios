@@ -32,6 +32,35 @@ def test_merge_recovers_order_wiped_by_later_greeting():
     assert merged["pending_action"] == "awaiting_payment"
 
 
+def test_merge_keeps_latest_presented_list_over_richer_cart_donor():
+    latest = {
+        "last_presented_products": [
+            {"position": 1, "product_id": "1429", "name": "Seiko A", "brand": "Seiko"},
+            {"position": 2, "product_id": "1945", "name": "Seiko B", "brand": "Seiko"},
+            {"position": 3, "product_id": "1949", "name": "Seiko C", "brand": "Seiko"},
+        ],
+        "product_resolution_state": "options_presented",
+        "active_topic": "seiko",
+        "active_product": None,
+        "pending_action": None,
+    }
+    previous = {
+        "cart_session_id": "cart-old",
+        "pending_action": "choose_checkout_channel",
+        "active_product": {"product_id": "641", "name": "Tissot", "brand": "Tissot"},
+        "last_presented_products": [
+            {"position": 1, "product_id": "641", "name": "Tissot", "brand": "Tissot"},
+            {"position": 2, "product_id": "651", "name": "Tissot azul", "brand": "Tissot"},
+            {"position": 3, "product_id": "663", "name": "Citizen", "brand": "Citizen"},
+        ],
+    }
+    merged = merge_commerce_states(latest, previous)
+    assert merged["cart_session_id"] == "cart-old"
+    assert merged["last_presented_products"][0]["product_id"] == "1429"
+    assert merged["active_product"] is None
+    assert merged["product_resolution_state"] == "options_presented"
+
+
 def test_soft_greeting_and_unpaid_resume_detection():
     assert is_soft_greeting("Opa, boa noite")
     assert is_unpaid_order_resume_request(

@@ -1150,6 +1150,95 @@ def _subject_identifiable(interpretation: SalesInterpretation) -> bool:
     return any((subject.product_type, subject.brand, subject.model, subject.reference, subject.ean))
 
 
+def _persona_requires_qualification() -> bool:
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+    except Exception:
+        return False
+    return bool(runtime and runtime.enabled and runtime.require_qualification_before_catalog)
+
+
+def _persona_qualification_question(
+    interpretation: SalesInterpretation,
+    discovery_state: dict[str, Any] | None = None,
+) -> str | None:
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+    except Exception:
+        runtime = None
+    prompts = list(getattr(runtime, "qualification_prompts", None) or [])
+    if not prompts:
+        prompts = [
+            "Você já tem um modelo em mente ou quer uma sugestão?",
+            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
+            "Qual faixa de investimento você tem em mente?",
+        ]
+
+    known = set((discovery_state or {}).get("known_preferences") or [])
+    if isinstance((discovery_state or {}).get("known_preferences"), dict):
+        known = set(((discovery_state or {}).get("known_preferences") or {}).keys())
+    explicit_no = set((discovery_state or {}).get("explicit_no_preferences") or [])
+    recent = [
+        str(item or "").casefold()
+        for item in ((discovery_state or {}).get("recent_questions") or [])
+    ]
+
+    def _unused(prompt: str) -> bool:
+        folded = prompt.casefold()
+        return not any(folded[:48] in previous or previous[:48] in folded for previous in recent)
+
+    # Prefer preference-shaped questions still unknown.
+    preference_hints = (
+        ("budget", ("investimento", "orçamento", "orcamento", "faixa")),
+        ("style", ("estilo", "esporte", "ocasião", "ocasiao", "dia a dia", "trabalho")),
+        ("occasion", ("ocasião", "ocasiao", "presente", "especial")),
+        ("recipient", ("chamar", "nome", "para quem")),
+    )
+    for field, needles in preference_hints:
+        if field in known or field in explicit_no:
+            continue
+        for prompt in prompts:
+            folded = prompt.casefold()
+            if any(needle in folded for needle in needles) and _unused(prompt):
+                return prompt
+
+    for prompt in prompts:
+        if _unused(prompt):
+            return prompt
+    if interpretation.subject.brand:
+        return (
+            f"Beleza, {interpretation.subject.brand}. "
+            "Qual faixa de investimento e o estilo que você prefere?"
+        )
+    return prompts[0] if prompts else None
+
+
+def _needs_persona_qualification(
+    interpretation: SalesInterpretation,
+    discovery_state: dict[str, Any],
+) -> bool:
+    if not _persona_requires_qualification():
+        return False
+    if interpretation.stop_clarification:
+        return False
+    if _specific_product_lock(interpretation):
+        return False
+    if discovery_state.get("clarification_count", 0) >= 2:
+        return False
+    known = set(discovery_state.get("known_preferences") or [])
+    if isinstance(discovery_state.get("known_preferences"), dict):
+        known = set((discovery_state.get("known_preferences") or {}).keys())
+    explicit_no = set(discovery_state.get("explicit_no_preferences") or [])
+    covered = known | explicit_no
+    # Brand/category alone is not enough for Crono qualification.
+    qualifying = covered - {"brand", "attributes"}
+    return len(qualifying) < 1
+
+
 def _comparison_needs_qualification(interpretation: SalesInterpretation) -> bool:
     return interpretation.goal == "compare" and not _specific_product_lock(interpretation)
 
@@ -1233,7 +1322,7 @@ def _discovery_state(
     unknown_preferences = sorted(
         preference_fields - set(known_preferences) - set(explicit_no_preferences)
     )
-    return {
+    state = {
         "clarification_count": clarification_count,
         "enough_information_to_search": enough_information,
         "ready_for_retrieval": interpretation.ready_for_retrieval,
@@ -1246,7 +1335,12 @@ def _discovery_state(
         "subject_identifiable": subject_identifiable,
         "force_retrieval": force_retrieval,
         "comparison_without_sku": comparison_without_sku,
+        "persona_qualification_required": False,
     }
+    if _needs_persona_qualification(interpretation, state):
+        state["force_retrieval"] = False
+        state["persona_qualification_required"] = True
+    return state
 
 
 def _needs_clarification_before_retrieval(
@@ -1254,6 +1348,8 @@ def _needs_clarification_before_retrieval(
     plan: dict[str, Any],
     discovery_state: dict[str, Any],
 ) -> bool:
+    if discovery_state.get("persona_qualification_required"):
+        return True
     if discovery_state["force_retrieval"]:
         return False
     if plan.get("intent") == "purchase_intent":
@@ -1279,12 +1375,24 @@ async def generate_clarification_reply(
 ) -> AgentResult:
     settings = get_settings()
     deterministic_question = interpretation.clarification_question
+    if discovery_state and discovery_state.get("persona_qualification_required"):
+        persona_question = _persona_qualification_question(interpretation, discovery_state)
+        if persona_question:
+            deterministic_question = persona_question
+            interpretation = interpretation.model_copy(
+                update={
+                    "needs_clarification": True,
+                    "clarification_question": persona_question,
+                    "ready_for_retrieval": False,
+                }
+            )
     if not deterministic_question or _comparison_needs_qualification(interpretation):
         if _comparison_needs_qualification(interpretation):
             deterministic_question = _comparison_clarification_question(message, interpretation)
         else:
             deterministic_question = (
                 interpretation.clarification_question
+                or _persona_qualification_question(interpretation, discovery_state)
                 or "Qual caracter\u00edstica ou prefer\u00eancia \u00e9 mais importante para voc\u00ea?"
             )
     if interpretation._source == "openai" and interpretation.clarification_question and not _comparison_needs_qualification(interpretation):
