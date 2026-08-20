@@ -54,7 +54,10 @@ def test_fast_critique_rewrites_trade_in_denial():
     assert "trade_in_policy_violation" in verdict.issues
 
 
-def test_greeting_avoids_repeating_same_phrase_to_same_person():
+def test_greeting_avoids_repeating_same_phrase_to_same_person(monkeypatch):
+    import app.greeting_policy as gp
+
+    monkeypatch.setattr(gp, "resolve_persona_greeting", lambda: None)
     assert is_generic_greeting_reply("Olá! Como posso ajudar?")
     history = [{"role": "assistant", "content": "Olá! Como posso ajudar?"}]
     reply = choose_greeting_reply(history)
@@ -63,6 +66,21 @@ def test_greeting_avoids_repeating_same_phrase_to_same_person():
     history2 = history + [{"role": "assistant", "content": reply}]
     reply2 = choose_greeting_reply(history2)
     assert reply2 not in {"Olá! Como posso ajudar?", reply}
+
+
+def test_greeting_prefers_persona_crono(monkeypatch):
+    import app.greeting_policy as gp
+
+    crono = (
+        "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. "
+        "Como posso te ajudar hoje?"
+    )
+    monkeypatch.setattr(gp, "resolve_persona_greeting", lambda: crono)
+    assert choose_greeting_reply(None) == crono
+    assert is_generic_greeting_reply(crono)
+    # After Crono was already sent, rotate to a fallback.
+    history = [{"role": "assistant", "content": crono}]
+    assert choose_greeting_reply(history) != crono
 
 
 def test_fast_critique_dedupes_identical_greeting():

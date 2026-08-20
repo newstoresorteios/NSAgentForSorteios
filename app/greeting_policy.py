@@ -9,8 +9,8 @@ from typing import Any
 GREETING_REPLY = "Olá! Como posso ajudar?"
 
 # Short, distinct follow-ups when a generic greeting was already used recently.
-# Order = preference; first unused wins.
-_GREETING_VARIANTS = (
+# Order = preference after the persona primary greeting.
+_FALLBACK_GREETING_VARIANTS = (
     GREETING_REPLY,
     "Oi! Em que posso te ajudar?",
     "Olá! Me conta o que você procura.",
@@ -22,7 +22,7 @@ _GREETING_BODY_RE = re.compile(
     r"^\s*(ol[aá]|oi|bom dia|boa tarde|boa noite)[!.,\s]*"
     r"(como posso (te )?ajudar|em que posso (te )?ajudar|"
     r"me conta o que (você|voce) procura|pode falar|"
-    r"estou aqui|tudo bem)[!.?\s]*$",
+    r"estou aqui|tudo bem|eu sou o crono)[!.?\s]*.*$",
     flags=re.IGNORECASE,
 )
 
@@ -32,12 +32,81 @@ def _fold(text: str) -> str:
     return "".join(ch for ch in value if not unicodedata.combining(ch))
 
 
+def resolve_persona_greeting() -> str | None:
+    """Primary greeting from ChatBo persona profile / active DB persona."""
+    try:
+        from .config import get_settings
+        from .persona_knowledge_repository import (
+            chatbo_persona_id,
+            get_chatbo_persona_profile,
+        )
+        from .persona_repository import (
+            DEFAULT_PERSONA_KEY,
+            DEFAULT_TENANT_ID,
+            get_active_persona,
+        )
+
+        settings = get_settings()
+        if not bool(getattr(settings, "agent_db_persona_enabled", False)):
+            return None
+        tenant_id = str(
+            getattr(settings, "agent_persona_tenant_id", DEFAULT_TENANT_ID)
+            or DEFAULT_TENANT_ID
+        )
+        persona_key = str(
+            getattr(settings, "agent_persona_key", DEFAULT_PERSONA_KEY)
+            or DEFAULT_PERSONA_KEY
+        )
+        active = get_active_persona(tenant_id, persona_key)
+        if active is None:
+            return None
+        chatbo_id = chatbo_persona_id(active.metadata)
+        if chatbo_id:
+            profile = get_chatbo_persona_profile(chatbo_id) or {}
+            greeting = str(profile.get("greeting") or "").strip()
+            if greeting:
+                return greeting
+        # Fallback: first line in instructions that looks like a Crono greeting.
+        for line in str(active.instructions or "").splitlines():
+            cleaned = line.strip().strip('"').strip("'")
+            if "eu sou o crono" in cleaned.casefold() and len(cleaned) <= 220:
+                return cleaned
+    except Exception as exc:
+        print("[greeting.persona.error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:160],
+        })
+    return None
+
+
+def greeting_variants() -> tuple[str, ...]:
+    """Persona greeting first, then canned fallbacks (deduped)."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    primary = resolve_persona_greeting()
+    for candidate in (
+        primary,
+        *(_FALLBACK_GREETING_VARIANTS),
+    ):
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        key = _fold(text)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(text)
+    return tuple(ordered) or _FALLBACK_GREETING_VARIANTS
+
+
 def is_generic_greeting_reply(text: str | None) -> bool:
     cleaned = " ".join((text or "").strip().split())
     if not cleaned:
         return False
     folded = _fold(cleaned)
-    if any(folded == _fold(variant) for variant in _GREETING_VARIANTS):
+    if any(folded == _fold(variant) for variant in greeting_variants()):
+        return True
+    if "eu sou o crono" in folded and len(cleaned) <= 220:
         return True
     return bool(_GREETING_BODY_RE.match(cleaned))
 
@@ -82,15 +151,15 @@ def already_said(
 def choose_greeting_reply(recent_turns: list[dict[str, Any]] | None = None) -> str:
     """Pick a greeting that was not already sent in this conversation.
 
-    Goal: do not re-send the same phrase to the same person. Prefer a fresh
-    variant; if every canned greeting was used, fall back to a short nudge
-    that is not in the recent set.
+    Prefer the active persona greeting (Crono) so every customer hears the
+    same identity; only rotate canned fallbacks when that phrase was already
+    used in this thread.
     """
-    for variant in _GREETING_VARIANTS:
+    for variant in greeting_variants():
         if not already_said(variant, recent_turns):
             return variant
 
-    # All canned greetings already used — still avoid repeating the last one.
+    # All greetings already used — still avoid repeating the last one.
     fallback = "Pode me dizer o que você precisa?"
     if not already_said(fallback, recent_turns):
         return fallback
