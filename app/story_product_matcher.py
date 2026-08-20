@@ -74,6 +74,16 @@ def classify_match(
         if top1.score >= amb_min:
             return "ambiguous", top1
         return "not_found", None
+    if analysis is not None:
+        from .story_match_decider import build_evidence_profile, score_catalog_overlap
+
+        _, _, conflicts = score_catalog_overlap(top1, build_evidence_profile(analysis))
+        if any(str(item).startswith("unseen_variant:") for item in conflicts):
+            if top2 is not None:
+                resolved = try_resolve_tied_candidates(ordered, analysis, margin=0.0)
+                if resolved is not None and resolved.product_id != top1.product_id:
+                    return "matched", resolved
+            return "ambiguous", top1
     threshold = exact_min if is_exact else visual_min
     top1_listing = _candidate_listing_key(top1)
     top2_listing = _candidate_listing_key(top2) if top2 else None
@@ -218,6 +228,12 @@ _GENERIC_AND_SKIP = {
     "limitada",
     "limitado",
     "unidades",
+    "mundo",
+    "apenas",
+    "powermatic",
+    "chronometer",
+    "sapphire",
+    "crystal",
 }
 
 # Common in many SKUs of the same brand. AND-searching these with a dial color
@@ -343,6 +359,8 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
             key = _fold(token)
             if not key or key in seen or key == brand_fold or key in _COLOR_AND_SKIP:
                 continue
+            if key.endswith("mm") and key[:-2].isdigit():
+                continue
             if not allow_generic and key in _GENERIC_AND_SKIP:
                 continue
             seen.add(key)
@@ -361,6 +379,12 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
         from .story_match_decider import _is_brand_only_line
 
         if brand_names and _is_brand_only_line(raw, brand_names):
+            continue
+        folded_line = _fold(raw)
+        if any(
+            marker in folded_line
+            for marker in ("limitado", "unidades no mundo", "seminovo e", "confira")
+        ) and not any(_is_sku_like(part) for part in raw.split()):
             continue
         word_count = len([p for p in raw.replace("/", " ").split() if len(p.strip()) >= 2])
         if len(raw) >= 12 and word_count >= 2:
@@ -401,9 +425,16 @@ def collection_head_token(
             part.strip().strip(":.,;")
             for part in str(phrase or "").replace("/", " ").replace("-", " ").split()
         ]
-        strong = distinctive_search_tokens(parts)
+        strong = [
+            token
+            for token in distinctive_search_tokens(parts)
+            if not token.isdigit()
+            and not _fold(token).endswith("mm")
+            and _fold(token) not in {"powermatic"}
+        ]
         if strong:
-            return strong[-1]
+            named = [token for token in strong if len(_fold(token)) >= 6]
+            return named[-1] if named else strong[-1]
     distinctive = distinctive_search_tokens(tokens)
     if distinctive:
         return distinctive[-1]

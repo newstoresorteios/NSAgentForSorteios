@@ -45,6 +45,18 @@ _GENERIC_TITLE_SKIP = {
     "confira",
     "reserva",
     "energia",
+    "powermatic",
+    "seminovo",
+    "limitado",
+    "limitada",
+    "unidades",
+    "mundo",
+    "apenas",
+    "chronometer",
+    "sapphire",
+    "crystal",
+    "stainless",
+    "steel",
 }
 
 _WEAK_TITLE_TOKENS = {
@@ -187,13 +199,14 @@ def model_line_search_tokens(analysis: StoryVisualUnderstanding) -> list[str]:
             and len(part) >= 2
             and _fold(part) not in {"relogio", "relogios", "mm"}
             and _fold(part) not in _GENERIC_TITLE_SKIP
+            and not _fold(part).endswith("mm")
+            and not (part.isdigit() and len(part) <= 3)
         ]
         if len(strong) >= 2:
-            ordered = sorted(
-                strong,
-                key=lambda part: (1 if _fold(part) in _WEAK_TITLE_TOKENS else 0, _fold(part)),
-            )
-            return ordered[:4]
+            weak, rest = [], []
+            for part in strong:
+                (weak if _fold(part) in _WEAK_TITLE_TOKENS else rest).append(part)
+            return (rest + weak)[:4]
     return []
 
 

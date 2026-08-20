@@ -67,7 +67,15 @@ def test_tray_search_jobs_use_model_line_not_brand_only():
     assert first_brand == "Christopher Ward"
     folded = {t.casefold() for t in first_tokens}
     assert "c63" in folded
-    assert "ward" not in folded or "sealander" in folded
+    assert "sealander" in folded or "c63" in folded
+    second = jobs[1][1] if len(jobs) > 1 else []
+    second_fold = {t.casefold() for t in second}
+    assert "rocks" not in second_fold or "sealander" in second_fold
+    assert any(
+        {t.casefold() for t in tokens} == {"sealander", "verde"}
+        or {t.casefold() for t in tokens} == {"c63", "sealander"}
+        for _brand, tokens in jobs
+    )
     assert not any(
         job[1] == ["CHRISTOPHER", "WARD"] or _fold(t) == "ward" and len(job[1]) <= 2
         for job in jobs
@@ -143,3 +151,41 @@ def test_classify_match_resolves_cw_tie_with_analysis():
     assert status == "matched"
     assert top is not None
     assert top.product_id == "10611"
+
+
+def test_tray_search_jobs_use_ballade_and_color_not_powermatic_80():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Tissot"],
+        visible_text=["TISSOT BALLADE", "39 mm", "Motor: Powermatic 80"],
+        model_hypotheses=["Tissot Ballade Powermatic 80"],
+        collection_hypotheses=["Tissot Ballade"],
+        dial_colors=["blue"],
+    )
+    jobs = tray_search_jobs(analysis)
+    token_sets = [{t.casefold() for t in tokens} for _brand, tokens in jobs]
+    assert any("ballade" in tokens and "azul" in tokens for tokens in token_sets)
+    assert not any("80" in tokens for tokens in token_sets)
+    assert not any("powermatic" in tokens for tokens in token_sets)
+
+
+def test_classify_match_rejects_gmt_when_story_says_mk2():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Baltic"],
+        visible_text=["BALTIC AQUASCAPHE MK2"],
+        model_hypotheses=["Aquascaphe MK2"],
+        dial_colors=["green"],
+        watch_count=1,
+        readable_text_confidence=0.95,
+    )
+    gmt = StoryProductCandidate(
+        catalog_item_key="product:11379",
+        product_id="11379",
+        score=1.0,
+        match_reasons=[
+            "tray_brand_model:Baltic Aquascaphe verde",
+            "listing:relogio baltic aquascaphe gmt automatico verde",
+        ],
+        source="tray_search",
+    )
+    status, top = classify_match([gmt], multiple_products=False, analysis=analysis)
+    assert status != "matched"
