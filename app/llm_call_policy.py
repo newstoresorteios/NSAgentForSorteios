@@ -3,6 +3,9 @@
 Normal turns: interpret + grounded reply (≤2). Extra LLM (critique/judge)
 only when risk signals justify it — never as a substitute for deterministic
 factual validation.
+
+IQ-07: shadow base mode promotes to enforce on price/SKU/product turns;
+greeting and other low-risk paths stay skipped.
 """
 
 from __future__ import annotations
@@ -32,6 +35,22 @@ _CRITIQUE_TRIGGER_SIGNALS = frozenset(
     }
 )
 
+# IQ-07: when mode is enforce (including per-turn promotion), these also spend LLM.
+_COMMERCE_ENFORCE_TRIGGERS = frozenset(
+    {
+        "reply_contains_price",
+        "reply_contains_stock",
+        "reply_contains_promo",
+        "reply_contains_commercial_link",
+        "reply_contains_payment_link",
+        "commerce_products_presented",
+        "commerce_sku_or_reference",
+        "order_prepared_or_confirmed",
+        "payment_consulted",
+        "order_context_present",
+    }
+)
+
 
 def critique_risk_signals(
     *,
@@ -55,6 +74,58 @@ def critique_risk_signals(
         openai_call_count=openai_call_count,
         threshold=threshold,
     )
+
+
+def commerce_enforce_signal_hits(signals: list[str]) -> list[str]:
+    return [signal for signal in signals if signal in _COMMERCE_ENFORCE_TRIGGERS]
+
+
+def resolve_turn_critique_mode(
+    *,
+    incoming: IncomingMessage,
+    result: AgentResult,
+    configured_mode: str,
+    risk_score: int = 0,
+    factual_valid: bool = True,
+    openai_call_count: int = 0,
+) -> tuple[str, str]:
+    """Map configured critique mode → effective mode for this turn.
+
+    Returns (mode, reason). Greeting / low-risk stays at configured shadow/off
+    (loop still skips LLM). Commerce price/SKU/product turns promote shadow→enforce
+    when ``AGENT_CRITIQUE_ENFORCE_ON_COMMERCE`` is enabled.
+    """
+    mode = str(configured_mode or "shadow").strip().casefold()
+    if mode not in {"off", "shadow", "enforce"}:
+        mode = "shadow"
+    if mode == "off":
+        return "off", "configured_off"
+
+    skip, skip_reason = is_low_risk_judge_skip(incoming, result)
+    if skip:
+        return mode, f"skip_keep:{skip_reason or 'low_risk'}"
+
+    settings = get_settings()
+    if mode == "enforce":
+        return "enforce", "configured_enforce"
+
+    enforce_commerce = bool(
+        getattr(settings, "agent_critique_enforce_on_commerce", True)
+    )
+    if not enforce_commerce:
+        return mode, "commerce_promote_disabled"
+
+    signals = critique_risk_signals(
+        incoming=incoming,
+        result=result,
+        risk_score=risk_score,
+        factual_valid=factual_valid,
+        openai_call_count=openai_call_count,
+    )
+    hits = commerce_enforce_signal_hits(signals)
+    if hits:
+        return "enforce", f"commerce_promote:{hits[0]}"
+    return mode, "configured_shadow"
 
 
 def should_run_llm_critique(
@@ -85,10 +156,15 @@ def should_run_llm_critique(
         openai_call_count=openai_call_count,
     )
     trigger_hits = [s for s in signals if s in _CRITIQUE_TRIGGER_SIGNALS]
+    commerce_hits = commerce_enforce_signal_hits(signals)
 
     if not risk_only:
         # Legacy: always LLM after fast path (expensive).
         return True, "critique_always", signals
+
+    # IQ-07: enforce mode on commerce stakes always spends the critique LLM.
+    if critique_mode == "enforce" and commerce_hits:
+        return True, f"commerce_enforce:{commerce_hits[0]}", signals
 
     if trigger_hits:
         return True, f"risk:{trigger_hits[0]}", signals

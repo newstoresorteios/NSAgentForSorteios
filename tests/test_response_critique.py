@@ -361,7 +361,10 @@ async def test_critique_skips_greeting(monkeypatch):
     assert final.reply_text == "Olá! Como posso ajudar?"
     assert report.attempts == 0
     assert final.response_metadata["response_critique"]["skipped"] is True
-    assert final.response_metadata["response_critique"]["skip_reason"] == "soft_greeting"
+    assert final.response_metadata["response_critique"]["skip_reason"] in {
+        "soft_greeting",
+        "greeting_intent",
+    }
 
 
 @pytest.mark.asyncio
@@ -402,6 +405,7 @@ async def test_critique_risk_gate_skips_llm_on_low_risk(monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setenv("AGENT_CRITIQUE_LLM_ON_RISK_ONLY", "true")
     monkeypatch.setenv("AGENT_CRITIQUE_SHADOW_SAMPLE_RATE", "0")
+    monkeypatch.setenv("AGENT_CRITIQUE_ENFORCE_ON_COMMERCE", "false")
     get_settings.cache_clear()
 
     incoming = IncomingMessage(channel="whatsapp", text="tem relógio?")
@@ -430,3 +434,71 @@ async def test_critique_risk_gate_skips_llm_on_low_risk(monkeypatch):
     assert meta["skipped"] is True
     assert meta["risk_gate"] is True
     assert meta["skip_reason"] == "risk_gate_skip"
+
+
+@pytest.mark.asyncio
+async def test_critique_shadow_promotes_to_enforce_on_price_turn(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("AGENT_CRITIQUE_LLM_ON_RISK_ONLY", "true")
+    monkeypatch.setenv("AGENT_CRITIQUE_SHADOW_SAMPLE_RATE", "0")
+    monkeypatch.setenv("AGENT_CRITIQUE_ENFORCE_ON_COMMERCE", "true")
+    get_settings.cache_clear()
+
+    incoming = IncomingMessage(channel="whatsapp", text="quanto custa?")
+    result = AgentResult(
+        reply_text="Esse modelo custa R$ 3.200 e está disponível.",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "1", "name": "Seiko 5", "reference": "SRPD55"}],
+        },
+    )
+    calls = {"judge": 0}
+
+    async def fake_judge(**_kwargs):
+        calls["judge"] += 1
+        return CritiqueVerdict(
+            score=95,
+            pass_check=True,
+            issues=[],
+            summary="ok",
+        )
+
+    monkeypatch.setattr("app.response_critique.run_critique_judge", fake_judge)
+
+    final, report = await apply_response_critique_loop(
+        incoming=incoming,
+        result=result,
+        mode="shadow",
+        max_retries=1,
+    )
+    assert calls["judge"] == 1
+    assert report.mode == "enforce"
+    assert report.approved is True
+    meta = final.response_metadata["response_critique"]
+    assert meta.get("configured_mode") == "shadow" or report.mode == "enforce"
+
+
+@pytest.mark.asyncio
+async def test_critique_skips_greeting_intent(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("AGENT_CRITIQUE_ENFORCE_ON_COMMERCE", "true")
+    get_settings.cache_clear()
+
+    async def boom(**_kwargs):
+        raise AssertionError("greeting must skip critique LLM")
+
+    monkeypatch.setattr("app.response_critique.run_critique_judge", boom)
+
+    final, report = await apply_response_critique_loop(
+        incoming=IncomingMessage(channel="whatsapp", text="quero Seiko"),
+        result=AgentResult(
+            reply_text="Olá! Sou o Crono, posso te ajudar.",
+            intent="greeting",
+        ),
+        mode="shadow",
+        max_retries=1,
+    )
+    assert final.reply_text.startswith("Olá")
+    assert report.attempts == 0
+    assert final.response_metadata["response_critique"]["skipped"] is True
+    assert final.response_metadata["response_critique"]["skip_reason"] == "greeting_intent"

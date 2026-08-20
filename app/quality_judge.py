@@ -76,6 +76,8 @@ def is_low_risk_judge_skip(
     if source in _LOW_RISK_SOURCES:
         return True, f"deterministic:{source}"
     text = ((incoming.text if incoming else "") or "").strip()
+    if result.intent == "greeting" and not (result.commercial_data or {}):
+        return True, "greeting_intent"
     if text and _GREETING_RE.match(text):
         return True, "soft_greeting"
     if text and _THANKS_RE.match(text):
@@ -132,6 +134,35 @@ def collect_judge_risk_signals(
             signals.append("reply_contains_payment_link")
         else:
             signals.append("reply_contains_commercial_link")
+    products = commercial.get("products")
+    if (
+        (isinstance(products, list) and products)
+        or metadata.get("presented_products")
+        or commercial.get("product_id")
+        or metadata.get("active_product")
+    ):
+        signals.append("commerce_products_presented")
+    sku_bits = [
+        commercial.get("sku"),
+        commercial.get("reference"),
+        commercial.get("ean"),
+        metadata.get("sku"),
+        metadata.get("reference"),
+        metadata.get("ean"),
+    ]
+    if isinstance(products, list):
+        for product in products[:5]:
+            if not isinstance(product, dict):
+                continue
+            sku_bits.extend(
+                (
+                    product.get("sku"),
+                    product.get("reference"),
+                    product.get("ean"),
+                )
+            )
+    if any(str(bit or "").strip() for bit in sku_bits):
+        signals.append("commerce_sku_or_reference")
     if commercial.get("order_id") or metadata.get("order_state"):
         pending = str(metadata.get("pending_action") or "")
         if "confirm" in pending or metadata.get("order_created"):

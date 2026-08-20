@@ -282,7 +282,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v13"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v14"
 
 
 @app.get("/api/health")
@@ -334,6 +334,11 @@ async def health():
             "shadow",
         ),
         "agent_critique_mode": getattr(settings, "agent_critique_mode", "enforce"),
+        "agent_critique_enforce_on_commerce": getattr(
+            settings,
+            "agent_critique_enforce_on_commerce",
+            True,
+        ),
         "agent_critique_max_retries": getattr(
             settings,
             "agent_critique_max_retries",

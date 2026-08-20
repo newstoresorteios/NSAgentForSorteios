@@ -670,14 +670,27 @@ async def apply_response_critique_loop(
     """Dual-agent critique: judge draft, optionally call APIs and regenerate before send."""
     settings = get_settings()
     if mode is not None:
-        critique_mode: Literal["off", "shadow", "enforce"] = mode
+        configured_mode: Literal["off", "shadow", "enforce"] = mode
     else:
         from .rollout import resolve_effective_critique_mode
 
         resolved = resolve_effective_critique_mode(settings)
-        critique_mode = (  # type: ignore[assignment]
+        configured_mode = (  # type: ignore[assignment]
             resolved if resolved in {"off", "shadow", "enforce"} else "shadow"
         )
+
+    from .llm_call_policy import resolve_turn_critique_mode
+
+    critique_mode, mode_reason = resolve_turn_critique_mode(
+        incoming=incoming,
+        result=result,
+        configured_mode=configured_mode,
+        risk_score=risk_score,
+        factual_valid=factual_valid,
+        openai_call_count=openai_call_count,
+    )
+    if critique_mode not in {"off", "shadow", "enforce"}:
+        critique_mode = "shadow"
     retries = (
         max_retries
         if max_retries is not None
@@ -694,8 +707,10 @@ async def apply_response_critique_loop(
             **report.model_dump(mode="json"),
             "skipped": True,
             "skip_reason": skip_reason,
+            "mode_reason": mode_reason,
+            "configured_mode": configured_mode,
         }
-        print("[agent.critique.skip]", {"reason": skip_reason})
+        print("[agent.critique.skip]", {"reason": skip_reason, "mode_reason": mode_reason})
         return result, report
 
     # Instant deterministic checks (no LLM) — keeps latency low for clear gaffes.
@@ -715,8 +730,10 @@ async def apply_response_critique_loop(
             "skipped": True,
             "skip_reason": fast_skip,
             "fast_path": True,
+            "mode_reason": mode_reason,
+            "configured_mode": configured_mode,
         }
-        print("[agent.critique.fast]", {"reason": fast_skip})
+        print("[agent.critique.fast]", {"reason": fast_skip, "mode_reason": mode_reason})
         return fast_result, report
 
     seeded_fail = bool(fast_verdict is not None and not fast_verdict.pass_check)
@@ -747,13 +764,28 @@ async def apply_response_critique_loop(
             "skip_reason": gate_reason,
             "risk_gate": True,
             "risk_signals": gate_signals,
+            "mode_reason": mode_reason,
+            "configured_mode": configured_mode,
         }
         print(
             "[agent.critique.skip]",
-            {"reason": gate_reason, "signals": gate_signals[:8]},
+            {
+                "reason": gate_reason,
+                "signals": gate_signals[:8],
+                "mode_reason": mode_reason,
+            },
         )
         return result, report
 
+    print(
+        "[agent.critique.mode]",
+        {
+            "configured": configured_mode,
+            "effective": critique_mode,
+            "mode_reason": mode_reason,
+            "gate_reason": gate_reason,
+        },
+    )
     try:
         return await _run_response_critique_loop(
             incoming=incoming,
@@ -776,6 +808,8 @@ async def apply_response_critique_loop(
             **report.model_dump(mode="json"),
             "error_type": type(exc).__name__,
             "skipped": True,
+            "mode_reason": mode_reason,
+            "configured_mode": configured_mode,
         }
         return result, report
 

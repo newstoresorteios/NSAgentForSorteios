@@ -373,6 +373,11 @@ class Settings(BaseSettings):
         default="shadow",
         alias="AGENT_CRITIQUE_MODE",
     )
+    # IQ-07: when base mode is shadow, promote price/SKU/product turns to enforce.
+    agent_critique_enforce_on_commerce: bool = Field(
+        default=True,
+        alias="AGENT_CRITIQUE_ENFORCE_ON_COMMERCE",
+    )
     agent_critique_max_retries: int = Field(
         default=1,
         alias="AGENT_CRITIQUE_MAX_RETRIES",

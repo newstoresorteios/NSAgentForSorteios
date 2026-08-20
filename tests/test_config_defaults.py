@@ -37,6 +37,7 @@ def test_llm_budget_defaults_are_conservative_etapa6():
     assert Settings.model_fields["agent_max_llm_calls_per_turn"].default == 2
     assert Settings.model_fields["agent_max_llm_calls_per_turn_complex"].default == 4
     assert Settings.model_fields["agent_critique_mode"].default == "shadow"
+    assert Settings.model_fields["agent_critique_enforce_on_commerce"].default is True
     assert Settings.model_fields["agent_critique_max_retries"].default == 1
     assert Settings.model_fields["agent_critique_llm_on_risk_only"].default is True
     assert Settings.model_fields["agent_critique_shadow_sample_rate"].default == 0.0
