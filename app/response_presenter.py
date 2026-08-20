@@ -107,8 +107,28 @@ def split_whatsapp_blocks(text: str, *, max_blocks: int = 3) -> str:
     if len(chunks) <= max_blocks:
         return text or ""
     head = chunks[: max_blocks - 1]
-    tail = " ".join(chunks[max_blocks - 1 :])
+    overflow = chunks[max_blocks - 1 :]
+    # Space-join is fine for prose; URL/numbered lists must keep line breaks or
+    # WhatsApp shows "url2 3. Name" smashed on one line.
+    if _URL_RE.search("\n\n".join(overflow)) or any(
+        re.match(r"^\d+\.\s", part) for part in overflow
+    ):
+        tail = "\n\n".join(overflow)
+    else:
+        tail = " ".join(overflow)
     return "\n\n".join([*head, tail]).strip()
+
+
+def should_preserve_message_blocks(text: str, metadata: dict[str, Any] | None = None) -> bool:
+    """Photo/link shortlists must not be collapsed by WhatsApp block trimming."""
+    metadata = metadata or {}
+    if metadata.get("outbound_image_url") or metadata.get("outbound_image_urls"):
+        return True
+    if metadata.get("product_url_fallback"):
+        return True
+    if len(_URL_RE.findall(text or "")) >= 2:
+        return True
+    return False
 
 
 def preserve_urls(original: str, rewritten: str) -> str:
@@ -181,7 +201,8 @@ def present_reply_text_thin(
         value = limit_questions(value, max_questions=0)
     max_blocks = _max_blocks(profile)
     if profile.channel in {"whatsapp", "instagram", "facebook"}:
-        value = split_whatsapp_blocks(value, max_blocks=max_blocks)
+        if not should_preserve_message_blocks(value, metadata):
+            value = split_whatsapp_blocks(value, max_blocks=max_blocks)
     return preserve_urls(original, value).strip()
 
 
@@ -214,7 +235,8 @@ def present_reply_text_full(
 
     max_blocks = _max_blocks(profile)
     if profile.channel in {"whatsapp", "instagram", "facebook"}:
-        value = split_whatsapp_blocks(value, max_blocks=max_blocks)
+        if not should_preserve_message_blocks(value, metadata):
+            value = split_whatsapp_blocks(value, max_blocks=max_blocks)
 
     if intent in {"general", "greeting"} and not metadata.get("used_tray"):
         value = limit_questions(value, max_questions=1)

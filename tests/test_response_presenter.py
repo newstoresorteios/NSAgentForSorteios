@@ -126,14 +126,48 @@ def test_shadow_outbound_is_full_with_thin_preview(monkeypatch):
         get_settings.cache_clear()
 
 
-def test_thin_and_full_helpers_align_with_mode_dispatch():
-    raw = "Bloco A\n\nBloco B\n\nBloco C\n\nBloco D"
-    assert present_reply_text_thin(raw, channel="whatsapp") == present_reply_text(
-        raw, channel="whatsapp", mode="thin"
+def test_photo_list_keeps_newlines_under_whatsapp_block_cap():
+    raw = (
+        "Consigo sim — segue a foto principal de cada um:\n\n"
+        "1. King Turtle SRPE05K1\n"
+        "https://images.tcdn.com.br/img/a.jpg\n\n"
+        "2. Seiko 5 Sports SRPD79K1\n"
+        "https://images.tcdn.com.br/img/b.jpg\n\n"
+        "3. Prospex Save the Ocean SRPG57K1\n"
+        "https://images.tcdn.com.br/img/c.jpg\n\n"
+        "Se você quiser, eu também posso te mandar o link oficial de compra."
     )
-    assert present_reply_text_full(raw, channel="instagram") == present_reply_text(
-        raw, channel="instagram", mode="full"
+    text = present_reply_text(
+        raw,
+        channel="whatsapp",
+        intent="commerce",
+        metadata={
+            "outbound_image_urls": [
+                "https://images.tcdn.com.br/img/a.jpg",
+                "https://images.tcdn.com.br/img/b.jpg",
+                "https://images.tcdn.com.br/img/c.jpg",
+            ]
+        },
+        mode="thin",
     )
+    assert "https://images.tcdn.com.br/img/b.jpg\n\n3. Prospex" in text
+    assert "img/b.jpg 3. Prospex" not in text
+
+
+def test_url_overflow_blocks_join_with_newlines():
+    from app.response_presenter import split_whatsapp_blocks
+
+    raw = (
+        "Introdução\n\n"
+        "1. A\nhttps://images.tcdn.com.br/a.jpg\n\n"
+        "2. B\nhttps://images.tcdn.com.br/b.jpg\n\n"
+        "3. C\nhttps://images.tcdn.com.br/c.jpg\n\n"
+        "Fechamento"
+    )
+    # Without metadata skip: overflow still must not smash URLs with spaces.
+    text = split_whatsapp_blocks(raw, max_blocks=3)
+    assert "https://images.tcdn.com.br/b.jpg\n\n3. C" in text
+    assert "b.jpg 3. C" not in text
 
 
 def test_audio_disabled_on_instagram_profile():

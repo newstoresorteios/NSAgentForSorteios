@@ -456,11 +456,12 @@ async def resolve_presented_product_images(
         lines.append(f"{index}. {name}: a Tray não informou uma imagem oficial.")
     first_url = image_urls[0] if image_urls else None
     safety = None
+    body = "\n\n".join(lines)
     if not image_urls and link_fallbacks:
         safety = "product_media_link_fallback"
         reply_text = (
             "Não consegui enviar as fotos por aqui agora, mas estes são os "
-            "links oficiais com as imagens de cada modelo:\n" + "\n".join(lines)
+            "links oficiais com as imagens de cada modelo:\n\n" + body
         )
     elif not image_urls:
         safety = (
@@ -469,13 +470,12 @@ async def resolve_presented_product_images(
             else "product_image_not_available"
         )
         reply_text = (
-            "Estas são as fotos oficiais dos modelos que listei:\n" + "\n".join(lines)
+            "Estas são as fotos oficiais dos modelos que listei:\n\n" + body
         )
     else:
         reply_text = (
-            "Estas são as fotos oficiais dos modelos que listei:\n" + "\n".join(lines)
-        )
-    return AgentResult(
+            "Estas são as fotos oficiais dos modelos que listei:\n\n" + body
+        )    return AgentResult(
         reply_text=reply_text,
         intent="commerce",
         handoff_required=False,
