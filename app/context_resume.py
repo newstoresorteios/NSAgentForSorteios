@@ -276,13 +276,16 @@ def should_resume_pending_order(
     return False
 
 
-def build_contextual_greeting(state: CommerceConversationState) -> AgentResult:
+def build_contextual_greeting(
+    state: CommerceConversationState,
+    recent_turns: list[dict[str, Any]] | None = None,
+) -> AgentResult:
     """Soft greeting: keep commerce memory silently; never volunteer order/payment."""
     from .greeting_policy import choose_greeting_reply
 
     _ = state  # Memory stays in pipeline state; reply remains non-intrusive.
     return AgentResult(
-        reply_text=choose_greeting_reply(None),
+        reply_text=choose_greeting_reply(recent_turns),
         intent="general",
         response_metadata={
             "domain": "greeting",

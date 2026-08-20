@@ -282,7 +282,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v17"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v18"
 
 
 @app.get("/api/health")

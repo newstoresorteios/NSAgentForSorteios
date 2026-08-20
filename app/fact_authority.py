@@ -301,6 +301,7 @@ class GroundedCommerceEvidence(BaseModel):
 
 _COMMERCE_FIELDS: tuple[tuple[str, str], ...] = (
     ("price", "price"),
+    ("current_price", "price"),
     ("promotional_price", "promotional_price"),
     ("stock", "stock"),
     ("available", "availability"),
@@ -353,13 +354,20 @@ def grounded_evidence_from_product(
             claim.source,
         ):
             continue
-        # Stale index/cache may guide discovery but must not assert live price/stock.
-        if claim.revalidation_status == RevalidationStatus.STALE and kind in {
-            "price",
-            "promotional_price",
-            "stock",
-            "availability",
-        }:
+        # Stale index/cache may guide discovery but must not assert live price/stock
+        # — unless this turn explicitly fell back to the durable index after Tray
+        # revalidation failed (otherwise the persona reply is wiped by enforce).
+        allow_stale_commercial = bool(product.get("_revalidation_degraded"))
+        if (
+            claim.revalidation_status == RevalidationStatus.STALE
+            and kind in {
+                "price",
+                "promotional_price",
+                "stock",
+                "availability",
+            }
+            and not allow_stale_commercial
+        ):
             continue
         rows.append(
             GroundedCommerceEvidence(
@@ -417,9 +425,22 @@ def authorize_products_for_responder(
             or key in allowed_fields
         }
         # Drop unauthorized commercial numbers
-        for field in ("price", "promotional_price", "stock", "available", "url"):
+        for field in (
+            "price",
+            "current_price",
+            "promotional_price",
+            "stock",
+            "available",
+            "url",
+        ):
             if field not in allowed_fields:
                 cleaned.pop(field, None)
+        # Keep a single canonical price key for validators / composers.
+        if cleaned.get("price") is None:
+            for alt in ("current_price", "promotional_price"):
+                if cleaned.get(alt) is not None:
+                    cleaned["price"] = cleaned[alt]
+                    break
         cleaned["tenant_id"] = tenant_id
         cleaned["_grounded"] = True
         authorized.append(cleaned)

@@ -8,9 +8,11 @@ from typing import Any
 
 GREETING_REPLY = "Olá! Como posso ajudar?"
 
-# Short, distinct follow-ups when a generic greeting was already used recently.
-# Order = preference after the persona primary greeting.
+# Short, distinct follow-ups when the primary Crono greeting was already used.
+# Keep Crono identity in the first fallbacks so soft re-greets don't sound generic.
 _FALLBACK_GREETING_VARIANTS = (
+    "Oi! Sou o Crono da New Store Relógios. Em que posso te ajudar?",
+    "Olá de novo! Sou o Crono — me conta o que você procura.",
     GREETING_REPLY,
     "Oi! Em que posso te ajudar?",
     "Olá! Me conta o que você procura.",

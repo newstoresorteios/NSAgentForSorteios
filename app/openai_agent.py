@@ -731,7 +731,10 @@ async def _generate_agent_reply_async_inner(
         and not is_unpaid_order_resume_request(message.text)
         and not is_payment_link_request(message.text)
     ):
-        resume = build_contextual_greeting(commerce_state)
+        resume = build_contextual_greeting(
+            commerce_state,
+            recent_turns=recent_turns,
+        )
         return _annotate_agent_result(
             resume,
             domain=resume.response_metadata.get("domain") or "greeting",
@@ -1127,7 +1130,10 @@ async def _generate_agent_reply_async_inner(
     ):
         if has_resumable_commerce(commerce_state):
             # Keep soft: don't dump order/payment; still use Crono greeting text.
-            resume = build_contextual_greeting(commerce_state)
+            resume = build_contextual_greeting(
+                commerce_state,
+                recent_turns=recent_turns,
+            )
             return _annotate_agent_result(
                 resume,
                 domain=resume.response_metadata.get("domain") or "commerce",
