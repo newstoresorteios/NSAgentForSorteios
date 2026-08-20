@@ -256,6 +256,23 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         trusted_domains=trusted_fact_domains,
         commerce_state=commerce_state.model_dump(mode="json"),
     )
+    # Deterministic preference/link/persona checker (no extra LLM).
+    from .outbound_compliance import apply_outbound_compliance
+
+    interpretation = None
+    meta_interp = (result.response_metadata or {}).get("interpretation")
+    if isinstance(meta_interp, dict):
+        try:
+            from .models import SalesInterpretation
+
+            interpretation = SalesInterpretation.model_validate(meta_interp)
+        except Exception:
+            interpretation = None
+    result, _compliance = apply_outbound_compliance(
+        incoming=incoming,
+        result=result,
+        interpretation=interpretation,
+    )
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
     from .rollout import (

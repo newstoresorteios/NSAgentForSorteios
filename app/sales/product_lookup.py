@@ -25,6 +25,7 @@ from ..product_retrieval import (
     match_specific_products,
     preference_color_search_labels,
     preference_color_tokens,
+    prefer_dial_and_case_matches,
     prefilter_specific_candidates,
     product_matches_color_tokens,
     product_availability_state,
@@ -856,6 +857,11 @@ async def execute_compiled_product_retrieval(
             interpretation,
             mode="recommendation",
             factual_source=factual_source,
+        )
+        hard_filtered = prefer_dial_and_case_matches(
+            hard_filtered,
+            interpretation,
+            limit=max(retrieval_plan.candidate_limit, customer_result_limit()),
         )
         if bool(getattr(get_settings(), "agent_catalog_index_write_enabled", True)):
             # Refresh durable index from Tray results (or reaffirm index hits).

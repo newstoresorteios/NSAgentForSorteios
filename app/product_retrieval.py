@@ -535,9 +535,14 @@ def score_catalog_candidates(
                 score += 45
         if case_tokens:
             # Soft: silver/steel case should outrank all-black-case siblings when
-            # dial color alone collides on "preto".
-            if any(token in text for token in case_tokens):
-                score += 15
+            # dial color alone collides on "preto". Gold case is a hard preference
+            # signal ("dourado + visor preto") — boost strongly or demote rivals.
+            case_ok = product_matches_case_finish_tokens(product, case_tokens)
+            goldish = bool({"dourado", "gold", "golden", "ouro"} & set(case_tokens))
+            if case_ok:
+                score += 45 if goldish else 15
+            elif goldish:
+                score -= 40
             elif {"prata", "aco", "steel"} & set(case_tokens) and "preto" in text:
                 # Title says Preto (often dial) but finish asked for steel —
                 # mild penalty vs Samurai/steel-titled siblings.
@@ -554,6 +559,35 @@ def score_catalog_candidates(
         scored.append((score, product))
     scored.sort(key=lambda item: (-item[0], str(item[1].get("id") or "")))
     return [product for _, product in scored[: max(1, limit)]]
+
+
+def prefer_dial_and_case_matches(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    *,
+    limit: int = CUSTOMER_RESULT_LIMIT,
+) -> list[dict[str, Any]]:
+    """When dial + case finish are both known, surface conjunction matches first."""
+    color_tokens = preference_color_tokens(interpretation)
+    case_tokens = preference_case_finish_tokens(interpretation)
+    if not color_tokens or not case_tokens:
+        return products[:limit]
+    both = [
+        product
+        for product in products
+        if product_matches_color_tokens(product, color_tokens)
+        and product_matches_case_finish_tokens(product, case_tokens)
+        and not product_conflicts_dial_color(product, color_tokens)
+    ]
+    if both:
+        return score_catalog_candidates(
+            both,
+            interpretation,
+            require_color=True,
+            allow_movement_mismatch=False,
+            limit=limit,
+        ) or both[:limit]
+    return products[:limit]
 
 
 def keyword_match_products(
@@ -707,6 +741,11 @@ def catalog_match_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]
     for code in extract_model_codes(subject.model):
         tokens.append(_fold(code))
     tokens.extend(color_tokens)
+    # Case finish (dourado/gold) helps Tray AND when dial is already preto.
+    case_tokens = preference_case_finish_tokens(interpretation)
+    for token in case_tokens:
+        if token in {"dourado", "gold", "golden", "ouro", "prata", "silver"}:
+            tokens.append(token)
     # Keep movement when Vision asked Automatic — helps avoid GMT substitutes.
     if model_excludes_gmt(subject.model):
         tokens.append("automatico")
@@ -872,9 +911,25 @@ def preference_case_finish_tokens(
             expanded.extend(["prata", "aco", "steel"])
         elif token in {"preto", "black", "ion", "pvd"}:
             expanded.extend(["preto", "black"])
+        elif token in {"dourado", "gold", "golden", "ouro"}:
+            expanded.extend(["dourado", "gold", "golden", "ouro"])
         else:
             expanded.append(token)
     return tuple(dict.fromkeys(expanded))
+
+
+def product_matches_case_finish_tokens(
+    product: dict[str, Any],
+    case_tokens: tuple[str, ...],
+) -> bool:
+    if not case_tokens:
+        return True
+    text = _product_text(product)
+    aliases: set[str] = set()
+    for token in case_tokens:
+        aliases |= set(expand_color_aliases(token))
+        aliases.add(token)
+    return any(alias in text for alias in aliases)
 
 
 def product_matches_color_tokens(

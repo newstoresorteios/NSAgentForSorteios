@@ -152,6 +152,102 @@ def _ensure_attribute(preferences: ProductPreferences, label: str) -> None:
         preferences.attributes = [*preferences.attributes, label]
 
 
+def _extract_budget_max(text: str) -> float | None:
+    match = re.search(
+        r"(?:at[eé]|ate|menos de|no m[aá]ximo|at[eé] uns?|por at[eé])\s*"
+        r"(?:r\$\s*)?([\d.,]+)\s*(mil|k)?",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(
+            r"(?:r\$\s*)?([\d.,]+)\s*(mil|k)?\s*(?:reais|real)?",
+            text or "",
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        # Avoid treating bare years/codes as budget without currency cue.
+        raw_text = (text or "").lower()
+        if "real" not in raw_text and "r$" not in raw_text and "mil" not in raw_text:
+            if not re.search(r"at[eé]|ate|menos|m[aá]ximo", raw_text):
+                return None
+    raw = match.group(1).replace(".", "").replace(",", ".")
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if match.group(2):
+        value *= 1000
+    if value <= 0 or value > 1_000_000:
+        return None
+    return value
+
+
+_DIAL_HINT_RE = re.compile(
+    r"\b(?:visor|mostrador|dial)\s+(?:em\s+|na\s+|de\s+|com\s+)?"
+    r"(?P<dial>preto|black|branco|white|azul|blue|verde|green|rosa|pink|"
+    r"vermelho|red|cinza|gray|grey|dourado|gold|prata|silver)\b",
+    flags=re.IGNORECASE,
+)
+_CASE_GOLD_RE = re.compile(
+    r"\b(?P<case>dourad[oa]|gold|golden|ouro)\b",
+    flags=re.IGNORECASE,
+)
+_CASE_STEEL_RE = re.compile(
+    r"\b(?P<case>prata|silver|a[cç]o|steel|inox)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def repair_dial_and_case_preferences(
+    preferences: ProductPreferences,
+    *,
+    message_text: str | None = None,
+) -> ProductPreferences:
+    """Split 'dourado com visor preto' into dial=preto + material=dourado."""
+    text = message_text or ""
+    folded = _fold(text)
+    if not folded:
+        return preferences
+
+    dial_match = _DIAL_HINT_RE.search(text)
+    dial = _fold(dial_match.group("dial")) if dial_match else None
+    case = None
+    gold = _CASE_GOLD_RE.search(text)
+    steel = _CASE_STEEL_RE.search(text)
+    if gold:
+        case = "dourado"
+    elif steel and dial and _fold(steel.group("case")) != dial:
+        case = "prata"
+
+    color_fold = _fold(preferences.color)
+    material_fold = _fold(preferences.material)
+
+    # Visor/mostrador always wins as dial when present.
+    if dial and color_fold != dial:
+        # If color was the case finish (dourado) and dial is preto, move gold to material.
+        if color_fold in {"dourado", "gold", "golden", "ouro"} and not material_fold:
+            preferences.material = preferences.color or "dourado"
+        preferences.color = dial
+        color_fold = dial
+
+    # Gold/steel mentioned alongside a different dial → case finish.
+    if case and (not material_fold or material_fold in {"aco", "steel", "inox"}):
+        if not dial or case != color_fold:
+            preferences.material = case
+
+    # Collapse "dourado preto" without visor cue: keep preto as dial if both present.
+    if not dial and color_fold:
+        tokens = _tokens(preferences.color)
+        if "preto" in tokens and any(t in tokens for t in ("dourado", "gold", "ouro")):
+            preferences.color = "preto"
+            if not preferences.material:
+                preferences.material = "dourado"
+
+    return preferences
+
+
 def normalize_sales_interpretation(
     interpretation: SalesInterpretation,
     *,
@@ -189,6 +285,8 @@ def normalize_sales_interpretation(
         if budget is not None:
             preferences.budget_max = budget
 
+    repair_dial_and_case_preferences(preferences, message_text=message_text)
+
     # After gender + budget, discovery answers are usually ready to search.
     if (
         interpretation.domain == "commerce"
@@ -215,35 +313,3 @@ def normalize_sales_interpretation(
             interpretation.goal = "recommend"
 
     return interpretation
-
-
-def _extract_budget_max(text: str) -> float | None:
-    match = re.search(
-        r"(?:at[eé]|ate|menos de|no m[aá]ximo|at[eé] uns?|por at[eé])\s*"
-        r"(?:r\$\s*)?([\d.,]+)\s*(mil|k)?",
-        text or "",
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        match = re.search(
-            r"(?:r\$\s*)?([\d.,]+)\s*(mil|k)?\s*(?:reais|real)?",
-            text or "",
-            flags=re.IGNORECASE,
-        )
-        if not match:
-            return None
-        # Avoid treating bare years/codes as budget without currency cue.
-        raw_text = (text or "").lower()
-        if "real" not in raw_text and "r$" not in raw_text and "mil" not in raw_text:
-            if not re.search(r"at[eé]|ate|menos|m[aá]ximo", raw_text):
-                return None
-    raw = match.group(1).replace(".", "").replace(",", ".")
-    try:
-        value = float(raw)
-    except ValueError:
-        return None
-    if match.group(2):
-        value *= 1000
-    if value <= 0 or value > 1_000_000:
-        return None
-    return value

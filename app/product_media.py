@@ -16,6 +16,16 @@ _DEAD_STOREFRONT_MARKERS = (
     "sem-resultados",
     "sem_resultados",
 )
+# Soft-404 pages often return HTTP 200 with this Portuguese copy.
+_DEAD_STOREFRONT_BODY_MARKERS = (
+    "produto nao encontrado",
+    "produto não encontrado",
+    "nao encontramos o produto",
+    "não encontramos o produto",
+    "desculpe, nao encontramos",
+    "desculpe, não encontramos",
+    "pagenotfound",
+)
 _BRACELET_SUFFIXES = (
     "vk",
     "vc",
@@ -37,6 +47,8 @@ _SPELLING_SWAPS = (
 _PATH_SWAPS = (
     ("/relogios-christopher-ward/", "/christopher-ward/"),
     ("/christopher-ward/", "/relogios-christopher-ward/"),
+    ("/relogios-bulova/", "/relogios/relogios-bulova/"),
+    ("/relogios/relogios-bulova/", "/relogios-bulova/"),
 )
 _HOST_SWAPS = (
     ("www.newstorerj.com.br", "www.newstorerj.com"),
@@ -101,6 +113,79 @@ def _is_dead_storefront_location(location: str | None) -> bool:
     return any(marker in text for marker in _DEAD_STOREFRONT_MARKERS)
 
 
+def _is_dead_storefront_body(body: str | None) -> bool:
+    text = (body or "").casefold()
+    if not text:
+        return False
+    # Accent-fold lightly so "não" / "nao" both match.
+    folded = (
+        text.replace("á", "a")
+        .replace("ã", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+    markers = tuple(
+        marker.replace("á", "a")
+        .replace("ã", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+        for marker in _DEAD_STOREFRONT_BODY_MARKERS
+    )
+    return any(marker in folded for marker in markers)
+
+
+async def _probe_storefront_candidate(client: Any, candidate: str) -> bool:
+    """True when the URL looks like a live product page (not soft-404)."""
+    try:
+        response = await client.head(candidate)
+    except Exception:
+        return False
+    location = response.headers.get("location")
+    if response.status_code in {301, 302, 303, 307, 308} and _is_dead_storefront_location(
+        location
+    ):
+        return False
+    if response.status_code == 404:
+        return False
+    if response.status_code in {301, 302, 303, 307, 308} and location:
+        if _is_dead_storefront_location(location):
+            return False
+        target = (
+            location
+            if location.startswith("http")
+            else f"{urlparse(candidate).scheme}://{urlparse(candidate).netloc}{location}"
+        )
+        try:
+            followed = await client.get(target)
+        except Exception:
+            return False
+        if followed.status_code != 200:
+            return False
+        return not _is_dead_storefront_body(followed.text[:4000])
+    # Always GET on apparent success — NewStore soft-404s often return 200.
+    if 200 <= response.status_code < 300 or response.status_code in {405, 501}:
+        try:
+            get_response = await client.get(candidate)
+        except Exception:
+            return False
+        if get_response.status_code != 200:
+            return False
+        if _is_dead_storefront_location(get_response.headers.get("location")):
+            return False
+        return not _is_dead_storefront_body(get_response.text[:4000])
+    return False
+
+
 def storefront_url_candidates(url: str) -> list[str]:
     """Generate alternate storefront slugs when Tray returns a stale path."""
     parsed = urlparse(url.strip())
@@ -126,6 +211,11 @@ def storefront_url_candidates(url: str) -> list[str]:
     for old, new in _PATH_SWAPS:
         if old in path:
             _add(path.replace(old, new, 1))
+    # Generic brand path: /relogios-foo/... ↔ /relogios/relogios-foo/...
+    if re.match(r"^/relogios-[^/]+/", path) and not path.startswith("/relogios/relogios-"):
+        _add("/relogios" + path)
+    if path.startswith("/relogios/relogios-"):
+        _add(path[len("/relogios") :])
     for old_host, new_host in _HOST_SWAPS:
         if parsed.netloc.casefold() == old_host.casefold():
             rebuilt = urlunparse(
@@ -159,53 +249,15 @@ async def resolve_live_product_url(url: str | None) -> str | None:
     import httpx
 
     candidates = storefront_url_candidates(primary)
-    timeout = httpx.Timeout(4.0, connect=2.0)
+    timeout = httpx.Timeout(6.0, connect=2.5)
     async with httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=False,
         headers={"User-Agent": "NSAgentForSorteios/product-link"},
     ) as client:
         for candidate in candidates:
-            try:
-                response = await client.head(candidate)
-            except httpx.HTTPError:
-                continue
-            location = response.headers.get("location")
-            if response.status_code in {301, 302, 303, 307, 308} and _is_dead_storefront_location(
-                location
-            ):
-                continue
-            if response.status_code == 404:
-                continue
-            if response.status_code in {301, 302, 303, 307, 308} and location:
-                # Follow one hop to a same-host product page; reject search dead-ends.
-                if _is_dead_storefront_location(location):
-                    continue
-                try:
-                    followed = await client.head(
-                        location
-                        if location.startswith("http")
-                        else f"{urlparse(candidate).scheme}://{urlparse(candidate).netloc}{location}"
-                    )
-                except httpx.HTTPError:
-                    continue
-                if followed.status_code == 200 and not _is_dead_storefront_location(
-                    followed.headers.get("location")
-                ):
-                    return candidate
-                continue
-            if 200 <= response.status_code < 300:
+            if await _probe_storefront_candidate(client, candidate):
                 return candidate
-            # Some storefronts reject HEAD; fall back to GET without body drain cost.
-            if response.status_code in {405, 501}:
-                try:
-                    get_response = await client.get(candidate)
-                except httpx.HTTPError:
-                    continue
-                if get_response.status_code == 200 and not _is_dead_storefront_location(
-                    get_response.headers.get("location")
-                ):
-                    return candidate
     return None
 
 
@@ -269,30 +321,52 @@ async def resolve_product_image(
     ) or (product_reference.product_url or None)
     if "error" in product:
         if isinstance(fallback_url, str) and fallback_url.strip():
+            probed = await ensure_product_has_live_url(
+                {
+                    "id": product_reference.product_id,
+                    "name": product_reference.name,
+                    "reference": product_reference.reference,
+                    "url": fallback_url.strip(),
+                }
+            )
+            live = official_product_url(probed)
             name = str(product_reference.name or "produto")
+            if live and not probed.get("_product_url_dead"):
+                return AgentResult(
+                    reply_text=(
+                        f"Não consegui puxar a foto agora, mas aqui está o link "
+                        f"oficial de {name} (com as imagens da loja):\n{live}"
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="product_media_link_fallback",
+                    commercial_data={
+                        "products": [probed],
+                        "image": None,
+                    },
+                    response_metadata={
+                        "domain": "commerce",
+                        "image_url_found": False,
+                        "product_url_fallback": True,
+                        "media_send_supported": False,
+                        "media_send_failed": False,
+                        "used_tray": True,
+                    },
+                )
             return AgentResult(
                 reply_text=(
-                    f"Não consegui puxar a foto agora, mas aqui está o link "
-                    f"oficial de {name} (com as imagens da loja):\n{fallback_url.strip()}"
+                    f"Não consegui enviar a foto de {name} agora e o link da "
+                    "vitrine desse item está inconsistente. Posso te passar "
+                    "outra opção da lista ou buscar de novo?"
                 ),
                 intent="commerce",
                 handoff_required=False,
-                safety_reason="product_media_link_fallback",
-                commercial_data={
-                    "products": [
-                        {
-                            "id": product_reference.product_id,
-                            "name": product_reference.name,
-                            "reference": product_reference.reference,
-                            "url": fallback_url.strip(),
-                        }
-                    ],
-                    "image": None,
-                },
+                safety_reason="product_media_dead_link",
+                commercial_data={"products": [probed], "image": None},
                 response_metadata={
                     "domain": "commerce",
                     "image_url_found": False,
-                    "product_url_fallback": True,
+                    "product_url_dead": True,
                     "media_send_supported": False,
                     "media_send_failed": False,
                     "used_tray": True,
@@ -339,21 +413,46 @@ async def resolve_product_image(
     live_url = official_product_url(product) or fallback_url
     if not image_url:
         if isinstance(live_url, str) and live_url.strip():
+            probed = await ensure_product_has_live_url(
+                {**product, "url": live_url.strip()}
+            )
+            live = official_product_url(probed)
             name = str(product.get("name") or product_reference.name or "produto")
+            if live and not probed.get("_product_url_dead"):
+                return AgentResult(
+                    reply_text=(
+                        f"Não tenho a foto pronta para enviar por aqui, mas o link "
+                        f"oficial de {name} tem as imagens da loja:\n{live}"
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="product_image_link_fallback",
+                    commercial_data={"products": [probed], "image": None},
+                    response_metadata={
+                        "domain": "commerce",
+                        "active_product": active.model_dump(mode="json"),
+                        "image_url_found": False,
+                        "product_url_fallback": True,
+                        "media_send_supported": False,
+                        "media_send_failed": False,
+                        "used_tray": True,
+                    },
+                )
             return AgentResult(
                 reply_text=(
-                    f"Não tenho a foto pronta para enviar por aqui, mas o link "
-                    f"oficial de {name} tem as imagens da loja:\n{live_url.strip()}"
+                    f"Não tenho a foto de {name} para enviar agora e o link da "
+                    "vitrine desse item está inconsistente. Quer que eu busque "
+                    "outra opção?"
                 ),
                 intent="commerce",
                 handoff_required=False,
-                safety_reason="product_image_link_fallback",
-                commercial_data={"products": [product], "image": None},
+                safety_reason="product_media_dead_link",
+                commercial_data={"products": [probed], "image": None},
                 response_metadata={
                     "domain": "commerce",
                     "active_product": active.model_dump(mode="json"),
                     "image_url_found": False,
-                    "product_url_fallback": True,
+                    "product_url_dead": True,
                     "media_send_supported": False,
                     "media_send_failed": False,
                     "used_tray": True,
@@ -442,13 +541,28 @@ async def resolve_presented_product_images(
             "product_media_link_fallback",
             "product_image_link_fallback",
             "product_image_not_available",
+            "product_media_dead_link",
         }:
             if one.safety_reason == "product_media_technical_failure":
                 technical_failure = True
-            if isinstance(product_url, str) and product_url.strip():
-                link_fallbacks += 1
+            if one.safety_reason == "product_media_dead_link":
                 lines.append(
-                    f"{index}. {name}\nLink com fotos: {product_url.strip()}"
+                    f"{index}. {name}: link da vitrine inconsistente agora."
+                )
+                continue
+            if isinstance(product_url, str) and product_url.strip():
+                probed = await ensure_product_has_live_url(
+                    {**(product or {}), "url": product_url.strip(), "name": name}
+                )
+                live = official_product_url(probed)
+                if live and not probed.get("_product_url_dead"):
+                    link_fallbacks += 1
+                    lines.append(
+                        f"{index}. {name}\nLink com fotos: {live}"
+                    )
+                    continue
+                lines.append(
+                    f"{index}. {name}: não consegui um link oficial válido agora."
                 )
                 continue
             lines.append(f"{index}. {name}: não consegui consultar a imagem agora.")
