@@ -297,6 +297,17 @@ def _listing_blob(candidate: StoryProductCandidate) -> str:
     return _fold(" ".join(parts))
 
 
+def _listing_case_size_mm(blob: str) -> str | None:
+    text = _fold(blob)
+    explicit = _SIZE_RE.search(text)
+    if explicit:
+        return explicit.group(1)
+    sku_size = re.search(r"\bc\d{2}-(\d{2})[a-z]", text)
+    if sku_size:
+        return sku_size.group(1)
+    return None
+
+
 def score_catalog_overlap(
     candidate: StoryProductCandidate,
     profile: StoryEvidenceProfile,
@@ -318,12 +329,16 @@ def score_catalog_overlap(
         score += 0.15
         reasons.append("color_overlap")
 
+    listing_size = _listing_case_size_mm(blob)
     if profile.size_mm:
-        if profile.size_mm in blob or f"{profile.size_mm} mm" in blob:
+        if listing_size == profile.size_mm or (
+            profile.size_mm in blob and listing_size in {None, profile.size_mm}
+        ):
             score += 0.12
             reasons.append(f"size_{profile.size_mm}mm")
-        elif "39" in blob and profile.size_mm == "36":
-            score += 0.04
+        elif listing_size and listing_size != profile.size_mm:
+            score -= 0.4
+            conflicts.append("size_mismatch")
 
     brand_parts = {
         "ward",
@@ -343,7 +358,7 @@ def score_catalog_overlap(
         or (
             len(t) >= 4
             and t not in brand_parts
-            and t not in {"automatic", "automatico", "mecanico", "rocks"}
+            and t not in {"automatic", "automatico", "mecanico"}
         )
     ]
     if family_tokens and not any(_token_in_blob(blob, t) for t in family_tokens):
@@ -368,12 +383,20 @@ def score_catalog_overlap(
             "quartz",
             "ward",
             "relogio",
-            "rocks",
+            "verde",
+            "green",
+            "azul",
+            "blue",
+            "preto",
+            "black",
         }
         and len(t) >= 4
     ]
     missing_distinctive = [t for t in distinctive if not _token_in_blob(blob, t)]
-    if distinctive and missing_distinctive:
+    if "rocks" in positives and not _token_in_blob(blob, "rocks"):
+        score -= 0.35
+        conflicts.append("missing_line:rocks")
+    elif distinctive and missing_distinctive:
         miss_ratio = len(missing_distinctive) / len(distinctive)
         score -= 0.08 * miss_ratio
         if miss_ratio >= 0.5:
@@ -458,7 +481,10 @@ def try_resolve_tied_candidates(
     # Prefer listings without unseen variants/materials (GMT/bronze) when Story omitted them.
     def _has_unseen(conflicts: list[str]) -> bool:
         return any(
-            str(c).startswith("unseen_variant:") or str(c).startswith("unseen_material:")
+            str(c).startswith("unseen_variant:")
+            or str(c).startswith("unseen_material:")
+            or str(c) == "size_mismatch"
+            or str(c).startswith("missing_line:")
             for c in conflicts
         )
 
@@ -469,11 +495,16 @@ def try_resolve_tied_candidates(
     for consensus, cand, conflicts in clean:
         if float(cand.score or 0.0) < min_tray:
             continue
-        if profile.colors:
-            blob = _listing_blob(cand)
-            if blob and not any(color in blob for color in profile.colors):
-                continue
         filtered.append((consensus, cand, conflicts))
+    if profile.colors:
+        colored = [
+            row
+            for row in filtered
+            if any(color in _listing_blob(row[1]) for color in profile.colors)
+        ]
+        # Only lock to color-named listings when at least one candidate prints the color.
+        if colored:
+            filtered = colored
     clean = filtered
     if not clean:
         # Every candidate invents a variant the Story never showed — do not guess.

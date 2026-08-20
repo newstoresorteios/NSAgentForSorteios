@@ -135,7 +135,8 @@ def storefront_url_candidates(url: str) -> list[str]:
                 seen.add(rebuilt)
                 variants.append(rebuilt)
 
-    # Bracelet / strap SKU suffixes often differ while the watch is the same listing family.
+    # Bracelet suffix repair stays on the same SKU stem (39ada3-s00v1-*),
+    # never a different model such as Sealander Rocks (36a3h1).
     match = re.search(r"-(%s)$" % "|".join(_BRACELET_SUFFIXES), path, re.IGNORECASE)
     if match:
         prefix = path[: match.start()]

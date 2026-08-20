@@ -68,9 +68,7 @@ def test_tray_search_jobs_use_model_line_not_brand_only():
     folded = {t.casefold() for t in first_tokens}
     assert "c63" in folded
     assert "sealander" in folded or "c63" in folded
-    second = jobs[1][1] if len(jobs) > 1 else []
-    second_fold = {t.casefold() for t in second}
-    assert "rocks" not in second_fold or "sealander" in second_fold
+    assert any("rocks" in {t.casefold() for t in tokens} for _brand, tokens in jobs)
     assert any(
         {t.casefold() for t in tokens} == {"sealander", "verde"}
         or {t.casefold() for t in tokens} == {"c63", "sealander"}
@@ -126,11 +124,41 @@ def test_decider_prefers_non_gmt_when_story_says_sealander_rocks():
     ordered = rerank_candidates_with_consensus([gmt, seander], analysis)
     assert ordered[0].product_id == "10611"
     winner = try_resolve_tied_candidates([seander, gmt], analysis)
-    assert winner is not None
-    assert winner.product_id == "10611"
+    assert winner is None
 
 
-def test_classify_match_resolves_cw_tie_with_analysis():
+def test_decider_prefers_rocks_36_over_similar_seander_39():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Christopher Ward"],
+        visible_text=["CHRISTOPHER WARD", "C63 SEALANDER ROCKS", "36 mm"],
+        model_hypotheses=["C63 Sealander Rocks 36mm"],
+        collection_hypotheses=["C63 Sealander Rocks"],
+        visible_references=["C63 SEALANDER ROCKS"],
+        dial_colors=["green"],
+        readable_text_confidence=0.95,
+        watch_count=1,
+    )
+    seander_39 = _candidate(
+        "10611",
+        "relogio christopher ward c63 seander automatico verde c63-39ada3-s00v1-vc",
+    )
+    rocks_36 = _candidate(
+        "rocks36",
+        "relogio christopher ward c63 sealander rocks automatico c63-36a3h1-s00a0-b1",
+    )
+    ordered = rerank_candidates_with_consensus([seander_39, rocks_36], analysis)
+    assert ordered[0].product_id == "rocks36"
+    status, top = classify_match(
+        [seander_39, rocks_36],
+        multiple_products=False,
+        analysis=analysis,
+    )
+    assert status == "matched"
+    assert top is not None
+    assert top.product_id == "rocks36"
+
+
+def test_classify_match_does_not_quote_39mm_when_story_is_rocks_36():
     analysis = StoryVisualUnderstanding(
         visible_brands=["Christopher Ward"],
         visible_text=["CHRISTOPHER WARD", "C63 SEALANDER ROCKS", "36 mm"],
@@ -148,9 +176,36 @@ def test_classify_match_resolves_cw_tie_with_analysis():
         "relogio christopher ward c63 sealander gmt automatico verde c63-39agm3-s00v1-b0",
     )
     status, top = classify_match([gmt, seander], multiple_products=False, analysis=analysis)
+    assert status != "matched"
+
+
+def test_classify_match_resolves_cw_tie_with_analysis():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Christopher Ward"],
+        visible_text=["CHRISTOPHER WARD", "C63 SEALANDER ROCKS", "36 mm"],
+        model_hypotheses=["C63 Sealander Rocks 36mm"],
+        dial_colors=["green"],
+        readable_text_confidence=0.95,
+        watch_count=1,
+    )
+    rocks = _candidate(
+        "rocks36",
+        "relogio christopher ward c63 sealander rocks automatico c63-36a3h1-s00a0-b1",
+    )
+    seander = _candidate(
+        "10611",
+        "relogio christopher ward c63 seander automatico verde c63-39ada3-s00v1-vc",
+    )
+    gmt = _candidate(
+        "10697",
+        "relogio christopher ward c63 sealander gmt automatico verde c63-39agm3-s00v1-b0",
+    )
+    status, top = classify_match(
+        [gmt, seander, rocks], multiple_products=False, analysis=analysis
+    )
     assert status == "matched"
     assert top is not None
-    assert top.product_id == "10611"
+    assert top.product_id == "rocks36"
 
 
 def test_tray_search_jobs_use_ballade_and_color_not_powermatic_80():
@@ -167,6 +222,23 @@ def test_tray_search_jobs_use_ballade_and_color_not_powermatic_80():
     assert not any("claro" in tokens for tokens in token_sets)
     assert not any("80" in tokens for tokens in token_sets)
     assert not any("powermatic" in tokens for tokens in token_sets)
+
+
+def test_classify_match_rejects_39mm_seander_when_story_is_36mm_rocks():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Christopher Ward"],
+        visible_text=["CHRISTOPHER WARD", "C63 SEALANDER ROCKS", "36 mm"],
+        model_hypotheses=["C63 Sealander Rocks 36mm"],
+        dial_colors=["green"],
+        watch_count=1,
+        readable_text_confidence=0.95,
+    )
+    seander = _candidate(
+        "10611",
+        "relogio christopher ward c63 seander automatico verde c63-39ada3-s00v1-vc",
+    )
+    status, _top = classify_match([seander], multiple_products=False, analysis=analysis)
+    assert status != "matched"
 
 
 def test_classify_match_rejects_all_gmt_pool_when_story_omits_gmt():
@@ -186,7 +258,7 @@ def test_classify_match_rejects_all_gmt_pool_when_story_omits_gmt():
         "10727",
         "relogio christopher ward c63 sealander gmt automatico verde hko",
     )
-    status, top = classify_match([gmt_a, gmt_b], multiple_products=False, analysis=analysis)
+    status, _top = classify_match([gmt_a, gmt_b], multiple_products=False, analysis=analysis)
     assert status != "matched"
 
 

@@ -79,7 +79,10 @@ def classify_match(
 
         _, _, conflicts = score_catalog_overlap(top1, build_evidence_profile(analysis))
         if any(
-            str(item).startswith("unseen_variant:") or str(item).startswith("unseen_material:")
+            str(item).startswith("unseen_variant:")
+            or str(item).startswith("unseen_material:")
+            or str(item) == "size_mismatch"
+            or str(item).startswith("missing_line:")
             for item in conflicts
         ):
             if top2 is not None:
@@ -667,9 +670,14 @@ def tray_search_jobs(
     # Most specific first — one good query beats many paginated broad scans.
     if brand and prefer_model_line_first and len(model_line) >= 2:
         _add(brand, model_line)
+        rocks = next((t for t in model_line if _fold(t) == "rocks"), None)
+        if rocks:
+            _add(brand, [rocks])
+            if colors:
+                _add(brand, [rocks, colors[0]])
         if len(model_line) >= 3:
             _add(brand, model_line[:2])
-        # Drop rare marketing suffixes (Rocks) that empty AND matches.
+        # Fallback without rare suffixes if the AND with Rocks/MK2 is empty.
         core = [t for t in model_line if _fold(t) not in {"rocks", "mk2", "mk"}]
         if len(core) >= 2 and core != model_line[:2]:
             _add(brand, core[:2])
@@ -1108,6 +1116,22 @@ async def match_story_to_catalog(
                 for marker in ("bronze", "titane", "titanium", "gmt", "chrono", "cronografo")
                 if marker in blob and marker not in evidence_blob
             ]
+            from .story_match_decider import _SIZE_RE, _listing_case_size_mm
+
+            story_size = None
+            for raw in (
+                *(analysis.visible_text or []),
+                *(analysis.model_hypotheses or []),
+            ):
+                match = _SIZE_RE.search(str(raw or ""))
+                if match:
+                    story_size = match.group(1)
+                    break
+            listing_size = _listing_case_size_mm(blob)
+            if story_size and listing_size and story_size != listing_size:
+                material_conflicts.append("size_mismatch")
+            if "rocks" in evidence_blob and "rocks" not in blob:
+                material_conflicts.append("missing_line:rocks")
             model_tokens = _model_tokens_for_match(tokens, brand)
             model_hits = sum(
                 1 for token in model_tokens if len(token) >= 3 and _token_in_text(blob, token)
@@ -1119,6 +1143,8 @@ async def match_story_to_catalog(
                 and bool(model_tokens)
                 and model_hits >= min(2, max(len(model_tokens), 1))
                 and (not color_required or color >= 0.8)
+                and "size_mismatch" not in material_conflicts
+                and "missing_line:rocks" not in material_conflicts
             )
             if color_required and color < 0.8 and not url_hit:
                 strong = False
