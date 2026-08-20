@@ -15,7 +15,7 @@ _ITEM_RE = re.compile(
     re.IGNORECASE,
 )
 _HREF_RE = re.compile(
-    r'href="(https://www\.newstorerj\.com(?:\.br)?/relogios/[^"]+/relogio-[^"]+)"',
+    r'href="(https://www\.newstorerj\.com(?:\.br)?/(?:relogios[^/]*/relogio-|relogio-seminovo-)[^"]+)"',
     re.IGNORECASE,
 )
 _REF_RE = re.compile(r"(c\d{2}-\d{2}[a-z0-9-]+)", re.IGNORECASE)

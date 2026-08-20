@@ -572,6 +572,86 @@ def edition_count_search_tokens(analysis: StoryVisualUnderstanding) -> list[str]
     return found[:2]
 
 
+def build_storefront_fallback_queries(
+    analysis: StoryVisualUnderstanding,
+    *,
+    brand: str | None,
+    evidence_blob: str,
+    missing_line: list[str],
+    store_url: str | None = None,
+) -> list[str]:
+    """Build vitrine search queries when Tray misses a line or returns zero hits."""
+    from .story_match_decider import model_line_search_tokens
+
+    queries: list[str] = []
+    seen: set[str] = set()
+
+    def _add(*parts: str) -> None:
+        cleaned = [str(part or "").strip() for part in parts if str(part or "").strip()]
+        if not cleaned:
+            return
+        query = " ".join(cleaned)
+        if len(query) < 3:
+            return
+        key = _fold(query)
+        if key in seen:
+            return
+        seen.add(key)
+        queries.append(query)
+
+    brand_str = str(brand or "").strip()
+    if not brand_str and analysis.visible_brands:
+        brand_str = str(analysis.visible_brands[0] or "").strip()
+
+    model_line = model_line_search_tokens(analysis)
+    colors = _dial_color_search_tokens(analysis)
+    edition_counts = edition_count_search_tokens(analysis)
+    planned_brand, planned_tokens = tray_search_plan(analysis)
+    head = collection_head_token(analysis, planned_tokens)
+    brand_str = brand_str or str(planned_brand or "").strip()
+
+    if store_url:
+        slug_brand, slug_tokens = tokens_from_store_url(store_url)
+        if slug_tokens:
+            _add(*slug_tokens[:4])
+            if slug_brand:
+                _add(slug_brand, *slug_tokens[:3])
+
+    if "rocks" in missing_line:
+        _add("sealander rocks")
+        _add("rocks")
+        if brand_str:
+            _add(brand_str, "sealander", "rocks")
+            if colors:
+                _add(brand_str, "rocks", colors[0])
+
+    if "mk2" in missing_line:
+        if brand_str:
+            _add(brand_str, "aquascaphe", "mk2")
+            if colors:
+                _add(brand_str, "aquascaphe", "mk2", colors[0])
+        _add("aquascaphe", "mk2")
+        if colors:
+            _add("aquascaphe", "mk2", colors[0])
+
+    for ref in (*(analysis.visible_references or []), *(analysis.visible_skus or [])):
+        if _is_sku_like(ref):
+            _add(brand_str, ref)
+
+    if brand_str and model_line:
+        _add(brand_str, *model_line[:4])
+    if brand_str and edition_counts:
+        _add(brand_str, edition_counts[0])
+        if "seminovo" in evidence_blob:
+            _add(brand_str, "seminovo", edition_counts[0])
+    if brand_str and "seminovo" in evidence_blob:
+        _add(brand_str, "seminovo", "automatico")
+    if brand_str and head and colors:
+        _add(brand_str, head, colors[0])
+
+    return queries[:10]
+
+
 def extract_store_product_url(*texts: str | None) -> str | None:
     """Pick the first New Store product URL from free text (CONFIRA paste / DM)."""
     pattern = re.compile(
@@ -660,11 +740,17 @@ def tray_search_jobs(
         if slug_brand and len(slug_tokens) >= 1:
             _add(slug_brand, slug_tokens[:1])
 
+    seminovo_in_story = any("seminovo" in _fold(text) for text in (analysis.visible_text or []))
+
     # Limited-edition counts survive when Meta omits the CONFIRA sticker URL.
     if brand and edition_counts:
         _add(brand, [edition_counts[0]])
         if head:
             _add(brand, [head, edition_counts[0]])
+    if brand and seminovo_in_story:
+        _add(brand, ["seminovo", "automatico"])
+        if edition_counts:
+            _add(brand, ["seminovo", edition_counts[0]])
 
     # Most specific first — one good query beats many paginated broad scans.
     if brand and prefer_model_line_first and len(model_line) >= 2:
@@ -1131,7 +1217,11 @@ async def match_story_to_catalog(
                 material_conflicts.append("size_mismatch")
             if "rocks" in evidence_blob and "rocks" not in blob:
                 material_conflicts.append("missing_line:rocks")
-            line_locked = "rocks" in evidence_blob and "rocks" in blob
+            if "mk2" in evidence_blob and "mk2" not in blob:
+                material_conflicts.append("missing_line:mk2")
+            line_locked = ("rocks" in evidence_blob and "rocks" in blob) or (
+                "mk2" in evidence_blob and "mk2" in blob
+            )
             model_tokens = _model_tokens_for_match(tokens, brand)
             model_hits = sum(
                 1 for token in model_tokens if len(token) >= 3 and _token_in_text(blob, token)
@@ -1145,6 +1235,7 @@ async def match_story_to_catalog(
                 and (not color_required or color >= 0.8 or line_locked)
                 and "size_mismatch" not in material_conflicts
                 and "missing_line:rocks" not in material_conflicts
+                and "missing_line:mk2" not in material_conflicts
             )
             if color_required and color < 0.8 and not url_hit and not line_locked:
                 strong = False
@@ -1330,15 +1421,17 @@ async def match_story_to_catalog(
         if token in evidence_blob
         and not any(token in _fold(" ".join(c.match_reasons)) for c in candidates)
     ]
-    if execute_tool is not None and missing_line:
+    needs_storefront = bool(missing_line) or not candidates
+    if execute_tool is not None and needs_storefront:
         from .storefront_search import hydrate_storefront_hits, search_storefront
 
-        queries: list[str] = []
-        if "rocks" in missing_line:
-            queries.append("rocks")
-            queries.append("sealander rocks")
-        if "mk2" in missing_line:
-            queries.append("mk2")
+        queries = build_storefront_fallback_queries(
+            analysis,
+            brand=search_brand,
+            evidence_blob=evidence_blob,
+            missing_line=missing_line,
+            store_url=store_url,
+        )
         seen_queries: set[str] = set()
         storefront_products: list[dict[str, Any]] = []
         for query in queries:
@@ -1351,9 +1444,10 @@ async def match_story_to_catalog(
                 await hydrate_storefront_hits(hits, execute_tool=execute_tool)
             )
         if storefront_products:
+            ingest_tokens = missing_line or planned_tokens or ["storefront"]
             _ingest_tray_page(
                 brand=search_brand,
-                tokens=missing_line,
+                tokens=ingest_tokens,
                 page=1,
                 products=storefront_products,
                 paging={"total": len(storefront_products), "limit": len(storefront_products)},

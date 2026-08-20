@@ -283,3 +283,4 @@ def test_classify_match_rejects_gmt_when_story_says_mk2():
     )
     status, top = classify_match([gmt], multiple_products=False, analysis=analysis)
     assert status != "matched"
+    assert status == "ambiguous"

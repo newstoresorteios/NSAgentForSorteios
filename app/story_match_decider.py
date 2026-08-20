@@ -396,6 +396,9 @@ def score_catalog_overlap(
     if "rocks" in positives and not _token_in_blob(blob, "rocks"):
         score -= 0.35
         conflicts.append("missing_line:rocks")
+    elif "mk2" in positives and not _token_in_blob(blob, "mk2"):
+        score -= 0.35
+        conflicts.append("missing_line:mk2")
     elif distinctive and missing_distinctive:
         miss_ratio = len(missing_distinctive) / len(distinctive)
         score -= 0.08 * miss_ratio
