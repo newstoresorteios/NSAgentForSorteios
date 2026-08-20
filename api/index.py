@@ -283,7 +283,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v30"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v31"
 
 
 @app.get("/api/health")
@@ -1098,6 +1098,58 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "skipped_reply": not bool(send_result),
         }
     )
+
+
+@app.get(
+    "/api/cron/tray-keepalive",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def tray_keepalive_cron():
+    """Ping TrayAdaptor /health so deploys stay warm and outages surface early."""
+    import httpx
+
+    settings = get_settings()
+    base = (settings.tray_adapter_url or "").rstrip("/")
+    if not base:
+        return {"ok": False, "skipped": True, "reason": "tray_adapter_url_missing"}
+    url = f"{base}/health"
+    started = __import__("time").monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+        elapsed_ms = int((__import__("time").monotonic() - started) * 1000)
+        payload = {
+            "ok": response.status_code == 200,
+            "status_code": response.status_code,
+            "elapsed_ms": elapsed_ms,
+            "url_host": __import__("urllib.parse").urlparse(url).netloc,
+        }
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                payload["tray_status"] = body.get("status")
+                payload["tray_build"] = body.get("build")
+        except ValueError:
+            pass
+        log_event("tray.keepalive", payload)
+        return payload
+    except Exception as exc:  # noqa: BLE001
+        elapsed_ms = int((__import__("time").monotonic() - started) * 1000)
+        payload = {
+            "ok": False,
+            "error": type(exc).__name__,
+            "elapsed_ms": elapsed_ms,
+        }
+        log_event("tray.keepalive", payload)
+        return payload
+
+
+@app.post(
+    "/api/cron/tray-keepalive",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def tray_keepalive_cron_manual():
+    return await tray_keepalive_cron()
 
 
 @app.get(
