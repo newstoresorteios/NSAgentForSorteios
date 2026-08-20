@@ -418,12 +418,40 @@ def apply_policy_overrides(
 def _as_prompt_list(value: Any) -> list[str]:
     if value is None:
         return []
+    if isinstance(value, dict):
+        for key in ("items", "rules", "prompts", "values", "list"):
+            nested = value.get(key)
+            if nested is not None:
+                return _as_prompt_list(nested)
+        # Single labeled object → stringify values that look like prose.
+        out: list[str] = []
+        for key, item in value.items():
+            text = str(item or "").strip()
+            if text and key.casefold() not in {"id", "version", "type"}:
+                if ":" in text or len(text) > 24:
+                    out.append(text)
+                else:
+                    out.append(f"{key}: {text}")
+        return out
     if isinstance(value, str):
         text = value.strip()
-        return [text] if text else []
+        if not text:
+            return []
+        if text.startswith("[") or text.startswith("{"):
+            try:
+                import json
+
+                parsed = json.loads(text)
+            except Exception:
+                return [text]
+            return _as_prompt_list(parsed)
+        return [text]
     if isinstance(value, list):
-        out: list[str] = []
+        out = []
         for item in value:
+            if isinstance(item, (dict, list)):
+                out.extend(_as_prompt_list(item))
+                continue
             text = str(item or "").strip()
             if text:
                 out.append(text)

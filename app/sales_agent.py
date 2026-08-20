@@ -3271,6 +3271,25 @@ async def _handle_sales_message_inner(
             interpretation=None,
             state=evolve_commerce_state(state, rejected),
         )
+
+    from .sales.policies.objection_authority import try_objection_authority_result
+
+    objection_result = try_objection_authority_result(message, interpretation, state)
+    if objection_result is not None:
+        print("[sales.objection.authority]", {
+            "kind": (objection_result.response_metadata or {}).get("objection_kind"),
+            "handoff": objection_result.handoff_required,
+        })
+        return _mark_sales_result(
+            objection_result,
+            interpretation=interpretation,
+            goal=(interpretation.goal if interpretation is not None else "discover"),
+            response_source="deterministic_objection",
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason=objection_result.safety_reason,
+        )
+
     log_purchase_progress("interpretation", "start")
     if isinstance(semantic_plan, SalesInterpretation):
         plan = interpretation_to_plan(semantic_plan, message.text)
