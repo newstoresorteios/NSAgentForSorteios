@@ -4197,21 +4197,27 @@ async def _handle_sales_message_inner(
         )
         link_failed = "error" in link_facts
         product_url = link_facts.get("product_url")
+        url_dead = bool(link_facts.get("product_url_dead")) or not isinstance(
+            product_url, str
+        )
+        if url_dead and not link_failed:
+            reply_text = (
+                "Consultei o produto na Tray, mas o link da vitrine deste acabamento "
+                "está inconsistente no site agora. Posso te passar a referência/valor "
+                "ou encaminhar para o atendimento fechar o pedido."
+            )
+            safety = "product_link_not_available"
+        elif link_failed:
+            reply_text = "Não consegui consultar o link oficial deste produto agora."
+            safety = "tray_adapter_unavailable"
+        else:
+            reply_text = f"Link oficial consultado.\n{product_url}"
+            safety = None
         link_result = AgentResult(
-            reply_text=(
-                f"Link oficial consultado.\n{product_url}"
-                if isinstance(product_url, str)
-                else "A Tray não informou um link oficial para este produto."
-            ),
+            reply_text=reply_text,
             intent="commerce",
             handoff_required=False,
-            safety_reason=(
-                "tray_adapter_unavailable"
-                if link_failed
-                else "product_link_not_available"
-                if not isinstance(product_url, str)
-                else None
-            ),
+            safety_reason=safety,
             commercial_data={
                 "product_link": {
                     "product_id": link_facts.get("product_id")
@@ -4219,6 +4225,10 @@ async def _handle_sales_message_inner(
                     "product_name": link_facts.get("product_name")
                     or resolved_product.name,
                     "product_url": product_url,
+                    "product_url_repaired": bool(
+                        link_facts.get("product_url_repaired")
+                    ),
+                    "product_url_dead": url_dead,
                 }
             },
             response_metadata={

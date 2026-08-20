@@ -1,13 +1,43 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from .commerce_context import CommerceProductReference
 from .models import AgentResult
 
 
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+_DEAD_STOREFRONT_MARKERS = (
+    "pagenotfound",
+    "no_results",
+    "sem-resultados",
+    "sem_resultados",
+)
+_BRACELET_SUFFIXES = (
+    "vk",
+    "vc",
+    "hko",
+    "hb",
+    "b0",
+    "b1",
+    "sg",
+    "sb",
+    "rk",
+    "hk",
+)
+_SPELLING_SWAPS = (
+    ("seander", "sealander"),
+    ("sealander", "seander"),
+    ("selander", "sealander"),
+    ("sealander", "selander"),
+)
+_PATH_SWAPS = (
+    ("/relogios-christopher-ward/", "/christopher-ward/"),
+    ("/christopher-ward/", "/relogios-christopher-ward/"),
+)
 
 
 def _https_url(value: Any) -> str | None:
@@ -49,6 +79,134 @@ def official_product_url(product: dict[str, Any]) -> str | None:
             if found:
                 return found
     return _http_url(value)
+
+
+def _is_probeable_storefront(url: str) -> bool:
+    host = (urlparse(url).netloc or "").casefold()
+    if not host:
+        return False
+    if host.endswith(".example") or host == "example.com" or "localhost" in host:
+        return False
+    return "newstorerj." in host or host.endswith(".com.br")
+
+
+def _is_dead_storefront_location(location: str | None) -> bool:
+    text = (location or "").casefold()
+    return any(marker in text for marker in _DEAD_STOREFRONT_MARKERS)
+
+
+def storefront_url_candidates(url: str) -> list[str]:
+    """Generate alternate storefront slugs when Tray returns a stale path."""
+    parsed = urlparse(url.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return []
+    path = parsed.path or ""
+    variants: list[str] = [url.strip()]
+    seen = {url.strip()}
+
+    def _add(path_value: str) -> None:
+        rebuilt = urlunparse(
+            (parsed.scheme, parsed.netloc, path_value, "", parsed.query, "")
+        )
+        if rebuilt not in seen:
+            seen.add(rebuilt)
+            variants.append(rebuilt)
+
+    for old, new in _SPELLING_SWAPS:
+        if old in path.casefold():
+            # Case-insensitive replace preserving path casing loosely.
+            pattern = re.compile(re.escape(old), re.IGNORECASE)
+            _add(pattern.sub(new, path, count=1))
+    for old, new in _PATH_SWAPS:
+        if old in path:
+            _add(path.replace(old, new, 1))
+
+    # Bracelet / strap SKU suffixes often differ while the watch is the same listing family.
+    match = re.search(r"-(%s)$" % "|".join(_BRACELET_SUFFIXES), path, re.IGNORECASE)
+    if match:
+        prefix = path[: match.start()]
+        current = match.group(1).casefold()
+        for suffix in _BRACELET_SUFFIXES:
+            if suffix == current:
+                continue
+            _add(f"{prefix}-{suffix}")
+    return variants
+
+
+async def resolve_live_product_url(url: str | None) -> str | None:
+    """Return a storefront URL that does not soft-404, or None if all candidates fail."""
+    if not isinstance(url, str) or not url.strip():
+        return None
+    primary = url.strip()
+    if not _is_probeable_storefront(primary):
+        return primary
+
+    import httpx
+
+    candidates = storefront_url_candidates(primary)
+    timeout = httpx.Timeout(4.0, connect=2.0)
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=False,
+        headers={"User-Agent": "NSAgentForSorteios/product-link"},
+    ) as client:
+        for candidate in candidates:
+            try:
+                response = await client.head(candidate)
+            except httpx.HTTPError:
+                continue
+            location = response.headers.get("location")
+            if response.status_code in {301, 302, 303, 307, 308} and _is_dead_storefront_location(
+                location
+            ):
+                continue
+            if response.status_code == 404:
+                continue
+            if response.status_code in {301, 302, 303, 307, 308} and location:
+                # Follow one hop to a same-host product page; reject search dead-ends.
+                if _is_dead_storefront_location(location):
+                    continue
+                try:
+                    followed = await client.head(
+                        location
+                        if location.startswith("http")
+                        else f"{urlparse(candidate).scheme}://{urlparse(candidate).netloc}{location}"
+                    )
+                except httpx.HTTPError:
+                    continue
+                if followed.status_code == 200 and not _is_dead_storefront_location(
+                    followed.headers.get("location")
+                ):
+                    return candidate
+                continue
+            if 200 <= response.status_code < 300:
+                return candidate
+            # Some storefronts reject HEAD; fall back to GET without body drain cost.
+            if response.status_code in {405, 501}:
+                try:
+                    get_response = await client.get(candidate)
+                except httpx.HTTPError:
+                    continue
+                if get_response.status_code == 200 and not _is_dead_storefront_location(
+                    get_response.headers.get("location")
+                ):
+                    return candidate
+    return None
+
+
+async def ensure_product_has_live_url(product: dict[str, Any]) -> dict[str, Any]:
+    """Mutate a copy with a working storefront URL when Tray's slug is stale."""
+    patched = dict(product)
+    raw = official_product_url(patched)
+    live = await resolve_live_product_url(raw)
+    if live:
+        patched["url"] = live
+        if live != raw:
+            patched["_product_url_repaired"] = True
+            patched["_product_url_original"] = raw
+    else:
+        patched["_product_url_dead"] = True
+    return patched
 
 
 def _image_url(value: Any) -> str | None:

@@ -637,14 +637,24 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
                 _unwrap_entity(payload, ("product", "data", "result")),
                 _PRODUCT_FIELDS,
             )
-            return {
+            from .product_media import ensure_product_has_live_url
+
+            product = await ensure_product_has_live_url(product)
+            live_url = official_product_url(product)
+            result = {
                 "product_id": str(
                     product.get("id")
                     or arguments["product_id"]
                 ),
                 "product_name": product.get("name"),
-                "product_url": official_product_url(product),
+                "product_url": live_url,
             }
+            if product.get("_product_url_repaired"):
+                result["product_url_repaired"] = True
+                result["product_url_original"] = product.get("_product_url_original")
+            if product.get("_product_url_dead") and not live_url:
+                result["product_url_dead"] = True
+            return result
         if name == "check_inventory":
             return _reduce(await client.get_product_stock(arguments["product_id"]), ("product_id", "stock", "available", "available_in_store", "available_for_purchase", "upon_request", "availability", "when_stock_runs_out"))
         if name == "list_categories":

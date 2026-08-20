@@ -135,6 +135,9 @@ async def _revalidate_product(
         product["_variant_revalidated"] = True
     product["_revalidated"] = True
     product["_factual_source"] = "tray_live"
+    from .product_media import ensure_product_has_live_url
+
+    product = await ensure_product_has_live_url(product)
     return product, False, None
 
 
@@ -310,8 +313,14 @@ def _compose_reply(
     stock = product.get("stock")
     url = product.get("url")
     available = product.get("available")
-    if question_type.value == "product_link" and url:
-        return f"Esse é o {name}. Segue o link atualizado: {url}"
+    if question_type.value == "product_link":
+        url = product.get("url")
+        if url and not product.get("_product_url_dead"):
+            return f"Esse é o {name}. Segue o link atualizado: {url}"
+        return (
+            f"Esse é o {name}. A página deste acabamento no site está inconsistente agora; "
+            "posso te passar a referência e o valor, ou encaminhar para o atendimento fechar o pedido."
+        )
     if question_type.value == "availability":
         if available is False or (isinstance(stock, int) and stock <= 0):
             return (
