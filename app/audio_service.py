@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,37 @@ AUDIO_MIME_TYPES = {
     "application/octet-stream",
 }
 AUDIO_EXTENSIONS = (".ogg", ".opus", ".mp3", ".m4a", ".aac", ".amr", ".wav", ".webm")
+
+_WHISPER_BRAND_PROMPT = (
+    "Transcrição de mensagem de WhatsApp em português do Brasil sobre a New Store "
+    "Relógios: marcas (Seiko, Hamilton, Tissot, Omega, Tag Heuer, Christopher Ward, "
+    "Certina, Orient, Citizen, Casio, Longines, Breitling, Ballade, Sealander), "
+    "modelo, referência, preço, Pix, frete, CEP, saldo e sorteio. "
+    "Prefira nomes de marcas de relógio quando o áudio for ambíguo."
+)
+
+# Whisper often turns short "tem Hamilton?" into "tem remetente?" on WhatsApp audio.
+_HAMILTON_MISHEARING = re.compile(
+    r"\btem\s+remetente\b|\bremetente\s+dispon",
+    flags=re.IGNORECASE,
+)
+
+
+def fix_common_watch_brand_mishearings(text: str) -> str:
+    """Correct known Whisper brand confusions without inventing new intent."""
+    value = (text or "").strip()
+    if not value:
+        return value
+    if _HAMILTON_MISHEARING.search(value):
+        fixed = re.sub(r"\btem\s+remetente\b", "tem Hamilton", value, flags=re.IGNORECASE)
+        fixed = re.sub(r"\bremetente\s+dispon", "Hamilton dispon", fixed, flags=re.IGNORECASE)
+        if fixed != value:
+            print(
+                "[audio.transcript.brand_fix]",
+                {"from": value, "to": fixed},
+            )
+        return fixed
+    return value
 
 
 def is_placeholder_audio_text(text: str | None, filename: str | None = None) -> bool:
@@ -132,10 +164,7 @@ async def transcribe_audio_url(url: str, filename: str | None = None) -> str:
                     model=settings.openai_transcribe_model,
                     file=audio_file,
                     language="pt",
-                    prompt=(
-                        "Transcrição de mensagem de WhatsApp em português do Brasil sobre "
-                        "sorteios New Store, saldo, cartão presente, relógios e simulação de compra."
-                    ),
+                    prompt=_WHISPER_BRAND_PROMPT,
                 ),
             )
     except APIStatusError as exc:
@@ -146,7 +175,7 @@ async def transcribe_audio_url(url: str, filename: str | None = None) -> str:
     text = (getattr(response, "text", None) or "").strip()
     if not text:
         raise RuntimeError("empty_transcription")
-    return text
+    return fix_common_watch_brand_mishearings(text)
 
 
 def synthesize_reply_audio(text: str) -> tuple[bytes, str, str]:
