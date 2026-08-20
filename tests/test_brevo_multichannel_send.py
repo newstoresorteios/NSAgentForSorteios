@@ -116,3 +116,64 @@ async def test_auto_whatsapp_keeps_transactional_number_route(monkeypatch):
 
     assert sent.ok is True
     assert calls == [("+55 11 99999-9999", "Resposta")]
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_uses_transactional_even_when_mode_is_conversations(monkeypatch):
+    import app.brevo_client as brevo
+
+    calls = []
+    monkeypatch.setattr(brevo, "get_settings", lambda: _settings(brevo_reply_mode="conversations"))
+
+    async def whatsapp(incoming, text):
+        calls.append(("whatsapp", incoming.sender_phone, text))
+        return BrevoSendResult(ok=True, dry_run=False, status_code=201)
+
+    async def conversations(*_args, **_kwargs):
+        raise AssertionError("WhatsApp with phone must not use Conversations when transactional succeeds")
+
+    monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
+    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
+
+    sent = await brevo.send_brevo_reply(
+        IncomingMessage(
+            channel="whatsapp",
+            sender_phone="5585999498149",
+            visitor_id="visitor-wa",
+        ),
+        "Olá do Crono",
+    )
+
+    assert sent.ok is True
+    assert calls == [("whatsapp", "5585999498149", "Olá do Crono")]
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_falls_back_to_conversations_when_transactional_fails(monkeypatch):
+    import app.brevo_client as brevo
+
+    calls = []
+    monkeypatch.setattr(brevo, "get_settings", lambda: _settings(brevo_reply_mode="conversations"))
+
+    async def whatsapp(*_args):
+        calls.append("whatsapp")
+        return BrevoSendResult(ok=False, dry_run=False, error="brevo_sender_number_missing")
+
+    async def conversations(incoming, text, audio_file=None):
+        calls.append(("conversations", incoming.visitor_id, text, audio_file))
+        return BrevoSendResult(ok=True, dry_run=False, status_code=200)
+
+    monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
+    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
+
+    sent = await brevo.send_brevo_reply(
+        IncomingMessage(
+            channel="whatsapp",
+            sender_phone="5585999498149",
+            visitor_id="visitor-wa",
+        ),
+        "Fallback",
+    )
+
+    assert sent.ok is True
+    assert calls == ["whatsapp", ("conversations", "visitor-wa", "Fallback", None)]
