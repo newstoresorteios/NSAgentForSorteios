@@ -120,6 +120,7 @@ def test_parse_instagram_login_from_and_string_message():
     assert messages[0].sender_external_id == "user-9"
     assert messages[0].message_id == "mid-9"
     assert messages[0].provider == "meta"
+    assert messages[0].sender_username == "cliente"
 
 
 def test_parse_message_edit_with_nested_sender_and_text():

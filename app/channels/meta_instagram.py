@@ -15,6 +15,58 @@ from app.config import get_settings
 from app.models import AgentResult, IncomingMessage
 from app.observability import log_event
 
+_IG_USERNAME_CACHE: dict[str, str] = {}
+
+
+def _username_from_dict(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    text = str(value.get("username") or "").strip().lstrip("@")
+    return text or None
+
+
+def _instagram_username_hint(sender: dict, message: dict, event: dict) -> str | None:
+    for obj in (
+        sender,
+        event.get("from"),
+        event.get("sender"),
+        message.get("from") if isinstance(message.get("from"), dict) else None,
+    ):
+        found = _username_from_dict(obj)
+        if found:
+            return found
+    return None
+
+
+def _lookup_ig_username(sender_id: str) -> str | None:
+    """Resolve Instagram handle from IGSID. Cached; never blocks the webhook for long."""
+    cached = _IG_USERNAME_CACHE.get(sender_id)
+    if cached:
+        return cached
+    settings = get_settings()
+    token = str(getattr(settings, "meta_page_access_token", "") or "").strip()
+    if not token or not sender_id:
+        return None
+    try:
+        import httpx
+
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(
+                f"https://graph.instagram.com/v21.0/{sender_id}",
+                params={"fields": "username,name", "access_token": token},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        data = resp.json() if resp.content else {}
+        if not isinstance(data, dict):
+            return None
+        username = str(data.get("username") or data.get("name") or "").strip().lstrip("@")
+        if username:
+            _IG_USERNAME_CACHE[sender_id] = username
+            return username
+    except Exception:
+        return None
+    return None
+
 
 def _agent_debug_log(
     *,
@@ -594,6 +646,10 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
             if not text and image_url:
                 text = "[Imagem recebida via Instagram]"
 
+            username = _instagram_username_hint(sender, message, event) or _lookup_ig_username(
+                sender_id
+            )
+
             messages.append(
                 IncomingMessage(
                     provider="meta",
@@ -604,6 +660,8 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                     visitor_id=sender_id or None,
                     sender_key=f"instagram:{sender_id}" if sender_id else None,
                     sender_external_id=sender_id or None,
+                    sender_username=username,
+                    sender_name=username,
                     text=text,
                     image_url=image_url,
                     attachment_type=attachment_type,

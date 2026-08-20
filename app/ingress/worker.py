@@ -67,27 +67,6 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
     incoming = attach_recent_image_for_followup(incoming)
 
     try:
-        from app.human_takeover import human_takeover_active
-
-        # ChatBô takeover state is Brevo-only. Meta Instagram must not inherit
-        # assigned_to from old Conversations threads.
-        if (incoming.provider or "").lower() != "meta" and human_takeover_active(
-            incoming
-        ):
-            mark_inbox_processed(inbox_id)
-            log_event(
-                "inbox.skipped_human_takeover",
-                {"inbox_id": inbox_id, "channel": incoming.channel},
-            )
-            return {"ok": True, "inbox_id": inbox_id, "skipped": "human_takeover"}
-    except Exception as exc:  # noqa: BLE001
-        log_exception(
-            "inbox.human_takeover_check_failed",
-            exc,
-            {"inbox_id": inbox_id},
-        )
-
-    try:
         claimed, inbound_id = claim_inbound_message(incoming.model_dump(mode="json"))
     except Exception as exc:
         log_exception("inbox.claim_inbound_failed", exc, {"inbox_id": inbox_id})
@@ -101,6 +80,28 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
     if isinstance(incoming.raw, dict):
         incoming.raw["inbound_id"] = inbound_id
         incoming.raw["inbox_id"] = inbox_id
+
+    try:
+        from app.human_takeover import human_takeover_active
+
+        if human_takeover_active(incoming):
+            mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
+            log_event(
+                "inbox.skipped_human_takeover",
+                {"inbox_id": inbox_id, "channel": incoming.channel, "inbound_id": inbound_id},
+            )
+            return {
+                "ok": True,
+                "inbox_id": inbox_id,
+                "inbound_id": inbound_id,
+                "skipped": "human_takeover",
+            }
+    except Exception as exc:  # noqa: BLE001
+        log_exception(
+            "inbox.human_takeover_check_failed",
+            exc,
+            {"inbox_id": inbox_id},
+        )
 
     if has_successful_agent_response(inbound_id):
         mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
