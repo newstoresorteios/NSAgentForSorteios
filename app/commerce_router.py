@@ -438,6 +438,8 @@ def _product_lines(
             if pix_price is not None and (
                 list_price is None or abs(pix_price - list_price) >= 0.01
             ):
+                # Ground derived Pix in commercial_data for factual validation.
+                product["pix_price"] = pix_price
                 block.append(f"À vista no Pix: {_price_label(pix_price)}")
             for installment in _installment_lines(payment, limit=2):
                 block.append(installment)
@@ -456,6 +458,7 @@ def _product_lines(
         if pix_price is not None and (
             list_price is None or abs(pix_price - list_price) >= 0.01
         ):
+            product["pix_price"] = pix_price
             parts.append(f"À vista no Pix: {_price_label(pix_price)}")
         if isinstance(product_url, str) and product_url.strip():
             parts.append(f"Link: {product_url.strip()}")

@@ -907,3 +907,81 @@ def test_parser_detects_image_from_url_extension_without_type():
     assert incoming.attachment_type == "image"
     assert incoming.image_url == "https://cdn.example.com/watch.jpg"
     assert incoming.input_modality == "text_with_image"
+
+
+def test_prospex_diver_dial_maps_to_sea_samurai_catalog_name():
+    """Vision often reads dial text; Tray titles use Sea Samurai (SRPL13K1)."""
+    from app.models import SalesInterpretation
+    from app.product_retrieval import (
+        ProductRetrievalCompiler,
+        identity_core_tokens,
+        normalize_pt_catalog_query,
+        score_catalog_candidates,
+    )
+
+    assert "Sea Samurai" in normalize_pt_catalog_query(
+        "Prospex Diver's 200m preto Mergulho"
+    )
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Seiko",
+        model="Prospex Diver's 200m",
+        color="preto",
+        case_finish="aço/prata",
+        features=["Automático", "Mergulho"],
+        confidence=0.96,
+    )
+    interpretation = interpretation_from_identification(identified)
+    model = interpretation.subject.model or ""
+    assert "Sea Samurai" in model
+    assert "Mergulho" not in model  # feature stays in attributes, not Tray name
+    assert "Mergulho" in interpretation.preferences.attributes
+    core = identity_core_tokens(model, color_tokens=("preto",))
+    assert "prospex" in core
+    assert "samurai" in core
+    assert "diver" not in core
+    assert "200m" not in core
+    assert "mergulho" not in core
+
+    products = [
+        {
+            "id": "1997",
+            "brand": "Seiko",
+            "name": (
+                "Relógio Seiko Prospex Save The Ocean Antarctica Monster "
+                "Pinguim Automático Azul"
+            ),
+            "price": 4999.0,
+        },
+        {
+            "id": "1945",
+            "brand": "Seiko",
+            "name": "Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1",
+            "reference": "SRPL13K1",
+            "price": 6099.99,
+        },
+        {
+            "id": "1949",
+            "brand": "Seiko",
+            "name": "Relógio Seiko King Turtle SRPE05",
+            "price": 5599.0,
+        },
+    ]
+    assert products_match_required_features(products, ["Mergulho"]) is True
+    ranked = score_catalog_candidates(products, interpretation, require_color=True)
+    assert ranked
+    assert ranked[0]["id"] == "1945"
+
+    plan = ProductRetrievalCompiler.compile(interpretation)
+    names = [req.name for req in plan.requests if req.name]
+    assert any(name and "Sea Samurai" in name for name in names)
+
+
+def test_products_match_mergulho_accepts_sea_samurai_title():
+    products = [
+        {
+            "id": "1945",
+            "name": "Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1",
+        }
+    ]
+    assert products_match_required_features(products, ["Mergulho"]) is True

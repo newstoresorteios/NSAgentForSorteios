@@ -259,6 +259,16 @@ _DESCRIPTOR_MODEL_TOKENS = frozenset(
         "man",
     }
 )
+# Dial boilerplate Tray omits for Seiko Prospex divers (Sea Samurai / King Turtle).
+_PROSPEX_DIVER_SOFT_IDENTITY = frozenset(
+    {"diver", "divers", "mergulho", "200m", "200"}
+)
+_PROSPEX_DIVER_COMMERCIAL_ALIASES: tuple[str, ...] = (
+    "Sea Samurai",
+    "Prospex Sea Samurai",
+    "King Turtle",
+    "Prospex King Turtle",
+)
 # Strap/case materials from Vision — useful for ranking, never AND-required.
 # Catalog titles usually only carry dial color (Branco/Rosa), not "pulseira bege".
 _ACCESSORY_COLOR_TOKENS = frozenset(
@@ -394,6 +404,12 @@ def identity_core_tokens(
     required = required_model_tokens(model)
     drop = set(color_tokens) | _OPTIONAL_MODEL_TOKENS | _DESCRIPTOR_MODEL_TOKENS
     core = tuple(token for token in required if token not in drop)
+    # Prospex store titles use Sea Samurai / King Turtle — dial "Diver's 200m"
+    # must not AND-block those catalog rows.
+    if any(token == "prospex" for token in core):
+        core = tuple(
+            token for token in core if token not in _PROSPEX_DIVER_SOFT_IDENTITY
+        )
     if core:
         return core
     # Fall back to non-color identity even for single-token models.
@@ -402,6 +418,10 @@ def identity_core_tokens(
         for token in significant_model_tokens(model)
         if token not in drop
     )
+    if any(token == "prospex" for token in identity):
+        identity = tuple(
+            token for token in identity if token not in _PROSPEX_DIVER_SOFT_IDENTITY
+        )
     return identity or required
 
 
@@ -477,6 +497,16 @@ def score_catalog_candidates(
             score += 30
         if feature_tokens and product_matches_feature_tokens(product, feature_tokens):
             score += 40
+        ask_fold = _fold(interpretation.subject.model)
+        if "prospex" in ask_fold and (
+            is_prospex_diver_ask(interpretation.subject.model)
+            or "samurai" in ask_fold
+            or "turtle" in ask_fold
+        ):
+            if "sea samurai" in text or ("samurai" in text and "prospex" in text):
+                score += 60
+            elif "king turtle" in text or ("turtle" in text and "prospex" in text):
+                score += 45
         if case_tokens:
             # Soft: silver/steel case should outrank all-black-case siblings when
             # dial color alone collides on "preto".
@@ -566,6 +596,11 @@ def normalize_pt_catalog_query(text: str | None) -> str:
     updated = value
     for pattern, replacement in replacements:
         updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
+    # Dial text → NewStore commercial title (SRPL13K1 / Sea Samurai line).
+    folded = _fold(updated)
+    if is_prospex_diver_ask(updated) and "samurai" not in folded and "turtle" not in folded:
+        auto = " Automático" if "automatico" in folded else ""
+        return f"Prospex Sea Samurai{auto}".strip()
     return updated
 
 
@@ -654,9 +689,46 @@ def catalog_match_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]
 
 _FEATURE_SEARCH_ALIASES: dict[str, tuple[str, ...]] = {
     "cronografo": ("cronografo", "chronograph", "chrono"),
-    "mergulho": ("mergulho", "diver", "divers", "200m"),
+    # NewStore titles Prospex divers as Sea Samurai / King Turtle, not "Diver's 200m".
+    "mergulho": (
+        "mergulho",
+        "diver",
+        "divers",
+        "200m",
+        "samurai",
+        "turtle",
+        "sea samurai",
+        "king turtle",
+    ),
     "gmt": ("gmt",),
 }
+
+
+def is_prospex_diver_ask(text: str | None) -> bool:
+    """True when Vision/customer text is a Prospex diver dial (not a named line yet)."""
+    folded = _fold(text)
+    if not folded or "prospex" not in folded:
+        return False
+    return bool(
+        re.search(r"\b(diver|divers|mergulho|200m|200)\b", folded)
+        or "diver" in folded
+    )
+
+
+def commercial_model_aliases(
+    model: str | None,
+    *,
+    brand: str | None = None,
+) -> tuple[str, ...]:
+    """Tray commercial names for dial-only Vision labels."""
+    probe = " ".join(part for part in (brand, model) if part).strip() or (model or "")
+    if not is_prospex_diver_ask(probe) and not is_prospex_diver_ask(model):
+        return ()
+    folded = _fold(model)
+    # Already a commercial line — do not expand to siblings.
+    if "samurai" in folded or "turtle" in folded:
+        return ()
+    return _PROSPEX_DIVER_COMMERCIAL_ALIASES
 
 
 def preference_feature_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
@@ -1072,6 +1144,22 @@ class ProductRetrievalCompiler:
                 identity_name or ""
             ):
                 _add_probe("exact_query_full", query=brand_model_query)
+            # Dial "Prospex Diver's 200m" → Tray titles Sea Samurai / King Turtle.
+            for alias in commercial_model_aliases(
+                pt_model or subject.model,
+                brand=subject.brand,
+            ):
+                _add_probe(
+                    "exact_commercial_alias",
+                    name=alias,
+                    brand=subject.brand,
+                )
+                if color_hue:
+                    _add_probe(
+                        "exact_commercial_alias_color",
+                        name=f"{alias} {color_hue}".strip(),
+                        brand=subject.brand,
+                    )
             # Tier 2 hooks — executed only when Tier 1 matching misses.
             if subject.brand:
                 requests.append(ProductRetrievalRequest(

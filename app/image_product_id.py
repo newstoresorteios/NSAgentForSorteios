@@ -36,8 +36,14 @@ Regras:
   do mostrador em reference — use color.
 - Em color: NÃO inclua pulseira, couro, caixa prata/aço.
   Ex.: mostrador preto + caixa aço → color="preto", case_finish="aço" (ou "prata").
-- Em model: priorize linha/coleção legível. Se vir "AUTOMATIC" / "DIVER'S 200m" /
-  "CHRONO" no mostrador, inclua no model ou em features — não descarte.
+- Em model: priorize linha/coleção COMERCIAL usada em e-commerce BR, não só o texto
+  literal do mostrador.
+  * Seiko com logo Prospex (X) + AUTOMATIC + DIVER'S 200m (sem "Save the Ocean" /
+    Monster / GMT no mostrador): use model="Prospex Sea Samurai" — esse é o nome
+    de catálogo (ex.: SRPL13K1). Coloque Mergulho/Automático em features.
+  * Se "King Turtle" / "Turtle" / "Samurai" estiver escrito/legível, use esse nome.
+  * Se vir só "AUTOMATIC" / "DIVER'S 200m" / "CHRONO" e NÃO souber a linha comercial,
+    ainda assim inclua a função em features — não descarte.
 - Se houver submostradores ou botões de cronógrafo, features DEVE incluir "cronógrafo".
 - Se o mostrador tiver a palavra AUTOMATIC / AUTOMÁTICO, features DEVE incluir "automático"
   (não confunda com variantes manuais/mecânicas da mesma linha).
@@ -62,7 +68,17 @@ class ImageProductIdentification(BaseModel):
 
 _FEATURE_MATCH_ALIASES: dict[str, tuple[str, ...]] = {
     "cronografo": ("cronografo", "chronograph", "chrono", "cronograph"),
-    "mergulho": ("mergulho", "diver", "divers", "dive", "200m"),
+    "mergulho": (
+        "mergulho",
+        "diver",
+        "divers",
+        "dive",
+        "200m",
+        "samurai",
+        "turtle",
+        "sea samurai",
+        "king turtle",
+    ),
     "gmt": ("gmt",),
 }
 
@@ -298,11 +314,21 @@ def interpretation_from_identification(
         # Append dial color only when model already has identity (never model="Preto").
         if color and color.casefold() not in model.casefold():
             model = f"{model} {color}".strip()
+        model_fold = model.casefold()
         for feature in features:
-            if feature.casefold() not in model.casefold():
-                # Keep distinctive functions in the model string for probes.
-                if feature.casefold() in {"cronógrafo", "cronografo", "mergulho", "gmt"}:
-                    model = f"{model} {feature}".strip()
+            feature_fold = feature.casefold()
+            if feature_fold in model_fold:
+                continue
+            # Keep chrono/GMT in the model string for probes. Do NOT append
+            # Mergulho onto Prospex Sea Samurai — Tray titles omit "Diver's 200m".
+            if feature_fold in {"cronógrafo", "cronografo", "gmt"}:
+                model = f"{model} {feature}".strip()
+                model_fold = model.casefold()
+            elif feature_fold == "mergulho" and not any(
+                token in model_fold for token in ("samurai", "turtle", "prospex")
+            ):
+                model = f"{model} {feature}".strip()
+                model_fold = model.casefold()
 
     interpretation = SalesInterpretation(
         domain="commerce",
