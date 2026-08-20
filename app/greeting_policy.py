@@ -26,6 +26,28 @@ _GREETING_BODY_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+_GREETING_LABEL_RE = re.compile(
+    r"^\s*(saudação|saudacao)\s+padr[aã]o"
+    r"(?:\s*\([^)]*\))?\s*:\s*",
+    flags=re.IGNORECASE,
+)
+
+
+def sanitize_greeting_reply(text: str | None) -> str:
+    """Strip instruction labels the model may echo from persona prose."""
+    cleaned = " ".join(str(text or "").strip().split())
+    if not cleaned:
+        return ""
+    cleaned = _GREETING_LABEL_RE.sub("", cleaned).strip()
+    # Drop leftover meta prefixes like "Saudação oficial:"
+    cleaned = re.sub(
+        r"^\s*(saudação|saudacao)\s+(oficial|inicial)\s*:\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned
+
 
 def _fold(text: str) -> str:
     value = unicodedata.normalize("NFKD", (text or "").strip().lower())
@@ -39,7 +61,7 @@ def resolve_persona_greeting() -> str | None:
 
         runtime = get_persona_runtime()
         if runtime is not None and (runtime.greeting_text or "").strip():
-            return runtime.greeting_text.strip()
+            return sanitize_greeting_reply(runtime.greeting_text)
     except Exception:
         pass
     try:
@@ -71,12 +93,12 @@ def resolve_persona_greeting() -> str | None:
         chatbo_id = chatbo_persona_id(active.metadata)
         if chatbo_id:
             profile = get_chatbo_persona_profile(chatbo_id) or {}
-            greeting = str(profile.get("greeting") or "").strip()
+            greeting = sanitize_greeting_reply(profile.get("greeting"))
             if greeting:
                 return greeting
         # Fallback: first line in instructions that looks like a Crono greeting.
         for line in str(active.instructions or "").splitlines():
-            cleaned = line.strip().strip('"').strip("'")
+            cleaned = sanitize_greeting_reply(line.strip().strip('"').strip("'"))
             if "eu sou o crono" in cleaned.casefold() and len(cleaned) <= 220:
                 return cleaned
     except Exception as exc:

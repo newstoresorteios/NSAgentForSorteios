@@ -47,7 +47,7 @@ class PersonaRuntimeConfig(BaseModel):
     tone: str | None = None
     tone_details: str | None = None
     customer_address_style: str | None = None
-    greeting_mode: Literal["persona_llm", "persona_text", "local"] = "persona_llm"
+    greeting_mode: Literal["persona_llm", "persona_text", "local"] = "persona_text"
     pix_discount_percent: int = DEFAULT_PIX_DISCOUNT_PERCENT
     max_pix_discount_percent: int = DEFAULT_PIX_DISCOUNT_PERCENT
     site_price_is_final: bool = True

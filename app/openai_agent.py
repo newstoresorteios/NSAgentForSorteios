@@ -69,15 +69,16 @@ from .sales_agent import (
     interpret_message,
     _is_greeting,
 )
-from .greeting_policy import choose_greeting_reply
+from .greeting_policy import choose_greeting_reply, sanitize_greeting_reply
 
 
 PERSONA_GREETING_OPERATIONAL = """\
 <greeting_contract>
 O cliente enviou apenas uma saudação.
-Use a identidade, tom e saudação da persona ativa (Crono New Store / ChatBo).
-Se FACTS.official_greeting existir, use essa saudação oficial como base
-(pode adaptar levemente com o primeiro nome do cliente se já conhecido).
+Responda SOMENTE com a mensagem final ao cliente — nunca copie rótulos de prompt
+como "Saudação padrão", "adapte ao contexto", "Saudação oficial:" ou títulos de seção.
+Se FACTS.official_greeting existir, use essa frase (pode trocar Olá/Bom dia conforme
+a mensagem do cliente e incluir o primeiro nome se conhecido).
 Apresente-se como Crono quando fizer sentido e pergunte como pode ajudar.
 Não invente produtos, preços, estoque, pedidos ou links.
 Resposta curta, natural, em português do Brasil.
@@ -331,6 +332,9 @@ async def generate_persona_greeting_reply(
             handoff_required=False,
             safety_reason="persona_greeting_empty",
         )
+    content = sanitize_greeting_reply(content)
+    if not content or content.casefold().startswith("saudação padrão"):
+        content = choose_greeting_reply(recent_turns)
     return AgentResult(
         reply_text=_truncate(content, settings.max_reply_chars),
         intent="general",
@@ -1138,8 +1142,27 @@ async def _generate_agent_reply_async_inner(
         greeting_mode = (
             runtime.greeting_mode
             if runtime is not None
-            else "persona_llm"
+            else "persona_text"
         )
+        # Prefer ChatBo "Saudação inicial" text when available — avoids the LLM
+        # echoing instruction labels like "Saudação padrão (adapte ao contexto):".
+        has_official_greeting = bool(
+            runtime is not None and (runtime.greeting_text or "").strip()
+        )
+        if has_official_greeting and greeting_mode != "persona_llm":
+            return _annotate_agent_result(
+                AgentResult(
+                    reply_text=choose_greeting_reply(recent_turns),
+                    intent="general",
+                    handoff_required=False,
+                ),
+                domain="greeting",
+                response_source="persona_greeting",
+                used_openai_interpreter=used_openai_interpreter,
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=interpretation._fallback_reason,
+            )
         # Crono (DB persona) is the attendance reference — greet via the compiled
         # persona prompt, not canned local phrases (unless policy says otherwise).
         if (
@@ -1154,16 +1177,19 @@ async def _generate_agent_reply_async_inner(
                 conversation_state=commerce_state,
             )
             if persona_reply and not persona_reply.safety_reason:
-                return _annotate_agent_result(
-                    persona_reply,
-                    domain="greeting",
-                    goal=interpretation.goal,
-                    response_source="openai",
-                    used_openai_interpreter=used_openai_interpreter,
-                    used_openai_responder=True,
-                    used_tray=False,
-                    fallback_reason=interpretation._fallback_reason,
-                )
+                cleaned = sanitize_greeting_reply(persona_reply.reply_text)
+                if cleaned and "saudação padrão" not in cleaned.casefold():
+                    persona_reply.reply_text = cleaned
+                    return _annotate_agent_result(
+                        persona_reply,
+                        domain="greeting",
+                        goal=interpretation.goal,
+                        response_source="openai",
+                        used_openai_interpreter=used_openai_interpreter,
+                        used_openai_responder=True,
+                        used_tray=False,
+                        fallback_reason=interpretation._fallback_reason,
+                    )
         return _annotate_agent_result(
             AgentResult(
                 reply_text=choose_greeting_reply(recent_turns),
@@ -1171,7 +1197,7 @@ async def _generate_agent_reply_async_inner(
                 handoff_required=False,
             ),
             domain="greeting",
-            response_source="local_greeting",
+            response_source="persona_greeting" if has_official_greeting else "local_greeting",
             used_openai_interpreter=False,
             used_openai_responder=False,
             used_tray=False,
