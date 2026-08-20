@@ -1063,6 +1063,8 @@ class ProductRetrievalCompiler:
             )
         )
         exact = bool(inferred_reference or subject.ean or model_for_exact)
+        if bool(getattr(interpretation, "_force_recommendation_mode", False)):
+            exact = False
         requests: list[ProductRetrievalRequest] = []
 
         if subject.ean:

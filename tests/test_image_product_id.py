@@ -1022,6 +1022,29 @@ def test_citizen_navihawk_mislabel_maps_to_sky_pilot():
     )
 
 
+def test_soft_line_interpretation_strips_color_and_forces_recommend():
+    from app.image_product_id import soft_line_interpretation_from_identification
+    from app.product_retrieval import ProductRetrievalCompiler
+
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="TAG Heuer",
+        model="Carrera prateado Cronógrafo",
+        color="prateado",
+        features=["Cronógrafo"],
+        confidence=0.9,
+    )
+    soft = soft_line_interpretation_from_identification(identified)
+    assert soft.goal == "recommend"
+    assert soft._force_recommendation_mode is True
+    assert soft.subject.brand == "TAG Heuer"
+    assert soft.subject.model
+    assert "Carrera" in soft.subject.model
+    assert "prateado" not in (soft.subject.model or "").casefold()
+    plan = ProductRetrievalCompiler.compile(soft)
+    assert plan.mode == "recommendation"
+
+
 def test_products_match_mergulho_accepts_sea_samurai_title():
     products = [
         {

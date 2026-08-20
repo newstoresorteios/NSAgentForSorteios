@@ -363,6 +363,63 @@ def interpretation_from_identification(
     return interpretation
 
 
+def soft_line_interpretation_from_identification(
+    identified: ImageProductIdentification,
+) -> SalesInterpretation:
+    """Relax exact photo match into a line/brand nearby search (Carrera, Sky Pilot…)."""
+    from .product_retrieval import identity_core_tokens, preference_color_tokens
+
+    base = interpretation_from_identification(identified)
+    color_tokens = preference_color_tokens(base)
+    core = identity_core_tokens(base.subject.model, color_tokens=color_tokens)
+    drop = {
+        "cronografo",
+        "chronograph",
+        "automatico",
+        "quartz",
+        "eco",
+        "drive",
+        "ecodrive",
+        "multifuncao",
+        "alarme",
+        *color_tokens,
+        "prateado",
+        "prata",
+        "silver",
+    }
+    line_tokens = [token for token in core if token not in drop][:3]
+    line_label = " ".join(line_tokens).title() if line_tokens else None
+    if not line_label:
+        raw = (identified.model or "").strip()
+        line_label = raw.split()[0] if raw else None
+    soft = base.model_copy(
+        update={
+            "goal": "recommend",
+            "subject": base.subject.model_copy(
+                update={
+                    "model": line_label,
+                    "reference": None,
+                }
+            ),
+            "references_previous_context": True,
+            "active_topic": "nearby_line_options",
+        }
+    )
+    soft._source = "image_vision_soft_line"
+    soft._force_recommendation_mode = True
+    return soft
+
+
+def _nearby_line_preferences(identified: ImageProductIdentification) -> dict[str, Any]:
+    soft = soft_line_interpretation_from_identification(identified)
+    return {
+        "nearby_line_brand": soft.subject.brand,
+        "nearby_line_model": soft.subject.model,
+        "nearby_line_color": soft.preferences.color,
+        "image_identify": identified.model_dump(mode="json"),
+    }
+
+
 def _clarification_result(
     *,
     reason: str,
@@ -934,13 +991,58 @@ async def handle_image_product_search(
             if isinstance(tray_result.commercial_data, dict):
                 tray_result.commercial_data["match_status"] = "ambiguous"
         else:
-            color_hint = (identified.color or "").strip()
-            tray_result.reply_text = (
-                f"Pela foto, identifiquei {label or 'esse modelo'}"
-                f"{f' ({color_hint})' if color_hint else ''}, "
-                "mas ainda não localizei essa combinação exata no catálogo. "
-                "Quer que eu mostre as opções mais próximas dessa linha?"
+            # Exact miss — immediately search the line (don't ask "quer que eu
+            # mostre?" and then forget the photo on "sim").
+            soft_interpretation = soft_line_interpretation_from_identification(
+                identified
             )
+            soft_result = await _execute_compiled_product_retrieval(
+                soft_interpretation
+            )
+            soft_products = (
+                (soft_result.commercial_data or {}).get("products")
+                if soft_result and isinstance(soft_result.commercial_data, dict)
+                else None
+            )
+            if isinstance(soft_products, list) and soft_products:
+                from .commerce_router import _product_lines
+
+                shown = soft_products[:2]
+                numbered_lines = [
+                    f"{position}. {line}"
+                    for position, line in enumerate(
+                        _product_lines(shown, compact=True),
+                        start=1,
+                    )
+                ]
+                tray_result = soft_result
+                tray_result.reply_text = (
+                    f"Pela foto, identifiquei {label or 'esse modelo'}, "
+                    "mas não fechei a combinação exata. Opções próximas dessa linha:\n"
+                    + "\n".join(numbered_lines)
+                    + "\n\nÉ algum desses?"
+                )
+                tray_result.commercial_data = {
+                    **(tray_result.commercial_data or {}),
+                    "products": shown,
+                    "match_status": "ambiguous",
+                }
+                tray_result.safety_reason = None
+                interpretation = soft_interpretation
+            else:
+                line_hint = soft_interpretation.subject.model or label
+                tray_result.reply_text = (
+                    f"Pela foto, identifiquei {label or 'esse modelo'}, "
+                    f"mas ainda não localizei {line_hint or 'essa linha'} no catálogo agora. "
+                    "Se tiver a referência (ex.: código no fundo da caixa), me manda "
+                    "que eu confiro de novo."
+                )
+                tray_result.response_metadata = {
+                    **(tray_result.response_metadata or {}),
+                    "pending_action": "show_nearby_line",
+                    "active_preferences": _nearby_line_preferences(identified),
+                    "active_topic": "nearby_line_options",
+                }
     elif tray_result.commercial_data and isinstance(
         tray_result.commercial_data.get("products"),
         list,
@@ -991,7 +1093,8 @@ async def handle_image_product_search(
             )
 
     # Vision turns never activate a SKU — wait for explicit confirmation.
-    tray_result.response_metadata.update({
+    meta = dict(tray_result.response_metadata or {})
+    meta.update({
         "image_search": True,
         "image_identify": identified.model_dump(mode="json"),
         "domain": "commerce",
@@ -1000,11 +1103,12 @@ async def handle_image_product_search(
         "clear_active_product": True,
         "product_resolution_state": "plausible_matches",
     })
+    tray_result.response_metadata = meta
     # Skip OpenAI responder here: Vision already spent the critical latency budget.
     return _mark_sales_result(
         tray_result,
         interpretation=interpretation,
-        goal="find",
+        goal=interpretation.goal or "find",
         response_source="image_vision",
         used_openai_responder=False,
         used_tray=True,

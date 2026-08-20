@@ -61,6 +61,7 @@ from .guardrails import (
     detect_coupon_code_inquiry,
 )
 from .models import AgentResult, IncomingMessage, SalesInterpretation
+from .context_resume import is_short_affirmation
 from .turn_runtime import LLMCallBudgetExceeded
 from .payment_service import (
     inspect_current_cart,
@@ -2263,7 +2264,106 @@ async def _handle_sales_message_inner(
     pending_action_used = False
     if (
         interpretation is not None
+        and state.pending_action == "show_nearby_line"
+        and (
+            interpretation.confirmation == "confirm"
+            or is_short_affirmation(message.text)
+        )
+    ):
+        from .image_product_id import (
+            ImageProductIdentification,
+            soft_line_interpretation_from_identification,
+        )
+
+        prefs = state.active_preferences if isinstance(state.active_preferences, dict) else {}
+        identify_payload = prefs.get("image_identify")
+        soft_interp = None
+        if isinstance(identify_payload, dict):
+            try:
+                soft_interp = soft_line_interpretation_from_identification(
+                    ImageProductIdentification.model_validate(identify_payload)
+                )
+            except (TypeError, ValueError):
+                soft_interp = None
+        if soft_interp is None:
+            brand = prefs.get("nearby_line_brand") or (
+                state.active_product.brand if state.active_product else None
+            )
+            model = prefs.get("nearby_line_model")
+            if brand or model:
+                soft_interp = SalesInterpretation(
+                    domain="commerce",
+                    goal="recommend",
+                    subject={
+                        "product_type": "relógio",
+                        "brand": brand,
+                        "model": model,
+                    },
+                    preferences={
+                        "color": prefs.get("nearby_line_color"),
+                    },
+                    information_needed=["catalog"],
+                    references_previous_context=True,
+                    enough_information_to_search=True,
+                    ready_for_retrieval=True,
+                    stop_clarification=True,
+                    needs_clarification=False,
+                    clarification_question=None,
+                    confidence=0.8,
+                    active_topic="nearby_line_options",
+                    purchase_stage="discovery",
+                    confirmation="confirm",
+                )
+                soft_interp._force_recommendation_mode = True
+                soft_interp._source = "nearby_line_resume"
+        if soft_interp is not None:
+            print("[sales.pending_action]", {
+                "action": "show_nearby_line",
+                "confirmed": True,
+                "brand": soft_interp.subject.brand,
+                "model": soft_interp.subject.model,
+            })
+            tray_result = await _execute_compiled_product_retrieval(soft_interp)
+            interpretation._clear_pending_action = True
+            pending_action_used = True
+            if tray_result is not None:
+                return _mark_sales_result(
+                    tray_result,
+                    interpretation=soft_interp,
+                    goal="recommend",
+                    response_source=tray_result.response_metadata.get(
+                        "response_source",
+                        "nearby_line_resume",
+                    ),
+                    used_openai_responder=False,
+                    used_tray=True,
+                    fallback_reason=tray_result.safety_reason,
+                )
+            return _mark_sales_result(
+                AgentResult(
+                    reply_text=(
+                        "Ainda não achei opções dessa linha no catálogo agora. "
+                        "Se tiver a referência do modelo, me manda que eu confiro."
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="product_not_found",
+                    response_metadata={
+                        "domain": "commerce",
+                        "clear_pending_action": True,
+                    },
+                ),
+                interpretation=soft_interp,
+                goal="recommend",
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=True,
+                fallback_reason="nearby_line_empty",
+            )
+    if (
+        interpretation is not None
         and state.pending_action
+        and state.pending_action != "show_nearby_line"
         and interpretation.confirmation == "confirm"
         and interpretation.goal in {"discover", "find", "recommend", "compare"}
     ):
