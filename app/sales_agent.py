@@ -82,9 +82,11 @@ from .order_service import (
 from .product_media import resolve_presented_product_images, resolve_product_image
 from .product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
+    apply_persona_presentation_order,
     commercial_availability_facts,
     ProductMatchError,
     ProductRetrievalCompiler,
+    customer_result_limit,
     enrich_product_variants,
     exact_progress_matches,
     exact_specific_product_matches,
@@ -2333,7 +2335,7 @@ async def _execute_compiled_product_retrieval(
                 soft = soft_confirm_candidates(
                     candidates,
                     interpretation,
-                    limit=CUSTOMER_RESULT_LIMIT,
+                    limit=customer_result_limit(),
                 )
                 if soft:
                     refreshed, revalidation_failed = await revalidate_products(
@@ -2489,7 +2491,8 @@ async def _execute_compiled_product_retrieval(
         ranked = await rerank_products(enriched, interpretation)
     else:
         ranked = hard_filtered
-    selected = ranked[:CUSTOMER_RESULT_LIMIT]
+    ranked = apply_persona_presentation_order(ranked)
+    selected = ranked[: customer_result_limit()]
     refreshed, revalidation_failed = await revalidate_products(
         selected,
         interpretation,

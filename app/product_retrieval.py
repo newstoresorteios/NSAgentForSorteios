@@ -31,6 +31,48 @@ MAX_VARIANT_PRODUCT_QUERIES = 5
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
+def customer_result_limit() -> int:
+    """Persona-aware shortlist size (ChatBo recommendation_rules / runtime policy)."""
+    limit = CUSTOMER_RESULT_LIMIT
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        if runtime is not None and getattr(runtime, "max_catalog_options", None):
+            limit = int(runtime.max_catalog_options)
+    except Exception:
+        limit = CUSTOMER_RESULT_LIMIT
+    return max(1, min(5, limit))
+
+
+def prefer_ready_stock_enabled() -> bool:
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        return bool(runtime and runtime.prefer_ready_stock)
+    except Exception:
+        return False
+
+
+def apply_persona_presentation_order(
+    products: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Stable reorder: ready-to-ship first when persona prefers urgency/stock."""
+    if not products or not prefer_ready_stock_enabled():
+        return products
+    ready: list[dict[str, Any]] = []
+    other: list[dict[str, Any]] = []
+    for product in products:
+        if in_ready_to_ship_category(product):
+            ready.append(product)
+        else:
+            other.append(product)
+    if not ready:
+        return products
+    return ready + other
+
+
 def rerank_selection_limit() -> int:
     settings = get_settings()
     try:

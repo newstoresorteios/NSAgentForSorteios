@@ -82,6 +82,10 @@ def test_build_runtime_reads_chatbo_greeting_and_tone():
             "greeting": "Olá! Eu sou o Crono, assistente virtual da New Store Relógios.",
             "closing_message": "Obrigado por falar com a New Store!",
             "customer_address_style": "Sempre pelo primeiro nome.",
+            "recommendation_rules": [
+                "Nunca apresentar mais de 3 peças de uma vez",
+                "priorizar pronta entrega",
+            ],
         },
     )
     assert runtime.agent_display_name == "Crono"
@@ -89,6 +93,9 @@ def test_build_runtime_reads_chatbo_greeting_and_tone():
     assert "Eu sou o Crono" in (runtime.greeting_text or "")
     assert runtime.closing_message
     assert "primeiro nome" in (runtime.customer_address_style or "")
+    assert runtime.max_catalog_options == 3
+    assert runtime.prefer_ready_stock is True
+    assert "Limite operacional" in runtime.sales_skills_block()
 
 
 def test_contextvar_roundtrip():

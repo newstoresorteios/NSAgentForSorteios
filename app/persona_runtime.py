@@ -55,6 +55,14 @@ class PersonaRuntimeConfig(BaseModel):
     require_product_before_checkout: bool = True
     require_qualification_before_catalog: bool = True
     qualification_prompts: list[str] = Field(default_factory=list)
+    max_catalog_options: int = 3
+    prefer_ready_stock: bool = False
+    require_official_catalog_link: bool = True
+    justify_recommendations: bool = True
+    recommendation_rule_texts: list[str] = Field(default_factory=list)
+    objection_prompts: list[str] = Field(default_factory=list)
+    sales_goal_prompts: list[str] = Field(default_factory=list)
+    example_prompts: list[str] = Field(default_factory=list)
     negotiation_beyond_pix: Literal["deny", "human_handoff"] = "human_handoff"
     policy_source: str = "defaults"
     load_error: str | None = None
@@ -99,13 +107,52 @@ class PersonaRuntimeConfig(BaseModel):
                 self.require_qualification_before_catalog
             ),
             "qualification_prompt_count": len(self.qualification_prompts),
+            "max_catalog_options": self.max_catalog_options,
+            "prefer_ready_stock": self.prefer_ready_stock,
+            "require_official_catalog_link": self.require_official_catalog_link,
+            "justify_recommendations": self.justify_recommendations,
             "negotiation_beyond_pix": self.negotiation_beyond_pix,
             "policy_source": self.policy_source,
             "chatbo_persona_id": self.chatbo_persona_id,
         }
 
+    def sales_skills_block(self, *, max_items: int = 4) -> str:
+        """Compact ChatBo sales skills for the interpreter (not full prose dump)."""
+        lines = ["<persona_sales_skills>"]
+        if self.qualification_prompts:
+            lines.append("Qualificação (pergunte antes de listar catálogo amplo):")
+            for item in self.qualification_prompts[:max_items]:
+                lines.append(f"- {item}")
+        if self.recommendation_rule_texts:
+            lines.append("Recomendação:")
+            for item in self.recommendation_rule_texts[:max_items]:
+                lines.append(f"- {item}")
+            lines.append(
+                f"- Limite operacional de opções: {self.max_catalog_options}."
+            )
+            if self.prefer_ready_stock:
+                lines.append("- Priorizar pronta entrega quando houver urgência.")
+        if self.objection_prompts:
+            lines.append("Objeções:")
+            for item in self.objection_prompts[:max_items]:
+                lines.append(f"- {item}")
+        if self.sales_goal_prompts:
+            lines.append("Objetivos:")
+            for item in self.sales_goal_prompts[:max_items]:
+                lines.append(f"- {item}")
+        if self.example_prompts:
+            lines.append("Exemplos de boa resposta:")
+            for item in self.example_prompts[: min(2, max_items)]:
+                lines.append(f"- {item}")
+        lines.append("</persona_sales_skills>")
+        if len(lines) <= 2:
+            return ""
+        return "\n".join(lines)
+
     def interpreter_policy_block(self) -> str:
         """Short structured hint for the intent interpreter (not full persona)."""
+        skills = self.sales_skills_block()
+        skills_section = f"\n{skills}\n" if skills else "\n"
         return (
             "<persona_runtime_policy>\n"
             f"- agent_name: {self.agent_display_name}\n"
@@ -119,6 +166,8 @@ class PersonaRuntimeConfig(BaseModel):
             f"{self.require_product_before_checkout}\n"
             f"- require_qualification_before_catalog: "
             f"{self.require_qualification_before_catalog}\n"
+            f"- max_catalog_options: {self.max_catalog_options}\n"
+            f"- prefer_ready_stock: {self.prefer_ready_stock}\n"
             f"- negotiation_beyond_pix: {self.negotiation_beyond_pix}\n"
             "- Use o perfil ChatBo completo no system prompt "
             "(saudação, objeções, recomendação, handoff).\n"
@@ -130,7 +179,8 @@ class PersonaRuntimeConfig(BaseModel):
             "- Perguntas de desconto/PIX sem fechar compra = "
             "payment_request_kind=informational e purchase_action=null.\n"
             "- Nunca prometa desconto acima de max_pix_discount_percent.\n"
-            "</persona_runtime_policy>"
+            "- Nunca liste mais opções do que max_catalog_options.\n"
+            f"</persona_runtime_policy>{skills_section}"
         )
 
     def prompt_policy_block(self) -> str:
@@ -161,6 +211,8 @@ class PersonaRuntimeConfig(BaseModel):
                 "carrinho.",
                 "Antes de listar catálogo: "
                 f"{'pergunte preferências da qualificação ChatBo' if self.require_qualification_before_catalog else 'pode buscar se o cliente pedir opções'}.",
+                f"Máximo de peças por resposta: {self.max_catalog_options}.",
+                f"Priorizar pronta entrega: {self.prefer_ready_stock}.",
                 f"Negociação além do PIX oficial: {negotiation}.",
                 "Siga o bloco <persona_knowledge> / persona ChatBo completo.",
                 "</persona_runtime_policy>",
@@ -308,6 +360,46 @@ def apply_policy_overrides(
                 ),
                 config.require_product_before_checkout,
             ),
+            "max_catalog_options": max(
+                1,
+                min(
+                    5,
+                    _coerce_int(
+                        policy.get(
+                            "max_catalog_options",
+                            policy.get("maxCatalogOptions", config.max_catalog_options),
+                        ),
+                        config.max_catalog_options,
+                    ),
+                ),
+            ),
+            "prefer_ready_stock": _coerce_bool(
+                policy.get(
+                    "prefer_ready_stock",
+                    policy.get("preferReadyStock", config.prefer_ready_stock),
+                ),
+                config.prefer_ready_stock,
+            ),
+            "require_official_catalog_link": _coerce_bool(
+                policy.get(
+                    "require_official_catalog_link",
+                    policy.get(
+                        "requireOfficialCatalogLink",
+                        config.require_official_catalog_link,
+                    ),
+                ),
+                config.require_official_catalog_link,
+            ),
+            "justify_recommendations": _coerce_bool(
+                policy.get(
+                    "justify_recommendations",
+                    policy.get(
+                        "justifyRecommendations",
+                        config.justify_recommendations,
+                    ),
+                ),
+                config.justify_recommendations,
+            ),
             "negotiation_beyond_pix": negotiation,
             "greeting_mode": greeting_mode,
             "agent_display_name": agent_name,
@@ -334,6 +426,54 @@ def _as_prompt_list(value: Any) -> list[str]:
                 out.append(text)
         return out
     return []
+
+
+_MAX_OPTIONS_RE = re.compile(
+    r"(?:"
+    r"mais\s+de\s+(?P<a>\d+)\s*pe[cç]as"
+    r"|"
+    r"(?:no\s+)?m[aá]ximo\s+(?:de\s+)?(?P<b>\d+)"
+    r"|"
+    r"at[eé]\s+(?P<c>\d+)\s*pe[cç]as"
+    r"|"
+    r"max(?:imo)?[_\s-]*(?P<d>\d+)"
+    r")",
+    flags=re.IGNORECASE,
+)
+
+
+def parse_recommendation_policy(rules: Any) -> dict[str, Any]:
+    """Derive executable ranking/presentation params from ChatBo recommendation_rules."""
+    texts = _as_prompt_list(rules)
+    blob = "\n".join(texts).casefold()
+    max_options = 3
+    for text in texts:
+        match = _MAX_OPTIONS_RE.search(text)
+        if not match:
+            continue
+        raw = match.group("a") or match.group("b") or match.group("c") or match.group("d")
+        if raw is None:
+            continue
+        value = int(raw)
+        if 1 <= value <= 5:
+            max_options = value
+            break
+    return {
+        "recommendation_rule_texts": texts,
+        "max_catalog_options": max_options,
+        "prefer_ready_stock": any(
+            token in blob
+            for token in ("pronta entrega", "pronta-entrega", "urgência", "urgencia")
+        ),
+        "require_official_catalog_link": any(
+            token in blob for token in ("link oficial", "catálogo integrado", "catalogo integrado")
+        )
+        or bool(texts),
+        "justify_recommendations": any(
+            token in blob for token in ("justificar", "razão concreta", "razao concreta")
+        )
+        or bool(texts),
+    }
 
 
 def _enrich_from_chatbo_profile(
@@ -370,6 +510,20 @@ def _enrich_from_chatbo_profile(
         updates["qualification_prompts"] = qualification_prompts
         # ChatBo qualification list is an executable discovery gate, not just prose.
         updates["require_qualification_before_catalog"] = True
+    recommendation = parse_recommendation_policy(
+        chatbo_profile.get("recommendation_rules")
+    )
+    if recommendation.get("recommendation_rule_texts"):
+        updates.update(recommendation)
+    objections = _as_prompt_list(chatbo_profile.get("objection_handling"))
+    if objections:
+        updates["objection_prompts"] = objections
+    goals = _as_prompt_list(chatbo_profile.get("sales_goals"))
+    if goals:
+        updates["sales_goal_prompts"] = goals
+    examples = _as_prompt_list(chatbo_profile.get("examples"))
+    if examples:
+        updates["example_prompts"] = examples
     if not updates:
         return config
     enriched = config.model_copy(update=updates)
