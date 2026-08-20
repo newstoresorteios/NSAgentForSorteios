@@ -279,16 +279,22 @@ async def test_payment_without_product_does_not_create_arbitrary_cart(monkeypatc
         IncomingMessage(text="consulta de pagamento"),
         {},
         {},
-        _interpretation(payment_method_preference=None, goal="inspect"),
+        _interpretation(
+            payment_method_preference=None,
+            payment_request_kind="informational",
+            goal="inspect",
+        ),
         commerce_state=CommerceConversationState(active_domain="commerce"),
     )
 
     assert calls == []
-    assert result.safety_reason == "no_cart_no_product"
+    assert result.safety_reason == "informational_payment_no_cart"
+    assert result.commercial_data["payment_policy"]["pix_discount_percent"] == 15
+    assert "carrinho" not in result.reply_text.lower()
 
 
 @pytest.mark.asyncio
-async def test_payment_with_unselected_product_list_requests_selection(monkeypatch):
+async def test_payment_with_unselected_product_list_answers_pix_policy(monkeypatch):
     import app.sales_agent as sales_agent
 
     execute, calls = _cart_executor()
@@ -296,10 +302,14 @@ async def test_payment_with_unselected_product_list_requests_selection(monkeypat
     monkeypatch.setattr(sales_agent, "get_settings", _settings)
 
     result = await sales_agent.handle_sales_message(
-        IncomingMessage(text="pagamento sem seleção"),
+        IncomingMessage(text="faz 20% no pix de desconto"),
         {},
         {},
-        _interpretation(payment_method_preference="pix", goal="inspect"),
+        _interpretation(
+            payment_method_preference="pix",
+            payment_request_kind="informational",
+            goal="inspect",
+        ),
         commerce_state=CommerceConversationState(
             active_domain="commerce",
             last_presented_products=[
@@ -311,7 +321,42 @@ async def test_payment_with_unselected_product_list_requests_selection(monkeypat
     )
 
     assert calls == []
+    assert result.safety_reason == "informational_payment_no_cart"
+    assert "15%" in result.reply_text
+    assert "20%" not in result.reply_text or "não consigo" in result.reply_text.lower()
+    assert result.commercial_data["cart"]["status"] == "not_required_for_informational_payment"
+
+
+@pytest.mark.asyncio
+async def test_checkout_payment_without_product_still_requires_selection(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    execute, calls = _cart_executor()
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(sales_agent, "get_settings", _settings)
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="quero pagar no pix agora"),
+        {},
+        {},
+        _interpretation(
+            payment_method_preference="pix",
+            payment_request_kind="checkout",
+            goal="buy",
+        ),
+        commerce_state=CommerceConversationState(
+            active_domain="commerce",
+            last_presented_products=[
+                {"position": 1, "product_id": "A", "name": "Produto A"},
+                {"position": 2, "product_id": "B", "name": "Produto B"},
+            ],
+        ),
+    )
+
+    assert calls == []
     assert result.safety_reason == "product_ambiguous"
+    assert "formas de pagamento" in result.reply_text.lower()
+    assert "preparar o carrinho" not in result.reply_text.lower()
 
 
 @pytest.mark.asyncio

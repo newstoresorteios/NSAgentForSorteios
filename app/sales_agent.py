@@ -332,9 +332,14 @@ e defina purchase_action=create_cart no mesmo resultado. Nao deixe a intencao de
 pagamento apagar o compromisso de compra.
 Use payment_method_preference somente quando o cliente escolher ou declarar preferencia
 por pix, card, boleto ou other; uma pergunta geral sobre aceitacao nao e uma escolha.
-Use payment_request_kind=informational para perguntas como "voces aceitam Pix?" e
-payment_request_kind=checkout quando o cliente quiser avancar factualmente para a etapa
-financeira. Uma consulta informativa nao pula nem altera requisitos do checkout.
+Use payment_request_kind=informational para perguntas como "voces aceitam Pix?",
+"no pix tem desconto?", "faz 20% no pix", "qual o desconto no pix?" e qualquer
+negociacao/consulta de desconto ou forma de pagamento sem compromisso de fechar compra.
+Nessas mensagens: payment_action=payment_options (ou preference=pix quando citarem PIX),
+purchase_action=null e NAO confirme create_cart.
+Use payment_request_kind=checkout somente quando o cliente quiser avancar factualmente
+para pagar/gerar cobranca/fechar pedido. Uma consulta informativa nao exige carrinho
+nem altera requisitos do checkout.
 COMMERCE_STATE.pending_action representa uma acao concreta oferecida imediatamente antes.
 Ela é uma proposta anterior, não uma obrigação do turno atual.
 Defina confirmation=confirm quando a mensagem atual aceitar semanticamente essa acao,
@@ -2832,6 +2837,8 @@ async def _create_order_with_payment_lookup(
 
 
 from .sales.policies.action_authority import (  # noqa: E402
+    informational_payment_policy_result as _informational_payment_policy_result,
+    is_informational_payment_query as _is_informational_payment_query,
     purchase_product_required_result as _purchase_product_required_result,
 )
 
@@ -4411,6 +4418,44 @@ async def _handle_sales_message_inner(
                 fallback_reason=ensured_result.safety_reason,
             )
     if payment_requested:
+        informational_payment = _is_informational_payment_query(
+            interpretation,
+            purchase_action=purchase_action,
+            has_purchase_requests=bool(purchase_requests),
+        )
+        if informational_payment and not (
+            state.cart_session_id and state.cart_url
+        ):
+            print("[sales.purchase.orchestrator.decision]", {
+                "branch": "informational_payment_no_cart",
+                "payment_request_kind": (
+                    interpretation.payment_request_kind
+                    if interpretation is not None
+                    else None
+                ),
+            })
+            info_result = _informational_payment_policy_result(
+                state,
+                payment_method_preference=payment_preference,
+            )
+            final = await _sales_response_with_openai(
+                message,
+                plan,
+                info_result,
+                interpretation,
+            )
+            if final:
+                return final
+            return _mark_sales_result(
+                info_result,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=info_result.safety_reason,
+            )
+
         if unresolved_purchase_items:
             missing = _purchase_product_required_result(state)
             return _mark_sales_result(
