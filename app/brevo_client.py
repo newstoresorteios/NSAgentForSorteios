@@ -216,21 +216,58 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
         # Prefer transactional WhatsApp API for phone delivery. Conversations
         # "send as agent" can return HTTP 200 while the message stays only in
         # the Brevo inbox (not pushed to the customer's WhatsApp).
+        # Ignore BREVO_REPLY_MODE=conversations for WhatsApp+phone.
         if audio_file and isinstance(result, AgentResult) and result.reply_audio_url:
             text = f"{text}\n\nOuça: {result.reply_audio_url}".strip()
-        sent = await _send_whatsapp_transactional_reply(incoming, text)
-        channel = "whatsapp"
-        if not sent.ok and incoming.visitor_id:
+        tx = await _send_whatsapp_transactional_reply(incoming, text)
+        if tx.ok:
+            sent = BrevoSendResult(
+                ok=True,
+                dry_run=False,
+                status_code=tx.status_code,
+                provider_response={
+                    "route": "whatsapp_transactional",
+                    "transactional": tx.provider_response,
+                },
+                error=None,
+            )
+            channel = "whatsapp"
+        elif incoming.visitor_id:
             log_event(
                 "brevo.send.whatsapp_transactional_fallback_conversations",
                 {
-                    "transactional_error": sent.error,
-                    "transactional_status": sent.status_code,
+                    "transactional_error": tx.error,
+                    "transactional_status": tx.status_code,
                     "visitor_id_present": True,
                 },
             )
-            sent = await _send_conversations_reply(incoming, text, audio_file=None)
+            conv = await _send_conversations_reply(incoming, text, audio_file=None)
+            sent = BrevoSendResult(
+                ok=bool(conv.ok),
+                dry_run=False,
+                status_code=conv.status_code,
+                provider_response={
+                    "route": "brevo_conversations_fallback",
+                    "transactional_error": tx.error,
+                    "transactional_status": tx.status_code,
+                    "transactional": tx.provider_response,
+                    "conversations": conv.provider_response,
+                },
+                error=None if conv.ok else (conv.error or tx.error),
+            )
             channel = "brevo_conversations_fallback"
+        else:
+            sent = BrevoSendResult(
+                ok=False,
+                dry_run=False,
+                status_code=tx.status_code,
+                provider_response={
+                    "route": "whatsapp_transactional",
+                    "transactional": tx.provider_response,
+                },
+                error=tx.error or "brevo_send_failed",
+            )
+            channel = "whatsapp"
     elif incoming.channel in {"instagram", "facebook", "widget"} and incoming.visitor_id:
         sent = await _send_conversations_reply(incoming, text, audio_file=audio_file)
         channel = "brevo_conversations"

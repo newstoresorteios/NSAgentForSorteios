@@ -146,6 +146,7 @@ async def test_whatsapp_uses_transactional_even_when_mode_is_conversations(monke
 
     assert sent.ok is True
     assert calls == [("whatsapp", "5585999498149", "Olá do Crono")]
+    assert sent.provider_response["route"] == "whatsapp_transactional"
 
 
 @pytest.mark.asyncio
@@ -157,11 +158,21 @@ async def test_whatsapp_falls_back_to_conversations_when_transactional_fails(mon
 
     async def whatsapp(*_args):
         calls.append("whatsapp")
-        return BrevoSendResult(ok=False, dry_run=False, error="brevo_sender_number_missing")
+        return BrevoSendResult(
+            ok=False,
+            dry_run=False,
+            error="brevo_sender_number_missing",
+            provider_response={"detail": "missing sender"},
+        )
 
     async def conversations(incoming, text, audio_file=None):
         calls.append(("conversations", incoming.visitor_id, text, audio_file))
-        return BrevoSendResult(ok=True, dry_run=False, status_code=200)
+        return BrevoSendResult(
+            ok=True,
+            dry_run=False,
+            status_code=200,
+            provider_response={"id": "conv-1", "type": "agent"},
+        )
 
     monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
     monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
@@ -177,3 +188,5 @@ async def test_whatsapp_falls_back_to_conversations_when_transactional_fails(mon
 
     assert sent.ok is True
     assert calls == ["whatsapp", ("conversations", "visitor-wa", "Fallback", None)]
+    assert sent.provider_response["route"] == "brevo_conversations_fallback"
+    assert sent.provider_response["transactional_error"] == "brevo_sender_number_missing"
