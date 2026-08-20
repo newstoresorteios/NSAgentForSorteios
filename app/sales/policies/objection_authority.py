@@ -327,7 +327,7 @@ def try_objection_authority_result(
             return None
         if interpretation.shipping_action:
             return None
-        if interpretation.payment_request_kind == "checkout":
+        if interpretation.payment_request_kind in {"checkout", "informational"}:
             return None
         if interpretation.confirmation in {"confirm", "reject"}:
             return None

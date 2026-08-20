@@ -1,10 +1,15 @@
 from app.commerce_context import CommerceConversationState
+from app.sales.checkout_flow import respond_to_commerce_service
+from app.sales.discovery import build_qualification_snapshot
 from app.sales.policies.action_authority import purchase_product_required_result
 from app.sales.policies.confirmation import confirmation_text_kind
+from app.sales.product_lookup import execute_compiled_product_retrieval
 from app.sales.workflows.catalog_ranking import rank_candidates, score_candidate
 from app.sales_agent import (
     _confirmation_text_kind,
+    _execute_compiled_product_retrieval,
     _purchase_product_required_result,
+    build_qualification_snapshot as sales_build_qualification_snapshot,
     rank_candidates as sales_rank_candidates,
     score_candidate as sales_score_candidate,
 )
@@ -51,6 +56,12 @@ def test_action_authority_wrapper_compatible():
     assert result.safety_reason == "no_cart_no_product"
     assert _purchase_product_required_result is purchase_product_required_result
     assert "carrinho" not in result.reply_text.lower()
+
+
+def test_iq08_modules_reexported_from_sales_agent():
+    assert sales_build_qualification_snapshot is build_qualification_snapshot
+    assert _execute_compiled_product_retrieval is execute_compiled_product_retrieval
+    assert respond_to_commerce_service.__name__ == "respond_to_commerce_service"
 
 
 def test_informational_payment_policy_without_cart():
