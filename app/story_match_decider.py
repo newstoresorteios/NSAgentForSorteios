@@ -527,6 +527,16 @@ def try_resolve_tied_candidates(
         if core and len(same_core) >= 2 and profile.text_path_score >= 0.85:
             return same_core[0][1]
 
+    straps = " ".join(_fold(item) for item in (analysis.strap_types or []))
+    if ("bracelet" in straps or "bracelete" in straps) and len(pool) >= 2:
+        bracelet_skus = [
+            row
+            for row in pool
+            if re.search(r"-b1(?:\s|$)", _listing_blob(row[1]))
+        ]
+        if len(bracelet_skus) == 1:
+            return bracelet_skus[0][1]
+
     tray_tied = (
         len(candidates) > 1 and abs(candidates[0].score - candidates[1].score) < 0.02
     )

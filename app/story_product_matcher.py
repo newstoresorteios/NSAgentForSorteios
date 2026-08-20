@@ -135,14 +135,13 @@ def _candidate_listing_key(candidate: StoryProductCandidate) -> str | None:
 
 
 def _candidate_core_listing_key(candidate: StoryProductCandidate) -> str | None:
-    """Normalize listing so bracelet SKU suffixes do not split the same watch."""
+    """Normalize listing so bracelet suffixes do not split the same colorway."""
     raw = _candidate_listing_key(candidate)
     if not raw:
         return None
     text = raw[8:] if raw.startswith("listing:") else raw
     folded = _fold(text)
-    # Drop trailing reference codes like c63-39ada3-s00v1-vc / hko / vk.
-    folded = re.sub(r"\b[a-z]?\d{2,}[a-z0-9-]{4,}\b", " ", folded)
+    folded = re.sub(r"-(vc|vk|hko|hb|b0|b1|sg|sb|rk|hk)$", "", folded)
     folded = re.sub(r"\s+", " ", folded).strip()
     return folded or None
 
@@ -965,7 +964,7 @@ async def match_story_to_catalog(
     color_required = bool(analysis.dial_colors)
     color_locked = any(_candidate_has_dial_color_lock(c) for c in candidates)
     page_size = _STORY_TRAY_PAGE_SIZE
-    _, planned_tokens = tray_search_plan(analysis)
+    search_brand, planned_tokens = tray_search_plan(analysis)
     analysis_distinctive = [
         token
         for token in distinctive_search_tokens(planned_tokens)
@@ -1132,6 +1131,7 @@ async def match_story_to_catalog(
                 material_conflicts.append("size_mismatch")
             if "rocks" in evidence_blob and "rocks" not in blob:
                 material_conflicts.append("missing_line:rocks")
+            line_locked = "rocks" in evidence_blob and "rocks" in blob
             model_tokens = _model_tokens_for_match(tokens, brand)
             model_hits = sum(
                 1 for token in model_tokens if len(token) >= 3 and _token_in_text(blob, token)
@@ -1142,11 +1142,11 @@ async def match_story_to_catalog(
                 brand_ok
                 and bool(model_tokens)
                 and model_hits >= min(2, max(len(model_tokens), 1))
-                and (not color_required or color >= 0.8)
+                and (not color_required or color >= 0.8 or line_locked)
                 and "size_mismatch" not in material_conflicts
                 and "missing_line:rocks" not in material_conflicts
             )
-            if color_required and color < 0.8 and not url_hit:
+            if color_required and color < 0.8 and not url_hit and not line_locked:
                 strong = False
             rank_penalty = ((page - 1) * page_size + idx) * 0.002
             name_key = _fold(product.get("name") or product.get("title") or "")
@@ -1323,6 +1323,41 @@ async def match_story_to_catalog(
             products=list(row.get("products") or []),
             paging=row.get("paging"),
         )
+
+    missing_line = [
+        token
+        for token in ("rocks", "mk2")
+        if token in evidence_blob
+        and not any(token in _fold(" ".join(c.match_reasons)) for c in candidates)
+    ]
+    if execute_tool is not None and missing_line:
+        from .storefront_search import hydrate_storefront_hits, search_storefront
+
+        queries: list[str] = []
+        if "rocks" in missing_line:
+            queries.append("rocks")
+            queries.append("sealander rocks")
+        if "mk2" in missing_line:
+            queries.append("mk2")
+        seen_queries: set[str] = set()
+        storefront_products: list[dict[str, Any]] = []
+        for query in queries:
+            key = _fold(query)
+            if key in seen_queries:
+                continue
+            seen_queries.add(key)
+            hits = await search_storefront(query)
+            storefront_products.extend(
+                await hydrate_storefront_hits(hits, execute_tool=execute_tool)
+            )
+        if storefront_products:
+            _ingest_tray_page(
+                brand=search_brand,
+                tokens=missing_line,
+                page=1,
+                products=storefront_products,
+                paging={"total": len(storefront_products), "limit": len(storefront_products)},
+            )
 
     ordered = sorted(candidates, key=lambda c: (-c.score, c.product_id))[:limit]
     if analysis is not None and ordered:
