@@ -388,6 +388,34 @@ def _matched_product_conflicts_with_vision(
     for marker in _VARIANT_MARKERS:
         if marker in blob and marker not in evidence_fold:
             return True
+    # Cached color wrong for Story dial (Prata quoted for verde Story).
+    if profile.colors:
+        if not any(color in blob for color in profile.colors):
+            # Only conflict when the listing asserts a different concrete dial color.
+            listing_colors = {
+                token
+                for token in (
+                    "verde",
+                    "azul",
+                    "preto",
+                    "branco",
+                    "prata",
+                    "dourado",
+                    "rosa",
+                    "laranja",
+                    "vermelho",
+                    "cinza",
+                    "green",
+                    "blue",
+                    "black",
+                    "white",
+                    "silver",
+                    "gold",
+                )
+                if token in blob
+            }
+            if listing_colors and listing_colors.isdisjoint(set(profile.colors)):
+                return True
     return False
 
 

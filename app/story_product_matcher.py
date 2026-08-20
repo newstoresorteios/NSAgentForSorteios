@@ -78,7 +78,10 @@ def classify_match(
         from .story_match_decider import build_evidence_profile, score_catalog_overlap
 
         _, _, conflicts = score_catalog_overlap(top1, build_evidence_profile(analysis))
-        if any(str(item).startswith("unseen_variant:") for item in conflicts):
+        if any(
+            str(item).startswith("unseen_variant:") or str(item).startswith("unseen_material:")
+            for item in conflicts
+        ):
             if top2 is not None:
                 resolved = try_resolve_tied_candidates(ordered, analysis, margin=0.0)
                 if resolved is not None and resolved.product_id != top1.product_id:
@@ -87,12 +90,23 @@ def classify_match(
     threshold = exact_min if is_exact else visual_min
     top1_listing = _candidate_listing_key(top1)
     top2_listing = _candidate_listing_key(top2) if top2 else None
+    top1_core = _candidate_core_listing_key(top1)
+    top2_core = _candidate_core_listing_key(top2) if top2 else None
     if (
         top1_listing
         and top2_listing
         and top1_listing == top2_listing
         and top1.score >= min(threshold, exact_min)
         and top1.product_id
+    ):
+        return "matched", top1
+    if (
+        top1_core
+        and top2_core
+        and top1_core == top2_core
+        and top1.score >= min(threshold, exact_min)
+        and top1.product_id
+        and is_exact
     ):
         return "matched", top1
     # Appearance-only must meet the stricter visual threshold.
@@ -115,6 +129,19 @@ def _candidate_listing_key(candidate: StoryProductCandidate) -> str | None:
         if str(reason).startswith("listing:"):
             return str(reason)
     return None
+
+
+def _candidate_core_listing_key(candidate: StoryProductCandidate) -> str | None:
+    """Normalize listing so bracelet SKU suffixes do not split the same watch."""
+    raw = _candidate_listing_key(candidate)
+    if not raw:
+        return None
+    text = raw[8:] if raw.startswith("listing:") else raw
+    folded = _fold(text)
+    # Drop trailing reference codes like c63-39ada3-s00v1-vc / hko / vk.
+    folded = re.sub(r"\b[a-z]?\d{2,}[a-z0-9-]{4,}\b", " ", folded)
+    folded = re.sub(r"\s+", " ", folded).strip()
+    return folded or None
 
 
 def _score_components(
@@ -232,6 +259,7 @@ _GENERIC_AND_SKIP = {
     "apenas",
     "powermatic",
     "chronometer",
+    "certified",
     "sapphire",
     "crystal",
 }
@@ -593,6 +621,11 @@ def tray_search_jobs(
     elif brand and head and colors and prefer_model_line_first:
         for color in colors[:1]:
             _add(brand, [head, color])
+    if brand and head:
+        _add(brand, [head])
+        if colors:
+            for color in colors[:1]:
+                _add(brand, [head, color])
     # Family + color without rare suffix (C63 Verde finds Seander typo listings).
     if brand and colors:
         family = next(
@@ -606,10 +639,11 @@ def tray_search_jobs(
         )
         if family:
             _add(brand, [family, colors[0]])
+            _add(brand, [family])
     if brand and distinctive and distinctive != model_line:
         _add(brand, distinctive[:3])
     _add(slug_brand, slug_tokens)
-    return jobs[:5]
+    return jobs[:6]
 
 
 def _title_lines_for_search(analysis: StoryVisualUnderstanding) -> list[str]:

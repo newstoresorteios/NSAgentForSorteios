@@ -53,6 +53,7 @@ _GENERIC_TITLE_SKIP = {
     "mundo",
     "apenas",
     "chronometer",
+    "certified",
     "sapphire",
     "crystal",
     "stainless",
@@ -454,8 +455,26 @@ def try_resolve_tied_candidates(
 
     scored.sort(key=lambda row: (-row[0], row[1].product_id))
 
-    # Prefer listings without unseen variants (GMT/bronze) when Story omitted them.
-    clean = [row for row in scored if not any(str(c).startswith("unseen_variant:") for c in row[2])]
+    # Prefer listings without unseen variants/materials (GMT/bronze) when Story omitted them.
+    def _has_unseen(conflicts: list[str]) -> bool:
+        return any(
+            str(c).startswith("unseen_variant:") or str(c).startswith("unseen_material:")
+            for c in conflicts
+        )
+
+    clean = [row for row in scored if not _has_unseen(row[2])]
+    # Require real Tray confidence + dial color when the Story shows one.
+    min_tray = 0.85
+    filtered: list[tuple[float, StoryProductCandidate, list[str]]] = []
+    for consensus, cand, conflicts in clean:
+        if float(cand.score or 0.0) < min_tray:
+            continue
+        if profile.colors:
+            blob = _listing_blob(cand)
+            if blob and not any(color in blob for color in profile.colors):
+                continue
+        filtered.append((consensus, cand, conflicts))
+    clean = filtered
     if not clean:
         # Every candidate invents a variant the Story never showed — do not guess.
         return None
@@ -464,18 +483,31 @@ def try_resolve_tied_candidates(
     second_score, second, second_conflicts = pool[1] if len(pool) > 1 else (0.0, None, [])
     gap = top_score - second_score
 
+    # Same model, different bracelet SKU suffixes (vc / hko / vk) → one commercial answer.
+    if len(pool) >= 2:
+        from .story_product_matcher import _candidate_core_listing_key
+
+        core = _candidate_core_listing_key(top)
+        same_core = [
+            row
+            for row in pool
+            if core and _candidate_core_listing_key(row[1]) == core
+        ]
+        if core and len(same_core) >= 2 and profile.text_path_score >= 0.85:
+            return same_core[0][1]
+
     tray_tied = (
         len(candidates) > 1 and abs(candidates[0].score - candidates[1].score) < 0.02
     )
     if tray_tied and profile.text_path_score >= 0.85 and second is not None:
-        top_has_variant = any(str(c).startswith("unseen_variant:") for c in top_conflicts)
-        second_has_variant = any(str(c).startswith("unseen_variant:") for c in second_conflicts)
+        top_has_variant = _has_unseen(top_conflicts)
+        second_has_variant = _has_unseen(second_conflicts)
         if top_has_variant and not second_has_variant:
             return second
         if second_has_variant and not top_has_variant:
             return top
 
-    if len(clean) == 1 and profile.text_path_score >= 0.85:
+    if len(clean) == 1 and profile.text_path_score >= 0.85 and float(clean[0][1].score or 0) >= min_tray:
         return clean[0][1]
     if tray_tied and gap >= 0.03 and top_score >= min_consensus:
         return top
