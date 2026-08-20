@@ -844,6 +844,16 @@ async def interpret_message(
         if use_turn_understanding
         else SALES_INTERPRETER_INSTRUCTIONS
     )
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        if runtime is not None and runtime.enabled:
+            system_instructions = (
+                f"{system_instructions}\n\n{runtime.interpreter_policy_block()}"
+            )
+    except Exception:
+        pass
     messages = [
         {"role": "system", "content": system_instructions},
         state_message,
@@ -4426,12 +4436,32 @@ async def _handle_sales_message_inner(
         if informational_payment and not (
             state.cart_session_id and state.cart_url
         ):
+            from .persona_runtime import get_persona_runtime
+
+            runtime = get_persona_runtime()
+            force_cart = bool(
+                runtime and runtime.require_cart_for_informational_payment
+            )
+            if force_cart:
+                missing = _purchase_product_required_result(state)
+                return _mark_sales_result(
+                    missing,
+                    interpretation=interpretation,
+                    goal=plan.get("goal"),
+                    response_source="deterministic_fallback",
+                    used_openai_responder=False,
+                    used_tray=False,
+                    fallback_reason=missing.safety_reason,
+                )
             print("[sales.purchase.orchestrator.decision]", {
                 "branch": "informational_payment_no_cart",
                 "payment_request_kind": (
                     interpretation.payment_request_kind
                     if interpretation is not None
                     else None
+                ),
+                "persona_policy_source": (
+                    runtime.policy_source if runtime is not None else None
                 ),
             })
             info_result = _informational_payment_policy_result(
@@ -4498,6 +4528,31 @@ async def _handle_sales_message_inner(
             payment_state.cart_session_id
             and payment_state.cart_url
         ):
+            from .persona_runtime import get_persona_runtime
+
+            runtime = get_persona_runtime()
+            if runtime is not None and not runtime.require_product_before_checkout:
+                info_result = _informational_payment_policy_result(
+                    state,
+                    payment_method_preference=payment_preference,
+                )
+                final = await _sales_response_with_openai(
+                    message,
+                    plan,
+                    info_result,
+                    interpretation,
+                )
+                if final:
+                    return final
+                return _mark_sales_result(
+                    info_result,
+                    interpretation=interpretation,
+                    goal=plan.get("goal"),
+                    response_source="deterministic_fallback",
+                    used_openai_responder=False,
+                    used_tray=False,
+                    fallback_reason=info_result.safety_reason,
+                )
             missing = _purchase_product_required_result(state)
             return _mark_sales_result(
                 missing,

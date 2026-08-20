@@ -4,9 +4,28 @@ from typing import Any
 
 from app.commerce_context import CommerceConversationState
 from app.models import AgentResult, SalesInterpretation
+from app.persona_runtime import (
+    DEFAULT_PIX_DISCOUNT_PERCENT,
+    get_persona_runtime,
+)
 
-# Política comercial oficial da New Store (persona Crono).
-PIX_DISCOUNT_PERCENT = 15
+# Fallback when persona runtime is not loaded for the turn.
+PIX_DISCOUNT_PERCENT = DEFAULT_PIX_DISCOUNT_PERCENT
+
+
+def _payment_policy_from_runtime() -> dict[str, Any]:
+    runtime = get_persona_runtime()
+    if runtime is None:
+        return {
+            "pix_discount_percent": PIX_DISCOUNT_PERCENT,
+            "max_pix_discount_percent": PIX_DISCOUNT_PERCENT,
+            "site_price_is_final": True,
+            "negotiation_beyond_pix": "human_handoff",
+            "require_cart_for_informational_payment": False,
+            "require_product_before_checkout": True,
+            "policy_source": "defaults",
+        }
+    return runtime.flow_params_dict()
 
 
 def is_informational_payment_query(
@@ -41,30 +60,40 @@ def informational_payment_policy_result(
     payment_method_preference: str | None = None,
 ) -> AgentResult:
     """Responde política de pagamento sem exigir/criar carrinho."""
+    policy = _payment_policy_from_runtime()
+    pix_pct = int(policy.get("pix_discount_percent") or PIX_DISCOUNT_PERCENT)
+    max_pix = int(policy.get("max_pix_discount_percent") or pix_pct)
+    negotiation = str(policy.get("negotiation_beyond_pix") or "human_handoff")
     products = [
         item.model_dump(mode="json")
         for item in state.last_presented_products[:3]
     ]
     preference = (payment_method_preference or "").strip().lower()
+    beyond = (
+        "só com consultor humano"
+        if negotiation == "human_handoff"
+        else "não é possível"
+    )
     if preference == "pix":
         reply_text = (
-            f"No PIX o desconto oficial da New Store é de {PIX_DISCOUNT_PERCENT}% "
+            f"No PIX o desconto oficial da New Store é de {pix_pct}% "
             "sobre o valor do site — não consigo aplicar mais do que isso. "
             "Se quiser, me diga qual modelo te interessa que eu te passo o valor no PIX."
         )
     else:
         reply_text = (
-            f"Aceitamos PIX (com {PIX_DISCOUNT_PERCENT}% de desconto sobre o valor do site), "
+            f"Aceitamos PIX (com {pix_pct}% de desconto sobre o valor do site), "
             "cartão e boleto conforme as opções oficiais. "
-            "O preço do site é final; desconto além dos 15% no PIX só com consultor humano. "
+            f"O preço do site é final; desconto além dos {max_pix}% no PIX {beyond}. "
             "Quer que eu calcule em algum modelo específico?"
         )
     commercial_data: dict[str, Any] = {
         "payment_policy": {
-            "pix_discount_percent": PIX_DISCOUNT_PERCENT,
-            "max_pix_discount_percent": PIX_DISCOUNT_PERCENT,
-            "site_price_is_final": True,
-            "negotiation_beyond_pix": "human_handoff",
+            "pix_discount_percent": pix_pct,
+            "max_pix_discount_percent": max_pix,
+            "site_price_is_final": bool(policy.get("site_price_is_final", True)),
+            "negotiation_beyond_pix": negotiation,
+            "policy_source": policy.get("policy_source"),
         },
         "products": products,
         "cart": {"status": "not_required_for_informational_payment"},
@@ -86,6 +115,10 @@ def informational_payment_policy_result(
         response_metadata={
             "domain": "commerce",
             "purchase_stage": "payment_discussion",
+            "persona_runtime": {
+                "persona_version_id": policy.get("persona_version_id"),
+                "policy_source": policy.get("policy_source"),
+            },
         },
     )
 

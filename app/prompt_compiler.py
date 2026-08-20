@@ -101,11 +101,14 @@ def compile_agent_prompt(
     audit: bool = False,
     conversation_key: str | None = None,
     inbound_id: int | None = None,
+    active_persona: Any | None = None,
 ) -> CompiledPrompt:
     """Compile instructions for the current turn.
 
     When ``AGENT_DB_PERSONA_ENABLED`` is false, uses ``fallback_instructions``
     (existing in-code prompts) without changing production behavior.
+    Prefer a turn-scoped ``active_persona`` (from persona_runtime) to avoid a
+    second DB fetch when the turn already loaded the persona.
     """
     settings = get_settings()
     channel = getattr(incoming, "channel", None) if incoming else None
@@ -115,14 +118,25 @@ def compile_agent_prompt(
     used_db_persona = False
     fallback_reason: str | None = None
     persona_text = ""
-    active_persona = None
+
+    if active_persona is None:
+        try:
+            from .persona_runtime import get_persona_runtime
+
+            runtime = get_persona_runtime()
+            if runtime is not None and runtime.active_persona is not None:
+                active_persona = runtime.active_persona
+        except Exception:
+            active_persona = None
 
     if bool(getattr(settings, "agent_db_persona_enabled", False)):
-        try:
-            active = get_active_persona(tenant_id, persona_key)
-        except Exception as exc:
-            active = None
-            fallback_reason = f"persona_load_failed:{type(exc).__name__}"
+        active = active_persona
+        if active is None:
+            try:
+                active = get_active_persona(tenant_id, persona_key)
+            except Exception as exc:
+                active = None
+                fallback_reason = f"persona_load_failed:{type(exc).__name__}"
         if active is not None:
             persona_text = active.instructions
             persona_version_id = active.id
@@ -272,14 +286,30 @@ def compile_agent_prompt(
                 "error": str(exc)[:160],
             })
 
+    runtime_policy_block = ""
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        if runtime is not None and runtime.enabled:
+            runtime_policy_block = runtime.prompt_policy_block()
+    except Exception:
+        runtime_policy_block = ""
+
     blocks = [
         FIXED_SAFETY_POLICY.strip(),
         f"<user_managed_persona>\n{persona_text.strip()}\n</user_managed_persona>",
         knowledge_block,
-        extensions_block,
-        channel_overlay_block(channel),
-        memory_block,
     ]
+    if runtime_policy_block.strip():
+        blocks.append(runtime_policy_block.strip())
+    blocks.extend(
+        [
+            extensions_block,
+            channel_overlay_block(channel),
+            memory_block,
+        ]
+    )
     if summary_block:
         blocks.append(summary_block)
     # Layer order: see app.prompt_layers.PROMPT_LAYER_ORDER (Etapa 7–8).

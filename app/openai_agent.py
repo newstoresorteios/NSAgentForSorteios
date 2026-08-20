@@ -117,6 +117,14 @@ STORE_KNOWLEDGE_UNAVAILABLE = "Ainda não tenho essa informação oficial da loj
 
 
 def _annotate_agent_result(result: AgentResult, **metadata: object) -> AgentResult:
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        if runtime is not None and "persona_runtime" not in result.response_metadata:
+            result.response_metadata["persona_runtime"] = runtime.flow_params_dict()
+    except Exception:
+        pass
     for key, value in metadata.items():
         if value is not None and key not in result.response_metadata:
             result.response_metadata[key] = value
@@ -543,6 +551,25 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
 
 
 async def generate_agent_reply_async(message: IncomingMessage, customer_context: dict) -> AgentResult:
+    from .persona_runtime import (
+        load_persona_runtime,
+        reset_persona_runtime,
+        set_persona_runtime,
+    )
+
+    persona_runtime = load_persona_runtime()
+    persona_token = set_persona_runtime(persona_runtime)
+    customer_context["_persona_runtime"] = persona_runtime.flow_params_dict()
+    try:
+        return await _generate_agent_reply_async_inner(message, customer_context)
+    finally:
+        reset_persona_runtime(persona_token)
+
+
+async def _generate_agent_reply_async_inner(
+    message: IncomingMessage,
+    customer_context: dict,
+) -> AgentResult:
     blocked_reason = detect_blocked_request(message.text)
     if blocked_reason:
         return _annotate_agent_result(
@@ -1090,10 +1117,19 @@ async def generate_agent_reply_async(message: IncomingMessage, customer_context:
                 fallback_reason=interpretation._fallback_reason,
             )
         settings = get_settings()
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        greeting_mode = (
+            runtime.greeting_mode
+            if runtime is not None
+            else "persona_llm"
+        )
         # Crono (DB persona) is the attendance reference — greet via the compiled
-        # persona prompt, not canned local phrases.
+        # persona prompt, not canned local phrases (unless policy says otherwise).
         if (
-            bool(getattr(settings, "agent_db_persona_enabled", False))
+            greeting_mode == "persona_llm"
+            and bool(getattr(settings, "agent_db_persona_enabled", False))
             and settings.openai_api_key
         ):
             persona_reply = await generate_persona_greeting_reply(

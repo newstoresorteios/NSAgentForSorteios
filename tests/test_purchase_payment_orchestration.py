@@ -359,8 +359,98 @@ async def test_checkout_payment_without_product_still_requires_selection(monkeyp
     assert "preparar o carrinho" not in result.reply_text.lower()
 
 
+def test_informational_payment_uses_persona_runtime_discount(monkeypatch):
+    import app.sales.policies.action_authority as authority
+    from app.commerce_context import CommerceConversationState
+    from app.persona_models import PersonaVersion
+    from app.persona_runtime import (
+        build_persona_runtime,
+        reset_persona_runtime,
+        set_persona_runtime,
+    )
+
+    persona = PersonaVersion.model_validate(
+        {
+            "id": 17,
+            "tenant_id": "newstore",
+            "persona_key": "newstore_commercial",
+            "version": 17,
+            "name": "Crono",
+            "instructions": "PIX 10%",
+            "instructions_hash": "x",
+            "status": "active",
+            "metadata": {
+                "runtime_policy": {"pix_discount_percent": 10},
+            },
+        }
+    )
+    runtime = build_persona_runtime(active=persona)
+    token = set_persona_runtime(runtime)
+    try:
+        result = authority.informational_payment_policy_result(
+            CommerceConversationState(),
+            payment_method_preference="pix",
+        )
+        assert "10%" in result.reply_text
+        assert result.commercial_data["payment_policy"]["pix_discount_percent"] == 10
+    finally:
+        reset_persona_runtime(token)
+
+
 @pytest.mark.asyncio
-async def test_multiple_items_share_session_before_payment(monkeypatch):
+async def test_informational_payment_respects_require_cart_flag(monkeypatch):
+    import app.sales_agent as sales_agent
+    from app.persona_models import PersonaVersion
+    from app.persona_runtime import (
+        build_persona_runtime,
+        reset_persona_runtime,
+        set_persona_runtime,
+    )
+
+    execute, calls = _cart_executor()
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(sales_agent, "get_settings", _settings)
+
+    persona = PersonaVersion.model_validate(
+        {
+            "id": 17,
+            "tenant_id": "newstore",
+            "persona_key": "newstore_commercial",
+            "version": 17,
+            "name": "Crono",
+            "instructions": "x",
+            "instructions_hash": "x",
+            "status": "active",
+            "metadata": {
+                "runtime_policy": {
+                    "require_cart_for_informational_payment": True,
+                },
+            },
+        }
+    )
+    token = set_persona_runtime(build_persona_runtime(active=persona))
+    try:
+        result = await sales_agent.handle_sales_message(
+            IncomingMessage(text="faz 20% no pix"),
+            {},
+            {},
+            _interpretation(
+                payment_method_preference="pix",
+                payment_request_kind="informational",
+                goal="inspect",
+            ),
+            commerce_state=CommerceConversationState(
+                active_domain="commerce",
+                last_presented_products=[
+                    {"position": 1, "product_id": "A", "name": "Produto A"},
+                ],
+            ),
+        )
+    finally:
+        reset_persona_runtime(token)
+
+    assert calls == []
+    assert result.safety_reason == "product_ambiguous"
     import app.sales_agent as sales_agent
 
     execute, calls = _cart_executor()
