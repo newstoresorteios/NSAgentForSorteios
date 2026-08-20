@@ -652,6 +652,32 @@ def build_storefront_fallback_queries(
     return queries[:10]
 
 
+def needs_storefront_fallback(
+    candidates: list[StoryProductCandidate],
+    *,
+    missing_line: list[str],
+    amb_min: float = 0.65,
+) -> bool:
+    """Run vitrine search when Tray misses the line or only weak overlaps remain."""
+    if missing_line or not candidates:
+        return True
+    ordered = sorted(candidates, key=lambda c: (-c.score, c.product_id))
+    top = ordered[0]
+    if float(top.score or 0.0) < amb_min:
+        return True
+    conflicts = (
+        top.score_components.conflicts
+        if top.score_components and top.score_components.conflicts
+        else []
+    )
+    return any(
+        str(item).startswith("unseen_material:")
+        or str(item).startswith("unseen_variant:")
+        or str(item).startswith("missing_line:")
+        for item in conflicts
+    )
+
+
 def extract_store_product_url(*texts: str | None) -> str | None:
     """Pick the first New Store product URL from free text (CONFIRA paste / DM)."""
     pattern = re.compile(
@@ -1149,6 +1175,7 @@ async def match_story_to_catalog(
         page: int,
         products: list[Any],
         paging: dict[str, Any] | None,
+        source: str = "tray_search",
     ) -> bool:
         nonlocal color_locked
         if not products:
@@ -1166,7 +1193,7 @@ async def match_story_to_catalog(
         try:
             from .catalog_index import index_products_best_effort
 
-            index_products_best_effort(products, factual_source="tray_search")
+            index_products_best_effort(products, factual_source=source)
         except Exception:
             pass
         for idx, product in enumerate(products):
@@ -1272,7 +1299,7 @@ async def match_story_to_catalog(
                     conflict_penalty=0.35 if material_conflicts else 0.0,
                     reasons=reasons,
                     conflicts=material_conflicts,
-                    source="tray_search",
+                    source=source,
                 ),
             )
             if color_required and color >= 0.8 and strong and analysis_distinctive:
@@ -1421,7 +1448,15 @@ async def match_story_to_catalog(
         if token in evidence_blob
         and not any(token in _fold(" ".join(c.match_reasons)) for c in candidates)
     ]
-    needs_storefront = bool(missing_line) or not candidates
+    settings = get_settings()
+    amb_min = float(
+        getattr(settings, "instagram_story_ambiguous_min_confidence", 0.65) or 0.65
+    )
+    needs_storefront = needs_storefront_fallback(
+        candidates,
+        missing_line=missing_line,
+        amb_min=amb_min,
+    )
     if execute_tool is not None and needs_storefront:
         from .storefront_search import hydrate_storefront_hits, search_storefront
 
@@ -1451,6 +1486,7 @@ async def match_story_to_catalog(
                 page=1,
                 products=storefront_products,
                 paging={"total": len(storefront_products), "limit": len(storefront_products)},
+                source="storefront_search",
             )
 
     ordered = sorted(candidates, key=lambda c: (-c.score, c.product_id))[:limit]

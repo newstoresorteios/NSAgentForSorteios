@@ -19,6 +19,42 @@ _HREF_RE = re.compile(
     re.IGNORECASE,
 )
 _REF_RE = re.compile(r"(c\d{2}-\d{2}[a-z0-9-]+)", re.IGNORECASE)
+_SKU_RE = re.compile(r"\b(96[a-z]\d{3})\b", re.IGNORECASE)
+
+
+def _product_from_storefront_hit(hit: dict[str, str]) -> dict[str, Any]:
+    """Minimal catalog row when Tray get_product is unavailable."""
+    product_id = str(hit.get("product_id") or "").strip()
+    name = str(hit.get("name") or "").strip()
+    url = str(hit.get("url") or "").strip()
+    reference = str(hit.get("reference") or "").strip()
+    if not reference:
+        sku_match = _SKU_RE.search(name.replace(" ", " "))
+        if sku_match:
+            reference = sku_match.group(1).upper()
+    brand = ""
+    lowered = name.casefold()
+    for candidate in (
+        "baltic",
+        "bulova",
+        "tissot",
+        "christopher ward",
+        "citizen",
+        "hamilton",
+        "seiko",
+    ):
+        if candidate in lowered:
+            brand = candidate.title() if candidate != "christopher ward" else "Christopher Ward"
+            break
+    return {
+        "id": product_id,
+        "name": name,
+        "title": name,
+        "url": url or None,
+        "reference": reference or None,
+        "brand": brand or None,
+        "storefront_only": True,
+    }
 
 
 def _decode_js_string(raw: str) -> str:
@@ -112,15 +148,22 @@ async def hydrate_storefront_hits(
         if not product_id or product_id in seen:
             continue
         seen.add(product_id)
+        product: dict[str, Any] | None = None
         try:
             result = await execute_tool("get_product", {"product_id": product_id})
         except Exception:
-            continue
-        if not isinstance(result, dict) or result.get("error"):
-            continue
-        product = dict(result)
-        product["id"] = str(product.get("id") or product_id)
-        if hit.get("url") and not product.get("url"):
-            product["url"] = hit["url"]
-        products.append(product)
+            result = None
+        if isinstance(result, dict) and not result.get("error"):
+            product = dict(result)
+            product["id"] = str(product.get("id") or product_id)
+            if hit.get("url") and not product.get("url"):
+                product["url"] = hit["url"]
+        else:
+            product = _product_from_storefront_hit(hit)
+            log_event(
+                "story_storefront_hydrate_fallback",
+                {"product_id": product_id, "name": hit.get("name", "")[:80]},
+            )
+        if product:
+            products.append(product)
     return products

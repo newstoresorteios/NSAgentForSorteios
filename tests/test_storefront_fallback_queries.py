@@ -4,11 +4,12 @@ from app.instagram_story_models import StoryProductCandidate, StoryVisualUnderst
 from app.storefront_search import parse_storefront_search_html
 from app.story_match_decider import try_resolve_tied_candidates
 from app.story_product_matcher import (
-    _candidate_core_listing_key,
     build_storefront_fallback_queries,
     classify_match,
+    needs_storefront_fallback,
     tray_search_jobs,
 )
+from app.instagram_story_models import StoryProductCandidate
 
 
 def test_build_storefront_fallback_queries_for_baltic_mk2_verde():
@@ -73,6 +74,28 @@ def test_parse_storefront_search_html_reads_baltic_mk2_verde_href():
     hits = parse_storefront_search_html(html)
     assert hits
     assert "mk2" in hits[0]["name"].casefold()
+
+
+def test_needs_storefront_fallback_for_weak_bulova_candidates():
+    weak = StoryProductCandidate(
+        catalog_item_key="product:3377",
+        product_id="3377",
+        score=0.267,
+        match_reasons=["tray_query_overlap:seminovo automatico"],
+        source="tray_search",
+    )
+    assert needs_storefront_fallback([weak], missing_line=[]) is True
+
+
+def test_needs_storefront_fallback_false_for_strong_match():
+    strong = StoryProductCandidate(
+        catalog_item_key="product:15196",
+        product_id="15196",
+        score=1.0,
+        match_reasons=["tray_brand_model:Tissot Ballade azul"],
+        source="tray_search",
+    )
+    assert needs_storefront_fallback([strong], missing_line=[]) is False
 
 
 def test_classify_match_accepts_mk2_when_story_says_mk2():
