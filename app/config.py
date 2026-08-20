@@ -539,6 +539,22 @@ class Settings(BaseSettings):
 
     tray_adapter_url: str = Field(default="", alias="TRAY_ADAPTER_URL")
     tray_adapter_token: str = Field(default="", alias="TRAY_ADAPTER_TOKEN")
+    tray_circuit_breaker_enabled: bool = Field(
+        default=True,
+        alias="TRAY_CIRCUIT_BREAKER_ENABLED",
+    )
+    tray_circuit_failure_threshold: int = Field(
+        default=3,
+        alias="TRAY_CIRCUIT_FAILURE_THRESHOLD",
+        ge=1,
+        le=20,
+    )
+    tray_circuit_open_seconds: float = Field(
+        default=45.0,
+        alias="TRAY_CIRCUIT_OPEN_SECONDS",
+        ge=5.0,
+        le=600.0,
+    )
     tray_ready_to_ship_category_ids: str = Field(
         default="403",
         alias="TRAY_READY_TO_SHIP_CATEGORY_IDS",

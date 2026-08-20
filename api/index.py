@@ -33,6 +33,7 @@ from app.db import (
 from app.inbound_coalesce import is_caption_echo_of_recent_image
 from app.config import get_allowed_channels, get_settings
 from app.rollout import build_rollout_status
+from app.tray_circuit_breaker import circuit_status_dict
 from app.conversation_lock import (
     ConversationLockUnavailable,
     acquire_conversation_lock,
@@ -282,7 +283,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v29"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v30"
 
 
 @app.get("/api/health")
@@ -387,6 +388,7 @@ async def health():
         "supabase_storage_configured": bool(settings.supabase_url and settings.supabase_service_key),
         "dry_run": settings.dry_run,
         "tray_adapter_configured": bool(settings.tray_adapter_url and settings.tray_adapter_token),
+        "tray_circuit_breaker": circuit_status_dict(),
         "tray_tools_enabled": bool(settings.tray_adapter_url and settings.tray_adapter_token),
         "pix_direct_enabled": bool(getattr(settings, "pix_direct_enabled", False)),
         "pix_mp_configured": bool(

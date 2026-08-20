@@ -10,6 +10,30 @@ import httpx
 from .config import get_settings
 from .http_resilience import DEFAULT_BACKOFF_SECONDS, is_transient_status
 from .runtime_context import register_integration_failure, register_tray_call
+from .tray_circuit_breaker import get_tray_circuit_breaker
+
+
+_AUTH_FAIL_MARKERS = frozenset(
+    {
+        "tray_authentication_failed",
+        "tray_configuration_error",
+    }
+)
+
+
+def _is_non_retryable_tray_error(
+    status_code: int | None,
+    diagnostics: dict[str, Any] | None,
+) -> bool:
+    """Auth/config failures will not heal within the same probe burst."""
+    if status_code not in {502, 503, 504, None}:
+        return False
+    payload = diagnostics or {}
+    for key in ("error", "tray_error_code", "tray_error_name", "tray_error_message"):
+        value = str(payload.get(key) or "").strip().casefold()
+        if value in _AUTH_FAIL_MARKERS or "authentication" in value:
+            return True
+    return False
 
 
 class TrayAdapterError(RuntimeError):
@@ -255,6 +279,18 @@ class TrayAdapterClient:
     ) -> Any:
         if not self.base_url or not self.token:
             raise TrayAdapterError("tray_adapter_not_configured")
+        breaker = get_tray_circuit_breaker()
+        if not breaker.allow_request():
+            register_integration_failure("tray")
+            print("[tray.client] circuit_open", {
+                "path": path,
+                "operation": self._operation_name(path),
+            })
+            raise TrayAdapterError(
+                "tray_circuit_open",
+                503,
+                diagnostics={"error": "tray_circuit_open"},
+            )
         register_tray_call()
         clean_params = {key: value for key, value in (params or {}).items() if value is not None}
         own_client = self._http_client is None
@@ -332,12 +368,18 @@ class TrayAdapterClient:
                             response_log.update(_tray_error_diagnostics(parsed_response))
                         print("[sales.cart.http.response]", response_log)
                     if response.status_code >= 400:
+                        diagnostics = _tray_error_diagnostics(parsed_response)
+                        non_retryable = _is_non_retryable_tray_error(
+                            response.status_code,
+                            diagnostics,
+                        )
                         if (
                             (
                                 response.status_code in self.transient_status_codes
                                 or is_transient_status(response.status_code)
                             )
                             and attempt < max_attempts
+                            and not non_retryable
                         ):
                             print("[sales.tray.retry]", {
                                 "operation": operation,
@@ -346,13 +388,23 @@ class TrayAdapterClient:
                             })
                             await asyncio.sleep(self.retry_backoff_seconds)
                             continue
+                        breaker.record_failure(
+                            status_code=response.status_code,
+                            error=str(
+                                diagnostics.get("error")
+                                or diagnostics.get("tray_error_code")
+                                or ""
+                            ),
+                            force_open=non_retryable,
+                        )
                         raise TrayAdapterError(
                             f"tray_adapter_http_{response.status_code}",
                             response.status_code,
-                            diagnostics=_tray_error_diagnostics(parsed_response),
+                            diagnostics=diagnostics,
                         )
                     if not response_is_json:
                         raise ValueError("tray_adapter_response_not_json")
+                    breaker.record_success()
                     return parsed_response
                 except (
                     httpx.TimeoutException,
@@ -376,6 +428,10 @@ class TrayAdapterClient:
                         })
                         await asyncio.sleep(self.retry_backoff_seconds)
                         continue
+                    breaker.record_failure(
+                        status_code=None,
+                        error="tray_adapter_unavailable",
+                    )
                     raise TrayAdapterError("tray_adapter_unavailable") from exc
             raise TrayAdapterError("tray_adapter_unavailable")
         except TrayAdapterError as exc:

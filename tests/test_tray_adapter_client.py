@@ -2,6 +2,14 @@ import httpx
 import pytest
 
 from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
+from app.tray_circuit_breaker import reset_tray_circuit_breaker_for_tests
+
+
+@pytest.fixture(autouse=True)
+def _reset_tray_circuit():
+    reset_tray_circuit_breaker_for_tests()
+    yield
+    reset_tray_circuit_breaker_for_tests()
 
 
 class FakeResponse:
