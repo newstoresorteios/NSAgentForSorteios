@@ -519,6 +519,44 @@ async def _finalize_story_catalog_match(
         )
 
     if status == "ambiguous":
+        from .story_match_decider import try_resolve_tied_candidates
+
+        resolved = try_resolve_tied_candidates(candidates[:5], analysis)
+        if resolved is not None:
+            product, tray_failed, _code, evidence = await _revalidate_matched_story_product(
+                product_id=resolved.product_id,
+                variant_id=resolved.variant_id,
+                execute_tool=tool,
+                tenant_id=tenant,
+                repo=repo,
+                provider=provider,
+                instagram_account_id=account,
+                story_media_id=media_id,
+            )
+            return StoryResolutionResult(
+                resolved=bool(product) and not tray_failed,
+                tenant_id=tenant,
+                story_media_id=media_id,
+                match_status="matched",
+                catalog_item_key=resolved.catalog_item_key,
+                product_id=resolved.product_id,
+                variant_id=resolved.variant_id,
+                confidence=resolved.score,
+                candidates=candidates[:5],
+                factual_evidence=evidence,
+                product_payload=product,
+                question_type=question_type,
+                reply_hint=_compose_reply(
+                    question_type=question_type,
+                    product=product,
+                    status="matched",
+                    candidates=candidates,
+                    tray_failed=tray_failed,
+                ),
+                shadow_only=shadow_only,
+                metrics=metrics,
+                resolved_at=datetime.now(timezone.utc),
+            )
         options = [
             c.catalog_item_key or c.product_id for c in candidates[:3] if c.product_id
         ]

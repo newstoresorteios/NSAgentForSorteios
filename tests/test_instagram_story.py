@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -1286,3 +1287,52 @@ async def test_story_matcher_does_not_exact_match_random_black_bulova(monkeypatc
         "tray_brand_model:" in " ".join(c.match_reasons)
         for c in candidates
     )
+
+
+@pytest.mark.asyncio
+async def test_story_matcher_runs_tray_jobs_concurrently(monkeypatch):
+    class EmptyRepo:
+        def search_exact(self, **_kwargs):
+            return []
+
+        def search_lexical(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        "app.catalog_index_repository.CatalogIndexRepository",
+        lambda: EmptyRepo(),
+    )
+    monkeypatch.setattr(
+        "app.product_image_index.visual_search_from_caption",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *_a, **_k: 0,
+    )
+
+    in_flight = 0
+    max_in_flight = 0
+
+    async def fake_tool(name, args):
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return {"products": [], "paging": {"total": 0, "page": 1, "limit": 50}}
+
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Christopher Ward"],
+        visible_text=["CHRISTOPHER WARD", "C63 SEALANDER ROCKS", "36 mm"],
+        model_hypotheses=["C63 Sealander Rocks 36mm"],
+        collection_hypotheses=["C63 Sealander Rocks"],
+        dial_colors=["green"],
+        watch_count=1,
+    )
+    await match_story_to_catalog(
+        tenant_id="newstore",
+        analysis=analysis,
+        execute_tool=fake_tool,
+    )
+    assert max_in_flight >= 2

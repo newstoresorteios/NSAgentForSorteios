@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 import unicodedata
 from typing import Any
 
@@ -350,12 +352,16 @@ def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, li
         _add_phrase(sku)
     for ref in analysis.visible_references or []:
         _add_phrase(ref)
+    brand_names = [str(b) for b in (analysis.visible_brands or [])]
     for text in analysis.visible_text or []:
         raw = str(text or "").strip()
         if _is_sku_like(raw):
             _add_phrase(raw)
             continue
-        # Title block on Story art (e.g. CHRISTOPHER WARD C63 SEALANDER ROCKS).
+        from .story_match_decider import _is_brand_only_line
+
+        if brand_names and _is_brand_only_line(raw, brand_names):
+            continue
         word_count = len([p for p in raw.replace("/", " ").split() if len(p.strip()) >= 2])
         if len(raw) >= 12 and word_count >= 2:
             _add_phrase(raw)
@@ -483,35 +489,41 @@ def tray_search_jobs(
         seen.add(key)
         jobs.append((brand, cleaned))
 
+    from .story_match_decider import model_line_search_tokens
+
     slug_brand, slug_tokens = tokens_from_store_url(store_url)
     brand, tokens = tray_search_plan(analysis)
+    model_line = _model_tokens_for_match(
+        model_line_search_tokens(analysis),
+        brand,
+    )
     distinctive = distinctive_search_tokens(tokens)
     head = collection_head_token(analysis, tokens)
     colors = _dial_color_search_tokens(analysis)
-    for color in colors:
-        if head:
+    model_line_has_ref = any(
+        re.search(r"[a-z]\d", _fold(token), re.IGNORECASE) for token in model_line
+    )
+    prefer_model_line_first = len(model_line) >= 3 or model_line_has_ref
+
+    # Most specific first — one good query beats many paginated broad scans.
+    if brand and prefer_model_line_first and len(model_line) >= 2:
+        _add(brand, model_line)
+        if len(model_line) >= 3:
+            _add(brand, model_line[:2])
+    elif brand and head and colors:
+        for color in colors[:1]:
             _add(brand, [head, color])
-    if distinctive:
-        _add(brand, distinctive)
-    if tokens:
-        _add(brand, tokens)
-    for line in _title_lines_for_search(analysis):
-        parts = distinctive_search_tokens(
-            [
-                part.strip().strip(":.,;")
-                for part in str(line).replace("/", " ").replace("-", " ").split()
-            ]
-        )
-        if len(parts) >= 2:
-            _add(brand, parts[:3])
-        elif len(parts) == 1:
-            _add(brand, parts)
-    if brand and distinctive:
-        _add(brand, distinctive[:1])
-    elif brand and len(tokens) > 1:
-        _add(brand, tokens[:1])
+    if brand and not prefer_model_line_first and len(model_line) >= 2:
+        _add(brand, model_line)
+        if len(model_line) >= 3:
+            _add(brand, model_line[:2])
+    elif brand and head and colors and prefer_model_line_first:
+        for color in colors[:1]:
+            _add(brand, [head, color])
+    if brand and distinctive and distinctive != model_line:
+        _add(brand, distinctive[:3])
     _add(slug_brand, slug_tokens)
-    return jobs[:8]
+    return jobs[:4]
 
 
 def _title_lines_for_search(analysis: StoryVisualUnderstanding) -> list[str]:
@@ -520,8 +532,9 @@ def _title_lines_for_search(analysis: StoryVisualUnderstanding) -> list[str]:
     return _title_like_lines(analysis)
 
 
-_STORY_TRAY_PAGE_SIZE = 20
-_STORY_TRAY_MAX_PAGES = 40
+_STORY_TRAY_PAGE_SIZE = 50
+_STORY_TRAY_MAX_PAGES = 2
+_STORY_TRAY_CONCURRENCY = 4
 
 
 def _product_text_blob(product: dict[str, Any]) -> str:
@@ -552,14 +565,15 @@ def _tray_search_page_done(
 ) -> bool:
     if not products:
         return True
-    if len(products) < page_size:
-        return True
     if paging and paging.get("total") is not None:
         try:
             total = int(paging["total"])
+            limit = int(paging.get("limit") or page_size)
         except (TypeError, ValueError):
             return False
-        return page * page_size >= total
+        return page * limit >= total
+    if len(products) < page_size:
+        return True
     return False
 
 
@@ -743,281 +757,347 @@ async def match_story_to_catalog(
     except Exception as exc:  # noqa: BLE001
         print("[story.matcher.index.error]", {"error_type": type(exc).__name__})
 
-    # Level 2 — real visual neighbors from caption embedding (tenant filtered when possible).
-    try:
-        from .product_image_index import visual_search_from_caption
-
-        caption_bits = [
-            *analysis.visible_brands[:2],
-            *analysis.model_hypotheses[:2],
-            *analysis.visible_references[:1],
-            *analysis.dial_colors[:1],
-            *analysis.strap_colors[:1],
-            analysis.visual_description[:180],
-        ]
-        caption = " ".join(str(x) for x in caption_bits if x).strip()
-        if caption:
-            neighbors = await visual_search_from_caption(caption)
-            for neighbor in neighbors[:limit]:
-                pid = str(neighbor.get("product_id") or "").strip()
-                if not pid:
-                    continue
-                distance = float(neighbor.get("distance") or 1.0)
-                # Convert distance to similarity in [0,1].
-                visual = max(0.0, min(1.0, 1.0 - distance))
-                conflicts: list[str] = []
-                brand_score = 0.0
-                nb_brand = _fold(neighbor.get("brand"))
-                if analysis.visible_brands:
-                    if nb_brand and nb_brand in {_fold(b) for b in analysis.visible_brands}:
-                        brand_score = 0.8
-                    elif nb_brand:
-                        conflicts.append("brand_conflict")
-                color_score = 0.0
-                if analysis.dial_colors:
-                    caption_l = _fold(neighbor.get("visual_caption") or neighbor.get("name"))
-                    if any(_fold(c) in caption_l for c in analysis.dial_colors):
-                        color_score = 0.5
-                _add_scored(
-                    {
-                        "id": pid,
-                        "variant_id": neighbor.get("variant_id"),
-                        "brand": neighbor.get("brand"),
-                        "name": neighbor.get("name"),
-                        "tenant_id": tenant_id,
-                    },
-                    _score_components(
-                        catalog_item_key=catalog_item_key_for(
-                            pid,
-                            str(neighbor["variant_id"])
-                            if neighbor.get("variant_id") is not None
-                            else None,
-                        ),
-                        product_id=pid,
-                        variant_id=(
-                            str(neighbor["variant_id"])
-                            if neighbor.get("variant_id") is not None
-                            else None
-                        ),
-                        visual=visual,
-                        brand=brand_score,
-                        color=color_score,
-                        quality_penalty=quality_penalty,
-                        conflict_penalty=0.3 if conflicts else 0.0,
-                        reasons=[f"visual_neighbor:d={distance:.3f}"],
-                        conflicts=conflicts,
-                        source="visual_index",
-                    ),
-                )
-    except Exception as exc:  # noqa: BLE001
-        print("[story.matcher.visual.error]", {"error_type": type(exc).__name__})
-
-    # Level 3 — live TRAYadaptor when the local index has no exact identifier hit.
-    # ai_catalog_index is a cache of previously retrieved SKUs, not the full store.
+    # Level 2+3 — visual neighbors and live Tray run concurrently (I/O bound).
     has_exact = any(str(c.source or "").startswith("exact_") for c in candidates)
-    if execute_tool is not None and not has_exact:
-        color_required = bool(analysis.dial_colors)
-        color_locked = any(_candidate_has_dial_color_lock(c) for c in candidates)
-        page_size = _STORY_TRAY_PAGE_SIZE
-        _, planned_tokens = tray_search_plan(analysis)
-        analysis_distinctive = [
-            token
-            for token in distinctive_search_tokens(planned_tokens)
-            if _fold(token) not in _COLOR_AND_SKIP
-        ]
-        evidence_blob = _fold(
-            " ".join(
-                [
-                    *(analysis.visible_text or []),
-                    *(analysis.visible_brands or []),
-                    *(analysis.model_hypotheses or []),
-                    *(analysis.collection_hypotheses or []),
-                    *(analysis.visible_skus or []),
-                    *(analysis.visible_references or []),
-                ]
-            )
+    color_required = bool(analysis.dial_colors)
+    color_locked = any(_candidate_has_dial_color_lock(c) for c in candidates)
+    page_size = _STORY_TRAY_PAGE_SIZE
+    _, planned_tokens = tray_search_plan(analysis)
+    analysis_distinctive = [
+        token
+        for token in distinctive_search_tokens(planned_tokens)
+        if _fold(token) not in _COLOR_AND_SKIP
+    ]
+    evidence_blob = _fold(
+        " ".join(
+            [
+                *(analysis.visible_text or []),
+                *(analysis.visible_brands or []),
+                *(analysis.model_hypotheses or []),
+                *(analysis.collection_hypotheses or []),
+                *(analysis.visible_skus or []),
+                *(analysis.visible_references or []),
+            ]
         )
-        for brand, tokens in tray_search_jobs(analysis, store_url=store_url):
-            if color_locked:
-                break
-            try:
-                slug = _fold((store_url or "").rstrip("/").split("/")[-1])
-                pages_scanned = 0
-                for page in range(1, _STORY_TRAY_MAX_PAGES + 1):
-                    arguments: dict[str, Any] = {
-                        "limit": page_size,
-                        "page": page,
-                    }
-                    if tokens:
-                        arguments["tokens"] = tokens
-                    if brand:
-                        arguments["brand"] = brand
-                    result = await execute_tool("search_products", arguments)
-                    products = result.get("products") if isinstance(result, dict) else None
-                    paging = result.get("paging") if isinstance(result, dict) else None
-                    if not isinstance(products, list) or not products:
-                        log_event(
-                            "story_tray_search_exhausted",
-                            {
-                                "brand": brand,
-                                "token_count": len(tokens),
-                                "page": page,
-                                "pages_scanned": pages_scanned,
-                                "reason": "empty_page",
-                            },
-                        )
-                        break
-                    pages_scanned += 1
-                    try:
-                        from .catalog_index import index_products_best_effort
+    )
+    slug = _fold((store_url or "").rstrip("/").split("/")[-1])
 
-                        index_products_best_effort(
-                            products,
-                            factual_source="tray_search",
-                        )
-                    except Exception:
-                        pass
-                    for idx, product in enumerate(products):
-                        if not isinstance(product, dict):
-                            continue
-                        pid = str(product.get("id") or "")
-                        if not pid:
-                            continue
-                        vid = (
-                            str(product["variant_id"])
-                            if product.get("variant_id") is not None
-                            else None
-                        )
-                        name_l = _fold(product.get("name") or product.get("title"))
-                        blob = _product_text_blob(product)
-                        product_brand = _fold(product.get("brand"))
-                        brand_ok = bool(brand) and (
-                            _fold(brand) in name_l
-                            or _fold(brand) in blob
-                            or product_brand == _fold(brand)
-                        )
-                        distinctive = tokens or [
-                            part
-                            for part in (brand or "").split()
-                            if len(part) >= 3
-                        ]
-                        hits = sum(
-                            1
-                            for token in distinctive
-                            if len(token) >= 3 and _fold(token) in blob
-                        )
-                        url_hit = bool(slug) and len(slug) >= 8 and slug in blob
-                        color = _dial_color_score(analysis, blob)
-                        material_conflicts = [
-                            f"unseen_material:{marker}"
-                            for marker in ("bronze", "titane", "titanium")
-                            if marker in blob and marker not in evidence_blob
-                        ]
-                        model_tokens = _model_tokens_for_match(tokens, brand)
-                        model_hits = sum(
-                            1
-                            for token in model_tokens
-                            if len(token) >= 3 and _fold(token) in blob
-                        )
-                        if hits < 1 and not url_hit:
-                            continue
-                        strong = url_hit or (
-                            brand_ok
-                            and bool(model_tokens)
-                            and model_hits
-                            >= min(2, max(len(model_tokens), 1))
-                            and (not color_required or color >= 0.8)
-                        )
-                        if color_required and color < 0.8 and not url_hit:
-                            strong = False
-                        rank_penalty = ((page - 1) * page_size + idx) * 0.002
-                        name_key = _fold(product.get("name") or product.get("title") or "")
-                        reason = (
-                            f"store_url:{slug[:80]}"
-                            if url_hit
-                            else (
-                                f"tray_brand_model:{brand or ''} {' '.join(tokens)}".strip()
-                                if strong
-                                else f"tray_query_overlap:{' '.join(tokens)[:40]}"
-                            )
-                        )
-                        reasons = [reason]
-                        if name_key:
-                            reasons.append(f"listing:{name_key[:80]}")
-                        _add_scored(
-                            {**product, "tenant_id": product.get("tenant_id") or tenant_id},
-                            _score_components(
-                                catalog_item_key=catalog_item_key_for(pid, vid),
-                                product_id=pid,
-                                variant_id=vid,
-                                exact=(
-                                    0.96
-                                    if url_hit
-                                    else (
-                                        0.7
-                                        if material_conflicts
-                                        else (0.92 if strong else 0.0)
-                                    )
-                                ),
-                                lexical=min(0.6, 0.2 * max(hits, 1) - rank_penalty),
-                                brand=0.85 if brand_ok else 0.2,
-                                model=min(0.8, 0.25 * hits),
-                                color=color,
-                                quality_penalty=quality_penalty,
-                                conflict_penalty=0.35 if material_conflicts else 0.0,
-                                reasons=reasons,
-                                conflicts=material_conflicts,
-                                source="tray_search",
-                            ),
-                        )
-                        if (
-                            color_required
-                            and color >= 0.8
-                            and strong
-                            and analysis_distinctive
-                        ):
-                            distinctive_hit = all(
-                                _fold(token) in blob
-                                for token in analysis_distinctive
-                                if len(token) >= 3
-                            )
-                            if distinctive_hit:
-                                color_locked = True
-                    log_event(
-                        "story_tray_search_page",
-                        {
-                            "brand": brand,
-                            "token_count": len(tokens),
-                            "page": page,
-                            "page_count": len(products),
-                            "color_locked": color_locked,
-                            "paging_total": (
-                                paging.get("total") if isinstance(paging, dict) else None
-                            ),
-                        },
-                    )
-                    if color_locked:
-                        break
-                    if _tray_search_page_done(
-                        products,
-                        paging if isinstance(paging, dict) else None,
-                        page=page,
-                        page_size=page_size,
-                    ):
-                        log_event(
-                            "story_tray_search_exhausted",
-                            {
-                                "brand": brand,
-                                "token_count": len(tokens),
-                                "page": page,
-                                "pages_scanned": pages_scanned,
-                                "reason": "last_page",
-                                "color_locked": color_locked,
-                            },
-                        )
-                        break
-            except Exception as exc:  # noqa: BLE001
-                print("[story.matcher.tray.error]", {"error_type": type(exc).__name__})
+    async def _load_visual_neighbors() -> list[dict[str, Any]]:
+        try:
+            from .product_image_index import visual_search_from_caption
+
+            caption_bits = [
+                *analysis.visible_brands[:2],
+                *analysis.model_hypotheses[:2],
+                *analysis.visible_references[:1],
+                *analysis.dial_colors[:1],
+                *analysis.strap_colors[:1],
+                analysis.visual_description[:180],
+            ]
+            caption = " ".join(str(x) for x in caption_bits if x).strip()
+            if not caption:
+                return []
+            return list(await visual_search_from_caption(caption) or [])[:limit]
+        except Exception as exc:  # noqa: BLE001
+            print("[story.matcher.visual.error]", {"error_type": type(exc).__name__})
+            return []
+
+    def _apply_visual_neighbors(neighbors: list[dict[str, Any]]) -> None:
+        for neighbor in neighbors:
+            pid = str(neighbor.get("product_id") or "").strip()
+            if not pid:
+                continue
+            distance = float(neighbor.get("distance") or 1.0)
+            visual = max(0.0, min(1.0, 1.0 - distance))
+            conflicts: list[str] = []
+            brand_score = 0.0
+            nb_brand = _fold(neighbor.get("brand"))
+            if analysis.visible_brands:
+                if nb_brand and nb_brand in {_fold(b) for b in analysis.visible_brands}:
+                    brand_score = 0.8
+                elif nb_brand:
+                    conflicts.append("brand_conflict")
+            color_score = 0.0
+            if analysis.dial_colors:
+                caption_l = _fold(neighbor.get("visual_caption") or neighbor.get("name"))
+                if any(_fold(c) in caption_l for c in analysis.dial_colors):
+                    color_score = 0.5
+            _add_scored(
+                {
+                    "id": pid,
+                    "variant_id": neighbor.get("variant_id"),
+                    "brand": neighbor.get("brand"),
+                    "name": neighbor.get("name"),
+                    "tenant_id": tenant_id,
+                },
+                _score_components(
+                    catalog_item_key=catalog_item_key_for(
+                        pid,
+                        str(neighbor["variant_id"])
+                        if neighbor.get("variant_id") is not None
+                        else None,
+                    ),
+                    product_id=pid,
+                    variant_id=(
+                        str(neighbor["variant_id"])
+                        if neighbor.get("variant_id") is not None
+                        else None
+                    ),
+                    visual=visual,
+                    brand=brand_score,
+                    color=color_score,
+                    quality_penalty=quality_penalty,
+                    conflict_penalty=0.3 if conflicts else 0.0,
+                    reasons=[f"visual_neighbor:d={distance:.3f}"],
+                    conflicts=conflicts,
+                    source="visual_index",
+                ),
+            )
+
+    def _ingest_tray_page(
+        *,
+        brand: str | None,
+        tokens: list[str],
+        page: int,
+        products: list[Any],
+        paging: dict[str, Any] | None,
+    ) -> bool:
+        nonlocal color_locked
+        if not products:
+            log_event(
+                "story_tray_search_exhausted",
+                {
+                    "brand": brand,
+                    "token_count": len(tokens),
+                    "page": page,
+                    "pages_scanned": 0,
+                    "reason": "empty_page",
+                },
+            )
+            return color_locked
+        try:
+            from .catalog_index import index_products_best_effort
+
+            index_products_best_effort(products, factual_source="tray_search")
+        except Exception:
+            pass
+        for idx, product in enumerate(products):
+            if not isinstance(product, dict):
+                continue
+            pid = str(product.get("id") or "")
+            if not pid:
+                continue
+            vid = (
+                str(product["variant_id"])
+                if product.get("variant_id") is not None
+                else None
+            )
+            name_l = _fold(product.get("name") or product.get("title"))
+            blob = _product_text_blob(product)
+            product_brand = _fold(product.get("brand"))
+            brand_ok = bool(brand) and (
+                _fold(brand) in name_l
+                or _fold(brand) in blob
+                or product_brand == _fold(brand)
+            )
+            distinctive = tokens or [
+                part for part in (brand or "").split() if len(part) >= 3
+            ]
+            hits = sum(
+                1 for token in distinctive if len(token) >= 3 and _fold(token) in blob
+            )
+            url_hit = bool(slug) and len(slug) >= 8 and slug in blob
+            color = _dial_color_score(analysis, blob)
+            material_conflicts = [
+                f"unseen_material:{marker}"
+                for marker in ("bronze", "titane", "titanium")
+                if marker in blob and marker not in evidence_blob
+            ]
+            model_tokens = _model_tokens_for_match(tokens, brand)
+            model_hits = sum(
+                1 for token in model_tokens if len(token) >= 3 and _fold(token) in blob
+            )
+            if hits < 1 and not url_hit:
+                continue
+            strong = url_hit or (
+                brand_ok
+                and bool(model_tokens)
+                and model_hits >= min(2, max(len(model_tokens), 1))
+                and (not color_required or color >= 0.8)
+            )
+            if color_required and color < 0.8 and not url_hit:
+                strong = False
+            rank_penalty = ((page - 1) * page_size + idx) * 0.002
+            name_key = _fold(product.get("name") or product.get("title") or "")
+            reason = (
+                f"store_url:{slug[:80]}"
+                if url_hit
+                else (
+                    f"tray_brand_model:{brand or ''} {' '.join(tokens)}".strip()
+                    if strong
+                    else f"tray_query_overlap:{' '.join(tokens)[:40]}"
+                )
+            )
+            reasons = [reason]
+            if name_key:
+                reasons.append(f"listing:{name_key[:80]}")
+            _add_scored(
+                {**product, "tenant_id": product.get("tenant_id") or tenant_id},
+                _score_components(
+                    catalog_item_key=catalog_item_key_for(pid, vid),
+                    product_id=pid,
+                    variant_id=vid,
+                    exact=(
+                        0.96
+                        if url_hit
+                        else (0.7 if material_conflicts else (0.92 if strong else 0.0))
+                    ),
+                    lexical=min(0.6, 0.2 * max(hits, 1) - rank_penalty),
+                    brand=0.85 if brand_ok else 0.2,
+                    model=min(0.8, 0.25 * hits),
+                    color=color,
+                    quality_penalty=quality_penalty,
+                    conflict_penalty=0.35 if material_conflicts else 0.0,
+                    reasons=reasons,
+                    conflicts=material_conflicts,
+                    source="tray_search",
+                ),
+            )
+            if color_required and color >= 0.8 and strong and analysis_distinctive:
+                distinctive_hit = all(
+                    _fold(token) in blob
+                    for token in analysis_distinctive
+                    if len(token) >= 3
+                )
+                if distinctive_hit:
+                    color_locked = True
+        log_event(
+            "story_tray_search_page",
+            {
+                "brand": brand,
+                "token_count": len(tokens),
+                "page": page,
+                "page_count": len(products),
+                "color_locked": color_locked,
+                "paging_total": paging.get("total") if paging else None,
+            },
+        )
+        if _tray_search_page_done(products, paging, page=page, page_size=page_size):
+            log_event(
+                "story_tray_search_exhausted",
+                {
+                    "brand": brand,
+                    "token_count": len(tokens),
+                    "page": page,
+                    "pages_scanned": page,
+                    "reason": "last_page",
+                    "color_locked": color_locked,
+                },
+            )
+        return color_locked
+
+    async def _fetch_tray_page(
+        brand: str | None,
+        tokens: list[str],
+        page: int,
+    ) -> dict[str, Any]:
+        arguments: dict[str, Any] = {"limit": page_size, "page": page}
+        if tokens:
+            arguments["tokens"] = tokens
+        if brand:
+            arguments["brand"] = brand
+        result = await execute_tool("search_products", arguments)
+        products = result.get("products") if isinstance(result, dict) else None
+        paging = result.get("paging") if isinstance(result, dict) else None
+        return {
+            "brand": brand,
+            "tokens": tokens,
+            "page": page,
+            "products": products if isinstance(products, list) else [],
+            "paging": paging if isinstance(paging, dict) else None,
+        }
+
+    async def _gather_tray_pages(
+        items: list[tuple[str | None, list[str], int]],
+    ) -> list[dict[str, Any]]:
+        if not items:
+            return []
+        sem = asyncio.Semaphore(_STORY_TRAY_CONCURRENCY)
+
+        async def _one(brand: str | None, tokens: list[str], page: int) -> dict[str, Any]:
+            async with sem:
+                try:
+                    return await _fetch_tray_page(brand, tokens, page)
+                except Exception as exc:  # noqa: BLE001
+                    print("[story.matcher.tray.error]", {"error_type": type(exc).__name__})
+                    return {
+                        "brand": brand,
+                        "tokens": tokens,
+                        "page": page,
+                        "products": [],
+                        "paging": None,
+                    }
+
+        return list(await asyncio.gather(*[_one(b, t, p) for b, t, p in items]))
+
+    async def _load_tray_pages() -> list[dict[str, Any]]:
+        if execute_tool is None or has_exact:
+            return []
+        jobs = tray_search_jobs(analysis, store_url=store_url)
+        if not jobs:
+            return []
+        first = await _gather_tray_pages([(brand, tokens, 1) for brand, tokens in jobs])
+        follow_up: list[tuple[str | None, list[str], int]] = []
+        strong_model_hit = False
+        for brand, tokens in jobs:
+            row = next(
+                (
+                    item
+                    for item in first
+                    if item.get("brand") == brand and item.get("tokens") == tokens
+                ),
+                None,
+            )
+            if row is None:
+                continue
+            products = row.get("products") or []
+            model_token_count = len(_model_tokens_for_match(tokens, brand))
+            if products and model_token_count >= 2:
+                strong_model_hit = True
+            max_pages = 1 if model_token_count >= 2 else _STORY_TRAY_MAX_PAGES
+            if max_pages < 2 or not products:
+                continue
+            if _tray_search_page_done(
+                products,
+                row.get("paging"),
+                page=1,
+                page_size=page_size,
+            ):
+                continue
+            follow_up.append((brand, tokens, 2))
+        extra: list[dict[str, Any]] = []
+        if follow_up and not strong_model_hit:
+            extra = await _gather_tray_pages(follow_up)
+        return [*first, *extra]
+
+    visual_neighbors, tray_pages = await asyncio.gather(
+        _load_visual_neighbors(),
+        _load_tray_pages(),
+    )
+    _apply_visual_neighbors(visual_neighbors)
+    color_locked = color_locked or any(
+        _candidate_has_dial_color_lock(c) for c in candidates
+    )
+    for row in tray_pages:
+        if color_locked:
+            break
+        _ingest_tray_page(
+            brand=row.get("brand"),
+            tokens=list(row.get("tokens") or []),
+            page=int(row.get("page") or 1),
+            products=list(row.get("products") or []),
+            paging=row.get("paging"),
+        )
 
     ordered = sorted(candidates, key=lambda c: (-c.score, c.product_id))[:limit]
     if analysis is not None and ordered:

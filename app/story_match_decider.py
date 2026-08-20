@@ -29,6 +29,35 @@ def _fold(value: Any) -> str:
 
 _SIZE_RE = re.compile(r"\b(\d{2})\s*mm\b", re.IGNORECASE)
 
+_GENERIC_TITLE_SKIP = {
+    "main",
+    "watch",
+    "product",
+    "relogio",
+    "relogios",
+    "modelo",
+    "automatico",
+    "mecanico",
+    "quartz",
+    "motor",
+    "swiss",
+    "made",
+    "confira",
+    "reserva",
+    "energia",
+}
+
+_WEAK_TITLE_TOKENS = {
+    "pilot",
+    "sport",
+    "navy",
+    "basic",
+    "classic",
+    "automatic",
+    "mecanico",
+    "quartz",
+}
+
 # Listing words that distinguish variants; penalize when absent from Story evidence.
 _VARIANT_MARKERS = (
     "gmt",
@@ -76,31 +105,96 @@ def _tokenize_phrase(raw: Any) -> list[str]:
     return out
 
 
+def _brand_token_set(brands: list[str]) -> set[str]:
+    parts: set[str] = set()
+    for brand in brands:
+        for token in _tokenize_phrase(brand):
+            parts.add(_fold(token))
+    return parts
+
+
+def _is_brand_only_line(text: str, brands: list[str]) -> bool:
+    """Skip 'CHRISTOPHER WARD' — it matches every SKU of the brand."""
+    tokens = [_fold(t) for t in _tokenize_phrase(text)]
+    if not tokens:
+        return True
+    brand_parts = _brand_token_set(brands)
+    return all(token in brand_parts for token in tokens)
+
+
+def _is_motor_spec_line(text: str) -> bool:
+    folded = _fold(text)
+    return folded.startswith("motor") or folded.startswith("motor:") or ": motor" in folded
+
+
+def _line_qualifies_as_title(text: str, brands: list[str], *, from_hypothesis: bool) -> bool:
+    if brands and _is_brand_only_line(text, brands):
+        return False
+    if from_hypothesis:
+        return True
+    brand_fold = _brand_token_set(brands)
+    folded = _fold(text)
+    if brand_fold and any(part in folded for part in brand_fold):
+        return not _is_motor_spec_line(text)
+    tokens = _tokenize_phrase(text)
+    if text.isupper() and len(tokens) >= 2:
+        return True
+    has_model_ref = any(
+        re.search(r"[a-z]\d{2}", _fold(tok), re.IGNORECASE) for tok in tokens
+    )
+    return bool(text.isupper() and len(tokens) >= 3 and has_model_ref)
+
+
 def _title_like_lines(analysis: StoryVisualUnderstanding) -> list[str]:
-    brands = {_fold(b) for b in (analysis.visible_brands or []) if b}
+    brands = [str(b) for b in (analysis.visible_brands or []) if b]
     lines: list[str] = []
     seen: set[str] = set()
-    for raw in (
-        *(analysis.visible_references or []),
-        *(analysis.model_hypotheses or []),
-        *(analysis.collection_hypotheses or []),
-        *(analysis.visible_text or []),
-    ):
-        text = str(raw or "").strip()
-        if len(text) < 8 or text in seen:
-            continue
-        folded = _fold(text)
-        if brands and not any(b in folded for b in brands):
-            # Model/reference lines (C63 SEALANDER ROCKS) without repeating brand.
-            tokens = _tokenize_phrase(text)
-            has_model_ref = any(
-                re.search(r"[a-z]\d{2}", _fold(tok), re.IGNORECASE) for tok in tokens
-            )
-            if not (text.isupper() and len(tokens) >= 3 and has_model_ref):
+    sources: tuple[tuple[list[str], bool], ...] = (
+        (list(analysis.visible_references or []), True),
+        (list(analysis.model_hypotheses or []), True),
+        (list(analysis.collection_hypotheses or []), True),
+        (list(analysis.visible_text or []), False),
+    )
+    for source, from_hypothesis in sources:
+        for raw in source:
+            text = str(raw or "").strip()
+            if len(text) < 8 or text in seen:
                 continue
-        seen.add(text)
-        lines.append(text)
+            if not _line_qualifies_as_title(text, brands, from_hypothesis=from_hypothesis):
+                continue
+            seen.add(text)
+            lines.append(text)
     return lines
+
+
+def model_line_search_tokens(analysis: StoryVisualUnderstanding) -> list[str]:
+    """Distinctive tokens from the model title block (C63, Sealander, Rocks)."""
+    brands = [str(b) for b in (analysis.visible_brands or []) if b]
+    brand_parts = _brand_token_set(brands)
+    for line in _title_like_lines(analysis):
+        if _is_motor_spec_line(line):
+            continue
+        if brands and _is_brand_only_line(line, brands):
+            continue
+        parts = [
+            part.strip().strip(":.,;")
+            for part in str(line).replace("/", " ").replace("-", " ").split()
+        ]
+        strong = [
+            part
+            for part in parts
+            if _fold(part) not in brand_parts
+            and len(part) >= 2
+            and _fold(part) not in {"relogio", "relogios", "mm"}
+            and _fold(part) not in _GENERIC_TITLE_SKIP
+        ]
+        if len(strong) >= 2:
+            ordered = sorted(
+                strong,
+                key=lambda part: (1 if _fold(part) in _WEAK_TITLE_TOKENS else 0, _fold(part)),
+            )
+            return ordered[:4]
+    return []
 
 
 def evaluate_text_evidence(analysis: StoryVisualUnderstanding) -> StoryEvidenceProfile:
@@ -200,8 +294,32 @@ def score_catalog_overlap(
             score += 0.12
             reasons.append(f"size_{profile.size_mm}mm")
         elif "39" in blob and profile.size_mm == "36":
-            # Catalog often lists 39 mm case with 36 mm collection naming.
             score += 0.04
+
+    brand_parts = {
+        "ward",
+        "christopher",
+        "bulova",
+        "citizen",
+        "laco",
+        "baltic",
+        "mido",
+        "seiko",
+        "tissot",
+    }
+    family_tokens = [
+        t
+        for t in positives
+        if re.match(r"c\d{2}", t)
+        or (
+            len(t) >= 4
+            and t not in brand_parts
+            and t not in {"automatic", "automatico", "mecanico", "rocks"}
+        )
+    ]
+    if family_tokens and not any(t in blob for t in family_tokens):
+        score -= 0.35
+        conflicts.append("model_family_miss")
 
     for marker in _VARIANT_MARKERS:
         if marker in blob and marker not in profile.positive_tokens:
