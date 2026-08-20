@@ -218,9 +218,124 @@ def test_persona_qualification_unlocks_on_brand_plus_budget():
             needs_clarification=False,
             confidence=0.9,
         )
-        state = sales_agent._discovery_state(interpretation, [])
+        # Budget must be in THIS message — otherwise stale memory is scrubbed.
+        state = sales_agent._discovery_state(
+            interpretation,
+            [],
+            message_text="quero um Seiko até 4500",
+        )
         assert state["persona_qualification_required"] is False
         assert state["qualification"]["satisfied_by"] == "brand+budget"
+    finally:
+        persona_runtime.reset_persona_runtime(token)
+
+
+def test_open_browse_scrubs_stale_budget_and_asks_investment():
+    import app.persona_runtime as persona_runtime
+    import app.sales_agent as sales_agent
+
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Qual faixa de investimento você tem em mente?",
+        ],
+    )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"product_type": "relógio", "brand": "Seiko"},
+            preferences={"budget_max": 5000},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            reference_type="previous_recommendation",
+            confidence=0.97,
+        )
+        state = sales_agent._discovery_state(
+            interpretation,
+            [],
+            message_text="quero ver um modelo de seiko",
+        )
+        assert "budget" not in state["known_preferences"]
+        assert state["persona_qualification_required"] is True
+        assert state["force_retrieval"] is False
+        question = sales_agent._persona_qualification_question(interpretation, state)
+        assert question and "investimento" in question.casefold()
+    finally:
+        persona_runtime.reset_persona_runtime(token)
+
+
+@pytest.mark.asyncio
+async def test_open_browse_ignores_previous_recommendation_and_asks_budget(monkeypatch):
+    import app.persona_runtime as persona_runtime
+    import app.sales_agent as sales_agent
+    from app.commerce_context import (
+        CommerceConversationState,
+        CommerceProductReference,
+        PresentedCommerceProduct,
+    )
+
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Qual faixa de investimento você tem em mente?",
+        ],
+    )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"product_type": "relógio", "brand": "Seiko"},
+            preferences={"budget_max": 5000},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            reference_type="previous_recommendation",
+            confidence=0.97,
+        )
+        state = CommerceConversationState(
+            last_presented_products=[
+                PresentedCommerceProduct(
+                    product_id="1999",
+                    name="Seiko Monster",
+                    position=1,
+                )
+            ],
+            active_product=CommerceProductReference(
+                product_id="1999",
+                name="Seiko Monster",
+            ),
+        )
+
+        async def forbid_tray(*args, **kwargs):
+            raise AssertionError("open browse must clarify before Tray")
+
+        monkeypatch.setattr(sales_agent, "execute_tool", forbid_tray)
+        monkeypatch.setattr(sales_agent, "get_settings", lambda: _settings())
+
+        result = await sales_agent.handle_sales_message(
+            IncomingMessage(text="quero ver um modelo de seiko"),
+            {"primary_intent": "commerce"},
+            {},
+            interpretation,
+            recent_turns=[],
+            commerce_state=state,
+        )
+        assert result.safety_reason == "commerce_clarification"
+        assert "investimento" in result.reply_text.casefold()
     finally:
         persona_runtime.reset_persona_runtime(token)
 

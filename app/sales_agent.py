@@ -1091,6 +1091,7 @@ from .sales.discovery import (  # noqa: E402
     _comparison_clarification_question,
     _discovery_state,
     _needs_clarification_before_retrieval,
+    is_open_catalog_browse_request,
 )
 
 
@@ -1160,7 +1161,12 @@ async def generate_clarification_reply(
         "current_message": message.text,
         "interpretation": interpretation.model_dump(),
         "context_note": context_note,
-        "DISCOVERY_STATE": discovery_state or _discovery_state(interpretation, recent_turns),
+        "DISCOVERY_STATE": discovery_state
+        or _discovery_state(
+            interpretation,
+            recent_turns,
+            message_text=message.text,
+        ),
     }
     try:
         from .openai_errors import OpenAIGatewayError
@@ -1831,6 +1837,31 @@ async def _handle_sales_message_inner(
             "resolved": resolved_product is not None,
             "resolved_by": resolved_by,
         })
+        # "Quero ver um Seiko" is a fresh browse — never treat prior shortlist as
+        # the target SKU (that skipped qualification and hammered Tray get_product).
+        if (
+            resolved_product is not None
+            and interpretation.reference_type
+            in {
+                "previous_recommendation",
+                "last_presented_product",
+                "current_product",
+            }
+            and is_open_catalog_browse_request(message.text, interpretation)
+        ):
+            print(
+                "[sales.reference.ignore_stale_browse]",
+                {
+                    "reference_type": interpretation.reference_type,
+                    "product_id": resolved_product.product_id,
+                    "brand": interpretation.subject.brand,
+                },
+            )
+            resolved_product = None
+            resolved_by = "none"
+            interpretation = interpretation.model_copy(
+                update={"reference_type": None, "reference_position": None}
+            )
         # Inbound photo must re-identify — never answer price from a stale
         # Kingfisher/sibling left in active/presented context.
         from .image_product_id import (
@@ -3261,7 +3292,15 @@ async def _handle_sales_message_inner(
             used_tray=bool(cart_result.response_metadata.get("used_tray", True)),
             fallback_reason=cart_result.safety_reason or "sales_responder_unavailable",
         )
-    discovery_state = _discovery_state(interpretation, recent_turns) if interpretation else None
+    discovery_state = (
+        _discovery_state(
+            interpretation,
+            recent_turns,
+            message_text=message.text,
+        )
+        if interpretation
+        else None
+    )
     if discovery_state and discovery_state["force_retrieval"] and plan.get("intent") == "clarification":
         plan = {**plan, "intent": "recommendation"}
     print("[sales.agent] planner", {

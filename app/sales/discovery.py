@@ -2,9 +2,30 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any
 
 from ..models import IncomingMessage, SalesInterpretation
+
+
+_OPEN_BROWSE_RE = re.compile(
+    r"\b("
+    r"quero ver|quero olhar|quero conhecer|quero um|quero uma|"
+    r"me mostra|mostra(?:r)?|"
+    r"ver modelos?|ver op(?:ç|c)(?:õ|o)es|op(?:ç|c)(?:õ|o)es de|"
+    r"sugest(?:ã|a)o|procurando|busco|buscar"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+_BUDGET_IN_MESSAGE_RE = re.compile(
+    r"("
+    r"\bat[eé]\b|\bno m[aá]ximo\b|\bat[eé]\s+\d|\b\d+\s*mil\b|"
+    r"\bor[cç]amento\b|\binvestimento\b|\bfaixa\b|\br\$\b|"
+    r"\breais\b|\b\d+\s*k\b|\bbudget\b"
+    r")",
+    flags=re.IGNORECASE,
+)
 
 def _is_clarification_turn(turn: dict[str, Any]) -> bool:
     metadata = turn.get("metadata") if isinstance(turn, dict) else None
@@ -43,6 +64,69 @@ def _known_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
     if preferences.attributes:
         known["attributes"] = preferences.attributes
     return known
+
+
+def message_states_budget(text: str | None) -> bool:
+    return bool(_BUDGET_IN_MESSAGE_RE.search(str(text or "")))
+
+
+def is_open_catalog_browse_request(
+    text: str | None,
+    interpretation: SalesInterpretation,
+) -> bool:
+    """Fresh brand/type browse — not a deictic pick from a prior shortlist."""
+    if _specific_product_lock(interpretation):
+        return False
+    if not (interpretation.subject.brand or interpretation.subject.product_type):
+        return False
+    if interpretation.goal in {"compare", "buy", "inspect"}:
+        return False
+    folded = str(text or "").casefold()
+    if any(
+        token in folded
+        for token in (
+            "esse",
+            "essa",
+            "deste",
+            "desta",
+            "primeiro",
+            "segundo",
+            "terceiro",
+            "o 1",
+            "o 2",
+            "o 3",
+            "número",
+            "numero",
+        )
+    ):
+        return False
+    return bool(_OPEN_BROWSE_RE.search(str(text or "")))
+
+
+def _scrub_stale_budget_for_open_browse(
+    known_preferences: dict[str, Any],
+    *,
+    interpretation: SalesInterpretation,
+    message_text: str | None,
+) -> dict[str, Any]:
+    """Don't let an old budget from chat memory skip Crono's investment question."""
+    if not is_open_catalog_browse_request(message_text, interpretation):
+        return known_preferences
+    if message_states_budget(message_text):
+        return known_preferences
+    if "budget" not in known_preferences:
+        return known_preferences
+    cleaned = dict(known_preferences)
+    cleaned.pop("budget", None)
+    print(
+        "[sales.discovery.scrub_stale_budget]",
+        {
+            "brand": interpretation.subject.brand,
+            "goal": interpretation.goal,
+            "had_budget": True,
+        },
+    )
+    return cleaned
 
 
 def _specific_product_lock(interpretation: SalesInterpretation) -> bool:
@@ -303,13 +387,27 @@ def _comparison_clarification_question(message: IncomingMessage, interpretation:
 def _discovery_state(
     interpretation: SalesInterpretation,
     recent_turns: list[dict[str, Any]] | None,
+    *,
+    message_text: str | None = None,
 ) -> dict[str, Any]:
     clarification_count = _consecutive_clarification_count(recent_turns)
-    known_preferences = _known_preferences(interpretation)
+    known_preferences = _scrub_stale_budget_for_open_browse(
+        _known_preferences(interpretation),
+        interpretation=interpretation,
+        message_text=message_text,
+    )
     explicit_no_preferences = list(dict.fromkeys(interpretation.preferences.explicit_no_preferences))
     known_preferences_count = len(known_preferences) + len(explicit_no_preferences)
     subject_identifiable = _subject_identifiable(interpretation)
     enough_information = interpretation.enough_information_to_search
+    # Open browse without budget in this message must re-qualify even if the
+    # interpreter inherited enough_information / ready_for_retrieval from memory.
+    if (
+        is_open_catalog_browse_request(message_text, interpretation)
+        and not message_states_budget(message_text)
+        and "budget" not in known_preferences
+    ):
+        enough_information = False
     comparison_without_sku = _comparison_needs_qualification(interpretation)
     force_retrieval = (
         subject_identifiable
