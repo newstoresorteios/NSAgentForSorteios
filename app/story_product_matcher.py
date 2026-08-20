@@ -521,24 +521,69 @@ def tokens_from_store_url(url: str | None) -> tuple[str | None, list[str]]:
     }
     tokens: list[str] = []
     brand: str | None = None
+    known_brands = {
+        "mido",
+        "laco",
+        "bulova",
+        "seiko",
+        "tissot",
+        "orient",
+        "casio",
+        "citizen",
+        "baltic",
+        "christopher",
+        "ward",
+    }
     for part in slug.replace("-", " ").split():
         key = _fold(part)
         if len(key) < 3 or key in skip or key in _COLOR_AND_SKIP:
             continue
-        if brand is None and key in {
-            "mido",
-            "laco",
-            "bulova",
-            "seiko",
-            "tissot",
-            "orient",
-            "casio",
-            "citizen",
-        }:
-            brand = part
+        if brand is None and key in known_brands:
+            # "christopher ward" → keep first brand word; skip trailing "ward" as brand.
+            if key == "ward" and brand is None:
+                continue
+            brand = "Christopher Ward" if key == "christopher" else part
+            continue
+        if key == "ward":
             continue
         tokens.append(part)
     return brand, tokens[:8]
+
+
+_EDITION_COUNT_RE = re.compile(
+    r"\b(\d{2,4})\s*(?:unidades|exemplares|pecas|peças)\b",
+    re.IGNORECASE,
+)
+
+
+def edition_count_search_tokens(analysis: StoryVisualUnderstanding) -> list[str]:
+    """Pull limited-edition counts from Story marketing copy (e.g. '350 unidades')."""
+    found: list[str] = []
+    seen: set[str] = set()
+    for text in analysis.visible_text or []:
+        for match in _EDITION_COUNT_RE.finditer(str(text or "")):
+            count = match.group(1)
+            if count in seen or _is_calendar_year_token(count):
+                continue
+            seen.add(count)
+            found.append(count)
+    return found[:2]
+
+
+def extract_store_product_url(*texts: str | None) -> str | None:
+    """Pick the first New Store product URL from free text (CONFIRA paste / DM)."""
+    pattern = re.compile(
+        r"https?://(?:www\.)?newstorerj\.com(?:\.br)?/[^\s<>\"']+",
+        re.IGNORECASE,
+    )
+    for text in texts:
+        for match in pattern.finditer(str(text or "")):
+            url = match.group(0).rstrip(").,;]")
+            path = url.split("?", 1)[0].rstrip("/")
+            slug = path.rsplit("/", 1)[-1].casefold()
+            if slug.startswith("relogio") or "96" in slug or len(slug) >= 12:
+                return url
+    return None
 
 
 def _dial_color_search_tokens(analysis: StoryVisualUnderstanding) -> list[str]:
@@ -597,10 +642,27 @@ def tray_search_jobs(
     distinctive = distinctive_search_tokens(tokens)
     head = collection_head_token(analysis, tokens)
     colors = _dial_color_search_tokens(analysis)
+    edition_counts = edition_count_search_tokens(analysis)
     model_line_has_ref = any(
         re.search(r"[a-z]\d", _fold(token), re.IGNORECASE) for token in model_line
     )
     prefer_model_line_first = len(model_line) >= 3 or model_line_has_ref
+
+    # CONFIRA / pasted product URL is the strongest catalog signal — never drop it.
+    if slug_brand or slug_tokens:
+        sku_like = [t for t in slug_tokens if _is_sku_like(t)]
+        if sku_like:
+            _add(slug_brand or brand, sku_like[:1])
+        if slug_tokens:
+            _add(slug_brand or brand, slug_tokens[:3])
+        if slug_brand and len(slug_tokens) >= 1:
+            _add(slug_brand, slug_tokens[:1])
+
+    # Limited-edition counts survive when Meta omits the CONFIRA sticker URL.
+    if brand and edition_counts:
+        _add(brand, [edition_counts[0]])
+        if head:
+            _add(brand, [head, edition_counts[0]])
 
     # Most specific first — one good query beats many paginated broad scans.
     if brand and prefer_model_line_first and len(model_line) >= 2:
@@ -642,8 +704,7 @@ def tray_search_jobs(
             _add(brand, [family])
     if brand and distinctive and distinctive != model_line:
         _add(brand, distinctive[:3])
-    _add(slug_brand, slug_tokens)
-    return jobs[:6]
+    return jobs[:8]
 
 
 def _title_lines_for_search(analysis: StoryVisualUnderstanding) -> list[str]:

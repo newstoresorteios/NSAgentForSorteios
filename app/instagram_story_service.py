@@ -93,6 +93,20 @@ def story_rollout_allows(
     return False, "unknown_mode"
 
 
+def _story_store_url(
+    story: InstagramStoryContext,
+    incoming: IncomingMessage | None = None,
+) -> str | None:
+    """CONFIRA sticker (rare on Meta) or a New Store URL pasted in the DM."""
+    from .story_product_matcher import extract_store_product_url
+
+    sticker = str(getattr(story, "story_link_sticker_url", None) or "").strip() or None
+    if sticker:
+        return sticker
+    text = str(getattr(incoming, "text", None) or "") if incoming is not None else ""
+    return extract_store_product_url(text)
+
+
 async def _revalidate_product(
     *,
     product_id: str,
@@ -901,7 +915,7 @@ async def resolve_story_product_question(
                 shadow_only=shadow_only,
                 metrics=metrics,
                 execute_tool=execute_tool,
-                store_url=story.story_link_sticker_url,
+                store_url=_story_store_url(story, incoming),
             )
         metrics["story_deterministic_matches"] = 1
         repo.touch_last_seen(
@@ -963,7 +977,7 @@ async def resolve_story_product_question(
                 shadow_only=shadow_only,
                 metrics=metrics,
                 execute_tool=execute_tool,
-                store_url=story.story_link_sticker_url,
+                store_url=_story_store_url(story, incoming),
             )
         if assoc.match_status == "ambiguous":
             metrics["story_ambiguous_matches"] = 1
@@ -1155,7 +1169,7 @@ async def resolve_story_product_question(
         download_url = story.operational_media_url() or story.operational_thumbnail_url()
 
     if not download_url:
-        if story.story_link_sticker_url:
+        if _story_store_url(story, incoming):
             return await _finalize_story_catalog_match(
                 repo=repo,
                 tenant=tenant,
@@ -1167,7 +1181,7 @@ async def resolve_story_product_question(
                 shadow_only=shadow_only,
                 metrics=metrics,
                 execute_tool=execute_tool,
-                store_url=story.story_link_sticker_url,
+                store_url=_story_store_url(story, incoming),
             )
         repo.mark_expired(
             tenant_id=tenant,
@@ -1310,7 +1324,7 @@ async def resolve_story_product_question(
                             media_type="image",
                         )
                         metrics["story_visual_analysis_calls"] = 1
-                    elif story.story_link_sticker_url:
+                    elif _story_store_url(story, incoming):
                         return await _finalize_story_catalog_match(
                             repo=repo,
                             tenant=tenant,
@@ -1322,7 +1336,7 @@ async def resolve_story_product_question(
                             shadow_only=shadow_only,
                             metrics=metrics,
                             execute_tool=execute_tool,
-                            store_url=story.story_link_sticker_url,
+                            store_url=_story_store_url(story, incoming),
                         )
                     else:
                         repo.mark_failed(
@@ -1460,7 +1474,7 @@ async def resolve_story_product_question(
         shadow_only=shadow_only,
         metrics=metrics,
         execute_tool=execute_tool,
-        store_url=story.story_link_sticker_url,
+        store_url=_story_store_url(story, incoming),
     )
 
 

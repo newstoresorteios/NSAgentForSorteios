@@ -38,6 +38,12 @@ _PATH_SWAPS = (
     ("/relogios-christopher-ward/", "/christopher-ward/"),
     ("/christopher-ward/", "/relogios-christopher-ward/"),
 )
+_HOST_SWAPS = (
+    ("www.newstorerj.com.br", "www.newstorerj.com"),
+    ("www.newstorerj.com", "www.newstorerj.com.br"),
+    ("newstorerj.com.br", "newstorerj.com"),
+    ("newstorerj.com", "newstorerj.com.br"),
+)
 
 
 def _https_url(value: Any) -> str | None:
@@ -120,6 +126,14 @@ def storefront_url_candidates(url: str) -> list[str]:
     for old, new in _PATH_SWAPS:
         if old in path:
             _add(path.replace(old, new, 1))
+    for old_host, new_host in _HOST_SWAPS:
+        if parsed.netloc.casefold() == old_host.casefold():
+            rebuilt = urlunparse(
+                (parsed.scheme, new_host, path, "", parsed.query, "")
+            )
+            if rebuilt not in seen:
+                seen.add(rebuilt)
+                variants.append(rebuilt)
 
     # Bracelet / strap SKU suffixes often differ while the watch is the same listing family.
     match = re.search(r"-(%s)$" % "|".join(_BRACELET_SUFFIXES), path, re.IGNORECASE)
