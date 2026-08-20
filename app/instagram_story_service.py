@@ -360,6 +360,37 @@ def _stored_vision_for_tray_retry(assoc: Any) -> StoryVisualUnderstanding | None
     return None
 
 
+def _matched_product_conflicts_with_vision(
+    product: dict[str, Any] | None,
+    analysis: StoryVisualUnderstanding | None,
+) -> bool:
+    """True when a cached match invents a variant the Story never showed (GMT vs MK2)."""
+    if not product or analysis is None:
+        return False
+    from .story_match_decider import _VARIANT_MARKERS, build_evidence_profile, _fold
+
+    blob = _fold(
+        " ".join(
+            str(product.get(field) or "")
+            for field in ("name", "title", "model", "reference", "description")
+        )
+    )
+    profile = build_evidence_profile(analysis)
+    evidence = " ".join(
+        [
+            *profile.model_lines,
+            *sorted(profile.positive_tokens),
+            *(analysis.visible_text or []),
+            *(analysis.model_hypotheses or []),
+        ]
+    )
+    evidence_fold = _fold(evidence)
+    for marker in _VARIANT_MARKERS:
+        if marker in blob and marker not in evidence_fold:
+            return True
+    return False
+
+
 def _reuse_assoc_result(
     *,
     assoc: Any,
@@ -789,17 +820,58 @@ async def resolve_story_product_question(
             story_media_id=media_id,
         )
 
-    # Already matched / manually confirmed → revalidate only (zero vision).
+    # Already matched / manually confirmed → revalidate only (zero vision),
+    # unless the cached SKU invents a variant (GMT) the Story never showed.
     if assoc and assoc.match_status in {"matched", "manually_confirmed"} and assoc.product_id:
+        stored = _stored_vision_for_tray_retry(assoc)
+        product, tray_failed, _code, evidence = await _maybe_revalidate(
+            assoc.product_id, assoc.variant_id
+        )
+        if (
+            stored is not None
+            and product is not None
+            and not tray_failed
+            and _matched_product_conflicts_with_vision(product, stored)
+            and execute_tool is not None
+        ):
+            log_event(
+                "story_catalog_tray_retry",
+                {
+                    "story_media_id": media_id,
+                    "prior_status": assoc.match_status,
+                    "reason": "cached_variant_conflict",
+                    "product_id": assoc.product_id,
+                },
+            )
+            repo.mark_not_found(
+                tenant_id=tenant,
+                provider=provider,
+                instagram_account_id=account,
+                story_media_id=media_id,
+                explanation={
+                    "reason": "cached_variant_conflict",
+                    "prior_product_id": assoc.product_id,
+                },
+            )
+            return await _finalize_story_catalog_match(
+                repo=repo,
+                tenant=tenant,
+                provider=provider,
+                account=account,
+                media_id=media_id,
+                analysis=stored,
+                question_type=question_type,
+                shadow_only=shadow_only,
+                metrics=metrics,
+                execute_tool=execute_tool,
+                store_url=story.story_link_sticker_url,
+            )
         metrics["story_deterministic_matches"] = 1
         repo.touch_last_seen(
             tenant_id=tenant,
             provider=provider,
             instagram_account_id=account,
             story_media_id=media_id,
-        )
-        product, tray_failed, _code, evidence = await _maybe_revalidate(
-            assoc.product_id, assoc.variant_id
         )
         variant_lines: list[str] | None = None
         if (

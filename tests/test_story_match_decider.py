@@ -159,13 +159,35 @@ def test_tray_search_jobs_use_ballade_and_color_not_powermatic_80():
         visible_text=["TISSOT BALLADE", "39 mm", "Motor: Powermatic 80"],
         model_hypotheses=["Tissot Ballade Powermatic 80"],
         collection_hypotheses=["Tissot Ballade"],
-        dial_colors=["blue"],
+        dial_colors=["azul claro"],
     )
     jobs = tray_search_jobs(analysis)
     token_sets = [{t.casefold() for t in tokens} for _brand, tokens in jobs]
     assert any("ballade" in tokens and "azul" in tokens for tokens in token_sets)
+    assert not any("claro" in tokens for tokens in token_sets)
     assert not any("80" in tokens for tokens in token_sets)
     assert not any("powermatic" in tokens for tokens in token_sets)
+
+
+def test_classify_match_rejects_all_gmt_pool_when_story_omits_gmt():
+    analysis = StoryVisualUnderstanding(
+        visible_brands=["Christopher Ward"],
+        visible_text=["CHRISTOPHER WARD", "C63 SEALANDER ROCKS", "36 mm"],
+        model_hypotheses=["C63 Sealander Rocks 36mm"],
+        dial_colors=["green"],
+        watch_count=1,
+        readable_text_confidence=0.95,
+    )
+    gmt_a = _candidate(
+        "10697",
+        "relogio christopher ward c63 sealander gmt automatico verde",
+    )
+    gmt_b = _candidate(
+        "10727",
+        "relogio christopher ward c63 sealander gmt automatico verde hko",
+    )
+    status, top = classify_match([gmt_a, gmt_b], multiple_products=False, analysis=analysis)
+    assert status != "matched"
 
 
 def test_classify_match_rejects_gmt_when_story_says_mk2():

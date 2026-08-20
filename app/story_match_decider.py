@@ -82,6 +82,21 @@ _VARIANT_MARKERS = (
     "cronografo",
 )
 
+# OCR/catalog spelling drift (Sealander Rocks Story ↔ Seander Tray title).
+_TOKEN_ALIASES: dict[str, tuple[str, ...]] = {
+    "sealander": ("sealander", "seander"),
+    "seander": ("sealander", "seander"),
+}
+
+
+def _token_in_blob(blob: str, token: str) -> bool:
+    key = _fold(token)
+    if not key:
+        return False
+    if key in blob:
+        return True
+    return any(alias in blob for alias in _TOKEN_ALIASES.get(key, ()))
+
 _COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
     "green": ("verde", "green"),
     "verde": ("verde", "green"),
@@ -291,7 +306,7 @@ def score_catalog_overlap(
         return 0.0, [], []
 
     positives = [t for t in profile.positive_tokens if len(t) >= 3]
-    hits = sum(1 for token in positives if token in blob)
+    hits = sum(1 for token in positives if _token_in_blob(blob, token))
     hit_ratio = hits / max(len(positives), 1)
 
     reasons: list[str] = []
@@ -330,24 +345,33 @@ def score_catalog_overlap(
             and t not in {"automatic", "automatico", "mecanico", "rocks"}
         )
     ]
-    if family_tokens and not any(t in blob for t in family_tokens):
+    if family_tokens and not any(_token_in_blob(blob, t) for t in family_tokens):
         score -= 0.35
         conflicts.append("model_family_miss")
 
     for marker in _VARIANT_MARKERS:
         if marker in blob and marker not in profile.positive_tokens:
             if not any(marker in _fold(line) for line in profile.model_lines):
-                score -= 0.32
+                score -= 0.45
                 conflicts.append(f"unseen_variant:{marker}")
 
     # Distinctive model-line words (Rocks, Leipzig, Summer) missing from listing.
     distinctive = [
         t
         for t in positives
-        if t not in {"automatic", "automatico", "mecanico", "quartz", "ward", "relogio"}
+        if t
+        not in {
+            "automatic",
+            "automatico",
+            "mecanico",
+            "quartz",
+            "ward",
+            "relogio",
+            "rocks",
+        }
         and len(t) >= 4
     ]
-    missing_distinctive = [t for t in distinctive if t not in blob]
+    missing_distinctive = [t for t in distinctive if not _token_in_blob(blob, t)]
     if distinctive and missing_distinctive:
         miss_ratio = len(missing_distinctive) / len(distinctive)
         score -= 0.08 * miss_ratio
@@ -429,8 +453,15 @@ def try_resolve_tied_candidates(
         scored.append((consensus, cand, conflicts))
 
     scored.sort(key=lambda row: (-row[0], row[1].product_id))
-    top_score, top, top_conflicts = scored[0]
-    second_score, second, second_conflicts = scored[1] if len(scored) > 1 else (0.0, None, [])
+
+    # Prefer listings without unseen variants (GMT/bronze) when Story omitted them.
+    clean = [row for row in scored if not any(str(c).startswith("unseen_variant:") for c in row[2])]
+    if not clean:
+        # Every candidate invents a variant the Story never showed — do not guess.
+        return None
+    pool = clean
+    top_score, top, top_conflicts = pool[0]
+    second_score, second, second_conflicts = pool[1] if len(pool) > 1 else (0.0, None, [])
     gap = top_score - second_score
 
     tray_tied = (
@@ -444,6 +475,8 @@ def try_resolve_tied_candidates(
         if second_has_variant and not top_has_variant:
             return top
 
+    if len(clean) == 1 and profile.text_path_score >= 0.85:
+        return clean[0][1]
     if tray_tied and gap >= 0.03 and top_score >= min_consensus:
         return top
     if profile.text_path_score >= 0.85 and gap >= 0.03:

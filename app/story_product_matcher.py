@@ -257,6 +257,11 @@ _COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
     "verde": ("verde", "green"),
     "blue": ("azul", "blue"),
     "azul": ("azul", "blue"),
+    "light blue": ("azul", "gelo", "blue"),
+    "azul claro": ("azul", "gelo", "blue"),
+    "azul gelo": ("azul", "gelo", "blue"),
+    "ice blue": ("azul", "gelo", "blue"),
+    "gelo": ("azul", "gelo", "blue"),
     "black": ("preto", "black"),
     "preto": ("preto", "black"),
     "orange": ("laranja", "orange"),
@@ -279,6 +284,32 @@ _COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
     "turquesa": ("turquesa", "turquoise"),
     "cream": ("creme", "cream"),
     "creme": ("creme", "cream"),
+}
+
+# Primary Portuguese color used in Tray AND jobs (never multi-word).
+_COLOR_SEARCH_PRIMARY: dict[str, str] = {
+    "purple": "roxo",
+    "violet": "roxo",
+    "roxo": "roxo",
+    "green": "verde",
+    "verde": "verde",
+    "blue": "azul",
+    "azul": "azul",
+    "light blue": "azul",
+    "azul claro": "azul",
+    "azul gelo": "azul",
+    "ice blue": "azul",
+    "gelo": "azul",
+    "black": "preto",
+    "preto": "preto",
+    "orange": "laranja",
+    "laranja": "laranja",
+    "yellow": "amarelo",
+    "amarelo": "amarelo",
+    "pink": "rosa",
+    "rosa": "rosa",
+    "white": "branco",
+    "branco": "branco",
 }
 
 
@@ -483,7 +514,7 @@ def tokens_from_store_url(url: str | None) -> tuple[str | None, list[str]]:
 
 
 def _dial_color_search_tokens(analysis: StoryVisualUnderstanding) -> list[str]:
-    """Portuguese-first color words to AND with brand/collection on Tray."""
+    """Single Portuguese color words for Tray AND (never 'azul'+'claro')."""
     ordered: list[str] = []
     seen: set[str] = set()
     raws = list(analysis.dial_colors or [])
@@ -492,14 +523,21 @@ def _dial_color_search_tokens(analysis: StoryVisualUnderstanding) -> list[str]:
         if dial:
             raws.append(dial)
     for raw in raws:
-        synonyms = _COLOR_SYNONYMS.get(_fold(raw), (_fold(raw),))
-        for token in synonyms:
-            key = _fold(token)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            ordered.append(token)
-    return ordered[:3]
+        folded = _fold(raw)
+        primary = _COLOR_SEARCH_PRIMARY.get(folded)
+        if primary is None and " " in folded:
+            primary = _COLOR_SEARCH_PRIMARY.get(folded.split()[-1]) or _COLOR_SEARCH_PRIMARY.get(
+                folded.split()[0]
+            )
+        if primary is None:
+            # Keep only a single alphabetic word — never split ice-blue into two ANDs.
+            parts = [part for part in folded.replace("-", " ").split() if part.isalpha()]
+            primary = parts[0] if len(parts) == 1 else None
+        if not primary or primary in seen:
+            continue
+        seen.add(primary)
+        ordered.append(primary)
+    return ordered[:2]
 
 
 def tray_search_jobs(
@@ -541,6 +579,10 @@ def tray_search_jobs(
         _add(brand, model_line)
         if len(model_line) >= 3:
             _add(brand, model_line[:2])
+        # Drop rare marketing suffixes (Rocks) that empty AND matches.
+        core = [t for t in model_line if _fold(t) not in {"rocks", "mk2", "mk"}]
+        if len(core) >= 2 and core != model_line[:2]:
+            _add(brand, core[:2])
     elif brand and head and colors:
         for color in colors[:1]:
             _add(brand, [head, color])
@@ -551,10 +593,23 @@ def tray_search_jobs(
     elif brand and head and colors and prefer_model_line_first:
         for color in colors[:1]:
             _add(brand, [head, color])
+    # Family + color without rare suffix (C63 Verde finds Seander typo listings).
+    if brand and colors:
+        family = next(
+            (
+                t
+                for t in (*model_line, *distinctive, *([head] if head else []))
+                if re.search(r"[a-z]\d", _fold(t), re.IGNORECASE)
+                or (len(_fold(t)) >= 6 and _fold(t) not in _COLOR_AND_SKIP)
+            ),
+            None,
+        )
+        if family:
+            _add(brand, [family, colors[0]])
     if brand and distinctive and distinctive != model_line:
         _add(brand, distinctive[:3])
     _add(slug_brand, slug_tokens)
-    return jobs[:4]
+    return jobs[:5]
 
 
 def _title_lines_for_search(analysis: StoryVisualUnderstanding) -> list[str]:
@@ -566,6 +621,20 @@ def _title_lines_for_search(analysis: StoryVisualUnderstanding) -> list[str]:
 _STORY_TRAY_PAGE_SIZE = 50
 _STORY_TRAY_MAX_PAGES = 2
 _STORY_TRAY_CONCURRENCY = 4
+
+_TOKEN_ALIASES: dict[str, tuple[str, ...]] = {
+    "sealander": ("sealander", "seander"),
+    "seander": ("sealander", "seander"),
+}
+
+
+def _token_in_text(blob: str, token: str) -> bool:
+    key = _fold(token)
+    if not key:
+        return False
+    if key in blob:
+        return True
+    return any(alias in blob for alias in _TOKEN_ALIASES.get(key, ()))
 
 
 def _product_text_blob(product: dict[str, Any]) -> str:
@@ -935,18 +1004,18 @@ async def match_story_to_catalog(
                 part for part in (brand or "").split() if len(part) >= 3
             ]
             hits = sum(
-                1 for token in distinctive if len(token) >= 3 and _fold(token) in blob
+                1 for token in distinctive if len(token) >= 3 and _token_in_text(blob, token)
             )
             url_hit = bool(slug) and len(slug) >= 8 and slug in blob
             color = _dial_color_score(analysis, blob)
             material_conflicts = [
                 f"unseen_material:{marker}"
-                for marker in ("bronze", "titane", "titanium")
+                for marker in ("bronze", "titane", "titanium", "gmt", "chrono", "cronografo")
                 if marker in blob and marker not in evidence_blob
             ]
             model_tokens = _model_tokens_for_match(tokens, brand)
             model_hits = sum(
-                1 for token in model_tokens if len(token) >= 3 and _fold(token) in blob
+                1 for token in model_tokens if len(token) >= 3 and _token_in_text(blob, token)
             )
             if hits < 1 and not url_hit:
                 continue
@@ -996,7 +1065,7 @@ async def match_story_to_catalog(
             )
             if color_required and color >= 0.8 and strong and analysis_distinctive:
                 distinctive_hit = all(
-                    _fold(token) in blob
+                    _token_in_text(blob, token)
                     for token in analysis_distinctive
                     if len(token) >= 3
                 )
