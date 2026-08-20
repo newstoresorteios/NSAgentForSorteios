@@ -20,6 +20,31 @@ def test_customer_request_triggers_handoff():
     assert handoff_provider_payload(result)["provider_action"] == "mark_for_human"
 
 
+def test_por_favor_accepts_joao_handoff_offer():
+    from app.handoff_service import is_handoff_acceptance
+
+    recent = [
+        {
+            "role": "assistant",
+            "content": (
+                "No momento não consegui acessar as fotos oficiais desses modelos "
+                "por aqui. Se você quiser, eu posso passar para o João da equipe "
+                "verificar isso com você."
+            ),
+        }
+    ]
+    assert is_handoff_acceptance("por favor", recent) is True
+    incoming = IncomingMessage(channel="whatsapp", text="por favor")
+    assert (
+        should_request_human_handoff(incoming, recent_turns=recent)
+        == "customer_accepted_handoff_offer"
+    )
+    result = build_human_handoff_result(reason="customer_accepted_handoff_offer")
+    assert result.handoff_required is True
+    assert "João" in result.reply_text or "joão" in result.reply_text.casefold()
+    assert NS_SALES_WHATSAPP in result.reply_text
+
+
 def test_enrich_handoff_keeps_existing_reason():
     incoming = IncomingMessage(channel="instagram", text="ok")
     result = AgentResult(

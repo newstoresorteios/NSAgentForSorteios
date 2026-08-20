@@ -287,11 +287,9 @@ def _product_lines(
             or product.get("product_url")
             or product.get("link")
         )
-        if (
-            not compact
-            and isinstance(product_url, str)
-            and product_url.strip()
-        ):
+        # Always surface the storefront link in shortlists — customers use it
+        # instead of asking for photos. Keep payment/stock out of compact mode.
+        if isinstance(product_url, str) and product_url.strip():
             parts.append(f"Link: {product_url.strip()}")
         if not compact:
             payment = _payment_label(

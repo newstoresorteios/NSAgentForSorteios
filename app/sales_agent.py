@@ -1238,6 +1238,9 @@ async def _sales_response_with_openai(
         "invalid_customer_document", "order_customer_not_confirmed",
         "order_customer_mismatch", "order_customer_lookup_technical_failure",
         "customer_orders_lookup_technical_failure",
+        # Keep deterministic storefront-link fallbacks (don't invent João handoff).
+        "product_media_link_fallback",
+        "product_image_link_fallback",
     }:
         return None
     if (tray_result.commercial_data or {}).get("input_template"):

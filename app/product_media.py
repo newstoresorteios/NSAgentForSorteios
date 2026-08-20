@@ -264,7 +264,40 @@ async def resolve_product_image(
         "get_product",
         {"product_id": product_reference.product_id},
     )
+    fallback_url = official_product_url(
+        {"url": product_reference.product_url}
+    ) or (product_reference.product_url or None)
     if "error" in product:
+        if isinstance(fallback_url, str) and fallback_url.strip():
+            name = str(product_reference.name or "produto")
+            return AgentResult(
+                reply_text=(
+                    f"Não consegui puxar a foto agora, mas aqui está o link "
+                    f"oficial de {name} (com as imagens da loja):\n{fallback_url.strip()}"
+                ),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="product_media_link_fallback",
+                commercial_data={
+                    "products": [
+                        {
+                            "id": product_reference.product_id,
+                            "name": product_reference.name,
+                            "reference": product_reference.reference,
+                            "url": fallback_url.strip(),
+                        }
+                    ],
+                    "image": None,
+                },
+                response_metadata={
+                    "domain": "commerce",
+                    "image_url_found": False,
+                    "product_url_fallback": True,
+                    "media_send_supported": False,
+                    "media_send_failed": False,
+                    "used_tray": True,
+                },
+            )
         return AgentResult(
             reply_text="Não consegui consultar a imagem oficial deste produto agora.",
             intent="commerce",
@@ -298,8 +331,34 @@ async def resolve_product_image(
     active = product_reference.model_copy(update={
         "name": product.get("name") or product_reference.name,
         "reference": product.get("reference") or product_reference.reference,
+        "product_url": (
+            official_product_url(product)
+            or product_reference.product_url
+        ),
     })
+    live_url = official_product_url(product) or fallback_url
     if not image_url:
+        if isinstance(live_url, str) and live_url.strip():
+            name = str(product.get("name") or product_reference.name or "produto")
+            return AgentResult(
+                reply_text=(
+                    f"Não tenho a foto pronta para enviar por aqui, mas o link "
+                    f"oficial de {name} tem as imagens da loja:\n{live_url.strip()}"
+                ),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="product_image_link_fallback",
+                commercial_data={"products": [product], "image": None},
+                response_metadata={
+                    "domain": "commerce",
+                    "active_product": active.model_dump(mode="json"),
+                    "image_url_found": False,
+                    "product_url_fallback": True,
+                    "media_send_supported": False,
+                    "media_send_failed": False,
+                    "used_tray": True,
+                },
+            )
         return AgentResult(
             reply_text="A Tray não informou uma imagem oficial para este produto.",
             intent="commerce",
@@ -358,6 +417,7 @@ async def resolve_presented_product_images(
     lines: list[str] = []
     products: list[dict[str, Any]] = []
     image_urls: list[str] = []
+    link_fallbacks = 0
     technical_failure = False
     for index, reference in enumerate(product_references[:3], start=1):
         one = await resolve_product_image(product_reference=reference, execute=execute)
@@ -367,25 +427,56 @@ async def resolve_presented_product_images(
             products.append(product)
         name = str(product.get("name") or reference.name or f"opção {index}")
         image_url = (one.response_metadata or {}).get("outbound_image_url")
-        if one.safety_reason == "product_media_technical_failure":
-            technical_failure = True
-            lines.append(f"{index}. {name}: não consegui consultar a imagem agora.")
-            continue
+        product_url = (
+            official_product_url(product)
+            or reference.product_url
+            or product.get("url")
+            or product.get("product_url")
+        )
         if isinstance(image_url, str) and image_url.strip():
             image_urls.append(image_url)
             lines.append(f"{index}. {name}\n{image_url}")
             continue
+        if one.safety_reason in {
+            "product_media_technical_failure",
+            "product_media_link_fallback",
+            "product_image_link_fallback",
+            "product_image_not_available",
+        }:
+            if one.safety_reason == "product_media_technical_failure":
+                technical_failure = True
+            if isinstance(product_url, str) and product_url.strip():
+                link_fallbacks += 1
+                lines.append(
+                    f"{index}. {name}\nLink com fotos: {product_url.strip()}"
+                )
+                continue
+            lines.append(f"{index}. {name}: não consegui consultar a imagem agora.")
+            continue
         lines.append(f"{index}. {name}: a Tray não informou uma imagem oficial.")
     first_url = image_urls[0] if image_urls else None
     safety = None
-    if not image_urls:
+    if not image_urls and link_fallbacks:
+        safety = "product_media_link_fallback"
+        reply_text = (
+            "Não consegui enviar as fotos por aqui agora, mas estes são os "
+            "links oficiais com as imagens de cada modelo:\n" + "\n".join(lines)
+        )
+    elif not image_urls:
         safety = (
             "product_media_technical_failure"
             if technical_failure
             else "product_image_not_available"
         )
+        reply_text = (
+            "Estas são as fotos oficiais dos modelos que listei:\n" + "\n".join(lines)
+        )
+    else:
+        reply_text = (
+            "Estas são as fotos oficiais dos modelos que listei:\n" + "\n".join(lines)
+        )
     return AgentResult(
-        reply_text="Estas são as fotos oficiais dos modelos que listei:\n" + "\n".join(lines),
+        reply_text=reply_text,
         intent="commerce",
         handoff_required=False,
         safety_reason=safety,
@@ -396,6 +487,7 @@ async def resolve_presented_product_images(
             "outbound_image_url": first_url,
             "outbound_image_urls": image_urls,
             "image_url_found": bool(first_url),
+            "product_url_fallback": bool(link_fallbacks),
             "media_send_supported": False,
             "media_send_failed": False,
             "used_tray": True,

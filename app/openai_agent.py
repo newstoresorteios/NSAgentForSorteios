@@ -671,6 +671,19 @@ async def _generate_agent_reply_async_inner(
     commerce_state = CommerceConversationState.from_payload(
         customer_context.get("_commerce_state")
     )
+    accepted_handoff = should_request_human_handoff(
+        message,
+        recent_turns=recovery_turns,
+    )
+    if accepted_handoff == "customer_accepted_handoff_offer":
+        return _annotate_agent_result(
+            build_human_handoff_result(reason=accepted_handoff),
+            domain="guardrail",
+            response_source="handoff",
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+        )
     log_event(
         "history.loaded",
         {

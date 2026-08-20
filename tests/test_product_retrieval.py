@@ -476,6 +476,7 @@ def test_compact_product_lines_omit_long_payment_dump():
             "name": "Relógio Christopher Ward C63 Sealander Automático Rosa",
             "reference": "C63-36ADA4-S00P0-B0",
             "current_price": 13004.99,
+            "url": "https://www.newstorerj.com.br/relogios-cw/sealander",
             "payment_option_details": {
                 "pix": {"value": 13004.99},
                 "installments": [
@@ -490,11 +491,11 @@ def test_compact_product_lines_omit_long_payment_dump():
     assert "Preço:" in compact
     assert "Condições comerciais" not in compact
     assert "Condições comerciais" in full
-    assert "Link:" not in compact
+    assert "Link: https://www.newstorerj.com.br/relogios-cw/sealander" in compact
     assert "Estoque:" not in compact
 
 
-def test_compact_product_lines_omit_url_and_stock():
+def test_compact_product_lines_keep_url_omit_stock():
     from app.commerce_router import _product_lines
 
     products = [
@@ -509,7 +510,7 @@ def test_compact_product_lines_omit_url_and_stock():
     ]
     compact = _product_lines(products, compact=True)[0]
     full = _product_lines(products, compact=False)[0]
-    assert "Link:" not in compact
+    assert "Link: https://www.newstorerj.com.br/relogios-tissot/seastar" in compact
     assert "Estoque:" not in compact
     assert "Link:" in full
     assert "Estoque:" in full
