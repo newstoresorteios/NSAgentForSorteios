@@ -71,8 +71,9 @@
     {
       "id": "s06_brand_search",
       "category": "brand_search",
-      "input": "tem relógio Tissot?",
+      "input": "tem relógio Tissot até 5000?",
       "channel": "whatsapp",
+      "notes": "Brand+budget unlocks ChatBo qualification gate before Tray search.",
       "tool_fixtures": {
         "search_products": {
           "success": true,
@@ -91,6 +92,23 @@
       "expected": {
         "domain": "commerce",
         "must_call_tools": ["search_products"],
+        "must_not_include": ["sk-"],
+        "max_openai_calls": 2,
+        "requires_factual_support": false,
+        "handoff_required": false
+      }
+    },
+    {
+      "id": "s06b_brand_only_qualifies_first",
+      "category": "brand_search",
+      "input": "tem relógio Tissot?",
+      "channel": "whatsapp",
+      "notes": "Brand alone must not dump catalog when ChatBo qualification is on.",
+      "tool_fixtures": {},
+      "expected": {
+        "domain": "commerce",
+        "must_call_tools": [],
+        "must_not_call_tools": ["search_products"],
         "must_not_include": ["sk-"],
         "max_openai_calls": 2,
         "requires_factual_support": false,

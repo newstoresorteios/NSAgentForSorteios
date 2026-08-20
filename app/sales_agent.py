@@ -1162,6 +1162,102 @@ def _persona_requires_qualification() -> bool:
     return bool(runtime and runtime.enabled and runtime.require_qualification_before_catalog)
 
 
+_QUAL_STYLE_DIMS = frozenset({"style", "occasion", "material", "color"})
+_QUAL_BUDGET_DIMS = frozenset({"budget"})
+_QUAL_MAX_QUESTIONS = 2
+
+
+def _preference_key_set(discovery_state: dict[str, Any]) -> set[str]:
+    known = discovery_state.get("known_preferences") or []
+    if isinstance(known, dict):
+        return set(known.keys())
+    return set(known)
+
+
+def _has_urgency_signal(interpretation: SalesInterpretation) -> bool:
+    attrs = list(interpretation.preferences.attributes or [])
+    blob = " ".join(str(item) for item in attrs).casefold()
+    return any(
+        token in blob
+        for token in ("pronta", "urgência", "urgencia", "rápido", "rapido", "hoje", "amanhã", "amanha")
+    )
+
+
+def build_qualification_snapshot(
+    interpretation: SalesInterpretation,
+    discovery_state: dict[str, Any],
+) -> dict[str, Any]:
+    """State machine: which ChatBo qualification dims are covered and if catalog may open."""
+    known = _preference_key_set(discovery_state)
+    explicit_no = set(discovery_state.get("explicit_no_preferences") or [])
+    covered = known | explicit_no
+    has_brand = bool(interpretation.subject.brand) or "brand" in covered
+    has_product_type = bool(interpretation.subject.product_type)
+    has_budget = bool(covered & _QUAL_BUDGET_DIMS)
+    has_style = bool(covered & _QUAL_STYLE_DIMS)
+    has_recipient = "recipient" in covered
+    has_urgency = _has_urgency_signal(interpretation)
+    clarification_count = int(discovery_state.get("clarification_count") or 0)
+
+    required = _persona_requires_qualification()
+    satisfied_by: str | None = None
+    ready = False
+
+    if not required:
+        ready = True
+        satisfied_by = "persona_qualification_off"
+    elif interpretation.stop_clarification:
+        ready = True
+        satisfied_by = "stop_clarification"
+    elif _specific_product_lock(interpretation):
+        ready = True
+        satisfied_by = "sku_lock"
+    elif clarification_count >= _QUAL_MAX_QUESTIONS:
+        ready = True
+        satisfied_by = "max_questions"
+    elif has_brand and has_budget:
+        ready = True
+        satisfied_by = "brand+budget"
+    elif has_brand and has_style:
+        ready = True
+        satisfied_by = "brand+style"
+    elif has_brand and has_urgency:
+        ready = True
+        satisfied_by = "brand+urgency"
+    elif has_product_type and has_budget and has_style:
+        ready = True
+        satisfied_by = "type+budget+style"
+    elif has_product_type and has_budget and (has_recipient or has_urgency):
+        ready = True
+        satisfied_by = "type+budget+signal"
+
+    missing: list[str] = []
+    if not has_budget:
+        missing.append("budget")
+    if not has_style:
+        missing.append("style")
+    if not has_brand and not has_product_type:
+        missing.append("subject")
+    if has_brand and not has_budget and not has_style and not has_urgency:
+        # Still need one unlocking signal beyond brand.
+        pass
+
+    return {
+        "required": required,
+        "ready": ready,
+        "satisfied_by": satisfied_by,
+        "covered_dims": sorted(covered),
+        "missing_dims": missing,
+        "has_brand": has_brand,
+        "has_product_type": has_product_type,
+        "has_budget": has_budget,
+        "has_style": has_style,
+        "has_urgency": has_urgency,
+        "clarification_count": clarification_count,
+        "max_questions": _QUAL_MAX_QUESTIONS,
+    }
+
+
 def _persona_qualification_question(
     interpretation: SalesInterpretation,
     discovery_state: dict[str, Any] | None = None,
@@ -1176,14 +1272,15 @@ def _persona_qualification_question(
     if not prompts:
         prompts = [
             "Você já tem um modelo em mente ou quer uma sugestão?",
-            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
             "Qual faixa de investimento você tem em mente?",
+            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
         ]
 
-    known = set((discovery_state or {}).get("known_preferences") or [])
-    if isinstance((discovery_state or {}).get("known_preferences"), dict):
-        known = set(((discovery_state or {}).get("known_preferences") or {}).keys())
-    explicit_no = set((discovery_state or {}).get("explicit_no_preferences") or [])
+    snap = (discovery_state or {}).get("qualification")
+    if not isinstance(snap, dict):
+        snap = build_qualification_snapshot(interpretation, discovery_state or {})
+
+    known = set(snap.get("covered_dims") or [])
     recent = [
         str(item or "").casefold()
         for item in ((discovery_state or {}).get("recent_questions") or [])
@@ -1193,15 +1290,28 @@ def _persona_qualification_question(
         folded = prompt.casefold()
         return not any(folded[:48] in previous or previous[:48] in folded for previous in recent)
 
-    # Prefer preference-shaped questions still unknown.
-    preference_hints = (
-        ("budget", ("investimento", "orçamento", "orcamento", "faixa")),
-        ("style", ("estilo", "esporte", "ocasião", "ocasiao", "dia a dia", "trabalho")),
-        ("occasion", ("ocasião", "ocasiao", "presente", "especial")),
-        ("recipient", ("chamar", "nome", "para quem")),
-    )
+    # Priority order depends on what still unlocks the state machine.
+    preference_hints: list[tuple[str, tuple[str, ...]]] = []
+    if not snap.get("has_budget"):
+        preference_hints.append(
+            ("budget", ("investimento", "orçamento", "orcamento", "faixa"))
+        )
+    if not snap.get("has_style"):
+        preference_hints.append(
+            (
+                "style",
+                ("estilo", "esporte", "ocasião", "ocasiao", "dia a dia", "trabalho", "uso"),
+            )
+        )
+        preference_hints.append(("occasion", ("ocasião", "ocasiao", "presente", "especial")))
+    if not snap.get("has_brand") and not snap.get("has_product_type"):
+        preference_hints.append(
+            ("model_intent", ("modelo em mente", "sugestão", "sugestao", "marca"))
+        )
+    preference_hints.append(("recipient", ("chamar", "nome", "para quem", "cidade")))
+
     for field, needles in preference_hints:
-        if field in known or field in explicit_no:
+        if field in known and field not in {"model_intent"}:
             continue
         for prompt in prompts:
             folded = prompt.casefold()
@@ -1212,9 +1322,14 @@ def _persona_qualification_question(
         if _unused(prompt):
             return prompt
     if interpretation.subject.brand:
+        if not snap.get("has_budget"):
+            return (
+                f"Beleza, {interpretation.subject.brand}. "
+                "Qual faixa de investimento você tem em mente?"
+            )
         return (
             f"Beleza, {interpretation.subject.brand}. "
-            "Qual faixa de investimento e o estilo que você prefere?"
+            "Qual estilo você prefere: mergulho, esportivo ou mais clássico?"
         )
     return prompts[0] if prompts else None
 
@@ -1223,22 +1338,9 @@ def _needs_persona_qualification(
     interpretation: SalesInterpretation,
     discovery_state: dict[str, Any],
 ) -> bool:
-    if not _persona_requires_qualification():
-        return False
-    if interpretation.stop_clarification:
-        return False
-    if _specific_product_lock(interpretation):
-        return False
-    if discovery_state.get("clarification_count", 0) >= 2:
-        return False
-    known = set(discovery_state.get("known_preferences") or [])
-    if isinstance(discovery_state.get("known_preferences"), dict):
-        known = set((discovery_state.get("known_preferences") or {}).keys())
-    explicit_no = set(discovery_state.get("explicit_no_preferences") or [])
-    covered = known | explicit_no
-    # Brand/category alone is not enough for Crono qualification.
-    qualifying = covered - {"brand", "attributes"}
-    return len(qualifying) < 1
+    snapshot = build_qualification_snapshot(interpretation, discovery_state)
+    discovery_state["qualification"] = snapshot
+    return bool(snapshot["required"] and not snapshot["ready"])
 
 
 def _comparison_needs_qualification(interpretation: SalesInterpretation) -> bool:

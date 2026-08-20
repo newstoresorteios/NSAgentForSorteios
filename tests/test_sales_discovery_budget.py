@@ -178,6 +178,7 @@ def test_persona_qualification_blocks_brand_only_force_retrieval(monkeypatch):
         state = sales_agent._discovery_state(interpretation, [])
         assert state["persona_qualification_required"] is True
         assert state["force_retrieval"] is False
+        assert state["qualification"]["ready"] is False
         assert sales_agent._needs_clarification_before_retrieval(
             interpretation,
             {"intent": "product_search"},
@@ -185,6 +186,41 @@ def test_persona_qualification_blocks_brand_only_force_retrieval(monkeypatch):
         )
         question = sales_agent._persona_qualification_question(interpretation, state)
         assert question and "investimento" in question.casefold()
+    finally:
+        persona_runtime.reset_persona_runtime(token)
+
+
+def test_persona_qualification_unlocks_on_brand_plus_budget():
+    import app.persona_runtime as persona_runtime
+    import app.sales_agent as sales_agent
+
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Qual faixa de investimento você tem em mente?",
+            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
+        ],
+    )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"product_type": "relógio", "brand": "Seiko"},
+            preferences={"budget_max": 4500},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            confidence=0.9,
+        )
+        state = sales_agent._discovery_state(interpretation, [])
+        assert state["persona_qualification_required"] is False
+        assert state["qualification"]["satisfied_by"] == "brand+budget"
     finally:
         persona_runtime.reset_persona_runtime(token)
 

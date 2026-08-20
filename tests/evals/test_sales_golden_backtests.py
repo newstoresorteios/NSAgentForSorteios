@@ -161,11 +161,103 @@ def test_golden_brand_only_seiko_requires_qualification():
         state = sales_agent._discovery_state(interpretation, [])
         assert state["persona_qualification_required"] is True
         assert state["force_retrieval"] is False
-        assert sales_agent._needs_clarification_before_retrieval(
-            interpretation,
-            {"intent": "product_search"},
-            state,
+        assert state["qualification"]["ready"] is False
+        assert state["qualification"]["has_brand"] is True
+        assert "budget" in state["qualification"]["missing_dims"]
+        question = sales_agent._persona_qualification_question(interpretation, state)
+        assert question and "investimento" in question.casefold()
+    finally:
+        reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+def test_golden_brand_plus_budget_unlocks_catalog():
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"product_type": "relógio", "brand": "Seiko"},
+            preferences={"budget_max": 5000},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            confidence=0.95,
         )
+        state = sales_agent._discovery_state(interpretation, [])
+        assert state["persona_qualification_required"] is False
+        assert state["qualification"]["ready"] is True
+        assert state["qualification"]["satisfied_by"] == "brand+budget"
+        assert state["force_retrieval"] is True
+    finally:
+        reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+def test_golden_brand_plus_style_unlocks_catalog():
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"brand": "Seiko"},
+            preferences={"style": "mergulho"},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            confidence=0.9,
+        )
+        state = sales_agent._discovery_state(interpretation, [])
+        assert state["persona_qualification_required"] is False
+        assert state["qualification"]["satisfied_by"] == "brand+style"
+    finally:
+        reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+def test_golden_sku_lock_skips_qualification():
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="find",
+            subject={"brand": "Seiko", "model": "King Turtle", "reference": "SRPE05K1"},
+            preferences={},
+            information_needed=["catalog"],
+            references_previous_context=False,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            confidence=0.99,
+        )
+        state = sales_agent._discovery_state(interpretation, [])
+        assert state["persona_qualification_required"] is False
+        assert state["qualification"]["satisfied_by"] == "sku_lock"
     finally:
         reset_persona_runtime(token)
 
