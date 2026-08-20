@@ -70,6 +70,27 @@ def test_build_runtime_parses_instructions_when_no_metadata_policy():
     assert runtime.policy_source == "instructions_parse"
 
 
+def test_build_runtime_reads_chatbo_greeting_and_tone():
+    persona = _persona(
+        metadata={"chatboPersonaId": "11111111-1111-1111-1111-111111111111"}
+    )
+    runtime = build_persona_runtime(
+        active=persona,
+        chatbo_profile={
+            "name": "Crono New Store",
+            "tone": "consultative",
+            "greeting": "Olá! Eu sou o Crono, assistente virtual da New Store Relógios.",
+            "closing_message": "Obrigado por falar com a New Store!",
+            "customer_address_style": "Sempre pelo primeiro nome.",
+        },
+    )
+    assert runtime.agent_display_name == "Crono"
+    assert runtime.tone == "Consultivo"
+    assert "Eu sou o Crono" in (runtime.greeting_text or "")
+    assert runtime.closing_message
+    assert "primeiro nome" in (runtime.customer_address_style or "")
+
+
 def test_contextvar_roundtrip():
     runtime = build_persona_runtime(active=_persona())
     token = set_persona_runtime(runtime)

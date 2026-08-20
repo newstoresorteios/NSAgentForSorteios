@@ -35,6 +35,14 @@ def _fold(text: str) -> str:
 def resolve_persona_greeting() -> str | None:
     """Primary greeting from ChatBo persona profile / active DB persona."""
     try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        if runtime is not None and (runtime.greeting_text or "").strip():
+            return runtime.greeting_text.strip()
+    except Exception:
+        pass
+    try:
         from .config import get_settings
         from .persona_knowledge_repository import (
             chatbo_persona_id,

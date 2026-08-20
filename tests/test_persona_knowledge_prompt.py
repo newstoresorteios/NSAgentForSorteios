@@ -94,6 +94,49 @@ def test_load_persona_knowledge_includes_new_attachment(monkeypatch):
     assert "Tratamento de objeções" in block or "Prazo: consultar Tray" in block
 
 
+def test_format_structured_persona_includes_identity_and_greeting():
+    from app.persona_knowledge_repository import format_structured_persona_profile
+
+    text = format_structured_persona_profile(
+        {
+            "name": "Crono New Store",
+            "role": "Assistente virtual comercial",
+            "tone": "consultative",
+            "tone_details": "Fale como entusiasta de relógios.",
+            "greeting": "Olá! Eu sou o Crono.",
+            "customer_address_style": "Sempre pelo primeiro nome.",
+            "closing_message": "Qualquer dúvida é só me chamar.",
+            "recommendation_rules": ["Nunca apresentar mais de 3 peças de uma vez"],
+            "human_handoff_criteria": ["Pedido de desconto acima dos 15% do PIX"],
+        },
+        skip_embedded_sections=False,
+    )
+    assert "Identidade" in text
+    assert "Consultivo" in text
+    assert "Olá! Eu sou o Crono." in text
+    assert "Sempre pelo primeiro nome." in text
+    assert "Nunca apresentar mais de 3 peças" in text
+    assert "desconto acima dos 15%" in text
+
+
+def test_format_structured_skips_only_embedded_sections():
+    from app.persona_knowledge_repository import format_structured_persona_profile
+
+    greeting = "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. Como posso te ajudar hoje?"
+    audience = "Público exclusivo ABC999: " + ("detalhe " * 40)
+    text = format_structured_persona_profile(
+        {
+            "greeting": greeting,
+            "target_audience": audience,
+            "recommendation_rules": ["Regra exclusiva XYZ123 nunca antes vista"],
+        },
+        instructions=f"prefix {greeting} suffix {audience} end",
+        skip_embedded_sections=True,
+    )
+    # Greeting is always kept (attendance identity).
+    assert "Saudação inicial" in text
+    assert "Regra exclusiva XYZ123" in text
+    assert "Público exclusivo ABC999" not in text
 def test_format_persona_knowledge_block_truncates():
     block = format_persona_knowledge_block(
         attachment_sections=[("big.txt", "a" * 500)],

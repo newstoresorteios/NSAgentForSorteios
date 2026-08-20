@@ -75,7 +75,9 @@ from .greeting_policy import choose_greeting_reply
 PERSONA_GREETING_OPERATIONAL = """\
 <greeting_contract>
 O cliente enviou apenas uma saudação.
-Use a identidade, tom e saudação da persona ativa (Crono New Store).
+Use a identidade, tom e saudação da persona ativa (Crono New Store / ChatBo).
+Se FACTS.official_greeting existir, use essa saudação oficial como base
+(pode adaptar levemente com o primeiro nome do cliente se já conhecido).
 Apresente-se como Crono quando fizer sentido e pergunte como pode ajudar.
 Não invente produtos, preços, estoque, pedidos ou links.
 Resposta curta, natural, em português do Brasil.
@@ -277,6 +279,19 @@ async def generate_persona_greeting_reply(
     facts["scope_domain"] = "greeting"
     facts["primary_intent"] = "greeting"
     facts["intents"] = [*facts.get("intents", []), "greeting"]
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        if runtime is not None:
+            if runtime.greeting_text:
+                facts["official_greeting"] = runtime.greeting_text
+            if runtime.agent_display_name:
+                facts["agent_display_name"] = runtime.agent_display_name
+            if runtime.tone:
+                facts["persona_tone"] = runtime.tone
+    except Exception:
+        pass
     system_instructions = resolve_system_instructions(
         fallback_instructions=PERSONA_GREETING_OPERATIONAL,
         incoming=message,

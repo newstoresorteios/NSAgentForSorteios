@@ -12,6 +12,45 @@ ATTACHMENT_READY_STATUSES = ("processed", "ready")
 
 _EMPTY_BLOCK = "<persona_knowledge>\n</persona_knowledge>"
 
+# Full ChatBo agent_personas surface used by the attendance UI.
+CHATBO_PROFILE_COLUMNS = (
+    "name",
+    "role",
+    "segment",
+    "language",
+    "tone",
+    "tone_details",
+    "greeting",
+    "introduction",
+    "customer_address_style",
+    "closing_message",
+    "target_audience",
+    "customer_profile",
+    "sales_goals",
+    "qualification_rules",
+    "opportunity_criteria",
+    "human_handoff_criteria",
+    "objection_handling",
+    "upsell_rules",
+    "recommendation_rules",
+    "escalation_rules",
+    "restrictions",
+    "examples",
+    "status",
+)
+
+_TONE_LABELS = {
+    "consultative": "Consultivo",
+    "professional": "Profissional",
+    "objective": "Objetivo",
+    "friendly": "Amigável",
+    "sophisticated": "Sofisticado",
+    "technical": "Técnico",
+    "informal": "Informal",
+    "custom": "Personalizado",
+    "personalized": "Personalizado",
+}
+
 
 @dataclass(frozen=True)
 class PersonaKnowledgeAttachment:
@@ -68,24 +107,12 @@ def list_persona_attachments(
 def get_chatbo_persona_profile(chatbo_persona_id: str) -> dict[str, Any] | None:
     from .db import get_conn
 
+    columns = ", ".join(CHATBO_PROFILE_COLUMNS)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT
-                    introduction,
-                    target_audience,
-                    customer_profile,
-                    sales_goals,
-                    qualification_rules,
-                    opportunity_criteria,
-                    human_handoff_criteria,
-                    objection_handling,
-                    upsell_rules,
-                    recommendation_rules,
-                    escalation_rules,
-                    restrictions,
-                    examples
+                f"""
+                SELECT {columns}
                 FROM public.agent_personas
                 WHERE id = %s::uuid
                 LIMIT 1
@@ -109,32 +136,94 @@ def text_already_embedded(body: str, instructions: str, *, min_anchor: int = 80)
     return head in haystack and tail in haystack
 
 
-def format_structured_persona_profile(profile: dict[str, Any]) -> str:
-    sections: list[str] = []
+def _format_profile_value(value: Any) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2).strip()
+    return str(value).strip()
+
+
+def _tone_label(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    return _TONE_LABELS.get(text.casefold(), text)
+
+
+def iter_structured_persona_sections(
+    profile: dict[str, Any],
+) -> list[tuple[str, str]]:
+    """Ordered ChatBo sections for prompt injection."""
+    identity_bits = [
+        ("Nome", profile.get("name")),
+        ("Função", profile.get("role")),
+        ("Segmento", profile.get("segment")),
+        ("Idioma", profile.get("language")),
+        ("Tom de voz", _tone_label(profile.get("tone"))),
+        ("Status", profile.get("status")),
+    ]
+    identity_lines = [
+        f"- {title}: {body}"
+        for title, value in identity_bits
+        if (body := _format_profile_value(value))
+    ]
+    sections: list[tuple[str, str]] = []
+    if identity_lines:
+        sections.append(("Identidade", "\n".join(identity_lines)))
+
     mapping: list[tuple[str, Any]] = [
-        ("Introdução complementar", profile.get("introduction")),
+        ("Detalhes do tom", profile.get("tone_details")),
+        ("Saudação inicial", profile.get("greeting")),
+        ("Apresentação do agente", profile.get("introduction")),
+        ("Forma de chamar o cliente", profile.get("customer_address_style")),
+        ("Encerramento padrão", profile.get("closing_message")),
         ("Público-alvo", profile.get("target_audience")),
-        ("Perfil do cliente", profile.get("customer_profile")),
-        ("Objetivos de venda", profile.get("sales_goals")),
+        ("Tipo / perfil do cliente", profile.get("customer_profile")),
+        ("Objetivos e prioridades de venda", profile.get("sales_goals")),
         ("Qualificação", profile.get("qualification_rules")),
         ("Critérios de oportunidade", profile.get("opportunity_criteria")),
-        ("Handoff humano", profile.get("human_handoff_criteria")),
+        ("Critérios para encaminhar ao vendedor", profile.get("human_handoff_criteria")),
         ("Tratamento de objeções", profile.get("objection_handling")),
         ("Upsell", profile.get("upsell_rules")),
-        ("Recomendações", profile.get("recommendation_rules")),
+        ("Regras de recomendação", profile.get("recommendation_rules")),
         ("Escalação", profile.get("escalation_rules")),
         ("Restrições", profile.get("restrictions")),
         ("Exemplos", profile.get("examples")),
     ]
     for title, value in mapping:
-        if value in (None, "", [], {}):
-            continue
-        if isinstance(value, (dict, list)):
-            body = json.dumps(value, ensure_ascii=False, indent=2)
-        else:
-            body = str(value).strip()
+        body = _format_profile_value(value)
         if body:
-            sections.append(f"### {title}\n{body}")
+            sections.append((title, body))
+    return sections
+
+
+def format_structured_persona_profile(
+    profile: dict[str, Any],
+    *,
+    instructions: str | None = None,
+    skip_embedded_sections: bool = True,
+) -> str:
+    """Render ChatBo profile. Optionally skip sections already in instructions."""
+    # Always keep short identity/attendance fields — they drive greeting and tone.
+    always_include = {
+        "Identidade",
+        "Detalhes do tom",
+        "Saudação inicial",
+        "Apresentação do agente",
+        "Forma de chamar o cliente",
+        "Encerramento padrão",
+    }
+    sections: list[str] = []
+    for title, body in iter_structured_persona_sections(profile):
+        if (
+            skip_embedded_sections
+            and title not in always_include
+            and instructions
+            and text_already_embedded(body, instructions)
+        ):
+            continue
+        sections.append(f"### {title}\n{body}")
     return "\n\n".join(sections)
 
 
@@ -178,8 +267,13 @@ def format_persona_knowledge_block(
         if len(piece) <= budget:
             chunks.append(piece)
             budget -= len(piece) + 2
+        else:
+            chunks.append(piece[: max(0, budget - 20)] + "\n...[truncado]")
+            budget = 0
 
     for filename, body in attachment_sections:
+        if budget < 200:
+            break
         piece = f"### Anexo: {filename}\n{body.strip()}"
         if len(piece) > budget:
             piece = piece[: max(0, budget - 20)] + "\n...[truncado]"
@@ -199,7 +293,9 @@ def format_persona_knowledge_block(
 
     intro = (
         "<persona_knowledge>\n"
-        "Base de conhecimento da persona (políticas e orientações institucionais).\n"
+        "Base completa da persona ChatBo (identidade, tom, saudação, objetivos, "
+        "qualificação, objeções, recomendação, handoff e restrições).\n"
+        "Siga estas orientações no atendimento. "
         "Nunca use isto para inventar preço, estoque, URL ou status de pedido — tools/Tray prevalecem.\n"
     )
     return intro + "\n\n".join(chunks) + "\n</persona_knowledge>"
@@ -226,9 +322,13 @@ def load_persona_knowledge_for_prompt(
             attachment_ids.append(attachment.id)
 
         profile = get_chatbo_persona_profile(persona_id) or {}
-        profile_text = format_structured_persona_profile(profile)
-        if profile_text and text_already_embedded(profile_text, instructions):
-            profile_text = ""
+        # Always prefer ChatBo structured fields; skip only sections already
+        # present verbatim in instructions to avoid doubling tokens.
+        profile_text = format_structured_persona_profile(
+            profile,
+            instructions=instructions,
+            skip_embedded_sections=True,
+        )
     else:
         profile_text = ""
 

@@ -42,6 +42,11 @@ class PersonaRuntimeConfig(BaseModel):
     display_name: str | None = None
     chatbo_persona_id: str | None = None
     agent_display_name: str = "Crono"
+    greeting_text: str | None = None
+    closing_message: str | None = None
+    tone: str | None = None
+    tone_details: str | None = None
+    customer_address_style: str | None = None
     greeting_mode: Literal["persona_llm", "persona_text", "local"] = "persona_llm"
     pix_discount_percent: int = DEFAULT_PIX_DISCOUNT_PERCENT
     max_pix_discount_percent: int = DEFAULT_PIX_DISCOUNT_PERCENT
@@ -77,6 +82,9 @@ class PersonaRuntimeConfig(BaseModel):
         return {
             "persona_version_id": self.persona_version_id,
             "agent_display_name": self.agent_display_name,
+            "greeting_text": self.greeting_text,
+            "closing_message": self.closing_message,
+            "tone": self.tone,
             "greeting_mode": self.greeting_mode,
             "pix_discount_percent": self.pix_discount_percent,
             "max_pix_discount_percent": self.max_pix_discount_percent,
@@ -87,6 +95,7 @@ class PersonaRuntimeConfig(BaseModel):
             "require_product_before_checkout": self.require_product_before_checkout,
             "negotiation_beyond_pix": self.negotiation_beyond_pix,
             "policy_source": self.policy_source,
+            "chatbo_persona_id": self.chatbo_persona_id,
         }
 
     def interpreter_policy_block(self) -> str:
@@ -94,6 +103,7 @@ class PersonaRuntimeConfig(BaseModel):
         return (
             "<persona_runtime_policy>\n"
             f"- agent_name: {self.agent_display_name}\n"
+            f"- tone: {self.tone or 'consultative'}\n"
             f"- pix_discount_percent: {self.pix_discount_percent}\n"
             f"- max_pix_discount_percent: {self.max_pix_discount_percent}\n"
             f"- site_price_is_final: {self.site_price_is_final}\n"
@@ -102,6 +112,8 @@ class PersonaRuntimeConfig(BaseModel):
             f"- require_product_before_checkout: "
             f"{self.require_product_before_checkout}\n"
             f"- negotiation_beyond_pix: {self.negotiation_beyond_pix}\n"
+            "- Use o perfil ChatBo completo no system prompt "
+            "(saudação, objeções, recomendação, handoff).\n"
             "- Perguntas de desconto/PIX sem fechar compra = "
             "payment_request_kind=informational e purchase_action=null.\n"
             "- Nunca prometa desconto acima de max_pix_discount_percent.\n"
@@ -114,18 +126,32 @@ class PersonaRuntimeConfig(BaseModel):
             if self.negotiation_beyond_pix == "human_handoff"
             else "recusar e manter a política oficial"
         )
-        return (
-            "<persona_runtime_policy>\n"
-            f"Identidade operacional: {self.agent_display_name}.\n"
-            f"Desconto oficial no PIX: {self.pix_discount_percent}% "
-            f"(máximo {self.max_pix_discount_percent}%).\n"
-            f"Preço do site é final: {self.site_price_is_final}.\n"
-            "Consulta informativa de pagamento/desconto "
-            f"{'exige' if self.require_cart_for_informational_payment else 'não exige'} "
-            "carrinho.\n"
-            f"Negociação além do PIX oficial: {negotiation}.\n"
-            "</persona_runtime_policy>"
+        lines = [
+            "<persona_runtime_policy>",
+            f"Identidade operacional: {self.agent_display_name}.",
+        ]
+        if self.tone:
+            lines.append(f"Tom de voz: {self.tone}.")
+        if self.greeting_text:
+            lines.append(f"Saudação oficial: {self.greeting_text}")
+        if self.customer_address_style:
+            lines.append(f"Tratamento ao cliente: {self.customer_address_style}")
+        if self.closing_message:
+            lines.append(f"Encerramento padrão: {self.closing_message}")
+        lines.extend(
+            [
+                f"Desconto oficial no PIX: {self.pix_discount_percent}% "
+                f"(máximo {self.max_pix_discount_percent}%).",
+                f"Preço do site é final: {self.site_price_is_final}.",
+                "Consulta informativa de pagamento/desconto "
+                f"{'exige' if self.require_cart_for_informational_payment else 'não exige'} "
+                "carrinho.",
+                f"Negociação além do PIX oficial: {negotiation}.",
+                "Siga o bloco <persona_knowledge> / persona ChatBo completo.",
+                "</persona_runtime_policy>",
+            ]
         )
+        return "\n".join(lines)
 
 
 def get_persona_runtime() -> PersonaRuntimeConfig | None:
@@ -279,6 +305,44 @@ def apply_policy_overrides(
     )
 
 
+def _enrich_from_chatbo_profile(
+    config: PersonaRuntimeConfig,
+    chatbo_profile: dict[str, Any] | None,
+) -> PersonaRuntimeConfig:
+    if not chatbo_profile:
+        return config
+    from .persona_knowledge_repository import _tone_label
+
+    updates: dict[str, Any] = {}
+    name = str(chatbo_profile.get("name") or "").strip()
+    if name:
+        updates["display_name"] = name
+        # Prefer short call-name ("Crono") from "Crono New Store".
+        updates["agent_display_name"] = name.split()[0] or name
+    greeting = str(chatbo_profile.get("greeting") or "").strip()
+    if greeting:
+        updates["greeting_text"] = greeting
+    closing = str(chatbo_profile.get("closing_message") or "").strip()
+    if closing:
+        updates["closing_message"] = closing
+    tone = _tone_label(chatbo_profile.get("tone"))
+    if tone:
+        updates["tone"] = tone
+    tone_details = str(chatbo_profile.get("tone_details") or "").strip()
+    if tone_details:
+        updates["tone_details"] = tone_details
+    address = str(chatbo_profile.get("customer_address_style") or "").strip()
+    if address:
+        updates["customer_address_style"] = address
+    if not updates:
+        return config
+    enriched = config.model_copy(update=updates)
+    return enriched.bind_sources(
+        active_persona=config.active_persona,
+        chatbo_profile=chatbo_profile,
+    )
+
+
 def build_persona_runtime(
     *,
     active: PersonaVersion | None,
@@ -305,10 +369,13 @@ def build_persona_runtime(
     from .persona_knowledge_repository import chatbo_persona_id
 
     config.chatbo_persona_id = chatbo_persona_id(active.metadata)
+    config = _enrich_from_chatbo_profile(config, chatbo_profile)
+    config.chatbo_persona_id = chatbo_persona_id(active.metadata)
+
     meta_policy = _metadata_policy(active.metadata)
     if meta_policy:
         config = apply_policy_overrides(config, meta_policy, source="metadata")
-        config.bind_sources(active_persona=active, chatbo_profile=chatbo_profile)
+        config = _enrich_from_chatbo_profile(config, chatbo_profile)
         config.chatbo_persona_id = chatbo_persona_id(active.metadata)
         return config
 
@@ -321,6 +388,7 @@ def build_persona_runtime(
                 "objection_handling",
                 "sales_goals",
                 "introduction",
+                "tone_details",
             )
         )
     parsed = extract_pix_discount_percent(active.instructions, restriction_text)
@@ -332,7 +400,7 @@ def build_persona_runtime(
                 "policy_source": "instructions_parse",
             }
         )
-        config.bind_sources(active_persona=active, chatbo_profile=chatbo_profile)
+        config = _enrich_from_chatbo_profile(config, chatbo_profile)
         config.chatbo_persona_id = chatbo_persona_id(active.metadata)
     return config
 

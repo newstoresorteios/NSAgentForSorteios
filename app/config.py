@@ -216,7 +216,7 @@ class Settings(BaseSettings):
         le=50,
     )
     agent_max_persona_knowledge_chars: int = Field(
-        default=12000,
+        default=20000,
         alias="AGENT_MAX_PERSONA_KNOWLEDGE_CHARS",
         ge=500,
         le=50000,
