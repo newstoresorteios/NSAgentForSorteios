@@ -205,6 +205,22 @@ class Settings(BaseSettings):
         ge=200,
         le=20000,
     )
+    agent_persona_knowledge_in_prompt_enabled: bool = Field(
+        default=True,
+        alias="AGENT_PERSONA_KNOWLEDGE_IN_PROMPT_ENABLED",
+    )
+    agent_max_persona_attachments: int = Field(
+        default=10,
+        alias="AGENT_MAX_PERSONA_ATTACHMENTS",
+        ge=1,
+        le=50,
+    )
+    agent_max_persona_knowledge_chars: int = Field(
+        default=12000,
+        alias="AGENT_MAX_PERSONA_KNOWLEDGE_CHARS",
+        ge=500,
+        le=50000,
+    )
     agent_max_conversation_summary_chars: int = Field(
         default=2500,
         alias="AGENT_MAX_CONVERSATION_SUMMARY_CHARS",

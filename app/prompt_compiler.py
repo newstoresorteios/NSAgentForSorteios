@@ -72,6 +72,7 @@ class CompiledPrompt(BaseModel):
     persona_version_id: int | None = None
     instruction_extension_ids: list[int] = Field(default_factory=list)
     contact_memory_ids: list[int] = Field(default_factory=list)
+    persona_attachment_ids: list[str] = Field(default_factory=list)
 
     instructions_hash: str
     instruction_char_count: int = 0
@@ -106,7 +107,6 @@ def compile_agent_prompt(
     When ``AGENT_DB_PERSONA_ENABLED`` is false, uses ``fallback_instructions``
     (existing in-code prompts) without changing production behavior.
     """
-    del relevant_knowledge  # reserved for later phases
     settings = get_settings()
     channel = getattr(incoming, "channel", None) if incoming else None
     sender_key = getattr(incoming, "sender_key", None) if incoming else None
@@ -115,6 +115,7 @@ def compile_agent_prompt(
     used_db_persona = False
     fallback_reason: str | None = None
     persona_text = ""
+    active_persona = None
 
     if bool(getattr(settings, "agent_db_persona_enabled", False)):
         try:
@@ -126,6 +127,7 @@ def compile_agent_prompt(
             persona_text = active.instructions
             persona_version_id = active.id
             used_db_persona = True
+            active_persona = active
         else:
             fallback_reason = fallback_reason or "persona_active_missing"
 
@@ -140,9 +142,43 @@ def compile_agent_prompt(
 
     extension_ids: list[int] = []
     memory_ids: list[int] = []
+    persona_attachment_ids: list[str] = []
     extensions_block = "<approved_instruction_extensions>\n</approved_instruction_extensions>"
+    knowledge_block = "<persona_knowledge>\n</persona_knowledge>"
     memory_block = "<customer_memory>\n</customer_memory>"
     summary_block = ""
+
+    load_persona_knowledge = bool(
+        getattr(settings, "agent_db_persona_enabled", False)
+        and getattr(settings, "agent_persona_knowledge_in_prompt_enabled", True)
+    )
+    if load_persona_knowledge and active_persona is not None:
+        try:
+            from .persona_knowledge_repository import load_persona_knowledge_for_prompt
+
+            persona_attachment_ids, knowledge_block = load_persona_knowledge_for_prompt(
+                active_persona,
+                limit=int(getattr(settings, "agent_max_persona_attachments", 10)),
+                max_chars=int(getattr(settings, "agent_max_persona_knowledge_chars", 12000)),
+                relevant_knowledge=relevant_knowledge,
+            )
+        except Exception as exc:
+            print("[prompt.compiler.persona_knowledge.error]", {
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:160],
+            })
+    elif relevant_knowledge:
+        try:
+            from .persona_knowledge_repository import format_relevant_knowledge_block
+
+            retrieved = format_relevant_knowledge_block(relevant_knowledge)
+            if retrieved.strip():
+                knowledge_block = retrieved
+        except Exception as exc:
+            print("[prompt.compiler.relevant_knowledge.error]", {
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:160],
+            })
 
     load_extensions = bool(getattr(settings, "agent_db_persona_enabled", False))
     load_contact_memory = bool(
@@ -239,6 +275,7 @@ def compile_agent_prompt(
     blocks = [
         FIXED_SAFETY_POLICY.strip(),
         f"<user_managed_persona>\n{persona_text.strip()}\n</user_managed_persona>",
+        knowledge_block,
         extensions_block,
         channel_overlay_block(channel),
         memory_block,
@@ -331,6 +368,7 @@ def compile_agent_prompt(
         persona_version_id=persona_version_id,
         instruction_extension_ids=extension_ids,
         contact_memory_ids=memory_ids,
+        persona_attachment_ids=persona_attachment_ids,
         instructions_hash=hash_instructions(instructions),
         instruction_char_count=len(instructions),
         input_char_count=input_char_count,
@@ -349,6 +387,7 @@ def compile_agent_prompt(
                 "persona_version_id": persona_version_id,
                 "instruction_extension_ids": extension_ids,
                 "contact_memory_ids": memory_ids,
+                "persona_attachment_ids": persona_attachment_ids,
                 "instruction_char_count": compiled.instruction_char_count,
                 "input_char_count": compiled.input_char_count,
                 "approximate_input_tokens": compiled.approximate_input_tokens,
@@ -364,6 +403,7 @@ def compile_agent_prompt(
                 "persona_version_id": persona_version_id,
                 "extension_ids_count": len(extension_ids),
                 "memory_ids_count": len(memory_ids),
+                "persona_attachment_ids_count": len(persona_attachment_ids),
                 "used_db_persona": used_db_persona,
                 "fallback_reason": fallback_reason,
             })

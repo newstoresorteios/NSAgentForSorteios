@@ -23,6 +23,9 @@ def _enable_persona(monkeypatch, enabled: bool = True):
             openai_api_mode="chat_completions",
             agent_persona_tenant_id="newstore",
             agent_persona_key="newstore_commercial",
+            agent_persona_knowledge_in_prompt_enabled=True,
+            agent_max_persona_attachments=10,
+            agent_max_persona_knowledge_chars=12000,
         ),
     )
 
@@ -42,8 +45,20 @@ def test_compile_includes_active_persona_and_safety(monkeypatch):
     created = repo.create_persona_version(
         instructions="PERSONA_ATIVA_NEWSTORE\n",
         name="NS",
+        metadata={"chatboPersonaId": "chatbo-persona-1"},
     )
     repo.activate_persona_version(created.id)
+
+    import app.persona_knowledge_repository as knowledge_repo
+
+    monkeypatch.setattr(
+        knowledge_repo,
+        "load_persona_knowledge_for_prompt",
+        lambda persona, **kwargs: (
+            ["att-1"],
+            "<persona_knowledge>\nDOC EXTRA\n</persona_knowledge>",
+        ),
+    )
 
     incoming = IncomingMessage(channel="instagram", text="oi", sender_key="ig:1")
     compiled = compiler.compile_agent_prompt(
@@ -53,7 +68,10 @@ def test_compile_includes_active_persona_and_safety(monkeypatch):
     )
     assert compiled.used_db_persona is True
     assert compiled.persona_version_id == created.id
+    assert compiled.persona_attachment_ids == ["att-1"]
     assert "PERSONA_ATIVA_NEWSTORE" in compiled.instructions
+    assert "<persona_knowledge>" in compiled.instructions
+    assert "DOC EXTRA" in compiled.instructions
     assert "<fixed_safety_policy>" in compiled.instructions
     assert "<channel_overlay>" in compiled.instructions
     assert "instagram" in compiled.instructions
@@ -95,6 +113,9 @@ def test_main_contract_not_duplicated_when_compat_off(monkeypatch):
             openai_api_mode="chat_completions",
             agent_persona_tenant_id="newstore",
             agent_persona_key="newstore_commercial",
+            agent_persona_knowledge_in_prompt_enabled=True,
+            agent_max_persona_attachments=10,
+            agent_max_persona_knowledge_chars=12000,
         ),
     )
     contract = "CONTRATO_UNICO_DE_SEGURANCA_E_TOM_NEWSTORE_XYZ"
@@ -123,6 +144,9 @@ def test_legacy_compat_flag_reembeds_contract(monkeypatch):
             openai_api_mode="chat_completions",
             agent_persona_tenant_id="newstore",
             agent_persona_key="newstore_commercial",
+            agent_persona_knowledge_in_prompt_enabled=True,
+            agent_max_persona_attachments=10,
+            agent_max_persona_knowledge_chars=12000,
         ),
     )
     contract = "CONTRATO_COMPAT_ABC"

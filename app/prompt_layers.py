@@ -16,6 +16,7 @@ from __future__ import annotations
 PROMPT_LAYER_ORDER: tuple[str, ...] = (
     "fixed_safety_policy",
     "user_managed_persona",
+    "persona_knowledge",
     "approved_instruction_extensions",
     "channel_overlay",
     "customer_memory",
