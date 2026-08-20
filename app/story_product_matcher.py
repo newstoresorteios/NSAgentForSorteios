@@ -1306,15 +1306,19 @@ async def match_story_to_catalog(
         _load_tray_pages(),
     )
     _apply_visual_neighbors(visual_neighbors)
-    color_locked = color_locked or any(
-        _candidate_has_dial_color_lock(c) for c in candidates
-    )
+    color_locked = False
     for row in tray_pages:
-        if color_locked:
-            break
-        _ingest_tray_page(
+        tokens = list(row.get("tokens") or [])
+        # Never drop a distinctive-token job (Rocks/MK2/SKU) because an earlier
+        # C63+verde page color-locked on a similar 39 mm listing.
+        distinctive_job = any(
+            _fold(token) in {"rocks", "mk2"} or _is_sku_like(token) for token in tokens
+        )
+        if color_locked and not distinctive_job:
+            continue
+        color_locked = _ingest_tray_page(
             brand=row.get("brand"),
-            tokens=list(row.get("tokens") or []),
+            tokens=tokens,
             page=int(row.get("page") or 1),
             products=list(row.get("products") or []),
             paging=row.get("paging"),
