@@ -2073,6 +2073,18 @@ async def revalidate_products(
         if "error" in result:
             failed = True
             partial = True
+            status_code = result.get("status_code")
+            # Upstream unhealthy / rate-limited: stop hammering remaining SKUs.
+            if status_code in (429, 503, 502, 504):
+                print(
+                    "[sales.revalidate.abort]",
+                    {
+                        "status_code": status_code,
+                        "attempted": attempted,
+                        "confirmed": len(refreshed),
+                    },
+                )
+                break
             continue
         # Revalidation is factual authority: overlay live Tray fields but never
         # invent price/stock when the live payload omits them.

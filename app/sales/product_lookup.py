@@ -874,12 +874,34 @@ async def execute_compiled_product_retrieval(
         _call_execute_tool,
     )
     if not refreshed and revalidation_failed:
-        return AgentResult(
-            reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
-            intent="commerce",
-            handoff_required=False,
-            safety_reason="tray_adapter_unavailable",
+        # IQ-06 resilience: if the durable index already produced a usable pool,
+        # serve those rows instead of failing the turn when Tray is 503/429.
+        index_backed = catalog_index_primary or any(
+            bool(product.get("_from_catalog_index"))
+            or str(product.get("_factual_source") or "").strip().lower()
+            == "catalog_index"
+            for product in selected
         )
+        if index_backed and selected:
+            print(
+                "[sales.revalidate.index_fallback]",
+                {
+                    "selected": len(selected),
+                    "catalog_index_primary": catalog_index_primary,
+                    "reason": "tray_revalidation_unavailable",
+                },
+            )
+            for product in selected:
+                product.setdefault("_factual_source", "catalog_index")
+                product["_revalidated"] = False
+                product["_revalidation_degraded"] = True
+        else:
+            return AgentResult(
+                reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="tray_adapter_unavailable",
+            )
     from ..commerce_router import _product_result
 
     final_products = refreshed or selected

@@ -252,6 +252,78 @@ async def test_recommendation_skips_tray_when_index_sufficient(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_recommendation_serves_index_when_tray_revalidation_fails(monkeypatch):
+    """Index-primary discovery must not hard-fail the turn on Tray 503/429."""
+    import app.sales_agent as sales_agent
+
+    calls: list[tuple] = []
+
+    async def fake_execute(name, arguments):
+        calls.append((name, arguments))
+        if name == "list_categories":
+            return {"error": "commerce_upstream_error", "status_code": 503}
+        if name == "get_product":
+            return {"error": "commerce_upstream_error", "status_code": 429}
+        raise AssertionError(f"unexpected tray call: {name} {arguments}")
+
+    index_products = [
+        {
+            "id": str(i),
+            "product_id": str(i),
+            "name": f"Seiko Modelo {i}",
+            "brand": "Seiko",
+            "price": 2000 + i * 100,
+            "current_price": 2000 + i * 100,
+            "available": True,
+            "available_in_store": True,
+            "_from_catalog_index": True,
+            "_factual_source": "catalog_index",
+        }
+        for i in range(1, 9)
+    ]
+
+    monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
+    monkeypatch.setattr(
+        "app.catalog_index_primary.fetch_primary_index_candidates",
+        lambda *a, **k: (index_products, "constraints"),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *a, **k: 0,
+    )
+    monkeypatch.setattr(
+        "app.product_retrieval.get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(
+            agent_catalog_index_read_enabled=True,
+            agent_catalog_index_write_enabled=False,
+            agent_catalog_index_fallback_to_tray=True,
+            agent_catalog_index_candidate_limit=30,
+            agent_persona_tenant_id="newstore",
+            openai_api_key="",
+            openai_model="gpt-4.1-mini",
+        ),
+    )
+
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation()
+    )
+
+    assert result is not None
+    assert result.safety_reason != "tray_adapter_unavailable"
+    assert len(result.commercial_data["products"]) == 3
+    assert all(p["brand"] == "Seiko" for p in result.commercial_data["products"])
+    assert all(p.get("_revalidation_degraded") for p in result.commercial_data["products"])
+    get_product_calls = [c for c in calls if c[0] == "get_product"]
+    # Abort after first upstream 429 — do not hammer remaining SKUs.
+    assert len(get_product_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_recommendation_refreshes_tray_when_index_empty(monkeypatch):
     import app.sales_agent as sales_agent
 

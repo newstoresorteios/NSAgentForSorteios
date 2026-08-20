@@ -462,3 +462,22 @@ async def test_top_three_are_revalidated_with_current_product_data():
     assert failed is False
     assert [args["product_id"] for name, args in calls if name == "get_product"] == ["0", "1", "2"]
     assert all(product["current_price"] == 2000 for product in refreshed)
+
+
+@pytest.mark.asyncio
+async def test_revalidate_aborts_remaining_skus_on_rate_limit():
+    calls = []
+
+    async def execute(name, arguments):
+        calls.append((name, arguments))
+        return {"error": "commerce_upstream_error", "status_code": 429}
+
+    refreshed, failed = await revalidate_products(
+        [{"id": str(index), "current_price": 1000} for index in range(5)],
+        _interpretation(),
+        execute,
+    )
+
+    assert failed is True
+    assert refreshed == []
+    assert [args["product_id"] for name, args in calls if name == "get_product"] == ["0"]
