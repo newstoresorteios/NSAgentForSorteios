@@ -36,6 +36,11 @@ def build_turn_quality_event(
     metadata = result_metadata or {}
     validation = metadata.get("factual_validation") or {}
     judge = metadata.get("quality_judge") or {}
+    critique = metadata.get("response_critique") or {}
+    compliance = metadata.get("outbound_compliance") or {}
+    compliance_verdict = (
+        compliance.get("verdict") if isinstance(compliance.get("verdict"), dict) else {}
+    )
     cache = runtime.context_snapshot.get("cache") or {}
     if not isinstance(cache, dict):
         cache = {}
@@ -75,6 +80,20 @@ def build_turn_quality_event(
         "stage_durations_ms": dict(runtime.stage_durations_ms),
         "tray_latency_ms": round(tray_latency, 2),
         "judge_triggered": bool(runtime.judge_triggered or judge.get("triggered")),
+        "critique_mode": critique.get("mode") or critique.get("configured_mode"),
+        "critique_regenerated": bool(
+            metadata.get("critique_regenerated") or critique.get("regenerated")
+        ),
+        "compliance_pass": (
+            True
+            if not compliance
+            else bool(compliance_verdict.get("pass_check", True))
+        ),
+        "compliance_reresearch": bool(compliance.get("reresearch_applied")),
+        "compliance_issues": list(compliance_verdict.get("issues") or [])[:8],
+        "policy_enforced": bool(
+            (metadata.get("policy_enforcement") or {}).get("applied")
+        ),
         "factual_valid": bool(validation.get("valid", True)),
         "fallback_reason": fallback,
         "handoff_required": bool(

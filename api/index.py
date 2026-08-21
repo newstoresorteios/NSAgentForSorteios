@@ -34,6 +34,7 @@ from app.inbound_coalesce import is_caption_echo_of_recent_image
 from app.config import get_allowed_channels, get_settings
 from app.rollout import build_rollout_status
 from app.tray_circuit_breaker import circuit_status_dict
+from app.tray_health_probe import probe_tray_adaptor, tray_ha_checklist
 from app.conversation_lock import (
     ConversationLockUnavailable,
     acquire_conversation_lock,
@@ -283,7 +284,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v33"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v34"
 
 
 @app.get("/api/health")
@@ -297,6 +298,7 @@ async def health():
         if channel in allowed_channels
     ]
     ordered_channels.extend(sorted(allowed_channels.difference(ordered_channels)))
+    tray_probe = await probe_tray_adaptor()
     return {
         "ok": True,
         "agent_version": AGENT_VERSION,
@@ -389,6 +391,8 @@ async def health():
         "dry_run": settings.dry_run,
         "tray_adapter_configured": bool(settings.tray_adapter_url and settings.tray_adapter_token),
         "tray_circuit_breaker": circuit_status_dict(),
+        "tray_adaptor_probe": tray_probe,
+        "tray_ha": tray_ha_checklist(tray_probe),
         "tray_tools_enabled": bool(settings.tray_adapter_url and settings.tray_adapter_token),
         "pix_direct_enabled": bool(getattr(settings, "pix_direct_enabled", False)),
         "pix_mp_configured": bool(
