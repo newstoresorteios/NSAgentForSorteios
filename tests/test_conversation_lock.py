@@ -81,6 +81,32 @@ async def test_lock_timeout_is_typed_and_does_not_release_owner():
 
 
 @pytest.mark.asyncio
+async def test_two_workers_contend_then_serialize():
+    """Simulate two workers racing the same conversation key."""
+    order: list[str] = []
+    barrier = asyncio.Event()
+
+    async def worker(name: str):
+        handle = await acquire_conversation_lock(
+            "conversation:two-workers",
+            timeout_seconds=2,
+        )
+        order.append(f"{name}:acquired")
+        barrier.set()
+        await asyncio.sleep(0.05)
+        order.append(f"{name}:release")
+        await release_conversation_lock(handle)
+
+    first = asyncio.create_task(worker("a"))
+    await barrier.wait()
+    second = asyncio.create_task(worker("b"))
+    await asyncio.gather(first, second)
+    assert order[0].endswith(":acquired")
+    assert order[-1].endswith(":release")
+    assert len(order) == 4
+
+
+@pytest.mark.asyncio
 async def test_database_lock_contention_is_busy_not_unavailable(monkeypatch):
     from app import conversation_lock as lock_mod
 

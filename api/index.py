@@ -284,7 +284,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v34"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v35"
 
 
 @app.get("/api/health")
@@ -330,6 +330,11 @@ async def health():
             settings,
             "agent_conversation_lock_enabled",
             True,
+        ),
+        "agent_async_ingress_enabled": getattr(
+            settings,
+            "agent_async_ingress_enabled",
+            False,
         ),
         "agent_quality_judge_mode": getattr(
             settings,
@@ -1442,6 +1447,14 @@ async def admin_rollout_status():
     return {"ok": True, **build_rollout_status()}
 
 
+@app.get("/api/admin/integrity-kpis", dependencies=[Depends(verify_admin_token)])
+async def admin_integrity_kpis(days: int = 7):
+    """Assertiveness KPIs vs 30d targets (not_found / ambiguous / tray / factual)."""
+    from app.integrity_kpis import build_integrity_kpi_report
+
+    return {"ok": True, **build_integrity_kpi_report(days=days)}
+
+
 @app.get("/api/admin/instagram/stories/health", dependencies=[Depends(verify_admin_token)])
 async def admin_instagram_story_health():
     from app.config import get_settings
@@ -1827,6 +1840,24 @@ async def cron_process_inbox():
 )
 async def cron_process_inbox_get():
     return await cron_process_inbox()
+
+
+@app.post(
+    "/api/cron/process-outbox",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def cron_process_outbox():
+    from app.ingress.outbox_worker import process_outbox_batch
+
+    return await process_outbox_batch()
+
+
+@app.get(
+    "/api/cron/process-outbox",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def cron_process_outbox_get():
+    return await cron_process_outbox()
 
 
 @app.post("/api/test/agent")
