@@ -508,6 +508,55 @@ def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
     )
 
 
+def guided_near_match_result(
+    products: list[dict[str, Any]],
+    *,
+    brand: str | None = None,
+    limit: int = 3,
+    safety_reason: str = "exact_product_ambiguous_brand",
+) -> AgentResult:
+    """Present 2–3 color/line-locked options instead of bare not_found or brand dump."""
+    shortlist = [product for product in products if isinstance(product, dict)][: max(1, min(limit, 5))]
+    if not shortlist:
+        return AgentResult(
+            reply_text="Não encontrei esse produto no catálogo agora.",
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="product_not_found",
+        )
+    brand_label = (brand or "").strip()
+    if brand_label:
+        prefix = (
+            f"Não fechei a combinação exata, mas estes {brand_label} "
+            "mais próximos batem com o que você pediu:"
+        )
+    else:
+        prefix = (
+            "Não fechei a combinação exata, mas estas opções próximas "
+            "batem com o que você pediu:"
+        )
+    numbered_lines = [
+        f"{position}. {line}"
+        for position, line in enumerate(_product_lines(shortlist, compact=True), start=1)
+    ]
+    return AgentResult(
+        reply_text=prefix + "\n" + "\n".join(numbered_lines) + "\n\nÉ algum desses?",
+        intent="commerce",
+        handoff_required=False,
+        safety_reason=safety_reason,
+        commercial_data={
+            "products": shortlist,
+            "match_status": "ambiguous",
+        },
+        response_metadata={
+            "presented_products": True,
+            "product_resolution_state": "plausible_matches",
+            "clear_active_product": True,
+            "guided_near_match": True,
+        },
+    )
+
+
 async def handle_commerce_message(
     message: IncomingMessage,
     facts: dict[str, Any],

@@ -714,6 +714,36 @@ async def execute_compiled_product_retrieval(
         reason = "exact_product_not_found" if retrieval_plan.mode == "exact" else "catalog_empty"
         print("[sales.retrieval.empty]", {"reason": reason, "had_catalog_ok": catalog_probe_ok})
         if retrieval_plan.mode == "exact":
+            # Last chance: durable index may still have color/brand near-matches.
+            from ..catalog_index_primary import fetch_primary_index_candidates
+            from ..commerce_router import guided_near_match_result
+
+            index_rows, _strategy = fetch_primary_index_candidates(
+                interpretation,
+                limit=max(retrieval_plan.candidate_limit, 30),
+            )
+            if index_rows:
+                soft = prefer_dial_and_case_matches(
+                    soft_confirm_candidates(
+                        index_rows,
+                        interpretation,
+                        limit=customer_result_limit(),
+                    ),
+                    interpretation,
+                    limit=customer_result_limit(),
+                )
+                if soft:
+                    refreshed, revalidation_failed = await revalidate_products(
+                        soft,
+                        interpretation,
+                        _call_execute_tool,
+                    )
+                    if refreshed or not revalidation_failed:
+                        return guided_near_match_result(
+                            refreshed or soft,
+                            brand=interpretation.subject.brand,
+                            limit=customer_result_limit(),
+                        )
             return AgentResult(
                 reply_text="Não encontrei esse produto no catálogo agora.",
                 intent="commerce",
@@ -737,58 +767,68 @@ async def execute_compiled_product_retrieval(
                     handoff_required=False,
                     safety_reason="tray_adapter_unavailable",
                 )
+            from ..commerce_router import guided_near_match_result
+
             brand = (interpretation.subject.brand or "").strip()
-            if used_brand_candidates and brand and candidates:
-                soft = soft_confirm_candidates(
-                    candidates,
+            # Densify pool only on exact miss — avoid changing discovery fan-out.
+            if brand:
+                candidates = await ensure_brand_pool_in_candidates(
+                    brand=brand,
+                    candidates=candidates,
+                    seen_ids=seen_ids,
+                    execute_tool=_call_execute_tool,
+                    limit=max(retrieval_plan.candidate_limit, 120),
+                )
+            soft = soft_confirm_candidates(
+                candidates,
+                interpretation,
+                limit=customer_result_limit(),
+            )
+            if soft:
+                soft = prefer_dial_and_case_matches(
+                    soft,
                     interpretation,
                     limit=customer_result_limit(),
                 )
-                if soft:
-                    refreshed, revalidation_failed = await revalidate_products(
-                        soft,
-                        interpretation,
-                        _call_execute_tool,
+            # Prefer color-compatible rows when the customer named a dial/case hue.
+            color_tokens = preference_color_tokens(interpretation)
+            if color_tokens and soft:
+                color_hits = [
+                    product
+                    for product in soft
+                    if product_matches_color_tokens(product, color_tokens)
+                ]
+                if color_hits:
+                    soft = color_hits
+            if soft:
+                refreshed, revalidation_failed = await revalidate_products(
+                    soft,
+                    interpretation,
+                    _call_execute_tool,
+                )
+                if refreshed or not revalidation_failed:
+                    return guided_near_match_result(
+                        refreshed or soft,
+                        brand=brand or None,
+                        limit=customer_result_limit(),
                     )
-                    if refreshed or not revalidation_failed:
-                        from ..commerce_router import _product_lines
-
-                        final_products = refreshed or soft
-                        numbered_lines = [
-                            f"{position}. {line}"
-                            for position, line in enumerate(
-                                _product_lines(final_products, compact=True),
-                                start=1,
-                            )
-                        ]
-                        return AgentResult(
-                            reply_text=(
-                                f"Não achei a combinação exata da foto, mas estes "
-                                f"{brand} da mesma linha são os mais próximos:\n"
-                                + "\n".join(numbered_lines[:2])
-                                + "\n\nQuer ver algum desses, ou prefere outra cor/modelo?"
-                            ),
-                            intent="commerce",
-                            handoff_required=False,
-                            safety_reason="exact_product_ambiguous_brand",
-                            commercial_data={
-                                "products": final_products,
-                                "match_status": "ambiguous",
-                            },
-                            response_metadata={
-                                "presented_products": True,
-                                "product_resolution_state": "plausible_matches",
-                                "clear_active_product": True,
-                            },
-                        )
+            if brand:
+                # Ask a focused clarifying question instead of dumping the brand.
+                color_hint = ""
+                if color_tokens:
+                    color_hint = f" com {'/'.join(sorted(color_tokens)[:2])}"
                 return AgentResult(
                     reply_text=(
-                        f"Não confirmei essa referência exata agora, mas tenho peças {brand} no catálogo. "
-                        "Quer que eu mostre algumas opções próximas?"
+                        f"Não confirmei essa referência exata de {brand}{color_hint}. "
+                        "Você lembra a referência, o tamanho da caixa ou outra cor do visor?"
                     ),
                     intent="commerce",
                     handoff_required=False,
-                    safety_reason="exact_product_ambiguous_brand",
+                    safety_reason="commerce_clarification",
+                    response_metadata={
+                        "product_resolution_state": "needs_clarification",
+                        "clear_active_product": True,
+                    },
                 )
             return AgentResult(
                 reply_text="Não encontrei esse produto no catálogo agora.",
@@ -796,6 +836,27 @@ async def execute_compiled_product_retrieval(
                 handoff_required=False,
                 safety_reason="product_not_found",
             )
+        # Recommendation: offer near-matches before hard no-match.
+        soft = soft_confirm_candidates(
+            candidates,
+            interpretation,
+            limit=customer_result_limit(),
+        )
+        if soft:
+            from ..commerce_router import guided_near_match_result
+
+            refreshed, revalidation_failed = await revalidate_products(
+                soft,
+                interpretation,
+                _call_execute_tool,
+            )
+            if refreshed or not revalidation_failed:
+                return guided_near_match_result(
+                    refreshed or soft,
+                    brand=(interpretation.subject.brand or None),
+                    limit=customer_result_limit(),
+                    safety_reason="recommendation_near_match",
+                )
         return AgentResult(
             reply_text="Encontrei produtos no catálogo, mas nenhum atende aos critérios objetivos informados agora.",
             intent="commerce",

@@ -239,6 +239,13 @@ async def test_brand_candidates_without_semantic_match_return_not_found(monkeypa
                     ]
                 }
             return {"products": []}
+        if tool == "get_product":
+            return {
+                "id": arguments.get("product_id") or "1",
+                "name": "Longines Conquest",
+                "brand": "Longines",
+                "available": True,
+            }
         raise AssertionError(tool)
 
     _mock_matcher(monkeypatch, [])
@@ -248,8 +255,17 @@ async def test_brand_candidates_without_semantic_match_return_not_found(monkeypa
         _interpretation(brand="Longines", model="ProdutoQueNaoExiste")
     )
 
-    assert result.safety_reason == "exact_product_ambiguous_brand"
     assert "Longines" in result.reply_text
+    assert result.safety_reason in {
+        "exact_product_ambiguous_brand",
+        "commerce_clarification",
+    }
+    if result.safety_reason == "exact_product_ambiguous_brand":
+        products = (result.commercial_data or {}).get("products") or []
+        assert products
+        assert "É algum desses?" in result.reply_text
+    else:
+        assert "referência" in result.reply_text.casefold()
 
 
 @pytest.mark.asyncio

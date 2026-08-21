@@ -8,6 +8,16 @@ from .config import get_settings
 from .db import ensure_tables, get_conn
 
 # Families mapped to the integrity plan targets.
+_AMBIGUOUS = frozenset(
+    {
+        "ambiguous",
+        "ambiguous_product",
+        "product_ambiguous",
+        "exact_product_ambiguous_brand",
+        "ambiguous_purchase_item",
+        "recommendation_near_match",
+    }
+)
 _NOT_FOUND = frozenset(
     {
         "not_found",
@@ -17,15 +27,7 @@ _NOT_FOUND = frozenset(
         "catalog_empty",
     }
 )
-_AMBIGUOUS = frozenset(
-    {
-        "ambiguous",
-        "ambiguous_product",
-        "product_ambiguous",
-        "exact_product_ambiguous_brand",
-        "ambiguous_purchase_item",
-    }
-)
+_CLARIFY = frozenset({"commerce_clarification"})
 _FACTUAL = frozenset({"factual_validation_failed"})
 _TRAY = frozenset({"tray_adapter_unavailable", "tray_circuit_open"})
 _COMPLIANCE = frozenset(
@@ -58,6 +60,8 @@ def _classify(reason: str | None) -> str | None:
         return "not_found"
     if key in _AMBIGUOUS:
         return "ambiguous"
+    if key in _CLARIFY:
+        return "clarification"
     if key in _FACTUAL:
         return "factual_fail"
     if key in _TRAY:
@@ -139,6 +143,7 @@ def build_integrity_kpi_report(*, days: int = 7) -> dict[str, Any]:
         "ok": 0,
         "not_found": 0,
         "ambiguous": 0,
+        "clarification": 0,
         "factual_fail": 0,
         "tray_down": 0,
         "compliance_applied": 0,

@@ -284,7 +284,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v35"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v36"
 
 
 @app.get("/api/health")
@@ -1114,11 +1114,15 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
     dependencies=[Depends(verify_remarketing_cron)],
 )
 async def catalog_url_health_cron():
+    from app.catalog_brand_warm import refresh_top_brands_into_index
     from app.catalog_url_health import repair_catalog_storefront_urls
+    from app.tray_tools import execute_tool
 
     result = await repair_catalog_storefront_urls(limit=50, probe_live=True)
-    log_event("catalog.url_health.cron.completed", result)
-    return result
+    warm = await refresh_top_brands_into_index(execute_tool, brand_limit=8)
+    payload = {**result, "brand_warm": warm}
+    log_event("catalog.url_health.cron.completed", payload)
+    return payload
 
 
 @app.post(
