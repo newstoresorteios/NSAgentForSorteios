@@ -32,6 +32,9 @@ _CRITIQUE_TRIGGER_SIGNALS = frozenset(
         "tool_or_safety_failure",
         "fallback_after_partial_tooling",
         "reply_contains_payment_link",
+        "inbound_image_turn",
+        "multi_product_shortlist",
+        "compliance_reresearch",
     }
 )
 
@@ -67,13 +70,26 @@ def critique_risk_signals(
     threshold = int(
         getattr(settings, "agent_quality_judge_risk_threshold", 70) or 70
     )
-    return collect_judge_risk_signals(
+    signals = collect_judge_risk_signals(
         result=result,
         risk_score=risk_score,
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
         threshold=threshold,
     )
+    if (incoming.image_url or "").strip():
+        signals.append("inbound_image_turn")
+    products = (result.commercial_data or {}).get("products") or []
+    if isinstance(products, list) and len(products) >= 2:
+        signals.append("multi_product_shortlist")
+    compliance = (result.response_metadata or {}).get("outbound_compliance") or {}
+    if compliance.get("reresearch_applied") or (
+        isinstance(compliance.get("verdict"), dict)
+        and not compliance.get("verdict", {}).get("pass_check", True)
+    ):
+        signals.append("compliance_reresearch")
+    # Deduplicate while preserving order.
+    return list(dict.fromkeys(signals))
 
 
 def commerce_enforce_signal_hits(signals: list[str]) -> list[str]:
@@ -192,7 +208,7 @@ def should_run_quality_judge(
     factual_valid: bool = True,
     openai_call_count: int = 0,
 ) -> tuple[bool, str, list[str]]:
-    """Judge stays off by default; only risk/sample can turn it on when mode ≠ off."""
+    """Judge: risk/sample only when mode ≠ off (default shadow)."""
     if judge_mode == "off":
         return False, "judge_mode_off", []
     if incoming is None:

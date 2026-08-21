@@ -117,7 +117,9 @@ def resolve_effective_judge_mode(settings: Any | None = None) -> str:
     cfg = settings or get_settings()
     if is_emergency(cfg):
         return "off"
-    return str(getattr(cfg, "agent_quality_judge_mode", "off") or "off").strip().casefold()
+    return str(
+        getattr(cfg, "agent_quality_judge_mode", "shadow") or "shadow"
+    ).strip().casefold()
 
 
 def rollback_env_checklist() -> dict[str, str]:

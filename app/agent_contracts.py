@@ -231,13 +231,53 @@ def evaluate_policy(
     if decision.handoff_required:
         action = "review"
         reasons.append("handoff_required")
+    if decision.domain == "out_of_scope":
+        action = "review"
+        reasons.append("out_of_scope")
+
+    configured = str(mode or "shadow").strip().casefold()
+    if configured not in {"off", "shadow", "enforce"}:
+        configured = "shadow"
+    # Selective enforce: handoff / out-of-scope promote shadow → enforce.
+    effective = configured
+    if configured == "shadow" and (
+        decision.handoff_required or decision.domain == "out_of_scope"
+    ):
+        effective = "enforce"
+        reasons.append("policy_promote_handoff_or_scope")
 
     return DecisionSnapshot(
         decision=decision,
         factual_validation_required=bool(
             decision.risk.required_validations
         ),
-        policy_mode=mode,
+        policy_mode=effective,  # type: ignore[arg-type]
         policy_action=action,
         policy_reasons=list(dict.fromkeys(reasons)),
     )
+
+
+def apply_policy_enforcement(
+    result: AgentResult,
+    snapshot: DecisionSnapshot,
+) -> AgentResult:
+    """When policy is enforce on handoff/out-of-scope, keep handoff sticky."""
+    if snapshot.policy_mode != "enforce":
+        return result
+    reasons = set(snapshot.policy_reasons)
+    if not reasons & {"handoff_required", "out_of_scope", "critical_risk"}:
+        return result
+    fixed = result.model_copy(deep=True)
+    fixed.handoff_required = True
+    fixed.response_metadata = dict(fixed.response_metadata or {})
+    fixed.response_metadata["policy_enforcement"] = {
+        "applied": True,
+        "reasons": sorted(reasons),
+    }
+    if "out_of_scope" in reasons and not (fixed.reply_text or "").strip():
+        fixed.reply_text = (
+            "Esse assunto fica fora do que consigo tratar aqui no WhatsApp. "
+            "Vou te passar para um atendente humano da New Store."
+        )
+        fixed.safety_reason = "policy_out_of_scope_handoff"
+    return fixed

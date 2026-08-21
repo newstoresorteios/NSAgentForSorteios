@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from app.config import get_settings
-from app.agent_contracts import build_agent_decision, evaluate_policy
+from app.agent_contracts import (
+    apply_policy_enforcement,
+    build_agent_decision,
+    evaluate_policy,
+)
 from app.commerce_context import CommerceConversationState, evolve_commerce_state
 from app.customer_identity import (
     resolve_person_key_candidates,
@@ -233,6 +237,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         decision,
         mode=getattr(settings, "agent_policy_mode", "shadow"),
     )
+    result = apply_policy_enforcement(result, policy_snapshot)
     result.response_metadata["decision_snapshot"] = (
         policy_snapshot.model_dump(mode="json")
     )
@@ -345,7 +350,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             validation = result.response_metadata.get("factual_validation") or {}
             result.response_metadata["factual_validation_post_critique"] = True
             factual_ok = bool(validation.get("valid", True))
-        # Quality judge stays off by default; when enabled, only on risk/sample.
+        # Quality judge: shadow by default; runs on risk even when critique is shadow.
+        # Skip when critique already enforced a regenerate to avoid double LLM spend.
         run_judge, judge_gate_reason, _judge_signals = should_run_quality_judge(
             incoming=incoming,
             result=result,
@@ -354,7 +360,15 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             factual_valid=factual_ok,
             openai_call_count=openai_calls,
         )
-        if run_judge and critique_mode == "off":
+        critique_enforced = bool(
+            critique_report
+            and critique_mode == "enforce"
+            and (
+                getattr(critique_report, "regenerated", False)
+                or getattr(critique_report, "applied_handoff", False)
+            )
+        )
+        if run_judge and not critique_enforced:
             judge_report = await run_quality_judge(
                 incoming,
                 result,
@@ -368,7 +382,11 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             result.response_metadata = dict(result.response_metadata or {})
             result.response_metadata["quality_judge_gate"] = {
                 "run": run_judge,
-                "reason": judge_gate_reason,
+                "reason": (
+                    "skipped_after_critique_enforce"
+                    if critique_enforced
+                    else judge_gate_reason
+                ),
                 "critique_mode": critique_mode,
             }
     max_reply_chars = getattr(settings, "max_reply_chars", 900)

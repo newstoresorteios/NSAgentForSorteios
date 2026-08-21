@@ -107,3 +107,17 @@ def test_openai_factual_claim_is_marked_for_shadow_review():
 
     assert snapshot.policy_action == "review"
     assert snapshot.policy_reasons == ["facts_require_validation"]
+
+
+def test_policy_promotes_shadow_to_enforce_on_handoff():
+    result = AgentResult(
+        reply_text="Vou te passar para um atendente.",
+        intent="handoff",
+        handoff_required=True,
+        response_metadata={"domain": "commerce", "response_source": "deterministic"},
+    )
+    decision = build_agent_decision(_incoming(), result, openai_call_count=0)
+    snapshot = evaluate_policy(decision, mode="shadow")
+    assert snapshot.policy_mode == "enforce"
+    assert "handoff_required" in snapshot.policy_reasons
+    assert "policy_promote_handoff_or_scope" in snapshot.policy_reasons

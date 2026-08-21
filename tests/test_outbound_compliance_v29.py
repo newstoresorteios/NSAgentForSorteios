@@ -149,3 +149,67 @@ def test_compliance_flags_gold_ignored_in_shortlist():
     )
     assert report.verdict is not None
     assert "listed_options_ignore_requested_gold" in report.verdict.issues
+
+    fixed, applied = apply_outbound_compliance(
+        incoming=incoming,
+        result=result,
+        interpretation=interpretation,
+    )
+    assert applied.applied is True
+    assert applied.reresearch_applied is True
+    assert "dourado" in (fixed.reply_text or "").casefold()
+    assert fixed.safety_reason == "compliance_preference_reresearch"
+
+
+def test_compliance_reresearch_surfaces_gold_match():
+    incoming = IncomingMessage(
+        text="quero bulova dourado com visor preto",
+        channel="whatsapp",
+    )
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"brand": "Bulova", "product_type": "relógio"},
+        preferences={"color": "preto", "material": "dourado"},
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    result = AgentResult(
+        reply_text=(
+            "Encontrei opções com visor preto, mas nenhum veio confirmado "
+            "em dourado nessa filtragem."
+        ),
+        intent="commerce",
+        handoff_required=False,
+        commercial_data={
+            "products": [
+                {"id": "1", "name": "Bulova Marine Star preto 96A288"},
+                {
+                    "id": "2",
+                    "name": "Relogio Bulova Marine Star preto com dourado 98B278",
+                    "url": "https://www.newstorerj.com.br/relogios/relogios-bulova/x",
+                },
+                {"id": "3", "name": "Bulova Classic preto 96C131"},
+            ]
+        },
+        response_metadata={"domain": "commerce"},
+    )
+    report = check_outbound_compliance(
+        incoming=incoming,
+        result=result,
+        interpretation=interpretation,
+    )
+    assert report.verdict is not None
+    assert "false_negative_gold_case" in report.verdict.issues
+
+    fixed, applied = apply_outbound_compliance(
+        incoming=incoming,
+        result=result,
+        interpretation=interpretation,
+    )
+    assert applied.reresearch_applied is True
+    products = (fixed.commercial_data or {}).get("products") or []
+    assert products
+    assert "dourado" in products[0]["name"].casefold()
+    assert "98B278" in (fixed.reply_text or "")

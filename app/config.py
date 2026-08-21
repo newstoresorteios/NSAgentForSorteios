@@ -354,7 +354,7 @@ class Settings(BaseSettings):
         le=1440,
     )
     agent_quality_judge_mode: Literal["off", "shadow", "enforce"] = Field(
-        default="off",
+        default="shadow",
         alias="AGENT_QUALITY_JUDGE_MODE",
     )
     agent_quality_judge_risk_threshold: int = Field(

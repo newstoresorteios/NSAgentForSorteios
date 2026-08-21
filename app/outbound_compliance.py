@@ -1,6 +1,8 @@
 """Deterministic outbound compliance checks (preference fit + dead links).
 
 Runs before send as a lightweight "juiz" without an extra LLM call.
+When preference shortlists miss dial/case constraints, attempt an in-memory
+re-rank/re-search over presented products before shipping the reply.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from .models import AgentResult, IncomingMessage, SalesInterpretation
 from .product_retrieval import (
     preference_case_finish_tokens,
     preference_color_tokens,
+    prefer_dial_and_case_matches,
     product_matches_case_finish_tokens,
     product_matches_color_tokens,
 )
@@ -31,6 +34,7 @@ class ComplianceReport(BaseModel):
     mode: Literal["off", "shadow", "enforce"] = "enforce"
     verdict: ComplianceVerdict | None = None
     applied: bool = False
+    reresearch_applied: bool = False
 
 
 _URL_RE = re.compile(r"https?://[^\s)>\]]+", flags=re.IGNORECASE)
@@ -48,6 +52,97 @@ def _presented_products(result: AgentResult) -> list[dict[str, Any]]:
     commercial = result.commercial_data or {}
     products = commercial.get("products") or []
     return [p for p in products if isinstance(p, dict)]
+
+
+def _format_preference_shortlist(products: list[dict[str, Any]]) -> str:
+    from .commerce_router import _product_lines
+
+    lines = _product_lines(products[:3], compact=True)
+    numbered = [f"{index}. {line}" for index, line in enumerate(lines, start=1)]
+    return "\n".join(numbered)
+
+
+def _reresearch_preference_shortlist(
+    *,
+    result: AgentResult,
+    interpretation: SalesInterpretation,
+    issues: set[str],
+) -> tuple[AgentResult, bool]:
+    """Rebuild shortlist from preference-compatible products when possible."""
+    products = _presented_products(result)
+    if not products or interpretation is None:
+        return result, False
+    ranked = prefer_dial_and_case_matches(products, interpretation, limit=3)
+    if not ranked:
+        return result, False
+
+    color_tokens = preference_color_tokens(interpretation)
+    case_tokens = preference_case_finish_tokens(interpretation)
+    goldish = bool({"dourado", "gold", "golden", "ouro"} & set(case_tokens))
+
+    improved = ranked
+    if goldish:
+        gold_hits = [
+            product
+            for product in ranked
+            if product_matches_case_finish_tokens(product, case_tokens)
+            and (
+                not color_tokens
+                or product_matches_color_tokens(product, color_tokens)
+            )
+        ]
+        if gold_hits:
+            improved = gold_hits
+        elif "listed_options_ignore_requested_gold" in issues:
+            # No gold in the presented pool — honest ask instead of fake list.
+            fixed = result.model_copy(deep=True)
+            fixed.reply_text = (
+                "Não fechei dourado com visor preto nessas opções. "
+                "Quer que eu busque só as combinações dourado + mostrador preto?"
+            )
+            fixed.safety_reason = "compliance_preference_reresearch"
+            fixed.response_metadata = dict(fixed.response_metadata or {})
+            fixed.response_metadata["compliance_reresearch"] = {
+                "reason": "no_gold_in_presented_pool",
+                "pending_hint": "search_gold_black_dial",
+            }
+            return fixed, True
+        else:
+            return result, False
+    elif color_tokens:
+        dial_hits = [
+            product
+            for product in ranked
+            if product_matches_color_tokens(product, color_tokens)
+        ]
+        if not dial_hits:
+            return result, False
+        improved = dial_hits
+
+    if [p.get("id") or p.get("name") for p in improved] == [
+        p.get("id") or p.get("name") for p in products[: len(improved)]
+    ]:
+        # Same order / same set — nothing to rewrite unless false_negative text.
+        if "false_negative_gold_case" not in issues:
+            return result, False
+
+    fixed = result.model_copy(deep=True)
+    commercial = dict(fixed.commercial_data or {})
+    commercial["products"] = improved
+    fixed.commercial_data = commercial
+    body = _format_preference_shortlist(improved)
+    fixed.reply_text = (
+        "Ajustei a lista para ficar mais perto do que você pediu "
+        "(cor do visor + acabamento):\n\n"
+        f"{body}\n\nQual deles mais chega perto do que você imaginou?"
+    )
+    fixed.safety_reason = "compliance_preference_reresearch"
+    fixed.response_metadata = dict(fixed.response_metadata or {})
+    fixed.response_metadata["compliance_reresearch"] = {
+        "reason": "reranked_presented_products",
+        "product_ids": [str(p.get("id") or "") for p in improved],
+    }
+    return fixed, True
 
 
 def check_outbound_compliance(
@@ -96,15 +191,11 @@ def check_outbound_compliance(
                     "nenhum veio confirmado em dourado",
                     "nenhum confirmado em dourado",
                     "sem dourado",
-                    "não encontrei.*dourado",
                 )
             )
-            # Saying "no gold" while gold+dial matches exist in commercial_data
-            # is a retrieval/presentation bug — catch when products actually have gold.
             if gold_hits and denied_gold:
                 issues.append("false_negative_gold_case")
             if gold_hits == 0 and not denied_gold and len(products) >= 2:
-                # Listed options without admitting they miss the gold ask.
                 if "dourado" in _fold(text) or "gold" in _fold(text):
                     issues.append("listed_options_ignore_requested_gold")
 
@@ -144,7 +235,7 @@ def apply_outbound_compliance(
     result: AgentResult,
     interpretation: SalesInterpretation | None = None,
 ) -> tuple[AgentResult, ComplianceReport]:
-    """Attach report; rewrite the worst dead-link photo fallbacks."""
+    """Attach report; rewrite dead links; re-rank preference shortlists."""
     report = check_outbound_compliance(
         incoming=incoming,
         result=result,
@@ -160,7 +251,6 @@ def apply_outbound_compliance(
 
     issues = set(verdict.issues)
     if issues & {"dead_product_url_in_reply", "photo_fallback_dead_link"}:
-        # Never ship a broken "link oficial".
         name = None
         products = _presented_products(fixed)
         if products:
@@ -175,8 +265,28 @@ def apply_outbound_compliance(
         report = report.model_copy(update={"applied": True})
         fixed.response_metadata["outbound_compliance"] = report.model_dump(mode="json")
 
+    preference_issues = issues & {
+        "listed_options_ignore_requested_gold",
+        "false_negative_gold_case",
+        "presented_products_miss_dial_color",
+    }
+    if preference_issues and interpretation is not None:
+        fixed, researched = _reresearch_preference_shortlist(
+            result=fixed,
+            interpretation=interpretation,
+            issues=preference_issues,
+        )
+        if researched:
+            report = report.model_copy(
+                update={"applied": True, "reresearch_applied": True}
+            )
+            fixed.response_metadata = dict(fixed.response_metadata or {})
+            fixed.response_metadata["outbound_compliance"] = report.model_dump(
+                mode="json"
+            )
+            return fixed, report
+
     if "listed_options_ignore_requested_gold" in issues:
-        # Soft rewrite: be honest that listed items are not gold.
         if "dourado" not in (fixed.reply_text or "").casefold():
             fixed.reply_text = (
                 (fixed.reply_text or "").rstrip()
@@ -187,5 +297,14 @@ def apply_outbound_compliance(
             fixed.response_metadata["outbound_compliance"] = report.model_dump(
                 mode="json"
             )
+
+    if "persona_identity_leak" in issues:
+        fixed.reply_text = (
+            "Sou o Crono da New Store Relógios. Em que posso te ajudar "
+            "com relógios?"
+        )
+        fixed.safety_reason = "persona_compliance_rewrite"
+        report = report.model_copy(update={"applied": True})
+        fixed.response_metadata["outbound_compliance"] = report.model_dump(mode="json")
 
     return fixed, report
