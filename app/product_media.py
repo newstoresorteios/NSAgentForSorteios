@@ -78,25 +78,47 @@ def _http_url(value: Any) -> str | None:
     return None
 
 
+def normalize_storefront_brand_path(url: str | None) -> str | None:
+    """Rewrite /relogios-{brand}/… → /relogios/relogios-{brand}/… when needed."""
+    if not isinstance(url, str) or not url.strip():
+        return None
+    primary = url.strip()
+    parsed = urlparse(primary)
+    path = parsed.path or ""
+    if re.match(r"^/relogios-[^/]+/", path) and not path.startswith("/relogios/relogios-"):
+        rebuilt = urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                "/relogios" + path,
+                "",
+                parsed.query,
+                "",
+            )
+        )
+        return rebuilt
+    return primary
+
+
 def official_product_url(product: dict[str, Any]) -> str | None:
     """Normalize the current string contract and the legacy protocol map."""
     value = product.get("url")
     direct_https = _https_url(value)
     if direct_https:
-        return direct_https
+        return normalize_storefront_brand_path(direct_https)
     if isinstance(value, dict):
         for key in ("https", "url", "link"):
             found = _https_url(value.get(key))
             if found:
-                return found
+                return normalize_storefront_brand_path(found)
         direct_http = _http_url(value.get("http"))
         if direct_http:
-            return direct_http
+            return normalize_storefront_brand_path(direct_http)
         for key in ("url", "link"):
             found = _http_url(value.get(key))
             if found:
-                return found
-    return _http_url(value)
+                return normalize_storefront_brand_path(found)
+    return normalize_storefront_brand_path(_http_url(value))
 
 
 def _is_probeable_storefront(url: str) -> bool:

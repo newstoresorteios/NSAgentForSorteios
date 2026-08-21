@@ -14,6 +14,10 @@
   ],
   "crons": [
     {
+      "path": "/api/cron/catalog-url-health",
+      "schedule": "15 5 * * *"
+    },
+    {
       "path": "/api/cron/tray-keepalive",
       "schedule": "*/10 * * * *"
     },

@@ -273,6 +273,8 @@ class CatalogIndexRepository:
 
 def row_to_product_dict(row: dict[str, Any]) -> dict[str, Any]:
     """Map index row to Tray-like product dict for discovery (not final authority)."""
+    from .product_media import normalize_storefront_brand_path
+
     freshness = row.get("freshness_at")
     return {
         "id": row.get("product_id"),
@@ -293,7 +295,7 @@ def row_to_product_dict(row: dict[str, Any]) -> dict[str, Any]:
         ),
         "stock": row.get("stock"),
         "available": row.get("available"),
-        "url": row.get("url"),
+        "url": normalize_storefront_brand_path(row.get("url")) or row.get("url"),
         "image_url": row.get("image_url"),
         "tenant_id": row.get("tenant_id"),
         "_factual_source": "catalog_index",

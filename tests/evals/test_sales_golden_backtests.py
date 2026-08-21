@@ -136,6 +136,45 @@ def test_prefer_ready_stock_reorders_shortlist():
 
 
 @pytest.mark.offline_eval
+def test_golden_dourado_visor_preto_prefers_conjunction():
+    from app.models import SalesInterpretation
+    from app.preference_normalize import normalize_sales_interpretation
+    from app.product_retrieval import prefer_dial_and_case_matches
+
+    sales = normalize_sales_interpretation(
+        SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"brand": "Bulova", "product_type": "relógio"},
+            preferences={"color": "dourado"},
+            references_previous_context=False,
+            needs_clarification=False,
+            confidence=0.9,
+        ),
+        message_text="quero bulova dourado com o visor preto",
+    )
+    assert sales.preferences.color == "preto"
+    assert sales.preferences.material == "dourado"
+    ranked = prefer_dial_and_case_matches(
+        [
+            {
+                "id": "1",
+                "brand": "Bulova",
+                "name": "Bulova Marine Star automatico preto 96A288",
+            },
+            {
+                "id": "2",
+                "brand": "Bulova",
+                "name": "Bulova Marine Star preto com dourado 98B278",
+            },
+        ],
+        sales,
+        limit=2,
+    )
+    assert ranked[0]["id"] == "2"
+
+
+@pytest.mark.offline_eval
 def test_golden_brand_only_seiko_requires_qualification():
     import app.sales_agent as sales_agent
 

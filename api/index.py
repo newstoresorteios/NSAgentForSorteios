@@ -283,7 +283,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v31"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v32"
 
 
 @app.get("/api/health")
@@ -1098,6 +1098,26 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "skipped_reply": not bool(send_result),
         }
     )
+
+
+@app.get(
+    "/api/cron/catalog-url-health",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def catalog_url_health_cron():
+    from app.catalog_url_health import repair_catalog_storefront_urls
+
+    result = await repair_catalog_storefront_urls(limit=50, probe_live=True)
+    log_event("catalog.url_health.cron.completed", result)
+    return result
+
+
+@app.post(
+    "/api/cron/catalog-url-health",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def catalog_url_health_cron_manual():
+    return await catalog_url_health_cron()
 
 
 @app.get(
