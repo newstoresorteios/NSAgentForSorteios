@@ -186,6 +186,28 @@ def enrich_handoff_metadata(
     return result
 
 
+_INTEGRATION_HANDOFF_REASONS = frozenset(
+    {
+        "category_adapter_error",
+        "tray_authentication_failed",
+        "tray_connection_failed",
+    }
+)
+
+
+def apply_integration_failure_handoff(result: AgentResult) -> AgentResult:
+    """Persona: Falha de integração → encaminhar para humano."""
+    if result.handoff_required:
+        return result
+    reason = (result.safety_reason or "").strip()
+    if reason not in _INTEGRATION_HANDOFF_REASONS:
+        return result
+    return build_human_handoff_result(
+        reason=f"integration_failure:{reason}",
+        reply_text=HUMAN_HANDOFF_ACK_MESSAGE,
+    )
+
+
 def handoff_provider_payload(result: AgentResult) -> dict[str, Any] | None:
     handoff = (result.response_metadata or {}).get("handoff")
     if not isinstance(handoff, dict) or not handoff.get("required"):

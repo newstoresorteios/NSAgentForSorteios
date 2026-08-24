@@ -206,7 +206,7 @@ async def test_image_only_fragment_is_not_skipped_as_no_text(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_conversation_busy_returns_200_skip_not_503(monkeypatch):
+async def test_conversation_busy_database_lock_returns_200_skip(monkeypatch):
     import api.index as index
     from app.conversation_lock import ConversationLockUnavailable
 
@@ -236,6 +236,35 @@ async def test_conversation_busy_returns_200_skip_not_503(monkeypatch):
     assert response.json() == {
         "ok": True,
         "skipped": True,
+        "reason": "conversation_busy",
+    }
+
+
+@pytest.mark.asyncio
+async def test_conversation_local_lock_timeout_returns_503_retry(monkeypatch):
+    import api.index as index
+    from app.conversation_lock import ConversationLockUnavailable
+
+    async def lock_timeout(*_args, **_kwargs):
+        raise ConversationLockUnavailable("local_lock_timeout")
+
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
+    monkeypatch.setattr(index, "acquire_conversation_lock", lock_timeout)
+    monkeypatch.setattr(
+        index,
+        "claim_inbound_message",
+        lambda _message: (_ for _ in ()).throw(
+            AssertionError("lock timeout must not claim")
+        ),
+    )
+
+    response = await _post_webhook(index, _fragment_payload())
+
+    assert response.status_code == 503
+    assert response.headers.get("retry-after") == "5"
+    assert response.json() == {
+        "ok": False,
+        "retry": True,
         "reason": "conversation_busy",
     }
 

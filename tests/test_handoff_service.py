@@ -1,4 +1,5 @@
 from app.handoff_service import (
+    apply_integration_failure_handoff,
     build_human_handoff_result,
     enrich_handoff_metadata,
     handoff_provider_payload,
@@ -56,3 +57,18 @@ def test_enrich_handoff_keeps_existing_reason():
     enriched = enrich_handoff_metadata(incoming, result)
     assert enriched.response_metadata["handoff"]["reason"] == "blocked_topic:apostar"
     assert enriched.response_metadata["handoff"]["channel"] == "instagram"
+
+
+def test_integration_failure_triggers_handoff():
+    result = AgentResult(
+        reply_text="Não consegui consultar a loja.",
+        intent="product_search",
+        handoff_required=False,
+        safety_reason="tray_authentication_failed",
+    )
+    handoff = apply_integration_failure_handoff(result)
+    assert handoff.handoff_required is True
+    assert handoff.response_metadata["handoff"]["reason"] == (
+        "integration_failure:tray_authentication_failed"
+    )
+    assert "instantes" in handoff.reply_text.lower()

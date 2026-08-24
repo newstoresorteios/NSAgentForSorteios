@@ -41,7 +41,7 @@ from app.conversation_lock import (
     conversation_lock_key,
     release_conversation_lock,
 )
-from app.handoff_service import handoff_provider_payload
+from app.handoff_service import apply_integration_failure_handoff, handoff_provider_payload
 from app.remarketing import run_remarketing_batch, sync_remarketing_interaction
 from app.product_image_index import run_product_image_index_batch
 from app.runtime_context import (
@@ -284,7 +284,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v39"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v40"
 
 
 @app.get("/api/health")
@@ -841,6 +841,24 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                             reason="conversation_busy",
                         )
                 else:
+                    if lock_error == "local_lock_timeout":
+                        log_event(
+                            "brevo.webhook.retry",
+                            {
+                                "reason": "conversation_busy",
+                                "channel": incoming.channel,
+                                "lock_timeout_seconds": lock_timeout,
+                            },
+                        )
+                        return JSONResponse(
+                            {
+                                "ok": False,
+                                "retry": True,
+                                "reason": "conversation_busy",
+                            },
+                            status_code=503,
+                            headers={"Retry-After": "5"},
+                        )
                     return _skip_webhook_event(
                         event_name=event_name,
                         reason="conversation_busy",
@@ -939,6 +957,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         },
     )
     agent_result = await process_incoming_message(incoming, customer_context)
+    agent_result = apply_integration_failure_handoff(agent_result)
 
     log_event(
         "brevo.webhook.agent_result",
