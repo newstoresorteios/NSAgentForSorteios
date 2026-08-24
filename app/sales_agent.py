@@ -169,16 +169,17 @@ lista o que o agente pode fazer; não afirme incapacidade se a capacidade existi
 """.strip()
 
 SALES_CLARIFICATION_INSTRUCTIONS = """
-Você é um vendedor da NewStore no WhatsApp.
-Faça uma resposta curta para obter no máximo DUAS informações relacionadas que
-realmente mudariam a busca. Considere o histórico, a interpretação e DISCOVERY_STATE.
-Não transforme a conversa em questionário. Não pergunte novamente informação já
-fornecida, presente em known_preferences ou em recent_questions. Não pergunte por uma
-preferência listada em explicit_no_preferences; isso significa que o cliente disse que
-não possui preferência naquele critério.
-Não afirme produto, preço, estoque, promoção ou condição comercial, pois a Tray ainda
-não foi consultada. Responda apenas com uma frase curta ou até duas perguntas simples
-e relacionadas.
+Você está em modo de qualificação comercial (contenção antes do catálogo).
+
+Regras de contenção (não invente política comercial):
+- Faça UMA pergunta curta alinhada à persona ativa e às regras de qualificação dela.
+- Use o bloco PERSONA / qualification prompts do contexto quando existirem.
+- Não transforme a conversa em questionário.
+- Não pergunte de novo o que já está em known_preferences, recent_questions
+  ou explicit_no_preferences.
+- Não afirme produto, preço, estoque ou condição comercial — a loja ainda não
+  foi consultada.
+- Não invente tom, identidade ou texto que contradiga a persona.
 """.strip()
 
 OUT_OF_SCOPE_REPLY = "Posso ajudar com produtos, compras, pedidos e informações da NewStore, além dos sorteios da loja."
@@ -1110,11 +1111,14 @@ async def generate_clarification_reply(
     discovery_state: dict[str, Any] | None = None,
 ) -> AgentResult:
     settings = get_settings()
-    deterministic_question = interpretation.clarification_question
-    if discovery_state and discovery_state.get("persona_qualification_required"):
+    persona_gate = bool(
+        isinstance(discovery_state, dict)
+        and discovery_state.get("persona_qualification_required")
+    )
+    persona_question = None
+    if persona_gate:
         persona_question = _persona_qualification_question(interpretation, discovery_state)
         if persona_question:
-            deterministic_question = persona_question
             interpretation = interpretation.model_copy(
                 update={
                     "needs_clarification": True,
@@ -1122,16 +1126,28 @@ async def generate_clarification_reply(
                     "ready_for_retrieval": False,
                 }
             )
+
+    # Prefer persona-sourced question as the containment hint; never invent copy.
+    deterministic_question = persona_question or interpretation.clarification_question
     if not deterministic_question or _comparison_needs_qualification(interpretation):
         if _comparison_needs_qualification(interpretation):
-            deterministic_question = _comparison_clarification_question(message, interpretation)
+            deterministic_question = _comparison_clarification_question(
+                message, interpretation
+            )
         else:
             deterministic_question = (
                 interpretation.clarification_question
                 or _persona_qualification_question(interpretation, discovery_state)
-                or "Qual caracter\u00edstica ou prefer\u00eancia \u00e9 mais importante para voc\u00ea?"
             )
-    if interpretation._source == "openai" and interpretation.clarification_question and not _comparison_needs_qualification(interpretation):
+
+    # Interpreter-authored question can be customer-facing only when the persona
+    # gate is NOT forcing qualification (otherwise rephrase with persona).
+    if (
+        interpretation._source == "openai"
+        and interpretation.clarification_question
+        and not _comparison_needs_qualification(interpretation)
+        and not persona_gate
+    ):
         return _mark_sales_result(
             AgentResult(
                 reply_text=html.unescape(interpretation.clarification_question.strip()),
@@ -1146,9 +1162,10 @@ async def generate_clarification_reply(
             used_tray=used_tray,
         )
     if not settings.openai_api_key:
+        reply = (deterministic_question or "").strip()
         return _mark_sales_result(
             AgentResult(
-                reply_text=deterministic_question,
+                reply_text=reply or (persona_question or ""),
                 intent="commerce",
                 handoff_required=False,
                 safety_reason="commerce_clarification",
@@ -1162,10 +1179,26 @@ async def generate_clarification_reply(
         )
 
     normalized_history = _normalize_interpreter_history(recent_turns)
+    persona_runtime = None
+    try:
+        from .persona_runtime import get_persona_runtime
+
+        persona_runtime = get_persona_runtime()
+    except Exception:
+        persona_runtime = None
+    persona_blocks: list[str] = [SALES_CLARIFICATION_INSTRUCTIONS]
+    if persona_runtime and persona_runtime.enabled:
+        policy = (persona_runtime.prompt_policy_block() or "").strip()
+        skills = (persona_runtime.sales_skills_block(max_items=8) or "").strip()
+        if policy:
+            persona_blocks.append(policy)
+        if skills:
+            persona_blocks.append(skills)
     request_context = {
         "current_message": message.text,
         "interpretation": interpretation.model_dump(),
         "context_note": context_note,
+        "persona_qualification_hint": persona_question,
         "DISCOVERY_STATE": discovery_state
         or _discovery_state(
             interpretation,
@@ -1178,7 +1211,7 @@ async def generate_clarification_reply(
         from .openai_gateway import generate_text_output
 
         clarification_messages = [
-            {"role": "system", "content": SALES_CLARIFICATION_INSTRUCTIONS},
+            {"role": "system", "content": "\n\n".join(persona_blocks)},
             *normalized_history,
             {"role": "user", "content": json.dumps(request_context, ensure_ascii=False)},
         ]
@@ -1206,9 +1239,10 @@ async def generate_clarification_reply(
         )
     except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.clarification] failed", {"error_type": type(exc).__name__})
+        fallback = (deterministic_question or persona_question or "").strip()
         return _mark_sales_result(
             AgentResult(
-                reply_text=deterministic_question,
+                reply_text=fallback,
                 intent="commerce",
                 handoff_required=False,
                 safety_reason="commerce_clarification",
@@ -3446,8 +3480,29 @@ async def _handle_sales_message_inner(
             discovery_state=discovery_state,
         )
     if plan.get("intent") == "clarification" or vague_query:
+        clarification = str(plan.get("clarification_question") or "").strip()
+        if not clarification and interpretation is not None:
+            clarification = (
+                _persona_qualification_question(
+                    interpretation,
+                    discovery_state,
+                )
+                or str(interpretation.clarification_question or "").strip()
+            )
+        if not clarification:
+            return await generate_clarification_reply(
+                message=message,
+                interpretation=interpretation
+                or SalesInterpretation(
+                    domain="commerce",
+                    goal="discover",
+                    needs_clarification=True,
+                ),
+                recent_turns=recent_turns,
+                discovery_state=discovery_state,
+            )
         result = AgentResult(
-            reply_text=str(plan.get("clarification_question") or "Qual característica ou preferência é mais importante para você?"),
+            reply_text=clarification,
             intent="commerce",
             handoff_required=False,
             safety_reason="commerce_clarification",

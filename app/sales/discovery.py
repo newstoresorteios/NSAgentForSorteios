@@ -253,19 +253,36 @@ def _persona_qualification_question(
     interpretation: SalesInterpretation,
     discovery_state: dict[str, Any] | None = None,
 ) -> str | None:
+    """Pick the next unused qualification prompt from the active persona only.
+
+    Containment (which dim is missing) lives in code; the spoken question text
+    must come from ChatBo/persona — never invent reply copy here.
+    """
     try:
         from ..persona_runtime import get_persona_runtime
 
         runtime = get_persona_runtime()
     except Exception:
         runtime = None
-    prompts = list(getattr(runtime, "qualification_prompts", None) or [])
+    prompts = [
+        str(item).strip()
+        for item in (getattr(runtime, "qualification_prompts", None) or [])
+        if str(item or "").strip()
+    ]
     if not prompts:
-        prompts = [
-            "Você já tem um modelo em mente ou quer uma sugestão?",
-            "Qual faixa de investimento você tem em mente?",
-            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
-        ]
+        return None
+
+    # Prefer real questions from the persona list (skip bare field labels).
+    question_like = [
+        item
+        for item in prompts
+        if "?" in item
+        or item.casefold().startswith(
+            ("como ", "qual ", "você ", "voce ", "é ", "e ", "para ")
+        )
+    ]
+    if question_like:
+        prompts = question_like
 
     snap = (discovery_state or {}).get("qualification")
     if not isinstance(snap, dict):
@@ -312,16 +329,6 @@ def _persona_qualification_question(
     for prompt in prompts:
         if _unused(prompt):
             return prompt
-    if interpretation.subject.brand:
-        if not snap.get("has_budget"):
-            return (
-                f"Beleza, {interpretation.subject.brand}. "
-                "Qual faixa de investimento você tem em mente?"
-            )
-        return (
-            f"Beleza, {interpretation.subject.brand}. "
-            "Qual estilo você prefere: mergulho, esportivo ou mais clássico?"
-        )
     return prompts[0] if prompts else None
 
 
@@ -368,24 +375,12 @@ def _mentioned_watch_brands(text: str | None) -> list[str]:
 
 
 def _comparison_clarification_question(message: IncomingMessage, interpretation: SalesInterpretation) -> str:
-    brands = _mentioned_watch_brands(message.text)
-    if interpretation.subject.brand and interpretation.subject.brand not in brands:
-        brands.insert(0, interpretation.subject.brand)
-    if len(brands) >= 2:
-        labeled = " e ".join(brands[:2])
-        return (
-            f"Beleza, {labeled}. Qual modelo de cada um voc\u00ea tem em mente, "
-            "ou o que mais pesa agora: estilo, or\u00e7amento ou uso?"
-        )
-    if brands:
-        return (
-            f"Beleza, {brands[0]}. Qual modelo voc\u00ea quer comparar, "
-            "ou o que mais pesa: estilo, or\u00e7amento ou uso?"
-        )
-    return (
-        "Qual modelo voc\u00ea quer comparar, ou o que mais pesa agora: "
-        "estilo, or\u00e7amento ou uso?"
-    )
+    """Containment for compare-without-SKU: prefer a persona qualification prompt."""
+    persona_q = _persona_qualification_question(interpretation, {})
+    if persona_q:
+        return persona_q
+    # No persona prompts loaded — ask interpreter/LLM path instead of inventing copy.
+    return (interpretation.clarification_question or "").strip()
 
 
 def _discovery_state(
