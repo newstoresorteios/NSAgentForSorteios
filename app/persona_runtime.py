@@ -178,6 +178,8 @@ class PersonaRuntimeConfig(BaseModel):
             "- Liberar catálogo quando houver brand+budget, brand+style, "
             "brand+urgência, type+budget+style, modelo/referência explícitos "
             "ou stop_clarification.\n"
+            "- Cor/material (ex.: dourado, automático) NÃO liberam catálogo "
+            "sozinhos com a marca — ainda falta estilo real ou faixa.\n"
             "- Modelo/referência explícitos liberam busca imediata.\n"
             "- Perguntas de desconto/PIX sem fechar compra = "
             "payment_request_kind=informational e purchase_action=null.\n"

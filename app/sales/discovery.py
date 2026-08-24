@@ -151,7 +151,9 @@ def _persona_requires_qualification() -> bool:
     return bool(runtime and runtime.enabled and runtime.require_qualification_before_catalog)
 
 
-_QUAL_STYLE_DIMS = frozenset({"style", "occasion", "material", "color"})
+# Only real style/occasion unlock brand+style. Color/material are catalog filters
+# (e.g. "dourado", "automático") and must NOT skip Crono's qualification questions.
+_QUAL_STYLE_DIMS = frozenset({"style", "occasion"})
 _QUAL_BUDGET_DIMS = frozenset({"budget"})
 _QUAL_MAX_QUESTIONS = 2
 

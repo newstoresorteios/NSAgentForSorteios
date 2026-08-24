@@ -230,6 +230,56 @@ def test_persona_qualification_unlocks_on_brand_plus_budget():
         persona_runtime.reset_persona_runtime(token)
 
 
+def test_brand_plus_color_or_material_still_requires_qualification():
+    """'quero um bulova dourado automatico' must ask faixa/estilo — not search yet."""
+    import app.persona_runtime as persona_runtime
+    import app.sales_agent as sales_agent
+
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Qual faixa de investimento você tem em mente?",
+            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
+        ],
+    )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="find",
+            subject={"product_type": "relógio", "brand": "Bulova"},
+            preferences={
+                "color": "dourado",
+                "material": "dourado",
+                "attributes": ["automático"],
+            },
+            information_needed=["catalog"],
+            references_previous_context=False,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            confidence=0.92,
+        )
+        state = sales_agent._discovery_state(
+            interpretation,
+            [],
+            message_text="quero um bulova dourado automatico",
+        )
+        assert state["persona_qualification_required"] is True
+        assert state["force_retrieval"] is False
+        assert state["qualification"]["ready"] is False
+        assert state["qualification"]["has_style"] is False
+        question = sales_agent._persona_qualification_question(interpretation, state)
+        assert question
+        folded = question.casefold()
+        assert "investimento" in folded or "esporte" in folded or "estilo" in folded
+    finally:
+        persona_runtime.reset_persona_runtime(token)
+
+
 def test_open_browse_scrubs_stale_budget_and_asks_investment():
     import app.persona_runtime as persona_runtime
     import app.sales_agent as sales_agent
