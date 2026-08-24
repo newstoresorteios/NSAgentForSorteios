@@ -34,6 +34,11 @@ _GREETING_LABEL_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+_FAREWELL_RE = re.compile(
+    r"^\s*(at[eé]|tchau|obrigad[oa]|valeu|flw|falou|por hoje)\b",
+    flags=re.IGNORECASE,
+)
+
 
 def sanitize_greeting_reply(text: str | None) -> str:
     """Strip instruction labels the model may echo from persona prose."""
@@ -196,3 +201,17 @@ def choose_greeting_reply(recent_turns: list[dict[str, Any]] | None = None) -> s
     if not already_said(fallback, recent_turns):
         return fallback
     return "Estou aqui — o que você procura?"
+
+
+def is_farewell_message(text: str | None) -> bool:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return False
+    return bool(_FAREWELL_RE.match(_fold(cleaned)))
+
+
+def choose_farewell_reply(name: str | None = None) -> str:
+    first = str(name or "").strip().split()[0] if name and str(name).strip() else None
+    if first:
+        return f"Até, {first}! Qualquer coisa, é só chamar."
+    return "Até! Qualquer coisa, é só chamar."

@@ -6,6 +6,7 @@ from app.preference_normalize import (
     is_gender_only_label,
     normalize_sales_interpretation,
     preference_gender_label,
+    recent_user_context_text,
 )
 from app.product_retrieval import ProductRetrievalCompiler, preference_gender_tokens
 
@@ -71,3 +72,37 @@ def test_gender_only_label_never_exact():
     )
     plan = ProductRetrievalCompiler.compile(normalized)
     assert plan.mode == "recommendation"
+
+
+def test_normalize_prx_integrated_bracelet_and_brushed_case_from_context():
+    interpretation = _base(
+        subject={"product_type": "relógio", "brand": "Tissot"},
+        preferences={},
+        needs_clarification=False,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+    )
+    context = (
+        "Quero o Tissot PRX com pulseira integrada\n"
+        "A caixa é rajada, escovada"
+    )
+    normalized = normalize_sales_interpretation(
+        interpretation,
+        message_text="tem disponível?",
+        context_text=context,
+    )
+    attrs = {item.casefold() for item in normalized.preferences.attributes}
+    assert "pulseira_integrada" in attrs
+    assert "acabamento_escovado" in attrs
+    assert normalized.subject.model == "PRX"
+    assert normalized.preferences.material == "prata"
+
+
+def test_recent_user_context_text_collects_user_turns():
+    turns = [
+        {"role": "assistant", "content": "Olá"},
+        {"role": "user", "content": "PRX integrado"},
+        {"role": "user", "content": "caixa escovada"},
+    ]
+    assert "PRX integrado" in recent_user_context_text(turns)
+    assert "caixa escovada" in recent_user_context_text(turns)

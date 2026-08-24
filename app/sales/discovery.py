@@ -7,6 +7,8 @@ import unicodedata
 from typing import Any
 
 from ..models import IncomingMessage, SalesInterpretation
+from ..commerce_context import CommerceConversationState
+from ..order_service import has_active_order_context, is_order_lookup_request
 
 
 _OPEN_BROWSE_RE = re.compile(
@@ -389,6 +391,7 @@ def _discovery_state(
     recent_turns: list[dict[str, Any]] | None,
     *,
     message_text: str | None = None,
+    commerce_state: CommerceConversationState | None = None,
 ) -> dict[str, Any]:
     clarification_count = _consecutive_clarification_count(recent_turns)
     known_preferences = _scrub_stale_budget_for_open_browse(
@@ -441,6 +444,13 @@ def _discovery_state(
         "force_retrieval": force_retrieval,
         "comparison_without_sku": comparison_without_sku,
         "persona_qualification_required": False,
+        "order_context_blocks_clarification": (
+            has_active_order_context(commerce_state)
+            and is_order_lookup_request(
+                message_text,
+                commerce_state=commerce_state,
+            )
+        ),
     }
     if _needs_persona_qualification(interpretation, state):
         state["force_retrieval"] = False
@@ -453,6 +463,8 @@ def _needs_clarification_before_retrieval(
     plan: dict[str, Any],
     discovery_state: dict[str, Any],
 ) -> bool:
+    if discovery_state.get("order_context_blocks_clarification"):
+        return False
     if discovery_state.get("persona_qualification_required"):
         return True
     if discovery_state["force_retrieval"]:

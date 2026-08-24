@@ -2,7 +2,9 @@
 
 from app.greeting_policy import (
     already_said,
+    choose_farewell_reply,
     choose_greeting_reply,
+    is_farewell_message,
     is_generic_greeting_reply,
 )
 from app.guardrails import detect_trade_in_or_appraisal_request
@@ -100,3 +102,10 @@ def test_fast_critique_dedupes_identical_greeting():
     assert skip == "fast_greeting_dedupe"
     assert fixed.reply_text != "Olá! Como posso ajudar?"
     assert verdict is not None
+
+
+def test_farewell_detector_and_reply():
+    assert is_farewell_message("Até") is True
+    assert is_farewell_message("obrigado") is True
+    assert is_farewell_message("quero um relógio") is False
+    assert "Felipe" in choose_farewell_reply("Felipe Newbold")

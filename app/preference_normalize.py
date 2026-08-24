@@ -198,6 +198,66 @@ _CASE_STEEL_RE = re.compile(
     r"\b(?P<case>prata|silver|a[cç]o|steel|inox)\b",
     flags=re.IGNORECASE,
 )
+_INTEGRATED_BRACELET_RE = re.compile(
+    r"(?:pulseira|caixa)\s+integrad|integrad[ao]\s+(?:com\s+)?(?:a\s+)?pulseira",
+    flags=re.IGNORECASE,
+)
+_BRUSHED_CASE_RE = re.compile(
+    r"caixa\s+(?:rajad[ao]|escovad[ao])|"
+    r"(?:rajad[ao]|escovad[ao])\s+(?:na\s+)?caixa|"
+    r"acabamento\s+escovad[ao]|brushed\s+case",
+    flags=re.IGNORECASE,
+)
+_PRX_RE = re.compile(r"\bprx\b", flags=re.IGNORECASE)
+
+
+def recent_user_context_text(
+    recent_turns: list[dict[str, Any]] | None,
+    *,
+    limit: int = 8,
+) -> str:
+    parts: list[str] = []
+    for turn in recent_turns or []:
+        if not isinstance(turn, dict) or turn.get("role") != "user":
+            continue
+        content = str(turn.get("content") or "").strip()
+        if content:
+            parts.append(content)
+    return "\n".join(parts[-limit:])
+
+
+def repair_style_preferences(
+    preferences: ProductPreferences,
+    subject: Any,
+    *,
+    message_text: str | None = None,
+    context_text: str | None = None,
+) -> None:
+    """Extract PRX integrated bracelet / brushed case cues spread across turns."""
+    combined = "\n".join(
+        part for part in (context_text or "", message_text or "") if part
+    )
+    folded = _fold(combined)
+    if not folded:
+        return
+
+    if _INTEGRATED_BRACELET_RE.search(combined):
+        _ensure_attribute(preferences, "pulseira_integrada")
+    if _BRUSHED_CASE_RE.search(combined) or (
+        "caixa" in folded and ("rajad" in folded or "escovad" in folded)
+    ):
+        _ensure_attribute(preferences, "acabamento_escovado")
+        material_fold = _fold(preferences.material)
+        color_fold = _fold(preferences.color)
+        if not material_fold or material_fold in {"aco", "steel", "inox"}:
+            if color_fold not in {"preto", "black"}:
+                preferences.material = "prata"
+    if _PRX_RE.search(combined):
+        model_fold = _fold(getattr(subject, "model", None))
+        if not model_fold or model_fold in {"relogio", "watch", "tissot"}:
+            subject.model = "PRX"
+        elif "prx" not in model_fold:
+            subject.model = f"{subject.model} PRX".strip()
 
 
 def repair_dial_and_case_preferences(
@@ -252,12 +312,16 @@ def normalize_sales_interpretation(
     interpretation: SalesInterpretation,
     *,
     message_text: str | None = None,
+    context_text: str | None = None,
 ) -> SalesInterpretation:
     """Fix gender misclassified as model/style and keep recommendation mode."""
     preferences = interpretation.preferences
     subject = interpretation.subject
+    combined_context = "\n".join(
+        part for part in (context_text or "", message_text or "") if part
+    )
     gender = detect_gender_label(
-        message_text,
+        combined_context,
         preferences.recipient,
         preferences.style,
         preferences.occasion,
@@ -285,7 +349,13 @@ def normalize_sales_interpretation(
         if budget is not None:
             preferences.budget_max = budget
 
-    repair_dial_and_case_preferences(preferences, message_text=message_text)
+    repair_dial_and_case_preferences(preferences, message_text=combined_context)
+    repair_style_preferences(
+        preferences,
+        subject,
+        message_text=message_text,
+        context_text=context_text,
+    )
 
     # After gender + budget, discovery answers are usually ready to search.
     if (

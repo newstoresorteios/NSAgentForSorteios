@@ -522,6 +522,36 @@ async def test_shipping_and_order_tools_normalize_internal_contracts():
 
 
 @pytest.mark.asyncio
+async def test_get_order_complete_merges_nested_shipping():
+    class OrderCompleteAdapter:
+        async def get_order_complete(self, order_id):
+            assert order_id == "25522"
+            return {
+                "order": {
+                    "order_id": 25522,
+                    "status": "ENVIADO",
+                    "status_group": "shipped",
+                },
+                "shipping": {
+                    "sending_code": "BR123456789BR",
+                    "tracking_url": "https://track.example/25522",
+                    "shipment": {"carrier": "Correios"},
+                },
+            }
+
+    status = await execute_tool(
+        "get_order_complete",
+        {"order_id": "25522"},
+        OrderCompleteAdapter(),
+    )
+    assert status["order_id"] == 25522
+    assert status["status"] == "ENVIADO"
+    assert status["sending_code"] == "BR123456789BR"
+    assert status["tracking_url"] == "https://track.example/25522"
+    assert status["shipment"] == {"carrier": "Correios"}
+
+
+@pytest.mark.asyncio
 async def test_list_orders_accepts_orders_envelope_for_session_reconciliation():
     class OrdersAdapter:
         async def list_orders(self, **kwargs):

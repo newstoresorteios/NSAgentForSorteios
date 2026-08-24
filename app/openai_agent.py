@@ -58,7 +58,12 @@ from .order_service import (
 from .payment_service import inspect_order_payment
 from .repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
 from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
-from .vip_profiles import build_vip_openai_context, get_vip_profile, pick_vip_nickname
+from .vip_profiles import (
+    build_vip_openai_context,
+    get_vip_profile,
+    pick_vip_address_name,
+    should_suppress_vip_nicknames,
+)
 from .user_preferences import detect_preferred_name_update
 from .tray_tools import TOOL_SCHEMAS, execute_tool
 from .sales_agent import (
@@ -69,7 +74,12 @@ from .sales_agent import (
     interpret_message,
     _is_greeting,
 )
-from .greeting_policy import choose_greeting_reply, sanitize_greeting_reply
+from .greeting_policy import (
+    choose_farewell_reply,
+    choose_greeting_reply,
+    is_farewell_message,
+    sanitize_greeting_reply,
+)
 
 
 PERSONA_GREETING_OPERATIONAL = """\
@@ -220,7 +230,18 @@ def build_agent_input(message: IncomingMessage, customer_context: dict, facts: d
     vip_block = ""
     vip = get_vip_profile(message.sender_phone)
     if vip:
-        nickname = pick_vip_nickname(vip, message.text)
+        history = customer_context.get("_conversation_turns") or customer_context.get(
+            "_model_conversation_turns"
+        )
+        suppress = should_suppress_vip_nicknames(
+            history,
+            current_text=message.text,
+        )
+        nickname = pick_vip_address_name(
+            vip,
+            seed=message.text,
+            suppress_nicknames=suppress,
+        )
         vip_block = f"\n\n{build_vip_openai_context(vip, nickname)}\n"
 
     display_name = facts.get("display_name") or customer_context.get("display_name")
@@ -728,6 +749,20 @@ async def _generate_agent_reply_async_inner(
                 used_tray=False,
             )
     order_reference = extract_order_reference(message.text)
+    if is_farewell_message(message.text):
+        display_name = message.sender_name or customer_context.get("display_name")
+        return _annotate_agent_result(
+            AgentResult(
+                reply_text=choose_farewell_reply(display_name),
+                intent="general",
+                handoff_required=False,
+            ),
+            domain="greeting",
+            response_source="farewell",
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+        )
     soft_greeting = _is_greeting(message.text) or is_soft_greeting(message.text)
     context_handles = extract_handles_from_conversation(
         state=commerce_state,
@@ -740,7 +775,7 @@ async def _generate_agent_reply_async_inner(
     if (
         soft_greeting
         and has_resumable_commerce(commerce_state)
-        and not is_order_lookup_request(message.text)
+        and not is_order_lookup_request(message.text, commerce_state=commerce_state)
         and not is_unpaid_order_resume_request(message.text)
         and not is_payment_link_request(message.text)
     ):
@@ -807,7 +842,7 @@ async def _generate_agent_reply_async_inner(
             used_tray=False,
         )
     wants_order_context = (
-        is_order_lookup_request(message.text)
+        is_order_lookup_request(message.text, commerce_state=commerce_state)
         or is_payment_link_request(message.text)
         or is_unpaid_order_resume_request(message.text)
     )
@@ -859,7 +894,7 @@ async def _generate_agent_reply_async_inner(
         ),
     )
     if (
-        is_order_lookup_request(message.text)
+        is_order_lookup_request(message.text, commerce_state=commerce_state)
         or resume_pending_order
         or is_payment_link_request(message.text)
     ) and (
@@ -876,7 +911,7 @@ async def _generate_agent_reply_async_inner(
                 if (
                     resume_pending_order or is_payment_link_request(message.text)
                 )
-                and not is_order_lookup_request(message.text)
+                and not is_order_lookup_request(message.text, commerce_state=commerce_state)
                 else "deterministic_status_lookup"
             ),
             "order_reference_present": bool(order_reference),
@@ -900,7 +935,7 @@ async def _generate_agent_reply_async_inner(
                 or is_payment_link_request(message.text)
                 or is_unpaid_order_resume_request(message.text)
             )
-            and not is_order_lookup_request(message.text)
+            and not is_order_lookup_request(message.text, commerce_state=commerce_state)
         ):
             result = await inspect_order_payment(
                 state=commerce_state,

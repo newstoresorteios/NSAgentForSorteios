@@ -8,6 +8,7 @@ from app.order_context_recovery import (
     hydrate_state_from_handles,
 )
 from app.order_service import (
+    _order_facts_result,
     extract_order_reference,
     is_order_lookup_request,
     order_reference_candidates,
@@ -70,6 +71,35 @@ def test_detects_followup_order_and_pix_requests():
     assert is_unpaid_order_resume_request(
         "consegue confirmar se o pagamento caiu?"
     ) is True
+
+
+def test_tracking_followup_without_pedido_when_order_in_state():
+    state = CommerceConversationState(order_id="25522")
+    assert is_order_lookup_request(
+        "qual o código de rastreio?",
+        commerce_state=state,
+    ) is True
+    assert is_order_lookup_request("qual o código de rastreio?") is False
+
+
+def test_extract_order_reference_from_o_pedido_e():
+    assert extract_order_reference("O pedido é 25520") == "25520"
+    assert extract_order_reference("> citação\nO pedido é 25520") == "25520"
+
+
+def test_order_facts_includes_shipping_code_from_nested_envelope():
+    state = CommerceConversationState()
+    result = _order_facts_result(
+        {
+            "order_id": "25522",
+            "status": "ENVIADO",
+            "status_group": "shipped",
+            "shipping": {"sending_code": "BR123456789BR"},
+        },
+        "25522",
+        state,
+    )
+    assert "BR123456789BR" in result.reply_text
 
 
 def test_splits_glued_store_code_and_internal_order_id():

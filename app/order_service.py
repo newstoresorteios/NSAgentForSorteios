@@ -177,12 +177,32 @@ def _looks_like_order_token(value: str | None) -> bool:
     return False
 
 
+def strip_whatsapp_quote(text: str | None) -> str:
+    """Remove quoted reply lines (>) so order ids survive WhatsApp citations."""
+    lines = [
+        line
+        for line in str(text or "").splitlines()
+        if not line.strip().startswith(">")
+    ]
+    cleaned = "\n".join(lines).strip()
+    return cleaned or str(text or "").strip()
+
+
+def has_active_order_context(state: CommerceConversationState | None) -> bool:
+    if state is None:
+        return False
+    return bool(state.order_id or state.order_lookup_id)
+
+
 def extract_order_reference(text: str | None) -> str | None:
-    folded = _fold_text(text)
+    cleaned = strip_whatsapp_quote(text)
+    folded = _fold_text(cleaned)
     patterns = (
         r"\bcod(?:igo)?\.?\s*(?:do\s+)?pedido\s*[:#-]?\s*([a-z0-9][a-z0-9-]*)",
         r"\bpedido\s+(?:n(?:umero|o)?|cod(?:igo)?)\.?\s*[:#-]?\s*([a-z0-9][a-z0-9-]*)",
         r"\bpedido\s*[:#-]\s*([a-z0-9][a-z0-9-]*)",
+        r"\bo pedido\s+[ée]\s*(\d{3,12})",
+        r"\bpedido\s+(\d{4,12})\b",
         # Keep digit-leading tokens (store codes like 0CC… / numeric ids).
         r"\bpedido\s+([0-9][a-z0-9-]*)",
     )
@@ -198,9 +218,14 @@ def extract_order_reference(text: str | None) -> str | None:
     return None
 
 
-def is_order_lookup_request(text: str | None) -> bool:
-    folded = _fold_text(text)
-    if extract_order_reference(text):
+def is_order_lookup_request(
+    text: str | None,
+    *,
+    commerce_state: CommerceConversationState | None = None,
+) -> bool:
+    cleaned = strip_whatsapp_quote(text)
+    folded = _fold_text(cleaned)
+    if extract_order_reference(cleaned):
         return True
     # Short follow-ups after an order was discussed in the same thread.
     followup_signals = (
@@ -210,6 +235,23 @@ def is_order_lookup_request(text: str | None) -> bool:
         "e ai como ficou",
     )
     if any(signal in folded for signal in followup_signals):
+        return True
+    order_followup_signals = (
+        "rastre",
+        "codigo de rastreio",
+        "codigo rastreio",
+        "tracking",
+        "correios",
+        "observ",
+        "previsao de envio",
+        "previsao de entrega",
+        "quando chega",
+        "ja enviou",
+        "foi enviado",
+    )
+    if has_active_order_context(commerce_state) and any(
+        signal in folded for signal in order_followup_signals
+    ):
         return True
     if "pedido" not in folded:
         return False
@@ -771,6 +813,8 @@ def _order_facts_result(
 ) -> AgentResult:
     shipment = result.get("shipment")
     shipment = shipment if isinstance(shipment, dict) else {}
+    shipping = result.get("shipping")
+    shipping = shipping if isinstance(shipping, dict) else {}
     tracking = {
         key: result.get(key)
         for key in (
@@ -778,13 +822,24 @@ def _order_facts_result(
             "estimated_delivery_date", "shipment",
         ) if result.get(key) is not None
     }
-    for key in (
-        "sending_code", "tracking_url", "sending_date",
-        "estimated_delivery_date",
-    ):
-        if key not in tracking and shipment.get(key) is not None:
-            tracking[key] = shipment[key]
-    if shipment:
+    for source in (shipment, shipping):
+        for key in (
+            "sending_code", "tracking_url", "sending_date",
+            "estimated_delivery_date",
+        ):
+            if key not in tracking and source.get(key) is not None:
+                tracking[key] = source[key]
+        nested = source.get("shipment")
+        if isinstance(nested, dict):
+            for key in (
+                "sending_code", "tracking_url", "sending_date",
+                "estimated_delivery_date",
+            ):
+                if key not in tracking and nested.get(key) is not None:
+                    tracking[key] = nested[key]
+            if "shipment" not in tracking:
+                tracking["shipment"] = nested
+    if shipment and "shipment" not in tracking:
         tracking["shipment"] = shipment
     facts = {
         "success": True,
@@ -819,8 +874,19 @@ def _order_facts_result(
     else:
         reply_text = f'Seu pedido está com status "{status_label}".'
     tracking_url = tracking.get("tracking_url")
+    sending_code = tracking.get("sending_code")
+    shipped = status_group == "shipped" or "enviad" in status_label.casefold()
     if tracking_url:
         reply_text = f"{reply_text} Rastreio: {tracking_url}"
+    elif sending_code:
+        reply_text = (
+            f'{reply_text} Código de rastreio: {sending_code}'
+        )
+    elif shipped:
+        reply_text = (
+            f"{reply_text} O pedido já foi enviado, mas o código de rastreio "
+            "ainda não está cadastrado. Posso encaminhar para a equipe confirmar."
+        )
     return AgentResult(
         reply_text=reply_text,
         intent="commerce",

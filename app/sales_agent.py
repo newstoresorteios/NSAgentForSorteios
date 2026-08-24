@@ -876,7 +876,10 @@ async def interpret_message(
     try:
         from .openai_errors import OpenAIGatewayError, OpenAIRefusalError
         from .openai_gateway import parse_structured_output
-        from .preference_normalize import normalize_sales_interpretation
+        from .preference_normalize import (
+            normalize_sales_interpretation,
+            recent_user_context_text,
+        )
 
         text_format = TurnUnderstanding if use_turn_understanding else SalesInterpretation
         parse_result = await parse_structured_output(
@@ -923,6 +926,7 @@ async def interpret_message(
         interpretation = normalize_sales_interpretation(
             interpretation,
             message_text=current_text,
+            context_text=recent_user_context_text(recent_turns),
         )
         # Re-sync TurnUnderstanding after preference normalization when present.
         if interpretation._turn_understanding is None:
@@ -1481,11 +1485,15 @@ async def _handle_sales_message_inner(
 ) -> AgentResult | None:
     interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
     if interpretation is not None:
-        from .preference_normalize import normalize_sales_interpretation
+        from .preference_normalize import (
+            normalize_sales_interpretation,
+            recent_user_context_text,
+        )
 
         interpretation = normalize_sales_interpretation(
             interpretation,
             message_text=message.text,
+            context_text=recent_user_context_text(recent_turns),
         )
     from .commerce_router import (
         is_listed_catalog_follow_up,
@@ -3400,6 +3408,7 @@ async def _handle_sales_message_inner(
             interpretation,
             recent_turns,
             message_text=message.text,
+            commerce_state=state,
         )
         if interpretation
         else None

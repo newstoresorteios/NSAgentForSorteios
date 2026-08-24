@@ -629,6 +629,38 @@ async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
     )
 
 
+def test_prx_brushed_silver_outranks_black_without_dial_request():
+    from app.product_retrieval import score_catalog_candidates
+
+    interpretation = _interpretation(
+        goal="find",
+        brand="Tissot",
+        model="PRX",
+        preferences={
+            "material": "prata",
+            "attributes": ["pulseira_integrada", "acabamento_escovado"],
+        },
+    )
+    products = [
+        {
+            "id": "preto",
+            "brand": "Tissot",
+            "model": "PRX",
+            "name": "Relógio Tissot PRX Preto T137.410.11.051.00",
+            "reference": "T137.410.11.051.00",
+        },
+        {
+            "id": "prata",
+            "brand": "Tissot",
+            "model": "PRX",
+            "name": "Relógio Tissot PRX Prata Escovado T137.410.11.031.00",
+            "reference": "T137.410.11.031.00",
+        },
+    ]
+    hits = score_catalog_candidates(products, interpretation, limit=2)
+    assert [product["id"] for product in hits] == ["prata"]
+
+
 @pytest.mark.asyncio
 async def test_score_rejects_single_token_accessory_match():
     from app.product_retrieval import score_catalog_candidates

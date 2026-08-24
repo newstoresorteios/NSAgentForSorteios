@@ -523,6 +523,25 @@ def score_catalog_candidates(
             score += 30
         if feature_tokens and product_matches_feature_tokens(product, feature_tokens):
             score += 40
+        if "pulseira_integrada" in feature_tokens:
+            if "prx" in text or "integrad" in text:
+                score += 55
+            elif any(token in text for token in ("couro", "leather", "silicone")):
+                score -= 35
+        if "acabamento_escovado" in feature_tokens:
+            brushed_hit = any(
+                token in text for token in ("escovad", "rajad", "brushed", "prata")
+            )
+            if brushed_hit:
+                score += 45
+            color_fold = _fold(interpretation.preferences.color)
+            if (
+                color_fold not in {"preto", "black"}
+                and "preto" in text
+                and "prata" not in text
+                and not brushed_hit
+            ):
+                score -= 30
         ask_fold = _fold(interpretation.subject.model)
         if "prospex" in ask_fold and (
             is_prospex_diver_ask(interpretation.subject.model)
@@ -773,6 +792,8 @@ _FEATURE_SEARCH_ALIASES: dict[str, tuple[str, ...]] = {
         "king turtle",
     ),
     "gmt": ("gmt",),
+    "pulseira_integrada": ("prx", "integrad"),
+    "acabamento_escovado": ("escovad", "rajad", "brushed", "prata"),
 }
 
 
@@ -852,7 +873,14 @@ def preference_feature_tokens(interpretation: SalesInterpretation) -> tuple[str,
         folded = _fold(item)
         if not folded:
             continue
-        if "crono" in folded or "chrono" in folded:
+        if folded in {"pulseira_integrada", "acabamento_escovado"}:
+            tokens.append(folded)
+            continue
+        if "integrad" in folded and "pulseira" in folded:
+            tokens.append("pulseira_integrada")
+        elif "escovad" in folded or "rajad" in folded:
+            tokens.append("acabamento_escovado")
+        elif "crono" in folded or "chrono" in folded:
             tokens.append("cronografo")
         elif "diver" in folded or "mergulho" in folded or "200m" in folded:
             tokens.append("mergulho")

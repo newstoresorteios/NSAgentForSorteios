@@ -590,6 +590,41 @@ def _reduce_order(payload: Any) -> dict[str, Any]:
     return _reduce(order, _ORDER_FIELDS)
 
 
+def _reduce_order_complete(payload: Any) -> dict[str, Any]:
+    """Flatten Tray get_order_complete envelope {order, shipping} for order_service."""
+    if not isinstance(payload, dict):
+        return _reduce_order(payload)
+    order = _unwrap_entity(payload, ("order", "data", "result"))
+    reduced = _reduce(order, _ORDER_FIELDS) if isinstance(order, dict) else {}
+    shipping = payload.get("shipping")
+    if isinstance(shipping, dict):
+        nested_shipment = shipping.get("shipment")
+        if isinstance(nested_shipment, dict):
+            if reduced.get("shipment") is None:
+                reduced["shipment"] = nested_shipment
+            for key in (
+                "sending_code",
+                "tracking_url",
+                "sending_date",
+                "estimated_delivery_date",
+            ):
+                if shipping.get(key) is None and nested_shipment.get(key) is not None:
+                    shipping[key] = nested_shipment[key]
+        for key in (
+            "sending_code",
+            "tracking_url",
+            "sending_date",
+            "estimated_delivery_date",
+            "shipment",
+        ):
+            if shipping.get(key) is not None and reduced.get(key) is None:
+                reduced[key] = shipping[key]
+    for key in _ORDER_FIELDS:
+        if payload.get(key) is not None and reduced.get(key) is None:
+            reduced[key] = payload[key]
+    return reduced
+
+
 def _reduce_orders(payload: Any) -> dict[str, Any]:
     values = _items(payload)
     return {"orders": [_reduce_order(value) for value in values]}
@@ -742,7 +777,7 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
         if name == "get_order":
             return _reduce_order(await client.get_order(arguments["order_id"]))
         if name == "get_order_complete":
-            return _reduce_order(
+            return _reduce_order_complete(
                 await client.get_order_complete(arguments["order_id"])
             )
         if name == "get_order_payment":
