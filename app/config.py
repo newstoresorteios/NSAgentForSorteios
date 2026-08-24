@@ -559,6 +559,10 @@ class Settings(BaseSettings):
         default="403",
         alias="TRAY_READY_TO_SHIP_CATEGORY_IDS",
     )
+    order_tracking_audit_sample_ids: str = Field(
+        default="25522,25520",
+        alias="ORDER_TRACKING_AUDIT_SAMPLE_IDS",
+    )
 
     audio_inbound_enabled: bool = Field(default=True, alias="AUDIO_INBOUND_ENABLED")
     audio_outbound_enabled: bool = Field(default=True, alias="AUDIO_OUTBOUND_ENABLED")

@@ -284,7 +284,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v37"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v38"
 
 
 @app.get("/api/health")
@@ -1457,6 +1457,41 @@ async def admin_integrity_kpis(days: int = 7):
     from app.integrity_kpis import build_integrity_kpi_report
 
     return {"ok": True, **build_integrity_kpi_report(days=days)}
+
+
+@app.get(
+    "/api/admin/orders/{order_id}/tracking-audit",
+    dependencies=[Depends(verify_admin_token)],
+)
+async def admin_order_tracking_audit(order_id: str):
+    from app.order_tracking_audit import audit_order_tracking
+    from app.tray_tools import execute_tool
+
+    return {
+        "ok": True,
+        **await audit_order_tracking(order_id, execute=execute_tool),
+    }
+
+
+@app.get(
+    "/api/cron/order-tracking-audit",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def order_tracking_audit_cron():
+    from app.order_tracking_audit import run_order_tracking_audit_batch
+    from app.tray_tools import execute_tool
+
+    result = await run_order_tracking_audit_batch(execute=execute_tool)
+    log_event("order.tracking_audit.cron.completed", result)
+    return result
+
+
+@app.post(
+    "/api/cron/order-tracking-audit",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def order_tracking_audit_cron_manual():
+    return await order_tracking_audit_cron()
 
 
 @app.get("/api/admin/instagram/stories/health", dependencies=[Depends(verify_admin_token)])

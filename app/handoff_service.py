@@ -16,6 +16,9 @@ _HANDOFF_OFFER_MARKERS = (
     "coloco com o joao",
     "encaminhar",
     "encaminho",
+    "posso encaminhar",
+    "encaminhar para a equipe",
+    "quer que eu encaminhe",
     "equipe da new store",
     "joão da equipe",
     "joao da equipe",
@@ -70,6 +73,11 @@ def last_assistant_offered_handoff(recent_turns: list[dict[str, Any]] | None) ->
         if any(marker in folded for marker in _HANDOFF_OFFER_MARKERS):
             return True
         metadata = turn.get("metadata") if isinstance(turn.get("metadata"), dict) else {}
+        handoff = metadata.get("handoff")
+        if isinstance(handoff, dict) and (
+            handoff.get("offer") or handoff.get("required")
+        ):
+            return True
         if metadata.get("handoff_required") or (
             isinstance(metadata.get("handoff"), dict)
             and metadata["handoff"].get("required")

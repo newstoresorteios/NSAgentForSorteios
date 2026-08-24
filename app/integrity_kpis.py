@@ -37,6 +37,12 @@ _COMPLIANCE = frozenset(
         "persona_compliance_rewrite",
     }
 )
+_ORDER_OPS = frozenset(
+    {
+        "order_notes_unavailable",
+        "order_tracking_missing",
+    }
+)
 
 _TARGETS = {
     "not_found_pct": 12.0,
@@ -68,6 +74,8 @@ def _classify(reason: str | None) -> str | None:
         return "tray_down"
     if key in _COMPLIANCE:
         return "compliance_applied"
+    if key in _ORDER_OPS:
+        return "order_ops"
     return "other"
 
 
@@ -147,6 +155,7 @@ def build_integrity_kpi_report(*, days: int = 7) -> dict[str, Any]:
         "factual_fail": 0,
         "tray_down": 0,
         "compliance_applied": 0,
+        "order_ops": 0,
         "other": 0,
     }
     for item in counts:

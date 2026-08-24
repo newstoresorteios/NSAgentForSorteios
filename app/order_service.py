@@ -242,7 +242,6 @@ def is_order_lookup_request(
         "codigo rastreio",
         "tracking",
         "correios",
-        "observ",
         "previsao de envio",
         "previsao de entrega",
         "quando chega",
@@ -268,6 +267,81 @@ def is_order_lookup_request(
         "meu pedido",
     )
     return any(signal in folded for signal in lookup_signals)
+
+
+def is_order_notes_request(
+    text: str | None,
+    *,
+    commerce_state: CommerceConversationState | None = None,
+) -> bool:
+    """Customer asks for internal order notes — not shipment tracking."""
+    cleaned = strip_whatsapp_quote(text)
+    folded = _fold_text(cleaned)
+    if not folded:
+        return False
+    if any(token in folded for token in ("rastre", "tracking", "correios")):
+        return False
+    note_signals = (
+        "observacao",
+        "observacoes",
+        "observação",
+        "observações",
+        "nota do pedido",
+        "notas do pedido",
+        "comentario do pedido",
+        "comentário do pedido",
+        "anotacao",
+        "anotação",
+        "anotacoes",
+        "anotações",
+    )
+    if any(signal in folded for signal in note_signals):
+        return has_active_order_context(commerce_state) or "pedido" in folded
+    if "observ" in folded and "pedido" in folded:
+        return has_active_order_context(commerce_state) or True
+    return False
+
+
+def _handoff_offer_metadata(*, reason: str) -> dict[str, Any]:
+    from .site_knowledge import NS_SALES_WHATSAPP
+
+    return {
+        "handoff": {
+            "required": False,
+            "offer": True,
+            "reason": reason,
+            "contact_whatsapp": NS_SALES_WHATSAPP,
+            "provider_action": "mark_for_human_on_accept",
+        },
+        "pending_action": "awaiting_handoff_confirmation",
+    }
+
+
+def order_notes_unavailable_result(
+    state: CommerceConversationState,
+) -> AgentResult:
+    order_label = state.order_id or state.order_lookup_id or "do pedido"
+    reply_text = (
+        f"Sobre o pedido {order_label}, não consigo ver observações internas por aqui. "
+        "Quer que eu encaminhe para a equipe confirmar?"
+    )
+    metadata = {
+        "domain": "commerce",
+        "used_tray": False,
+        "factual_fallback_text": reply_text,
+        "order_state": {
+            "order_id": state.order_id,
+            "order_lookup_id": state.order_lookup_id,
+        },
+        **_handoff_offer_metadata(reason="order_notes_unavailable"),
+    }
+    return AgentResult(
+        reply_text=reply_text,
+        intent="commerce",
+        safety_reason="order_notes_unavailable",
+        commercial_data={"success": True, "stage": "order_notes"},
+        response_metadata=metadata,
+    )
 
 
 def _money(value: Any) -> str | None:
@@ -885,34 +959,38 @@ def _order_facts_result(
     elif shipped:
         reply_text = (
             f"{reply_text} O pedido já foi enviado, mas o código de rastreio "
-            "ainda não está cadastrado. Posso encaminhar para a equipe confirmar."
+            "ainda não está cadastrado. Quer que eu encaminhe para a equipe confirmar?"
         )
+    metadata: dict[str, Any] = {
+        "domain": "commerce",
+        "clear_pending_action": True,
+        "factual_fallback_text": reply_text,
+        "order_state": {
+            "order_id": facts["order_id"],
+            "order_status": facts["status"],
+            "order_status_group": facts["status_group"],
+            "order_lookup_id": None,
+        },
+        "purchase_stage": (
+            "payment_confirmed"
+            if state.order_payment_status == "confirmed"
+            else "awaiting_payment"
+            if state.order_payment_status == "pending" or awaiting_payment
+            else "order_created"
+        ),
+        "pending_action": (
+            "awaiting_payment" if awaiting_payment else None
+        ),
+        "used_tray": True,
+    }
+    if shipped and not tracking_url and not sending_code:
+        metadata.update(_handoff_offer_metadata(reason="order_tracking_missing"))
+        metadata["safety_reason_hint"] = "order_tracking_missing"
     return AgentResult(
         reply_text=reply_text,
         intent="commerce",
         commercial_data=facts,
-        response_metadata={
-            "domain": "commerce",
-            "clear_pending_action": True,
-            "factual_fallback_text": reply_text,
-            "order_state": {
-                "order_id": facts["order_id"],
-                "order_status": facts["status"],
-                "order_status_group": facts["status_group"],
-                "order_lookup_id": None,
-            },
-            "purchase_stage": (
-                "payment_confirmed"
-                if state.order_payment_status == "confirmed"
-                else "awaiting_payment"
-                if state.order_payment_status == "pending" or awaiting_payment
-                else "order_created"
-            ),
-            "pending_action": (
-                "awaiting_payment" if awaiting_payment else None
-            ),
-            "used_tray": True,
-        },
+        response_metadata=metadata,
     )
 
 

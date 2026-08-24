@@ -54,6 +54,8 @@ from .order_service import (
     get_order_facts,
     invalid_tax_document_result,
     is_order_lookup_request,
+    is_order_notes_request,
+    order_notes_unavailable_result,
 )
 from .payment_service import inspect_order_payment
 from .repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
@@ -837,6 +839,16 @@ async def _generate_agent_reply_async_inner(
             ),
             domain="commerce",
             response_source="context_resume_payment_url",
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+        )
+    if is_order_notes_request(message.text, commerce_state=commerce_state):
+        result = order_notes_unavailable_result(commerce_state)
+        return _annotate_agent_result(
+            result,
+            domain="commerce",
+            response_source="deterministic_fallback",
             used_openai_interpreter=False,
             used_openai_responder=False,
             used_tray=False,
