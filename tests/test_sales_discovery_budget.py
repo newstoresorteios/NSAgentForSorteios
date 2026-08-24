@@ -512,24 +512,39 @@ async def test_catalog_request_interpretation_reaches_retrieval_without_clarific
 
 @pytest.mark.asyncio
 async def test_brand_comparison_without_model_asks_instead_of_searching(monkeypatch):
-    interpretation = _interpretation(
-        product_type="relógio",
-        goal="compare",
-        needs_clarification=False,
-        enough=True,
-        ready=True,
-        clarification_question=None,
-    )
+    import app.persona_runtime as persona_runtime
 
-    result, calls = await _run_sales(
-        monkeypatch,
-        interpretation,
-        [],
-        text="Hamilton ou Baltic?",
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Você já tem um modelo em mente ou quer uma sugestão?",
+            "Qual faixa de investimento você tem em mente?",
+        ],
     )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = _interpretation(
+            product_type="relógio",
+            goal="compare",
+            needs_clarification=False,
+            enough=True,
+            ready=True,
+            clarification_question=None,
+        )
 
-    assert calls == []
-    assert result.safety_reason == "commerce_clarification"
-    assert "Hamilton" in result.reply_text
-    assert "Baltic" in result.reply_text
-    assert "newstorerj.com.br" not in result.reply_text
+        result, calls = await _run_sales(
+            monkeypatch,
+            interpretation,
+            [],
+            text="Hamilton ou Baltic?",
+        )
+
+        assert calls == []
+        assert result.safety_reason == "commerce_clarification"
+        # Reply comes from persona qualification prompts — not hardcoded brand copy.
+        assert "modelo" in result.reply_text.casefold() or "investimento" in result.reply_text.casefold()
+        assert "newstorerj.com.br" not in result.reply_text
+    finally:
+        persona_runtime.reset_persona_runtime(token)
