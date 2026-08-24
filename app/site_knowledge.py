@@ -10,10 +10,14 @@ HUMAN_SUPPORT_MESSAGE = (
     "Lá você encontra orientação e atendimento humano."
 )
 
+HUMAN_HANDOFF_ACK_MESSAGE = (
+    "Encaminhei seu atendimento para a equipe. Você será atendido em instantes."
+)
+
 TRADE_IN_HANDOFF_MESSAGE = (
     "A New Store avalia, troca e compra relógios. "
-    "Vou encaminhar você para um atendente da loja seguir com a avaliação. "
-    f"{HUMAN_SUPPORT_MESSAGE}"
+    "Vou encaminhar seu atendimento para um atendente da loja seguir com a avaliação. "
+    "Você será atendido em instantes."
 )
 
 REGISTER_PHONE_MESSAGE = (

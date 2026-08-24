@@ -4,7 +4,11 @@ from typing import Any
 
 from .guardrails import default_safe_handoff, detect_human_support_request
 from .models import AgentResult, IncomingMessage
-from .site_knowledge import HUMAN_SUPPORT_MESSAGE, NS_SALES_WHATSAPP, TRADE_IN_HANDOFF_MESSAGE
+from .site_knowledge import (
+    HUMAN_HANDOFF_ACK_MESSAGE,
+    NS_SALES_WHATSAPP,
+    TRADE_IN_HANDOFF_MESSAGE,
+)
 
 
 _HANDOFF_OFFER_MARKERS = (
@@ -129,14 +133,11 @@ def build_human_handoff_result(
             text = TRADE_IN_HANDOFF_MESSAGE
         elif reason == "customer_accepted_handoff_offer":
             text = (
-                "Perfeito — vou encaminhar seu atendimento para o João da equipe. "
-                f"{HUMAN_SUPPORT_MESSAGE}"
+                "Perfeito — encaminhei seu atendimento. "
+                "Você será atendido em instantes."
             )
         else:
-            text = (
-                "Vou encaminhar seu atendimento para a equipe da New Store. "
-                f"{HUMAN_SUPPORT_MESSAGE}"
-            )
+            text = HUMAN_HANDOFF_ACK_MESSAGE
     if reason.startswith("blocked_topic:"):
         text = default_safe_handoff()
     return AgentResult(

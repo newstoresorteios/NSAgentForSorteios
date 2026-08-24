@@ -5,7 +5,6 @@ from app.handoff_service import (
     should_request_human_handoff,
 )
 from app.models import AgentResult, IncomingMessage
-from app.site_knowledge import NS_SALES_WHATSAPP
 
 
 def test_customer_request_triggers_handoff():
@@ -16,7 +15,8 @@ def test_customer_request_triggers_handoff():
     assert should_request_human_handoff(incoming) == "customer_requested_human"
     result = build_human_handoff_result(reason="customer_requested_human")
     assert result.handoff_required is True
-    assert NS_SALES_WHATSAPP in result.reply_text
+    assert "instantes" in result.reply_text.lower()
+    assert "encaminh" in result.reply_text.lower()
     assert handoff_provider_payload(result)["provider_action"] == "mark_for_human"
 
 
@@ -41,8 +41,8 @@ def test_por_favor_accepts_joao_handoff_offer():
     )
     result = build_human_handoff_result(reason="customer_accepted_handoff_offer")
     assert result.handoff_required is True
-    assert "João" in result.reply_text or "joão" in result.reply_text.casefold()
-    assert NS_SALES_WHATSAPP in result.reply_text
+    assert "instantes" in result.reply_text.lower()
+    assert "encaminh" in result.reply_text.lower()
 
 
 def test_enrich_handoff_keeps_existing_reason():

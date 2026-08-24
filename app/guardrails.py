@@ -297,10 +297,9 @@ def detect_blocked_request(text: str) -> str | None:
 
 
 def default_safe_handoff() -> str:
-    from .site_knowledge import HUMAN_SUPPORT_MESSAGE, SITE_URL
+    from .site_knowledge import HUMAN_HANDOFF_ACK_MESSAGE
 
     return (
-        "Para sua segurança, vou encaminhar esse atendimento para a equipe da New Store. "
-        f"{HUMAN_SUPPORT_MESSAGE} "
-        f"Você também pode acessar sua conta em {SITE_URL}."
+        "Para sua segurança, encaminhei esse atendimento para a equipe da New Store. "
+        f"{HUMAN_HANDOFF_ACK_MESSAGE}"
     )

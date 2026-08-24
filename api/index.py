@@ -284,7 +284,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v38"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v39"
 
 
 @app.get("/api/health")
@@ -1096,6 +1096,24 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                 "channel": incoming.channel,
             },
         )
+
+    if agent_result.handoff_required and provider_send_ok:
+        try:
+            from app.handoff_queue import mark_conversa_for_human_handoff
+
+            mark_conversa_for_human_handoff(
+                incoming,
+                reason=agent_result.safety_reason or "handoff_required",
+            )
+        except Exception as exc:
+            log_exception(
+                "handoff.queue.failed",
+                exc,
+                {
+                    "inbound_id": inbound_id,
+                    "channel": incoming.channel,
+                },
+            )
 
     return JSONResponse(
         {

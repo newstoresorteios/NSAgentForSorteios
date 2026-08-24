@@ -7,9 +7,10 @@ def test_human_support_message_contains_whatsapp():
     assert "vendas" in HUMAN_SUPPORT_MESSAGE.lower()
 
 
-def test_default_safe_handoff_includes_sales_contact():
+def test_default_safe_handoff_promises_human_queue():
     reply = default_safe_handoff()
-    assert NS_SALES_WHATSAPP in reply
+    assert "instantes" in reply.lower()
+    assert "encaminh" in reply.lower()
 
 
 def test_detect_human_support_request():
