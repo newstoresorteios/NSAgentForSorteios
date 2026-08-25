@@ -106,6 +106,25 @@ def test_fast_critique_dedupes_identical_greeting():
 
 def test_farewell_detector_and_reply():
     assert is_farewell_message("Até") is True
+    assert is_farewell_message("até logo") is True
     assert is_farewell_message("obrigado") is True
     assert is_farewell_message("quero um relógio") is False
+    # Budget / commerce must reach GPT — never short-circuit farewell.
+    assert is_farewell_message("até R$ 10 mil") is False
+    assert is_farewell_message("ate 5000") is False
+    assert is_farewell_message("até amanhã vejo esse Tissot") is False
     assert "Felipe" in choose_farewell_reply("Felipe Newbold")
+
+
+def test_resolve_address_name_prefers_checkout_over_whatsapp_nick():
+    from app.greeting_policy import resolve_address_name
+
+    assert (
+        resolve_address_name(
+            checkout_name="João Paulo Firmino",
+            whatsapp_profile_name="Razor Blue",
+        ).startswith("João")
+    )
+    assert (
+        resolve_address_name(whatsapp_profile_name="Razor Blue") == "Razor Blue"
+    )

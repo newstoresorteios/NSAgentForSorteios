@@ -35,7 +35,23 @@ _GREETING_LABEL_RE = re.compile(
 )
 
 _FAREWELL_RE = re.compile(
-    r"^\s*(at[eé]|tchau|obrigad[oa]|valeu|flw|falou|por hoje)\b",
+    r"^\s*(at[eé](\s+(logo|mais|breve|amanh[aã]|j[aá]))?|"
+    r"tchau(\s+tchau)?|"
+    r"obrigad[oa](\s+(tudo|pela\s+ajuda))?|"
+    r"valeu|flw|falou|"
+    r"por hoje(\s+[eé]\s+s[oó])?)"
+    r"[!.,\s]*$",
+    flags=re.IGNORECASE,
+)
+
+# Budget / commerce phrases that start with "até" must never short-circuit to farewell.
+_FAREWELL_COMMERCIAL_BLOCK_RE = re.compile(
+    r"("
+    r"r\s*\$|\bmil\b|\breais?\b|\bor[cç]amento\b|"
+    r"\bat[eé]\s+\d|\b\d+\s*(k|mil)?\b|"
+    r"\bquero\b|\btem\b|\bcomprar\b|\brel[oó]gio\b|"
+    r"\bpix\b|\bparcela|\bmodelo\b|\bmarca\b"
+    r")",
     flags=re.IGNORECASE,
 )
 
@@ -204,10 +220,21 @@ def choose_greeting_reply(recent_turns: list[dict[str, Any]] | None = None) -> s
 
 
 def is_farewell_message(text: str | None) -> bool:
+    """True only for clear, standalone farewells — never budget/commerce openers.
+
+    Deterministic farewell short-circuits GPT. Keep this narrow so phrases like
+    \"até R$ 10 mil\" or \"até amanhã vejo o Tissot\" reach the model.
+    """
     cleaned = str(text or "").strip()
     if not cleaned:
         return False
-    return bool(_FAREWELL_RE.match(_fold(cleaned)))
+    # Long turns with product context belong to the LLM, not the farewell shortcut.
+    if len(cleaned) > 48:
+        return False
+    folded = _fold(cleaned)
+    if _FAREWELL_COMMERCIAL_BLOCK_RE.search(folded):
+        return False
+    return bool(_FAREWELL_RE.match(folded))
 
 
 def choose_farewell_reply(name: str | None = None) -> str:
@@ -215,3 +242,23 @@ def choose_farewell_reply(name: str | None = None) -> str:
     if first:
         return f"Até, {first}! Qualquer coisa, é só chamar."
     return "Até! Qualquer coisa, é só chamar."
+
+
+def resolve_address_name(
+    *,
+    preferred_name: str | None = None,
+    checkout_name: str | None = None,
+    account_name: str | None = None,
+    whatsapp_profile_name: str | None = None,
+) -> str | None:
+    """Prefer durable/legal identity over WhatsApp nick for addressivity."""
+    for candidate in (
+        preferred_name,
+        checkout_name,
+        account_name,
+        whatsapp_profile_name,
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None

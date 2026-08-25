@@ -80,6 +80,7 @@ from .greeting_policy import (
     choose_farewell_reply,
     choose_greeting_reply,
     is_farewell_message,
+    resolve_address_name,
     sanitize_greeting_reply,
 )
 
@@ -752,7 +753,24 @@ async def _generate_agent_reply_async_inner(
             )
     order_reference = extract_order_reference(message.text)
     if is_farewell_message(message.text):
-        display_name = message.sender_name or customer_context.get("display_name")
+        checkout_name = None
+        try:
+            draft = getattr(commerce_state, "checkout_draft", None)
+            customer = getattr(draft, "customer", None) if draft is not None else None
+            checkout_name = getattr(customer, "name", None)
+        except Exception:
+            checkout_name = None
+        display_name = resolve_address_name(
+            preferred_name=(customer_context or {}).get("preferred_name")
+            if isinstance(customer_context, dict)
+            else None,
+            checkout_name=checkout_name,
+            account_name=(customer_context or {}).get("display_name")
+            or (customer_context or {}).get("name")
+            if isinstance(customer_context, dict)
+            else None,
+            whatsapp_profile_name=message.sender_name,
+        )
         return _annotate_agent_result(
             AgentResult(
                 reply_text=choose_farewell_reply(display_name),

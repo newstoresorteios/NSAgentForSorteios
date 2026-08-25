@@ -2457,15 +2457,43 @@ def _deterministic_semantic_order(
 ) -> list[dict[str, Any]]:
     gender_tokens = preference_gender_tokens(interpretation)
     color_tokens = preference_color_tokens(interpretation)
+    prefs = interpretation.preferences
+    style_blob = _fold(
+        " ".join(
+            str(part)
+            for part in (
+                prefs.style,
+                prefs.occasion,
+                *list(prefs.attributes or []),
+                interpretation.subject.product_type,
+            )
+            if part
+        )
+    )
+    wants_diver = any(
+        token in style_blob
+        for token in ("mergulho", "diver", "divers", "aquascaphe")
+    )
+    wants_small_case = any(
+        token in style_blob
+        for token in ("caixa menor", "menor", "compacto", "39mm", "37mm", "38mm")
+    ) or bool(
+        re.search(r"\b(3[5-9]|40)\s*mm\b", style_blob)
+    )
+    # Also honor explicit case-size talk from attributes alone.
+    attr_fold = _fold(" ".join(str(a) for a in (prefs.attributes or []) if a))
+    if re.search(r"\b(caixa\s+menor|37\s*mm|38\s*mm|39\s*mm)\b", attr_fold):
+        wants_small_case = True
+
     terms = [
         _fold(value)
         for value in (
-            interpretation.preferences.style,
-            interpretation.preferences.color,
-            interpretation.preferences.material,
-            interpretation.preferences.occasion,
-            interpretation.preferences.recipient,
-            *interpretation.preferences.attributes,
+            prefs.style,
+            prefs.color,
+            prefs.material,
+            prefs.occasion,
+            prefs.recipient,
+            *prefs.attributes,
         )
         if value
     ]
@@ -2478,6 +2506,20 @@ def _deterministic_semantic_order(
             base += 3
         if color_tokens and product_matches_color_tokens(product, color_tokens):
             base += 4
+        if wants_diver:
+            # True divers (≈200m / diver line) beat dress 100m watches labeled "casual".
+            if re.search(r"\b(200\s*m|300\s*m|diver|divers|mergulho|aquascaphe|ds action)\b", text):
+                base += 5
+            if re.search(r"\b(100\s*m|ds-?7|dress|casual)\b", text) and not re.search(
+                r"\b(200\s*m|300\s*m|diver|divers)\b", text
+            ):
+                base -= 4
+        if wants_small_case:
+            size_match = re.search(r"\b(3[5-9]|40)\s*mm\b", text)
+            if size_match:
+                base += 3
+            elif re.search(r"\b(4[1-9]|5\d)\s*mm\b", text):
+                base -= 2
         scored.append((base, index, product))
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [product for _, _, product in scored[:rerank_selection_limit()]]
@@ -2536,6 +2578,9 @@ async def rerank_products(
                         "em ordem de relevância. "
                         "Trate sinônimos de cor (azul=blue, preto=black, branco=white, rosa=pink, "
                         "verde=green, vermelho=red) e gênero (feminino/lady/dama). "
+                        "Se o cliente pediu diver/mergulho, priorize 200m/diver/Aquascaphe/DS Action "
+                        "e não ranqueie alto modelos dress/100m (ex.: DS-7) como diver. "
+                        "Se pediu caixa menor, prefira ~37–40 mm sobre 41 mm+. "
                         "Não invente IDs. Não altere preço, estoque, URL ou disponibilidade. "
                         "Use só evidências dos candidatos (nome, marca, cor, descrição)."
                     ),
