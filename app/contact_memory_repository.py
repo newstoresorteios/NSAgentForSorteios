@@ -77,14 +77,31 @@ def select_relevant_memories(
             "material_preference",
             "size_preference",
             "explicit_no_preference",
+            "occasion",
+            "recipient",
+            "conversation_goal",
             "preferred_name",
             "communication_style",
         }
         ranked = [item for item in usable if item.memory_kind in prefer]
         usable = ranked or usable
-    elif domain_norm in {"greeting", "general"}:
-        prefer = {"preferred_name", "communication_style", "do_not_repeat"}
-        usable = [item for item in usable if item.memory_kind in prefer] or usable[:2]
+    elif domain_norm in {"greeting", "general", ""}:
+        # Returning contacts: bring prior interest themes into the greeting turn.
+        prefer = {
+            "preferred_name",
+            "communication_style",
+            "do_not_repeat",
+            "brand_preference",
+            "product_preference",
+            "price_preference",
+            "color_preference",
+            "material_preference",
+            "occasion",
+            "recipient",
+            "conversation_goal",
+            "stable_customer_fact",
+        }
+        usable = [item for item in usable if item.memory_kind in prefer] or usable[:6]
 
     selected: list[ContactMemory] = []
     chars = 0
@@ -227,7 +244,10 @@ def forget_contact_memory(
 def format_customer_memory_block(memories: list[ContactMemory]) -> str:
     if not memories:
         return "<customer_memory>\n</customer_memory>"
-    lines = ["<customer_memory>"]
+    lines = [
+        "<customer_memory>",
+        "Fatos estáveis deste contato (reutilize; não pergunte de novo sem necessidade):",
+    ]
     for item in memories:
         value = item.value
         if isinstance(value, dict) and "value" in value and len(value) == 1:
@@ -235,8 +255,8 @@ def format_customer_memory_block(memories: list[ContactMemory]) -> str:
         else:
             rendered = value
         if item.safe_summary:
-            lines.append(f"{item.memory_key}: {item.safe_summary}")
+            lines.append(f"- {item.memory_key}: {item.safe_summary}")
         else:
-            lines.append(f"{item.memory_key}: {rendered}")
+            lines.append(f"- {item.memory_key}: {rendered}")
     lines.append("</customer_memory>")
     return "\n".join(lines)

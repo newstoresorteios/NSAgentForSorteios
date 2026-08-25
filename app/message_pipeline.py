@@ -492,6 +492,36 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     if customer_context.get("found") and user_id:
         record_interaction_memory(int(user_id), result.intent, incoming.text)
 
+    # Durable themes/preferences for the next contact (structured, not full history).
+    if interpretation is not None and (
+        incoming.sender_key or incoming.sender_phone or incoming.conversation_id
+    ):
+        try:
+            from app.contact_preference_memory import (
+                persist_contact_preferences_from_interpretation,
+            )
+
+            pref_result = persist_contact_preferences_from_interpretation(
+                tenant_id=str(getattr(settings, "agent_persona_tenant_id", "newstore")),
+                sender_key=incoming.sender_key
+                or (
+                    f"whatsapp:{incoming.sender_phone}"
+                    if incoming.sender_phone
+                    else None
+                ),
+                conversation_key=(
+                    incoming.conversation_id
+                    or incoming.sender_key
+                    or incoming.sender_phone
+                ),
+                interpretation=interpretation,
+                inbound_id=inbound_id,
+            )
+            result.response_metadata = dict(result.response_metadata or {})
+            result.response_metadata["contact_preference_memory"] = pref_result
+        except Exception as exc:
+            log_exception("memory.contact_preference.error", exc)
+
     if getattr(settings, "agent_memory_proposals_enabled", False) or getattr(
         settings, "agent_instruction_extension_proposals_enabled", False
     ) or getattr(settings, "agent_conversation_summary_enabled", False):

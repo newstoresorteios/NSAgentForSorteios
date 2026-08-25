@@ -37,4 +37,8 @@ def mark_sales_result(
             "active_preferences",
             interpretation.preferences.model_dump(mode="json", exclude_none=True),
         )
+        # Needed for durable contact preference memory after the turn.
+        marked.response_metadata["interpretation"] = interpretation.model_dump(
+            mode="json"
+        )
     return marked

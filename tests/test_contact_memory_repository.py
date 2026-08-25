@@ -23,8 +23,9 @@ def test_format_customer_memory_block_is_factual():
             )
         ]
     )
-    assert "preferred_brands: Tissot" in block
+    assert "- preferred_brands: Tissot" in block
     assert "sempre" not in block.lower()
+    assert "Fatos estáveis" in block
 
 
 def test_select_relevant_memories_prefers_commerce_kinds(monkeypatch):

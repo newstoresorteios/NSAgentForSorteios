@@ -87,11 +87,15 @@ def test_persona_and_memory_rollout_defaults():
     assert Settings.model_fields["agent_memory_proposals_enabled"].default is True
     assert Settings.model_fields["agent_memory_auto_apply_enabled"].default is False
     assert Settings.model_fields["agent_contact_memory_in_prompt_enabled"].default is True
-    assert Settings.model_fields["agent_conversation_summary_enabled"].default is False
+    assert (
+        Settings.model_fields["agent_contact_preference_memory_enabled"].default is True
+    )
+    assert Settings.model_fields["agent_conversation_summary_mode"].default == "enforce"
     assert (
         Settings.model_fields["agent_conversation_summary_in_prompt_enabled"].default
-        is False
+        is True
     )
+    assert Settings.model_fields["agent_conversation_summary_enabled"].default is False
     assert Settings.model_fields["agent_learning_auto_promote"].default is False
     assert Settings.model_fields["agent_learning_auto_activate"].default is False
     assert Settings.model_fields["agent_full_obs_logs"].default is False

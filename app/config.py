@@ -259,6 +259,16 @@ class Settings(BaseSettings):
         default=True,
         alias="AGENT_CONTACT_MEMORY_IN_PROMPT_ENABLED",
     )
+    # Persist brand/style/budget/theme from interpretation into contact memory.
+    agent_contact_preference_memory_enabled: bool = Field(
+        default=True,
+        alias="AGENT_CONTACT_PREFERENCE_MEMORY_ENABLED",
+    )
+    # Also write a compact conversation summary from those preferences.
+    agent_contact_preference_summary_enabled: bool = Field(
+        default=True,
+        alias="AGENT_CONTACT_PREFERENCE_SUMMARY_ENABLED",
+    )
     agent_instruction_extension_proposals_enabled: bool = Field(
         default=False,
         alias="AGENT_INSTRUCTION_EXTENSION_PROPOSALS_ENABLED",
@@ -269,12 +279,13 @@ class Settings(BaseSettings):
     )
     # Inject compacted conversation summary into compiled system instructions.
     agent_conversation_summary_in_prompt_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="AGENT_CONVERSATION_SUMMARY_IN_PROMPT_ENABLED",
     )
     # off | shadow | enforce — shadow generates but does not inject into reply prompt.
+    # Prefer enforce so continuity summary from preference memory is visible.
     agent_conversation_summary_mode: Literal["off", "shadow", "enforce"] = Field(
-        default="off",
+        default="enforce",
         alias="AGENT_CONVERSATION_SUMMARY_MODE",
     )
     agent_prompt_compilation_audit_enabled: bool = Field(
