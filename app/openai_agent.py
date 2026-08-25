@@ -247,8 +247,31 @@ def build_agent_input(message: IncomingMessage, customer_context: dict, facts: d
         )
         vip_block = f"\n\n{build_vip_openai_context(vip, nickname)}\n"
 
-    display_name = facts.get("display_name") or customer_context.get("display_name")
-    display_label = display_name or message.sender_name or "não informado"
+    checkout_name = None
+    commerce_state = (
+        customer_context.get("_commerce_state")
+        if isinstance(customer_context, dict)
+        else None
+    )
+    if isinstance(commerce_state, dict):
+        draft = commerce_state.get("checkout_draft") or {}
+        customer = draft.get("customer") if isinstance(draft, dict) else None
+        if isinstance(customer, dict):
+            checkout_name = customer.get("name")
+    display_name = resolve_address_name(
+        preferred_name=(customer_context or {}).get("preferred_name")
+        if isinstance(customer_context, dict)
+        else None,
+        checkout_name=checkout_name,
+        account_name=facts.get("display_name")
+        or (
+            customer_context.get("display_name")
+            if isinstance(customer_context, dict)
+            else None
+        ),
+        whatsapp_profile_name=message.sender_name,
+    )
+    display_label = display_name or "não informado"
     modality_note = ""
     if message.input_modality == "audio":
         modality_note = "\n- Origem: áudio transcrito para texto"

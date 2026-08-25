@@ -94,7 +94,9 @@ def detect_objection_kind(text: str | None) -> ObjectionKind | None:
         r"(mais\s+de\s+\d+\s*%|\d+\s*%\s*(de\s+)?desconto|desconto\s+maior|"
         r"alem\s+dos?\s+\d+|além\s+dos?\s+\d+|faz\s+\d+\s*%|me\s+da\s+\d+\s*%|"
         r"abaixa\s+o\s+preco|abaixa\s+o\s+preço|negocia(r)?\s+o\s+preco|"
-        r"negocia(r)?\s+o\s+preço|cobertura\s+de\s+preco|cobertura\s+de\s+preço)",
+        r"negocia(r)?\s+o\s+preço|cobertura\s+de\s+preco|cobertura\s+de\s+preço|"
+        r"\b(tem|quero|pedi|faz|da|d[aá])\s+(um\s+)?desconto\b|"
+        r"\bdesconto\s+no\s+pix\b|\bdesconto\s+pix\b)",
         folded,
     ):
         return "extra_discount"
@@ -321,6 +323,14 @@ def try_objection_authority_result(
     state: CommerceConversationState,
 ) -> AgentResult | None:
     """Early deterministic objection path; None = continue normal sales flow."""
+    kind = detect_objection_kind(message.text)
+    if kind is None:
+        return None
+
+    # Discount policy must win over checkout/payment orchestration (persona P0).
+    if kind == "extra_discount":
+        return objection_policy_result(kind, state=state)
+
     # Don't steal active checkout / payment orchestration turns.
     if interpretation is not None:
         if interpretation.checkout_data is not None:
@@ -334,7 +344,4 @@ def try_objection_authority_result(
         if interpretation.purchase_action in {"create_cart", "checkout_question", "show_cart_link"}:
             return None
 
-    kind = detect_objection_kind(message.text)
-    if kind is None:
-        return None
     return objection_policy_result(kind, state=state)

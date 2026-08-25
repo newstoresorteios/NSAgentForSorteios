@@ -1080,6 +1080,108 @@ def extract_model_codes(text: str | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(_MODEL_CODE_RE.findall(str(text or ""))))
 
 
+async def resolve_products_from_message_text(
+    text: str | None,
+    *,
+    execute_tool: Any,
+) -> list[dict[str, Any]]:
+    """Last-chance identity: storefront URL slug, reference code, or URL tokens."""
+    blob = str(text or "").strip()
+    if not blob or execute_tool is None:
+        return []
+
+    from .catalog_specs import reference_from_store_url
+    from .config import get_settings
+    from .story_product_matcher import extract_store_product_url, tokens_from_store_url
+
+    products: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    async def _absorb(raw: Any) -> None:
+        if not isinstance(raw, dict) or raw.get("error") or raw.get("id") is None:
+            return
+        product_id = str(raw["id"])
+        if product_id in seen:
+            return
+        seen.add(product_id)
+        products.append(raw)
+
+    async def _absorb_search(result: Any) -> None:
+        if not isinstance(result, dict) or "error" in result:
+            return
+        for item in result.get("products") or []:
+            if isinstance(item, dict):
+                await _absorb(item)
+
+    tenant_id = (
+        getattr(get_settings(), "agent_persona_tenant_id", None) or "newstore"
+    )
+
+    store_url = extract_store_product_url(blob)
+    if store_url:
+        ref = reference_from_store_url(store_url)
+        if ref:
+            await _absorb_search(
+                await execute_tool(
+                    "search_products",
+                    {"reference": ref, "limit": 10, "page": 1},
+                )
+            )
+            if not products:
+                try:
+                    from .catalog_index_repository import CatalogIndexRepository
+
+                    rows = CatalogIndexRepository().search_exact(
+                        tenant_id=tenant_id,
+                        reference=ref,
+                        limit=5,
+                    )
+                    for row in rows or []:
+                        pid = str(row.get("product_id") or "")
+                        if not pid or pid in seen:
+                            continue
+                        await _absorb(
+                            await execute_tool("get_product", {"product_id": pid})
+                        )
+                except Exception:
+                    pass
+        if not products:
+            brand, tokens = tokens_from_store_url(store_url)
+            probe_name = " ".join(tokens[:8]).strip()
+            if probe_name:
+                args: dict[str, Any] = {
+                    "name": probe_name,
+                    "limit": 15,
+                    "page": 1,
+                }
+                if brand:
+                    args["brand"] = brand
+                await _absorb_search(
+                    await execute_tool("search_products", args)
+                )
+
+    ref = extract_reference_code(blob)
+    if ref and not products:
+        await _absorb_search(
+            await execute_tool(
+                "search_products",
+                {"reference": ref, "limit": 10, "page": 1},
+            )
+        )
+
+    if products:
+        print(
+            "[sales.retrieval.message_identity]",
+            {
+                "had_url": bool(store_url),
+                "had_reference": bool(ref),
+                "resolved": len(products),
+                "ids": [str(p.get("id")) for p in products[:5]],
+            },
+        )
+    return products
+
+
 def _product_text(product: dict[str, Any]) -> str:
     fields = (
         "name", "brand", "model", "reference", "ean", "description",

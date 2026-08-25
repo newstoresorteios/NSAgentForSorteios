@@ -169,6 +169,56 @@ def is_false_diver_product(product: dict[str, Any] | None) -> bool:
     return False
 
 
+def extract_material(product: dict[str, Any] | str | None) -> str | None:
+    """Harvest case material from Tray field or title/description (titânio/aço)."""
+    if isinstance(product, dict):
+        explicit = product.get("material")
+        if explicit is not None and str(explicit).strip():
+            return str(explicit).strip()
+        blob = product_spec_blob(product)
+    else:
+        blob = _fold(product)
+    if re.search(r"\b(titanio|titanium|ti\s*case)\b", blob):
+        return "titânio"
+    if re.search(r"\b(ceramic|ceramica|cerâmica)\b", blob):
+        return "cerâmica"
+    if re.search(r"\b(ouro|gold|rose\s*gold|ouro\s*rosa)\b", blob):
+        return "ouro"
+    if re.search(r"\b(aco|aço|steel|inox|stainless)\b", blob):
+        return "aço"
+    return None
+
+
+def reference_from_store_url(url: str | None) -> str | None:
+    """Pull Certina-style refs from storefront slug (c032-807-44-081-00)."""
+    from urllib.parse import urlparse
+
+    raw = str(url or "").strip()
+    if not raw:
+        return None
+    slug = urlparse(raw).path.rstrip("/").split("/")[-1]
+    certina_match = re.search(
+        r"(c\d{3}[-\.]\d{3}[-\.]\d{2}[-\.]\d{3}[-\.]\d{2})",
+        slug,
+        re.IGNORECASE,
+    )
+    if certina_match:
+        return certina_match.group(1).replace("-", ".").upper()
+    dotted = slug.replace("-", ".")
+    ref_match = re.search(
+        r"\b("
+        r"[A-Z]{1,4}\d{2,}[A-Z0-9]*(?:-[A-Z0-9]{1,})+"
+        r"|[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,}"
+        r"|[A-Z0-9]{2,}(?:\.[A-Z0-9]{2,}){2,}"
+        r")\b",
+        dotted,
+        re.IGNORECASE,
+    )
+    if ref_match:
+        return ref_match.group(1)
+    return None
+
+
 def interpretation_wants_diver(interpretation: Any) -> bool:
     prefs = getattr(interpretation, "preferences", None)
     subject = getattr(interpretation, "subject", None)

@@ -535,6 +535,7 @@ def tokens_from_store_url(url: str | None) -> tuple[str | None, list[str]]:
         "baltic",
         "christopher",
         "ward",
+        "certina",
     }
     for part in slug.replace("-", " ").split():
         key = _fold(part)

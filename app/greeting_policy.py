@@ -244,6 +244,58 @@ def choose_farewell_reply(name: str | None = None) -> str:
     return "Até! Qualquer coisa, é só chamar."
 
 
+_NICK_COLOR_WORDS = frozenset({
+    "blue", "red", "black", "white", "green", "pink", "gold", "silver",
+    "dark", "light", "neo", "pro", "max", "mini", "grey", "gray",
+})
+_NICK_DESCRIPTOR_WORDS = frozenset({
+    "razor", "wolf", "dragon", "shadow", "killer", "master", "king", "queen",
+    "devil", "ghost", "ninja", "storm", "fire", "ice", "star", "moon", "sun",
+    "sky", "rock", "steel", "blade", "hunter", "player", "gamer", "bot",
+})
+_COMMON_FIRST_NAMES = frozenset({
+    "joao", "maria", "jose", "ana", "pedro", "paulo", "carlos", "luis", "marcos",
+    "fernando", "rafael", "gabriel", "bruno", "felipe", "rodrigo", "marcelo",
+    "andre", "lucas", "matheus", "guilherme", "ricardo", "daniel", "eduardo",
+    "fabio", "renato", "roberto", "sergio", "antonio", "francisco", "julia",
+    "juliana", "camila", "patricia", "fernanda", "amanda", "beatriz", "carolina",
+    "larissa", "mariana", "natalia", "renata", "silvia", "vanessa", "aline",
+    "claudia", "helena", "isabela", "leticia", "priscila", "sandra", "tatiana",
+    "viviane",
+})
+
+
+def looks_like_whatsapp_nick(name: str | None) -> bool:
+    """True for Brevo/WhatsApp profile labels that are not real given names."""
+    text = str(name or "").strip()
+    if not text:
+        return False
+    if re.search(r"\d", text):
+        return True
+    if re.search(r"[^\w\s\-'.À-ÿ]", text):
+        return True
+    words = [_fold(part) for part in text.split() if part.strip()]
+    if not words:
+        return False
+    if len(words) == 1:
+        word = words[0]
+        return len(word) <= 2 or (word not in _COMMON_FIRST_NAMES and len(word) > 12)
+    if words[0] in _COMMON_FIRST_NAMES:
+        return False
+    nick_markers = _NICK_COLOR_WORDS | _NICK_DESCRIPTOR_WORDS
+    if any(word in nick_markers for word in words):
+        return True
+    raw_words = text.split()
+    if (
+        len(raw_words) == 2
+        and all(part[:1].isupper() for part in raw_words if part)
+        and words[0] not in _COMMON_FIRST_NAMES
+        and words[1] not in _COMMON_FIRST_NAMES
+    ):
+        return True
+    return False
+
+
 def resolve_address_name(
     *,
     preferred_name: str | None = None,
@@ -259,6 +311,12 @@ def resolve_address_name(
         whatsapp_profile_name,
     ):
         text = str(candidate or "").strip()
-        if text:
-            return text
+        if not text:
+            continue
+        if (
+            candidate is whatsapp_profile_name
+            and looks_like_whatsapp_nick(text)
+        ):
+            continue
+        return text
     return None

@@ -851,6 +851,64 @@ def _merge_cart_item_prices(
 _TRANSIENT_CART_STATUSES = {502, 503, 504}
 
 
+def _is_stale_cart_session(cart_result: dict[str, Any] | None) -> bool:
+    """True when Tray no longer has this session (expired/deleted cart)."""
+    if not isinstance(cart_result, dict):
+        return False
+    try:
+        if int(cart_result.get("status_code") or 0) == 404:
+            return True
+    except (TypeError, ValueError):
+        pass
+    error = str(cart_result.get("error") or "").casefold()
+    return error in {"not_found", "cart_not_found", "session_not_found"}
+
+
+def _clear_cart_session_state(
+    state: CommerceConversationState,
+) -> dict[str, Any]:
+    """Metadata payload that wipes stale cart identity from commerce state."""
+    return {
+        "cart_id": None,
+        "cart_session_id": None,
+        "cart_url": None,
+        "cart_product_id": None,
+        "cart_variant_id": None,
+        "cart_quantity": None,
+        "cart_items": [],
+    }
+
+
+def stale_cart_session_result(
+    *,
+    state: CommerceConversationState,
+    stage: str,
+) -> AgentResult:
+    print("[sales.cart.stale_session]", {
+        "stage": stage,
+        "session_hash": (state.cart_session_id or "")[-8:],
+    })
+    return AgentResult(
+        reply_text="",
+        intent="commerce",
+        handoff_required=False,
+        safety_reason="cart_session_stale",
+        commercial_data={
+            "cart": {
+                "status": "session_stale",
+                "cart_created": False,
+                "failure_stage": stage,
+            },
+        },
+        response_metadata={
+            "domain": "commerce",
+            "used_tray": True,
+            "cart_session_cleared": True,
+            "cart_state": _clear_cart_session_state(state),
+        },
+    )
+
+
 def _is_transient_cart_failure(
     *,
     status_code: Any = None,
@@ -1047,6 +1105,8 @@ async def _ensure_existing_cart_item(
             stage="cart_reconcile",
             exception_type=type(exc).__name__,
         )
+    if "error" in complete and _is_stale_cart_session(complete):
+        return stale_cart_session_result(state=state, stage="cart_reconcile")
     if "error" in complete:
         return _technical_failure(
             stage="cart_reconcile",
@@ -1586,11 +1646,21 @@ async def create_cart_items_checkout(
             allow_create=True,
         )
         if ensured is not None:
-            return _persist_cart_session(
-                ensured,
-                state,
-                state.cart_session_id,
-            )
+            if (ensured.response_metadata or {}).get("cart_session_cleared"):
+                state = state.model_copy(deep=True)
+                state.cart_session_id = None
+                state.cart_url = None
+                state.cart_id = None
+                state.cart_items = []
+                state.cart_product_id = None
+                state.cart_variant_id = None
+                state.cart_quantity = None
+            else:
+                return _persist_cart_session(
+                    ensured,
+                    state,
+                    state.cart_session_id,
+                )
     execution_state = state
     if item_requests and not state.cart_session_id:
         execution_state = state.model_copy(deep=True)

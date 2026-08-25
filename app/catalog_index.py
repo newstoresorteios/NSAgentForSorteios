@@ -114,6 +114,12 @@ def _infer_water_resistance(title: str, product: dict[str, Any]) -> int | None:
     return extract_water_resistance_m({**product, "name": title or product.get("name")})
 
 
+def _infer_material(title: str, product: dict[str, Any]) -> str | None:
+    from .catalog_specs import extract_material
+
+    return extract_material({**product, "name": title or product.get("name")})
+
+
 def _infer_mechanism(title: str, product: dict[str, Any]) -> str | None:
     blob = _fold(
         " ".join(
@@ -264,9 +270,9 @@ def to_canonical_item(
         dial_color=str(color) if color else None,
         strap_color=None,
         material=(
-            str(product.get("material"))
+            str(product.get("material")).strip()
             if product.get("material")
-            else None
+            else _infer_material(title, product)
         ),
         strap_type=None,
         colors_normalized=[c for c in colors if c],

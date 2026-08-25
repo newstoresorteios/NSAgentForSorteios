@@ -31,6 +31,7 @@ from ..product_retrieval import (
     product_availability_state,
     revalidate_products,
     rerank_products,
+    resolve_products_from_message_text,
     score_catalog_candidates,
     semantic_preferences,
     soft_confirm_candidates,
@@ -206,8 +207,70 @@ async def execute_contextual_product_lookup(
     return result
 
 
+async def _last_chance_from_message_text(
+    interpretation: SalesInterpretation,
+    message_text: str | None,
+    *,
+    mode: str,
+) -> AgentResult | None:
+    """Resolve product from pasted URL / reference before saying not_found."""
+    if not (message_text or "").strip():
+        return None
+    rows = await resolve_products_from_message_text(
+        message_text,
+        execute_tool=_call_execute_tool,
+    )
+    if not rows:
+        return None
+    if mode == "exact":
+        filtered = exact_progress_matches(rows, interpretation)
+        if not filtered:
+            filtered = hard_filter_products(
+                rows,
+                interpretation,
+                mode="exact",
+            )
+    else:
+        filtered = hard_filter_products(
+            rows,
+            interpretation,
+            mode="recommendation",
+        )
+    if not filtered:
+        filtered = rows[: customer_result_limit()]
+    refreshed, revalidation_failed = await revalidate_products(
+        filtered[: customer_result_limit()],
+        interpretation,
+        _call_execute_tool,
+    )
+    pool = refreshed or filtered
+    if not pool:
+        return None
+    from ..commerce_router import _product_result, guided_near_match_result
+
+    print(
+        "[sales.retrieval.message_identity_hit]",
+        {
+            "mode": mode,
+            "served": len(pool),
+            "revalidation_degraded": bool(revalidation_failed and refreshed),
+        },
+    )
+    if mode == "exact":
+        brand = (interpretation.subject.brand or "").strip()
+        return guided_near_match_result(
+            pool,
+            brand=brand or None,
+            limit=customer_result_limit(),
+            safety_reason="exact_message_identity_hit",
+        )
+    return _product_result("product_search", pool[: customer_result_limit()])
+
+
 async def execute_compiled_product_retrieval(
     interpretation: SalesInterpretation,
+    *,
+    message_text: str | None = None,
 ) -> AgentResult | None:
     initial_plan = ProductRetrievalCompiler.compile(interpretation)
     category_resolution = None
@@ -824,6 +887,13 @@ async def execute_compiled_product_retrieval(
                             brand=interpretation.subject.brand,
                             limit=customer_result_limit(),
                         )
+            identity_hit = await _last_chance_from_message_text(
+                interpretation,
+                message_text,
+                mode="exact",
+            )
+            if identity_hit is not None:
+                return identity_hit
             return AgentResult(
                 reply_text="Não encontrei esse produto no catálogo agora.",
                 intent="commerce",
@@ -836,6 +906,13 @@ async def execute_compiled_product_retrieval(
             handoff_required=False,
             safety_reason="recommendation_no_match",
         )
+    identity_hit = await _last_chance_from_message_text(
+        interpretation,
+        message_text,
+        mode=retrieval_plan.mode,
+    )
+    if identity_hit is not None:
+        return identity_hit
     if not hard_filtered:
         reason = "exact_product_not_found" if retrieval_plan.mode == "exact" else "hard_filter_empty"
         print("[sales.retrieval.empty]", {"reason": reason})

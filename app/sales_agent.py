@@ -2417,7 +2417,10 @@ async def _handle_sales_message_inner(
                 "brand": soft_interp.subject.brand,
                 "model": soft_interp.subject.model,
             })
-            tray_result = await _execute_compiled_product_retrieval(soft_interp)
+            tray_result = await _execute_compiled_product_retrieval(
+                soft_interp,
+                message_text=message.text,
+            )
             interpretation._clear_pending_action = True
             pending_action_used = True
             if tray_result is not None:
@@ -2625,7 +2628,10 @@ async def _handle_sales_message_inner(
                         "ready_for_retrieval": True,
                     },
                 )
-                lookup = await _execute_compiled_product_retrieval(item_interpretation)
+                lookup = await _execute_compiled_product_retrieval(
+                    item_interpretation,
+                    message_text=message.text,
+                )
                 candidates = (
                     (lookup.commercial_data or {}).get("products")
                     if lookup is not None
@@ -2693,7 +2699,10 @@ async def _handle_sales_message_inner(
         ))
     ):
         log_purchase_progress("product_resolution", "start")
-        lookup = await _execute_compiled_product_retrieval(interpretation)
+        lookup = await _execute_compiled_product_retrieval(
+            interpretation,
+            message_text=message.text,
+        )
         lookup_products = (
             (lookup.commercial_data or {}).get("products")
             if lookup is not None
@@ -3585,7 +3594,10 @@ async def _handle_sales_message_inner(
             resolved_product,
         )
     elif interpretation is not None and action == "product_search":
-        tray_result = await _execute_compiled_product_retrieval(interpretation)
+        tray_result = await _execute_compiled_product_retrieval(
+            interpretation,
+            message_text=message.text,
+        )
     else:
         queries = [str(plan.get("query") or "").strip()]
         code_value = re.sub(r"^(?:ean|sku|ref(?:er[êe]ncia)?)\s+", "", queries[0], flags=re.IGNORECASE)

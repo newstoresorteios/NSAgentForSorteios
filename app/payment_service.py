@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from .checkout_service import checkout_capabilities
+from .cart_service import _clear_cart_session_state, _is_stale_cart_session
 from .commerce_context import (
     CommerceConversationState,
     checkout_missing_fields,
@@ -247,6 +248,34 @@ async def inspect_payment_options(
             {"session_id": state.cart_session_id},
         )
     if "error" in cart:
+        if _is_stale_cart_session(cart):
+            from .sales.policies.action_authority import (
+                informational_payment_policy_result,
+            )
+
+            result = informational_payment_policy_result(
+                state,
+                payment_method_preference=payment_method_preference,
+            )
+            prefix = (
+                "O carrinho anterior expirou na loja. "
+                "Posso montar um novo quando você confirmar o modelo. "
+            )
+            metadata = dict(result.response_metadata or {})
+            metadata.update(
+                {
+                    "used_tray": True,
+                    "cart_session_cleared": True,
+                    "cart_state": _clear_cart_session_state(state),
+                }
+            )
+            return result.model_copy(
+                update={
+                    "reply_text": prefix + result.reply_text,
+                    "response_metadata": metadata,
+                    "safety_reason": "cart_session_stale",
+                }
+            )
         return AgentResult(
             reply_text="Não consegui reconciliar o carrinho neste momento.",
             intent="commerce",

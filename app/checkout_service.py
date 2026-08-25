@@ -132,9 +132,12 @@ def select_checkout_channel(
         reply_text=(
             template
             if template
-            else "Canal de checkout registrado."
-            if supported
-            else "O canal solicitado ainda não possui suporte técnico para concluir esta compra."
+            else (
+                "Perfeito — seguimos por aqui no WhatsApp. "
+                "Me diga se prefere PIX, cartão ou boleto."
+                if supported
+                else "O canal solicitado ainda não possui suporte técnico para concluir esta compra."
+            )
         ),
         intent="commerce",
         handoff_required=False,

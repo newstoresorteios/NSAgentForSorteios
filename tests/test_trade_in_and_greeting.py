@@ -117,14 +117,15 @@ def test_farewell_detector_and_reply():
 
 
 def test_resolve_address_name_prefers_checkout_over_whatsapp_nick():
-    from app.greeting_policy import resolve_address_name
+    from app.greeting_policy import looks_like_whatsapp_nick, resolve_address_name
 
+    assert looks_like_whatsapp_nick("Razor Blue") is True
+    assert looks_like_whatsapp_nick("João Paulo Firmino") is False
+    assert looks_like_whatsapp_nick("Felipe Newbold") is False
     assert (
         resolve_address_name(
             checkout_name="João Paulo Firmino",
             whatsapp_profile_name="Razor Blue",
         ).startswith("João")
     )
-    assert (
-        resolve_address_name(whatsapp_profile_name="Razor Blue") == "Razor Blue"
-    )
+    assert resolve_address_name(whatsapp_profile_name="Razor Blue") is None
