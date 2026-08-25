@@ -557,14 +557,17 @@ def persist_contact_preferences_from_interpretation(
                 memory_kind=str(item["memory_kind"]),
                 value=item["value"],
                 safe_summary=str(item.get("safe_summary") or ""),
-                source="deterministic_interpretation",
+                source="system",
                 importance=float(item.get("importance") or 0.8),
                 confidence=float(item.get("confidence") or 0.9),
                 use_in_instructions=True,
                 source_inbound_id=inbound_id,
                 source_response_id=response_id,
                 expires_at=item.get("expires_at"),
-                metadata={"origin": "contact_preference_memory"},
+                metadata={
+                    "origin": "contact_preference_memory",
+                    "extraction": "deterministic_interpretation",
+                },
             )
             upserted += 1
             keys.append(str(item["memory_key"]))

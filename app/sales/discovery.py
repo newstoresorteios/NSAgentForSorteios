@@ -133,7 +133,23 @@ def _scrub_stale_budget_for_open_browse(
 
 def _specific_product_lock(interpretation: SalesInterpretation) -> bool:
     subject = interpretation.subject
-    return any((subject.model, subject.reference, subject.ean))
+    if subject.reference or subject.ean:
+        return True
+    model = str(subject.model or "").strip()
+    if not model:
+        return False
+    model_fold = model.casefold()
+    brand_fold = str(subject.brand or "").casefold()
+    if brand_fold and model_fold == brand_fold:
+        return False
+    # Brand-only (or brand + "relógio") misparsed as model must not unlock catalog.
+    leftover = model_fold
+    for hit in _mentioned_watch_brands(model):
+        leftover = leftover.replace(hit.casefold(), " ")
+    for token in ("relógio", "relogio", "watch"):
+        leftover = leftover.replace(token, " ")
+    leftover = " ".join(leftover.split())
+    return bool(leftover)
 
 
 def _subject_identifiable(interpretation: SalesInterpretation) -> bool:
@@ -142,13 +158,21 @@ def _subject_identifiable(interpretation: SalesInterpretation) -> bool:
 
 
 def _persona_requires_qualification() -> bool:
+    """Keep ChatBo gate when persona DB load fails; honor flag when runtime is healthy."""
     try:
         from ..persona_runtime import get_persona_runtime
 
         runtime = get_persona_runtime()
     except Exception:
+        return True
+    # Outside a request scope (unit tests), no bound runtime → do not force the gate.
+    if runtime is None:
         return False
-    return bool(runtime and runtime.enabled and runtime.require_qualification_before_catalog)
+    if getattr(runtime, "load_error", None):
+        return True
+    if not getattr(runtime, "enabled", False):
+        return False
+    return bool(getattr(runtime, "require_qualification_before_catalog", True))
 
 
 # Only real style/occasion unlock brand+style. Color/material are catalog filters
@@ -184,6 +208,9 @@ def build_qualification_snapshot(
     covered = known | explicit_no
     has_brand = bool(interpretation.subject.brand) or "brand" in covered
     has_product_type = bool(interpretation.subject.product_type)
+    # Budget/style come from known_preferences (includes rehydrated prefs).
+    # Open-browse scrub removes stale budget from known_preferences on purpose —
+    # do not re-read interpretation.preferences here or scrub is bypassed.
     has_budget = bool(covered & _QUAL_BUDGET_DIMS)
     has_style = bool(covered & _QUAL_STYLE_DIMS)
     has_recipient = "recipient" in covered
@@ -354,6 +381,10 @@ def _mentioned_watch_brands(text: str | None) -> list[str]:
         "tissot",
         "citizen",
         "seiko",
+        "bulova",
+        "orient",
+        "casio",
+        "mido",
         "omega",
         "longines",
         "oris",
@@ -368,9 +399,17 @@ def _mentioned_watch_brands(text: str | None) -> list[str]:
         "christopher ward",
     )
     found: list[str] = []
+    display = {
+        "tag heuer": "TAG Heuer",
+        "christopher ward": "Christopher Ward",
+        "bulova": "Bulova",
+        "orient": "Orient",
+        "casio": "Casio",
+        "mido": "Mido",
+    }
     for brand in known:
         if brand in folded and brand not in found:
-            found.append(brand.title() if brand != "tag heuer" else "TAG Heuer")
+            found.append(display.get(brand, brand.title()))
     return found
 
 

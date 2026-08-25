@@ -230,6 +230,50 @@ def test_persona_qualification_unlocks_on_brand_plus_budget():
         persona_runtime.reset_persona_runtime(token)
 
 
+def test_rehydrated_style_and_budget_unlock_without_reasking():
+    """P2: prefs already on the interpretation (e.g. contact memory) satisfy the gate."""
+    import app.persona_runtime as persona_runtime
+    import app.sales_agent as sales_agent
+
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Qual faixa de investimento você tem em mente?",
+            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
+        ],
+    )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="find",
+            subject={"product_type": "relógio", "brand": "Hamilton"},
+            preferences={"style": "clássico", "budget_max": 4500},
+            information_needed=["catalog"],
+            references_previous_context=False,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=False,
+            confidence=0.9,
+        )
+        # Not an open-browse phrase — rehydrated budget/style must remain covered.
+        state = sales_agent._discovery_state(
+            interpretation,
+            [],
+            message_text="tem Hamilton?",
+        )
+        assert "style" in state["known_preferences"]
+        assert "budget" in state["known_preferences"]
+        assert state["persona_qualification_required"] is False
+        assert state["qualification"]["ready"] is True
+        assert state["qualification"]["satisfied_by"] in {"brand+budget", "brand+style"}
+    finally:
+        persona_runtime.reset_persona_runtime(token)
+
+
 def test_brand_plus_color_or_material_still_requires_qualification():
     """'quero um bulova dourado automatico' must ask faixa/estilo — not search yet."""
     import app.persona_runtime as persona_runtime

@@ -819,17 +819,20 @@ async def interpret_message(
     if _is_greeting(message.text):
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "greeting_fast_path"
+        fallback = _rehydrate_contact_preferences(fallback, message)
         _log_interpretation(fallback, settings.openai_model, fallback_reason="greeting_fast_path")
         return fallback
     if not settings.openai_api_key:
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "openai_api_key_missing"
+        fallback = _rehydrate_contact_preferences(fallback, message)
         _log_interpretation(fallback, settings.openai_model, fallback_reason="openai_api_key_missing")
         return fallback
     current_text = (message.text or "").strip()
     if not current_text:
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "empty_message"
+        fallback = _rehydrate_contact_preferences(fallback, message)
         _log_interpretation(fallback, settings.openai_model, fallback_reason="empty_message")
         return fallback
 
@@ -968,12 +971,14 @@ async def interpret_message(
         print("[sales.interpreter.error]", _bad_request_details(exc, interpreter_model))
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "openai_bad_request"
+        fallback = _rehydrate_contact_preferences(fallback, message)
         _log_interpretation(fallback, interpreter_model, fallback_reason="openai_bad_request")
         return fallback
     except OpenAIRefusalError as exc:
         print("[sales.interpreter] failed", {"error_type": type(exc).__name__})
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "openai_invalid_response"
+        fallback = _rehydrate_contact_preferences(fallback, message)
         _log_interpretation(
             fallback,
             interpreter_model,
@@ -992,6 +997,7 @@ async def interpret_message(
         fallback = _fallback_interpretation(message.text)
         fallback_reason = "openai_request_failed" if isinstance(exc, APIError) else "openai_invalid_response"
         fallback._fallback_reason = fallback_reason
+        fallback = _rehydrate_contact_preferences(fallback, message)
         _log_interpretation(fallback, interpreter_model, fallback_reason=fallback_reason)
         return fallback
 
@@ -1027,6 +1033,21 @@ def deterministic_sales_plan(text: str | None) -> dict[str, Any] | None:
             fallback_model = query
         else:
             fallback_product_type = query.split()[0] if action == "purchase_intent" else query
+    from .sales.discovery import _mentioned_watch_brands
+
+    brands = _mentioned_watch_brands(text)
+    brand = brands[0] if brands else None
+    model = fallback_model
+    if brand and model:
+        leftover = model.casefold()
+        for hit in brands:
+            leftover = leftover.replace(hit.casefold(), " ")
+        for token in ("relógio", "relogio", "watch"):
+            leftover = leftover.replace(token, " ")
+        leftover = " ".join(leftover.split())
+        model = leftover or None
+        if any(token in (fallback_model or "").casefold() for token in ("relógio", "relogio")):
+            fallback_product_type = fallback_product_type or "relógio"
     plan: dict[str, Any] = {
         "intent": "purchase_intent" if action == "purchase_intent" else _ACTION_TO_PLAN.get(action, "product_search"),
         "query": query,
@@ -1040,7 +1061,9 @@ def deterministic_sales_plan(text: str | None) -> dict[str, Any] | None:
         },
         "constraints": {"budget_max": budget_max, "attributes": query.split()[1:] if budget_max is not None and len(query.split()) > 1 else []},
     }
-    plan["subject"].update({"brand": None, "model": fallback_model})
+    plan["subject"].update({"brand": brand, "model": model})
+    if brand and "brand" not in plan["filters"]:
+        plan["filters"] = {**plan["filters"], "brand": brand}
     return plan
 
 

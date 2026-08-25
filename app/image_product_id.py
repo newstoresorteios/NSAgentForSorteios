@@ -471,7 +471,7 @@ def _clarification_result(
             if part
         ).strip()
         text = (
-            f"Não consegui confirmar a referência com segurança pela foto"
+            f"Não consegui confirmar o modelo com segurança pela foto"
             f"{f' ({hint})' if hint else ''}. "
             "Me confirma a marca e o modelo, ou envia uma foto mais nítida do mostrador?"
         )
@@ -1097,8 +1097,8 @@ async def handle_image_product_search(
                 tray_result.reply_text = (
                     f"Pela foto, identifiquei {label or 'esse modelo'}, "
                     f"mas ainda não localizei {line_hint or 'essa linha'} no catálogo agora. "
-                    "Se tiver a referência (ex.: código no fundo da caixa), me manda "
-                    "que eu confiro de novo."
+                    "Posso te mostrar opções mais próximas dessa linha se você quiser "
+                    "seguir por cor ou faixa de investimento."
                 )
                 tray_result.response_metadata = {
                     **(tray_result.response_metadata or {}),
