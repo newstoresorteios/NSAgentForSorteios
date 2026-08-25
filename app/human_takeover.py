@@ -1,8 +1,8 @@
 """Detecta quando a Central ChatBô assumiu a conversa (humano no comando).
 
-O pause NÃO é permanente: só silencia o bot enquanto houver evidência de
-atividade do atendente nos últimos N minutos (default 15). Sem atividade
-recente — mesmo com assigned_to preso — o agente volta a atender.
+Quando `bot_activated=false` na Central, o agente fica mudo até alguém
+reativar o bot (fail-closed). Quando só há `assigned_to`, o pause expira
+após `human_takeover_idle_minutes` sem atividade do atendente.
 """
 
 from __future__ import annotations
@@ -32,6 +32,31 @@ def _candidate_keys(incoming: IncomingMessage) -> list[str]:
         if text and text not in keys:
             keys.append(text)
     return keys
+
+
+def _lookup_keys(incoming: IncomingMessage) -> list[str]:
+    """Expand phone/thread aliases so conversas rows match (whatsapp:5548… vs 5548…)."""
+    keys = _candidate_keys(incoming)
+    expanded: list[str] = []
+    for key in keys:
+        if not key:
+            continue
+        expanded.append(key)
+        lowered = key.casefold()
+        if lowered.startswith("whatsapp:"):
+            bare = key.split(":", 1)[1].strip()
+            if bare and bare not in expanded:
+                expanded.append(bare)
+            continue
+        digits = "".join(ch for ch in key if ch.isdigit())
+        if len(digits) >= 10:
+            for variant in (
+                f"whatsapp:{digits}",
+                f"whatsapp:+{digits}",
+            ):
+                if variant not in expanded:
+                    expanded.append(variant)
+    return list(dict.fromkeys(expanded))
 
 
 def _primary_state_key(incoming: IncomingMessage) -> str | None:
@@ -67,6 +92,15 @@ def _conversas_has_takeover_signal(row: dict[str, Any]) -> bool:
     if row.get("bot_activated") is False:
         return True
     return False
+
+
+def _bot_explicitly_disabled(row: dict[str, Any]) -> bool:
+    return row.get("bot_activated") is False
+
+
+def _has_assigned_human(row: dict[str, Any]) -> bool:
+    assigned = row.get("assigned_to")
+    return assigned is not None and bool(str(assigned).strip())
 
 
 def _fetch_conversas_rows(keys: list[str]) -> list[dict[str, Any]]:
@@ -243,7 +277,7 @@ def touch_human_activity(incoming: IncomingMessage) -> bool:
 
     Call this on outbound/agent webhooks. Ignores echoes of our own bot sends.
     """
-    keys = _candidate_keys(incoming)
+    keys = _lookup_keys(incoming)
     state_key = _primary_state_key(incoming)
     if not state_key:
         return False
@@ -283,14 +317,12 @@ def touch_human_activity(incoming: IncomingMessage) -> bool:
 
 
 def human_takeover_active(incoming: IncomingMessage) -> bool:
-    """True only while a human is actively handling the thread.
+    """True while a human is handling the thread (agent must stay silent).
 
-    Requires takeover signal in ChatBô (`assigned_to` / `bot_activated=false`)
-    AND recent attendant activity within `human_takeover_idle_minutes`.
-
-    Stuck `assigned_to` without recent human activity does NOT mute the bot.
+    - `bot_activated=false` in ChatBô → block until bot is re-enabled (fail-closed).
+    - `assigned_to` only → block while attendant activity is within idle window.
     """
-    keys = _candidate_keys(incoming)
+    keys = _lookup_keys(incoming)
     state_key = _primary_state_key(incoming)
     if not keys or not state_key:
         return False
@@ -303,6 +335,24 @@ def human_takeover_active(incoming: IncomingMessage) -> bool:
 
     takeover_row = next((row for row in rows if _conversas_has_takeover_signal(row)), None)
     if takeover_row is None:
+        return False
+
+    bot_disabled = _bot_explicitly_disabled(takeover_row)
+    has_assignee = _has_assigned_human(takeover_row)
+
+    if bot_disabled:
+        log_event(
+            "human_takeover.block",
+            {
+                "reason": "bot_deactivated",
+                "state_key": state_key,
+                "assigned_to_present": has_assignee,
+                "bot_activated": takeover_row.get("bot_activated"),
+            },
+        )
+        return True
+
+    if not has_assignee:
         return False
 
     idle = timedelta(minutes=_idle_minutes())
@@ -337,9 +387,6 @@ def human_takeover_active(incoming: IncomingMessage) -> bool:
                 logger.warning("human_takeover state seed failed: %s", exc)
 
     if last_activity is None:
-        # First time we observe takeover without human timestamps: start a
-        # single 15‑min window — only if we can persist it. If persist fails,
-        # fail open so a stuck assigned_to never mutes forever.
         seeded = now
         try:
             _upsert_pause_state(
@@ -364,19 +411,6 @@ def human_takeover_active(incoming: IncomingMessage) -> bool:
             )
             return False
 
-    if last_activity is None:
-        log_event(
-            "human_takeover.allow",
-            {
-                "reason": "no_recent_human_activity",
-                "state_key": state_key,
-                "assigned_to_present": bool(takeover_row.get("assigned_to")),
-                "bot_activated": takeover_row.get("bot_activated"),
-                "idle_minutes": _idle_minutes(),
-            },
-        )
-        return False
-
     age = now - last_activity
     if age >= idle:
         log_event(
@@ -395,10 +429,10 @@ def human_takeover_active(incoming: IncomingMessage) -> bool:
     log_event(
         "human_takeover.block",
         {
+            "reason": "assigned_within_idle",
             "state_key": state_key,
             "activity_source": activity_source,
-            "assigned_to_present": bool(takeover_row.get("assigned_to")),
-            "bot_activated": takeover_row.get("bot_activated"),
+            "assigned_to_present": has_assignee,
             "remaining_seconds": remaining,
             "idle_minutes": _idle_minutes(),
         },

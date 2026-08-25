@@ -5,6 +5,7 @@ from app.human_takeover import (
     _candidate_keys,
     _conversas_has_takeover_signal,
     _human_activity_from_row,
+    _lookup_keys,
     human_takeover_active,
 )
 from app.models import IncomingMessage
@@ -26,6 +27,20 @@ def test_candidate_keys_dedupes():
     assert "5511999999999" in keys
     assert "vid" in keys
     assert len(keys) == len(set(keys))
+
+
+def test_lookup_keys_adds_whatsapp_phone_aliases():
+    msg = IncomingMessage(
+        channel="whatsapp",
+        conversation_id="8TP3QuTjwzgLQp935",
+        sender_key="whatsapp:5548999490859",
+        sender_phone="5548999490859",
+        text="oi",
+    )
+    keys = _lookup_keys(msg)
+    assert "5548999490859" in keys
+    assert "whatsapp:5548999490859" in keys
+    assert "8TP3QuTjwzgLQp935" in keys
 
 
 def test_takeover_signal_ignores_closed():
@@ -54,8 +69,72 @@ def test_human_activity_ignores_customer_last_message():
     )
 
 
+def test_bot_deactivated_blocks_indefinitely(monkeypatch):
+    monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    incoming = IncomingMessage(
+        channel="whatsapp",
+        conversation_id="conv-bot-off",
+        sender_key="conv-bot-off",
+        text="oi",
+    )
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    with (
+        patch(
+            "app.human_takeover._fetch_conversas_rows",
+            return_value=[
+                {
+                    "assigned_to": None,
+                    "bot_activated": False,
+                    "status": "waiting",
+                }
+            ],
+        ),
+        patch(
+            "app.human_takeover._load_pause_state",
+            return_value={"last_human_activity_at": old},
+        ),
+    ):
+        assert human_takeover_active(incoming) is True
+
+    get_settings.cache_clear()
+
+
+def test_bot_deactivated_blocks_when_persist_fails(monkeypatch):
+    monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    incoming = IncomingMessage(
+        channel="whatsapp",
+        conversation_id="conv-bot-off",
+        sender_key="conv-bot-off",
+        text="oi",
+    )
+    with (
+        patch(
+            "app.human_takeover._fetch_conversas_rows",
+            return_value=[
+                {
+                    "assigned_to": None,
+                    "bot_activated": False,
+                    "status": "waiting",
+                }
+            ],
+        ),
+        patch("app.human_takeover._load_pause_state", side_effect=RuntimeError("no table")),
+    ):
+        assert human_takeover_active(incoming) is True
+
+    get_settings.cache_clear()
+
+
 def test_stuck_assigned_without_activity_allows_bot_when_persist_fails(monkeypatch):
-    """If we cannot store the idle clock, never mute permanently."""
+    """If we cannot store the idle clock, never mute permanently (assigned only)."""
     monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
     from app.config import get_settings
 
@@ -71,7 +150,11 @@ def test_stuck_assigned_without_activity_allows_bot_when_persist_fails(monkeypat
         patch(
             "app.human_takeover._fetch_conversas_rows",
             return_value=[
-                {"assigned_to": "agent-1", "bot_activated": False, "status": "open"}
+                {
+                    "assigned_to": "agent-1",
+                    "bot_activated": True,
+                    "status": "open",
+                }
             ],
         ),
         patch("app.human_takeover._load_pause_state", return_value=None),
@@ -101,7 +184,11 @@ def test_first_observation_mutes_only_when_persisted(monkeypatch):
         patch(
             "app.human_takeover._fetch_conversas_rows",
             return_value=[
-                {"assigned_to": "agent-1", "bot_activated": False, "status": "open"}
+                {
+                    "assigned_to": "agent-1",
+                    "bot_activated": True,
+                    "status": "open",
+                }
             ],
         ),
         patch("app.human_takeover._load_pause_state", return_value=None),
@@ -111,6 +198,7 @@ def test_first_observation_mutes_only_when_persisted(monkeypatch):
         assert upsert.called
 
     get_settings.cache_clear()
+
 
 def test_human_takeover_expires_after_idle(monkeypatch):
     monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
@@ -128,7 +216,13 @@ def test_human_takeover_expires_after_idle(monkeypatch):
     with (
         patch(
             "app.human_takeover._fetch_conversas_rows",
-            return_value=[{"assigned_to": "agent-1", "bot_activated": False, "status": "open"}],
+            return_value=[
+                {
+                    "assigned_to": "agent-1",
+                    "bot_activated": True,
+                    "status": "open",
+                }
+            ],
         ),
         patch(
             "app.human_takeover._load_pause_state",
@@ -157,7 +251,13 @@ def test_human_takeover_active_within_idle(monkeypatch):
     with (
         patch(
             "app.human_takeover._fetch_conversas_rows",
-            return_value=[{"assigned_to": "agent-1", "bot_activated": False, "status": "open"}],
+            return_value=[
+                {
+                    "assigned_to": "agent-1",
+                    "bot_activated": True,
+                    "status": "open",
+                }
+            ],
         ),
         patch(
             "app.human_takeover._load_pause_state",
