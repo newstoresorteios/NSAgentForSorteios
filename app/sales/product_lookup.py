@@ -45,6 +45,70 @@ async def _call_execute_tool(name: str, arguments: dict[str, Any]):
     return await sales_agent.execute_tool(name, arguments)
 
 
+async def _serve_index_when_tray_unavailable(
+    interpretation: SalesInterpretation,
+    *,
+    reason: str,
+) -> AgentResult | None:
+    """IQ-06: exact/SKU turns must not die on Tray auth 503 if the durable index has hits.
+
+    Baltic MK2 (25/08) failed all Tray probes with tray_authentication_failed while
+    ai_catalog_index already had Aquascaphe MK2 — serve index rows degraded.
+    """
+    if not bool(getattr(get_settings(), "agent_catalog_index_read_enabled", True)):
+        return None
+    from ..catalog_index_primary import fetch_primary_index_candidates
+    from ..commerce_router import _product_result, guided_near_match_result
+
+    index_rows, strategy = fetch_primary_index_candidates(
+        interpretation,
+        limit=max(customer_result_limit() * 4, 20),
+    )
+    if not index_rows:
+        print(
+            "[sales.retrieval.index_unavailable_miss]",
+            {"reason": reason, "strategy": strategy},
+        )
+        return None
+
+    soft = prefer_dial_and_case_matches(
+        soft_confirm_candidates(
+            index_rows,
+            interpretation,
+            limit=customer_result_limit(),
+        ),
+        interpretation,
+        limit=customer_result_limit(),
+    )
+    if not soft:
+        soft = index_rows[: customer_result_limit()]
+    for product in soft:
+        product.setdefault("_factual_source", "catalog_index")
+        product["_from_catalog_index"] = True
+        product["_revalidated"] = False
+        product["_revalidation_degraded"] = True
+    print(
+        "[sales.retrieval.index_unavailable_fallback]",
+        {
+            "reason": reason,
+            "strategy": strategy,
+            "served": len(soft),
+            "ids": [str(p.get("id")) for p in soft[:5]],
+        },
+    )
+    # Prefer guided near-match copy for exact identity; otherwise standard shortlist.
+    brand = (interpretation.subject.brand or "").strip()
+    model = (interpretation.subject.model or "").strip()
+    if brand or model:
+        return guided_near_match_result(
+            soft,
+            brand=brand or None,
+            limit=customer_result_limit(),
+            safety_reason="exact_index_fallback_tray_down",
+        )
+    return _product_result("product_search", soft)
+
+
 async def execute_contextual_product_lookup(
     interpretation: SalesInterpretation,
     product_reference: CommerceProductReference,
@@ -285,9 +349,9 @@ async def execute_compiled_product_retrieval(
         result = await _call_execute_tool("search_products", arguments)
         return request, result
 
-    # IQ-06: durable catalog index first for recommendations; Tray only refreshes
-    # when the index pool is empty or too thin after hard constraints.
-    if retrieval_plan.mode == "recommendation":
+    # IQ-06: durable catalog index first for recommendations and exact identity.
+    # Exact/SKU turns (Baltic MK2 25/08) must not die solely on Tray auth 503.
+    if retrieval_plan.mode in {"recommendation", "exact"}:
         from ..catalog_index_primary import (
             fetch_primary_index_candidates,
             index_pool_is_sufficient,
@@ -311,14 +375,23 @@ async def execute_compiled_product_retrieval(
             _absorb_products(index_products)
             catalog_index_seeded = len(index_products)
             _refresh_hard_filtered()
-            catalog_index_primary = index_pool_is_sufficient(
-                hard_filtered,
-                candidate_limit=retrieval_plan.candidate_limit,
-            )
+            # Exact: index is "sufficient" when we already have progress matches —
+            # still refresh via Tray when possible, but skip fan-out if enough hits.
+            if retrieval_plan.mode == "exact":
+                catalog_index_primary = bool(hard_filtered) and index_pool_is_sufficient(
+                    hard_filtered,
+                    candidate_limit=min(retrieval_plan.candidate_limit, 5),
+                )
+            else:
+                catalog_index_primary = index_pool_is_sufficient(
+                    hard_filtered,
+                    candidate_limit=retrieval_plan.candidate_limit,
+                )
             print(
                 "[catalog.index.primary]",
                 {
                     "strategy": catalog_index_strategy,
+                    "mode": retrieval_plan.mode,
                     "seeded": catalog_index_seeded,
                     "hard_filtered": len(hard_filtered),
                     "sufficient": catalog_index_primary,
@@ -330,6 +403,7 @@ async def execute_compiled_product_retrieval(
                 "[catalog.index.primary]",
                 {
                     "strategy": None,
+                    "mode": retrieval_plan.mode,
                     "seeded": 0,
                     "hard_filtered": 0,
                     "sufficient": False,
@@ -705,6 +779,12 @@ async def execute_compiled_product_retrieval(
             )
         if product_lookup_failed and not catalog_probe_ok:
             print("[sales.retrieval.empty]", {"reason": "catalog_lookup_failed"})
+            fallback = await _serve_index_when_tray_unavailable(
+                interpretation,
+                reason="catalog_lookup_failed",
+            )
+            if fallback is not None:
+                return fallback
             return AgentResult(
                 reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
                 intent="commerce",
@@ -761,6 +841,12 @@ async def execute_compiled_product_retrieval(
         print("[sales.retrieval.empty]", {"reason": reason})
         if retrieval_plan.mode == "exact":
             if product_lookup_failed and not catalog_probe_ok:
+                fallback = await _serve_index_when_tray_unavailable(
+                    interpretation,
+                    reason="exact_hard_filter_empty_tray_down",
+                )
+                if fallback is not None:
+                    return fallback
                 return AgentResult(
                     reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
                     intent="commerce",
@@ -968,6 +1054,12 @@ async def execute_compiled_product_retrieval(
                 product["_revalidated"] = False
                 product["_revalidation_degraded"] = True
         else:
+            fallback = await _serve_index_when_tray_unavailable(
+                interpretation,
+                reason="revalidation_failed_no_index_seed",
+            )
+            if fallback is not None:
+                return fallback
             return AgentResult(
                 reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
                 intent="commerce",

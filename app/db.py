@@ -528,6 +528,7 @@ def ensure_tables() -> None:
                     gender text NULL,
                     mechanism text NULL,
                     case_size text NULL,
+                    water_resistance_m integer NULL,
                     dial_color text NULL,
                     strap_color text NULL,
                     material text NULL,
@@ -564,6 +565,17 @@ def ensure_tables() -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_tenant_product
                 ON public.ai_catalog_index (tenant_id, product_id);
+
+                ALTER TABLE public.ai_catalog_index
+                  ADD COLUMN IF NOT EXISTS water_resistance_m integer NULL;
+
+                CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_wr
+                ON public.ai_catalog_index (tenant_id, water_resistance_m)
+                WHERE water_resistance_m IS NOT NULL;
+
+                CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_case_size
+                ON public.ai_catalog_index (tenant_id, case_size)
+                WHERE case_size IS NOT NULL;
 
                 CREATE TABLE IF NOT EXISTS public.instagram_story_products (
                   id bigserial PRIMARY KEY,

@@ -42,6 +42,7 @@ class CanonicalCatalogItem(BaseModel):
     gender: str | None = None
     mechanism: str | None = None
     case_size: str | None = None
+    water_resistance_m: int | None = None
     dial_color: str | None = None
     strap_color: str | None = None
     material: str | None = None
@@ -99,6 +100,40 @@ def _fold(value: Any) -> str:
 
 def _tokens(value: Any) -> list[str]:
     return re.findall(r"[a-z0-9]+", _fold(value))
+
+
+def _infer_case_size(title: str, product: dict[str, Any]) -> str | None:
+    from .catalog_specs import extract_case_size_mm
+
+    return extract_case_size_mm({**product, "name": title or product.get("name")})
+
+
+def _infer_water_resistance(title: str, product: dict[str, Any]) -> int | None:
+    from .catalog_specs import extract_water_resistance_m
+
+    return extract_water_resistance_m({**product, "name": title or product.get("name")})
+
+
+def _infer_mechanism(title: str, product: dict[str, Any]) -> str | None:
+    blob = _fold(
+        " ".join(
+            str(part)
+            for part in (
+                title,
+                product.get("model"),
+                product.get("description"),
+                product.get("mechanism"),
+            )
+            if part
+        )
+    )
+    if re.search(r"\b(automatico|automatic|powermatic|auto)\b", blob):
+        return "automatic"
+    if re.search(r"\b(quartz|quartzo)\b", blob):
+        return "quartz"
+    if re.search(r"\b(mecanico|mechanical|manual)\b", blob):
+        return "mechanical"
+    return None
 
 
 def trigram_similarity(left: str, right: str) -> float:
@@ -223,8 +258,9 @@ def to_canonical_item(
         )
         or None,
         gender=None,
-        mechanism=None,
-        case_size=None,
+        mechanism=_infer_mechanism(title, product),
+        case_size=_infer_case_size(title, product),
+        water_resistance_m=_infer_water_resistance(title, product),
         dial_color=str(color) if color else None,
         strap_color=None,
         material=(
@@ -798,7 +834,7 @@ def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
                         INSERT INTO public.ai_catalog_index (
                             tenant_id, catalog_item_key, product_id, variant_id, sku, ean, reference,
                             brand, collection, model, title_normalized, category,
-                            gender, mechanism, case_size, dial_color, strap_color,
+                            gender, mechanism, case_size, water_resistance_m, dial_color, strap_color,
                             material, strap_type, colors_normalized, aliases,
                             price, promotional_price, stock, available,
                             available_in_store, url, image_url, freshness_at,
@@ -807,8 +843,8 @@ def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
                             %(tenant_id)s, %(catalog_item_key)s, %(product_id)s, %(variant_id)s, %(sku)s,
                             %(ean)s, %(reference)s, %(brand)s, %(collection)s,
                             %(model)s, %(title_normalized)s, %(category)s,
-                            %(gender)s, %(mechanism)s, %(case_size)s, %(dial_color)s,
-                            %(strap_color)s, %(material)s, %(strap_type)s,
+                            %(gender)s, %(mechanism)s, %(case_size)s, %(water_resistance_m)s,
+                            %(dial_color)s, %(strap_color)s, %(material)s, %(strap_type)s,
                             %(colors_normalized)s::jsonb, %(aliases)s::jsonb,
                             %(price)s, %(promotional_price)s, %(stock)s, %(available)s,
                             %(available_in_store)s, %(url)s, %(image_url)s,
@@ -825,6 +861,14 @@ def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
                             model = EXCLUDED.model,
                             title_normalized = EXCLUDED.title_normalized,
                             category = EXCLUDED.category,
+                            mechanism = COALESCE(EXCLUDED.mechanism, public.ai_catalog_index.mechanism),
+                            case_size = COALESCE(EXCLUDED.case_size, public.ai_catalog_index.case_size),
+                            water_resistance_m = COALESCE(
+                                EXCLUDED.water_resistance_m,
+                                public.ai_catalog_index.water_resistance_m
+                            ),
+                            dial_color = COALESCE(EXCLUDED.dial_color, public.ai_catalog_index.dial_color),
+                            material = COALESCE(EXCLUDED.material, public.ai_catalog_index.material),
                             colors_normalized = EXCLUDED.colors_normalized,
                             price = EXCLUDED.price,
                             promotional_price = EXCLUDED.promotional_price,

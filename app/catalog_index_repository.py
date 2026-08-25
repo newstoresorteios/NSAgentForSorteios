@@ -287,6 +287,9 @@ def row_to_product_dict(row: dict[str, Any]) -> dict[str, Any]:
         "model": row.get("model"),
         "name": row.get("title_normalized") or row.get("model"),
         "title": row.get("title_normalized"),
+        "case_size": row.get("case_size"),
+        "water_resistance_m": row.get("water_resistance_m"),
+        "mechanism": row.get("mechanism"),
         "price": float(row["price"]) if row.get("price") is not None else None,
         "promotional_price": (
             float(row["promotional_price"])

@@ -947,6 +947,10 @@ async def test_persistent_catalog_failure_is_technical_not_product_not_found(mon
         return {"error": "temporary failure"}
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        "app.catalog_index_primary.fetch_primary_index_candidates",
+        lambda *a, **k: ([], None),
+    )
 
     result = await sales_agent._execute_compiled_product_retrieval(
         _interpretation(brand="Doxa", model="SUB 300")
@@ -954,6 +958,75 @@ async def test_persistent_catalog_failure_is_technical_not_product_not_found(mon
 
     assert result.safety_reason == "tray_adapter_unavailable"
     assert result.safety_reason != "product_not_found"
+
+
+@pytest.mark.asyncio
+async def test_exact_tray_down_serves_catalog_index_fallback(monkeypatch):
+    """Baltic MK2 (25/08): Tray auth 503 must not erase index hits."""
+    import app.sales_agent as sales_agent
+    from types import SimpleNamespace
+
+    index_hit = {
+        "id": "15572",
+        "name": "Baltic Aquascaphe MK2 Blue",
+        "brand": "Baltic",
+        "current_price": 12500,
+        "available": True,
+        "available_in_store": True,
+        "_from_catalog_index": True,
+        "_factual_source": "catalog_index",
+    }
+
+    async def execute(tool, arguments):
+        if tool == "search_products":
+            return {"error": "tray_authentication_failed", "status_code": 503}
+        if tool == "get_product":
+            return {"error": "tray_authentication_failed", "status_code": 503}
+        raise AssertionError(tool)
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        "app.catalog_index_primary.fetch_primary_index_candidates",
+        lambda *a, **k: ([index_hit], "exact"),
+    )
+    monkeypatch.setattr(
+        "app.catalog_index.index_products_best_effort",
+        lambda *a, **k: 0,
+    )
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(
+            agent_catalog_index_read_enabled=True,
+            agent_catalog_index_write_enabled=False,
+            agent_catalog_index_fallback_to_tray=True,
+            agent_catalog_index_candidate_limit=30,
+            agent_persona_tenant_id="newstore",
+            openai_api_key="",
+            openai_model="gpt-4.1-mini",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.sales.product_lookup.get_settings",
+        lambda: SimpleNamespace(
+            agent_catalog_index_read_enabled=True,
+            agent_catalog_index_write_enabled=False,
+            agent_catalog_index_fallback_to_tray=True,
+            agent_catalog_index_candidate_limit=30,
+            agent_persona_tenant_id="newstore",
+            openai_api_key="",
+            openai_model="gpt-4.1-mini",
+        ),
+    )
+
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(brand="Baltic", model="Aquascaphe MK2")
+    )
+
+    assert result is not None
+    assert result.safety_reason != "tray_adapter_unavailable"
+    products = (result.commercial_data or {}).get("products") or []
+    assert any(str(p.get("id")) == "15572" for p in products)
 
 
 @pytest.mark.asyncio

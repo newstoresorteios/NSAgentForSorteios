@@ -1085,8 +1085,16 @@ def _product_text(product: dict[str, Any]) -> str:
         "name", "brand", "model", "reference", "ean", "description",
         "category", "category_name", "category_id", "attributes", "color",
         "style", "material", "properties", "ProductSettings", "variants",
+        "case_size", "water_resistance_m", "mechanism",
     )
-    return _fold(" ".join(str(product.get(field) or "") for field in fields))
+    chunks = [str(product.get(field) or "") for field in fields]
+    wr = product.get("water_resistance_m")
+    if wr is not None and str(wr).strip():
+        chunks.append(f"{wr}m")
+    case = product.get("case_size")
+    if case is not None and str(case).strip() and "mm" not in str(case).lower():
+        chunks.append(f"{case}mm")
+    return _fold(" ".join(chunks))
 
 
 def specific_product_search_terms(
@@ -1788,6 +1796,33 @@ def hard_filter_products(
         if mode == "recommendation" and _known_unavailable(product):
             continue
         selected.append(product)
+
+    # Diver ask: drop dress/100m false divers when the pool already has true divers
+    # (Certina DS-7 vs DS Action — contact 5548999490859, 25/08).
+    try:
+        from .catalog_specs import (
+            interpretation_wants_diver,
+            is_false_diver_product,
+            is_true_diver_product,
+        )
+
+        if interpretation_wants_diver(interpretation) and selected:
+            true_hits = [p for p in selected if is_true_diver_product(p)]
+            if true_hits:
+                filtered = [p for p in selected if not is_false_diver_product(p)]
+                if filtered:
+                    print(
+                        "[sales.hard_filter.diver]",
+                        {
+                            "before": len(selected),
+                            "after": len(filtered),
+                            "true_divers": len(true_hits),
+                            "dropped_false": len(selected) - len(filtered),
+                        },
+                    )
+                    return filtered
+    except Exception:
+        pass
     return selected
 
 
@@ -2455,35 +2490,20 @@ def _deterministic_semantic_order(
     products: list[dict[str, Any]],
     interpretation: SalesInterpretation,
 ) -> list[dict[str, Any]]:
+    from .catalog_specs import (
+        extract_case_size_mm,
+        extract_water_resistance_m,
+        interpretation_wants_diver,
+        interpretation_wants_small_case,
+        is_false_diver_product,
+        is_true_diver_product,
+    )
+
     gender_tokens = preference_gender_tokens(interpretation)
     color_tokens = preference_color_tokens(interpretation)
     prefs = interpretation.preferences
-    style_blob = _fold(
-        " ".join(
-            str(part)
-            for part in (
-                prefs.style,
-                prefs.occasion,
-                *list(prefs.attributes or []),
-                interpretation.subject.product_type,
-            )
-            if part
-        )
-    )
-    wants_diver = any(
-        token in style_blob
-        for token in ("mergulho", "diver", "divers", "aquascaphe")
-    )
-    wants_small_case = any(
-        token in style_blob
-        for token in ("caixa menor", "menor", "compacto", "39mm", "37mm", "38mm")
-    ) or bool(
-        re.search(r"\b(3[5-9]|40)\s*mm\b", style_blob)
-    )
-    # Also honor explicit case-size talk from attributes alone.
-    attr_fold = _fold(" ".join(str(a) for a in (prefs.attributes or []) if a))
-    if re.search(r"\b(caixa\s+menor|37\s*mm|38\s*mm|39\s*mm)\b", attr_fold):
-        wants_small_case = True
+    wants_diver = interpretation_wants_diver(interpretation)
+    wants_small_case = interpretation_wants_small_case(interpretation)
 
     terms = [
         _fold(value)
@@ -2507,19 +2527,30 @@ def _deterministic_semantic_order(
         if color_tokens and product_matches_color_tokens(product, color_tokens):
             base += 4
         if wants_diver:
-            # True divers (≈200m / diver line) beat dress 100m watches labeled "casual".
-            if re.search(r"\b(200\s*m|300\s*m|diver|divers|mergulho|aquascaphe|ds action)\b", text):
-                base += 5
-            if re.search(r"\b(100\s*m|ds-?7|dress|casual)\b", text) and not re.search(
-                r"\b(200\s*m|300\s*m|diver|divers)\b", text
-            ):
-                base -= 4
+            wr = extract_water_resistance_m(product)
+            if is_true_diver_product(product) or (wr is not None and wr >= 200):
+                base += 6
+            if is_false_diver_product(product):
+                base -= 8
+            elif wr is not None and wr <= 100:
+                base -= 6
         if wants_small_case:
-            size_match = re.search(r"\b(3[5-9]|40)\s*mm\b", text)
-            if size_match:
-                base += 3
-            elif re.search(r"\b(4[1-9]|5\d)\s*mm\b", text):
-                base -= 2
+            size_raw = extract_case_size_mm(product)
+            try:
+                size = int(size_raw) if size_raw else None
+            except (TypeError, ValueError):
+                size = None
+            if size is not None:
+                if 35 <= size <= 40:
+                    base += 4
+                elif size >= 41:
+                    base -= 2
+            else:
+                size_match = re.search(r"\b(3[5-9]|40)\s*mm\b", text)
+                if size_match:
+                    base += 3
+                elif re.search(r"\b(4[1-9]|5\d)\s*mm\b", text):
+                    base -= 2
         scored.append((base, index, product))
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [product for _, _, product in scored[:rerank_selection_limit()]]
