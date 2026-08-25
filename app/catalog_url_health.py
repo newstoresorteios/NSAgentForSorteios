@@ -119,3 +119,68 @@ async def repair_catalog_storefront_urls(
     }
     print("[catalog.url.repair]", result)
     return result
+
+
+def mark_stale_or_zero_price_unavailable(
+    *,
+    stale_days: int = 3,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Fail-closed: available=true rows that are stale or price-less become unavailable.
+
+    Does not delete rows — search/ranking should stop treating them as sellable.
+    """
+    tenant = _tenant_id()
+    days = max(1, min(int(stale_days), 30))
+    cap = max(1, min(int(limit), 2000))
+    try:
+        from .db import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH victims AS (
+                        SELECT catalog_item_key
+                        FROM public.ai_catalog_index
+                        WHERE tenant_id = %(tenant_id)s
+                          AND available IS TRUE
+                          AND (
+                            COALESCE(price, 0) <= 0
+                            OR freshness_at IS NULL
+                            OR freshness_at <= now() - make_interval(days => %(days)s)
+                          )
+                        ORDER BY freshness_at ASC NULLS FIRST
+                        LIMIT %(limit)s
+                    )
+                    UPDATE public.ai_catalog_index AS idx
+                    SET available = FALSE,
+                        updated_at = now()
+                    FROM victims
+                    WHERE idx.tenant_id = %(tenant_id)s
+                      AND idx.catalog_item_key = victims.catalog_item_key
+                    RETURNING idx.catalog_item_key
+                    """,
+                    {"tenant_id": tenant, "days": days, "limit": cap},
+                )
+                marked = [dict(row) for row in (cur.fetchall() or [])]
+            conn.commit()
+        result = {
+            "ok": True,
+            "marked_unavailable": len(marked),
+            "stale_days": days,
+            "tenant_id": tenant,
+        }
+        print("[catalog.freshness.mark_unavailable]", result)
+        return result
+    except Exception as exc:
+        print(
+            "[catalog.freshness.mark_unavailable.error]",
+            {"error_type": type(exc).__name__, "error": str(exc)[:160]},
+        )
+        return {
+            "ok": False,
+            "marked_unavailable": 0,
+            "error_type": type(exc).__name__,
+            "tenant_id": tenant,
+        }

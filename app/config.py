@@ -297,7 +297,7 @@ class Settings(BaseSettings):
         alias="AGENT_INSTRUCTION_EXTENSION_PROPOSALS_ENABLED",
     )
     agent_conversation_summary_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="AGENT_CONVERSATION_SUMMARY_ENABLED",
     )
     # Inject compacted conversation summary into compiled system instructions.

@@ -284,7 +284,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v43"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v44"
 
 
 @app.get("/api/health")
@@ -1161,7 +1161,10 @@ async def catalog_url_health_cron(
         list_top_index_brands,
         refresh_top_brands_into_index,
     )
-    from app.catalog_url_health import repair_catalog_storefront_urls
+    from app.catalog_url_health import (
+        mark_stale_or_zero_price_unavailable,
+        repair_catalog_storefront_urls,
+    )
     from app.tray_tools import execute_tool
 
     if clear_brand_cache:
@@ -1191,15 +1194,15 @@ async def catalog_url_health_cron(
             )
 
     result = await repair_catalog_storefront_urls(limit=url_limit, probe_live=True)
+    freshness = mark_stale_or_zero_price_unavailable(stale_days=3, limit=500)
     warm = await refresh_top_brands_into_index(
         execute_tool,
         brand_limit=brand_limit,
         products_per_brand=products_per_brand,
     )
-    payload = {**result, "brand_warm": warm}
+    payload = {**result, "freshness": freshness, "brand_warm": warm}
     log_event("catalog.url_health.cron.completed", payload)
     return payload
-
 
 @app.post(
     "/api/cron/catalog-url-health",

@@ -27,3 +27,49 @@ def test_row_to_product_dict_rewrites_stale_url():
         }
     )
     assert "/relogios/relogios-bulova/" in str(product.get("url") or "")
+
+
+def test_mark_stale_or_zero_price_unavailable_sql_shape(monkeypatch):
+    """Ensure hygiene update runs with bound params (no string-built intervals)."""
+    import app.catalog_url_health as module
+    import app.db as db_mod
+
+    captured: dict = {}
+
+    class FakeCursor:
+        def execute(self, sql, params=None):
+            captured["sql"] = sql
+            captured["params"] = params
+
+        def fetchall(self):
+            return [{"catalog_item_key": "1"}]
+
+    class FakeCursorCtx:
+        def __enter__(self):
+            return FakeCursor()
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursorCtx()
+
+        def commit(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(module, "_tenant_id", lambda: "newstore")
+    monkeypatch.setattr(db_mod, "get_conn", lambda: FakeConn())
+
+    result = module.mark_stale_or_zero_price_unavailable(stale_days=3, limit=10)
+    assert result["ok"] is True
+    assert result["marked_unavailable"] == 1
+    assert "make_interval(days => %(days)s)" in captured["sql"]
+    assert captured["params"]["days"] == 3
+    assert captured["params"]["limit"] == 10
