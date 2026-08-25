@@ -5,7 +5,7 @@ import hashlib
 from json import JSONDecodeError
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token, verify_remarketing_cron
@@ -1150,13 +1150,52 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
     "/api/cron/catalog-url-health",
     dependencies=[Depends(verify_remarketing_cron)],
 )
-async def catalog_url_health_cron():
-    from app.catalog_brand_warm import refresh_top_brands_into_index
+async def catalog_url_health_cron(
+    brand_limit: int = Query(default=8, ge=1, le=25),
+    products_per_brand: int = Query(default=40, ge=5, le=200),
+    url_limit: int = Query(default=50, ge=1, le=500),
+    clear_brand_cache: bool = Query(default=False),
+):
+    from app.catalog_brand_warm import (
+        _DEFAULT_TOP_BRANDS,
+        list_top_index_brands,
+        refresh_top_brands_into_index,
+    )
     from app.catalog_url_health import repair_catalog_storefront_urls
     from app.tray_tools import execute_tool
 
-    result = await repair_catalog_storefront_urls(limit=50, probe_live=True)
-    warm = await refresh_top_brands_into_index(execute_tool, brand_limit=8)
+    if clear_brand_cache:
+        try:
+            from app.db import get_conn
+
+            brands = list_top_index_brands(limit=brand_limit) or list(
+                _DEFAULT_TOP_BRANDS[:brand_limit]
+            )
+            keys = [
+                f"brand:{' '.join(str(b).strip().lower().split())}"
+                for b in brands
+                if str(b).strip()
+            ]
+            if keys:
+                with get_conn() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "DELETE FROM public.ai_catalog_cache WHERE cache_key = ANY(%s)",
+                            (keys,),
+                        )
+                    conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                "catalog.url_health.cache_clear_error",
+                {"error_type": type(exc).__name__},
+            )
+
+    result = await repair_catalog_storefront_urls(limit=url_limit, probe_live=True)
+    warm = await refresh_top_brands_into_index(
+        execute_tool,
+        brand_limit=brand_limit,
+        products_per_brand=products_per_brand,
+    )
     payload = {**result, "brand_warm": warm}
     log_event("catalog.url_health.cron.completed", payload)
     return payload
@@ -1166,8 +1205,18 @@ async def catalog_url_health_cron():
     "/api/cron/catalog-url-health",
     dependencies=[Depends(verify_remarketing_cron)],
 )
-async def catalog_url_health_cron_manual():
-    return await catalog_url_health_cron()
+async def catalog_url_health_cron_manual(
+    brand_limit: int = Query(default=8, ge=1, le=25),
+    products_per_brand: int = Query(default=40, ge=5, le=200),
+    url_limit: int = Query(default=50, ge=1, le=500),
+    clear_brand_cache: bool = Query(default=False),
+):
+    return await catalog_url_health_cron(
+        brand_limit=brand_limit,
+        products_per_brand=products_per_brand,
+        url_limit=url_limit,
+        clear_brand_cache=clear_brand_cache,
+    )
 
 
 @app.get(

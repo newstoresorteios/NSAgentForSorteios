@@ -62,17 +62,17 @@ async def refresh_top_brands_into_index(
     execute_tool: ToolExecutor,
     *,
     brand_limit: int = 8,
-    products_per_brand: int = 40,
+    products_per_brand: int = 80,
 ) -> dict[str, Any]:
     """Fetch Tray brand pools and write-through to ai_catalog_index."""
     brands = list_top_index_brands(limit=brand_limit) or list(_DEFAULT_TOP_BRANDS[:brand_limit])
     written = 0
     warmed: list[str] = []
     for brand in brands:
-        pool = await fetch_and_cache_brand_pool(brand, execute_tool)
+        pool = await fetch_and_cache_brand_pool(brand, execute_tool, pages=12, limit=50)
         if not pool:
             continue
-        slice_products = pool[: max(5, min(int(products_per_brand), 80))]
+        slice_products = pool[: max(5, min(int(products_per_brand), 200))]
         written += index_products_best_effort(
             slice_products,
             factual_source="tray_search",

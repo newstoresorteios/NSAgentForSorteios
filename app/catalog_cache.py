@@ -177,8 +177,8 @@ async def fetch_and_cache_brand_pool(
     brand: str,
     execute_tool: ToolExecutor,
     *,
-    pages: int = 5,
-    limit: int = 20,
+    pages: int = 12,
+    limit: int = 50,
 ) -> list[dict[str, Any]]:
     cache_key = cache_key_for_brand(brand)
     cached = load_catalog_cache(cache_key)
