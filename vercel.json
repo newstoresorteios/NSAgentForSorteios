@@ -19,7 +19,7 @@
     },
     {
       "path": "/api/cron/tray-keepalive",
-      "schedule": "*/10 * * * *"
+      "schedule": "5 3 * * *"
     },
     {
       "path": "/api/cron/remarketing",
@@ -39,11 +39,11 @@
     },
     {
       "path": "/api/cron/process-inbox",
-      "schedule": "*/5 * * * *"
+      "schedule": "10 3 * * *"
     },
     {
       "path": "/api/cron/process-outbox",
-      "schedule": "*/5 * * * *"
+      "schedule": "15 3 * * *"
     },
     {
       "path": "/api/cron/order-tracking-audit",
