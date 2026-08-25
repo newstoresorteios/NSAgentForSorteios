@@ -1,19 +1,37 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.contact_preference_memory import (
     build_preference_memory_items,
     persist_contact_preferences_from_interpretation,
+    rehydrate_interpretation_from_memories,
+    should_persist_interpretation,
 )
+from app.memory_models import ContactMemory
 from app.models import SalesInterpretation
 from tests.memory_fakes import InMemoryMemoryStore
 
 
+def _interp(**kwargs) -> SalesInterpretation:
+    base = {
+        "domain": "commerce",
+        "goal": "find",
+        "subject": {},
+        "preferences": {},
+        "references_previous_context": False,
+        "enough_information_to_search": False,
+        "ready_for_retrieval": False,
+        "needs_clarification": False,
+        "confidence": 0.9,
+    }
+    base.update(kwargs)
+    return SalesInterpretation(**base)
+
+
 def test_build_preference_memory_items_from_bulova_turn():
-    interpretation = SalesInterpretation(
-        domain="commerce",
-        goal="find",
+    interpretation = _interp(
         subject={"product_type": "relógio", "brand": "Bulova"},
         preferences={
             "color": "dourado",
@@ -21,11 +39,8 @@ def test_build_preference_memory_items_from_bulova_turn():
             "budget_max": 5000,
             "style": "clássico",
         },
-        references_previous_context=False,
         enough_information_to_search=True,
         ready_for_retrieval=True,
-        needs_clarification=False,
-        confidence=0.9,
     )
     items = build_preference_memory_items(interpretation)
     keys = {item["memory_key"] for item in items}
@@ -33,10 +48,104 @@ def test_build_preference_memory_items_from_bulova_turn():
     assert "color_preference" in keys
     assert "style_preference" in keys
     assert "price_preference" in keys
+    assert "movement_preference" in keys
+    assert "material_preference" not in keys
     assert "last_commerce_theme" in keys
     theme = next(item for item in items if item["memory_key"] == "last_commerce_theme")
     assert "Bulova" in theme["safe_summary"]
-    assert "clássico" in theme["safe_summary"]
+    assert theme["safe_summary"].startswith("theme=")
+    assert item_has_expiry(items)
+
+
+def item_has_expiry(items: list[dict]) -> bool:
+    return all(item.get("expires_at") is not None for item in items)
+
+
+def test_quality_gate_skips_generic_and_weak_turns():
+    weak = _interp(goal="discover", confidence=0.2, subject={}, preferences={})
+    assert should_persist_interpretation(weak) is False
+
+    brand_only = _interp(
+        subject={"brand": "Bulova"},
+        confidence=0.4,
+        enough_information_to_search=False,
+    )
+    assert should_persist_interpretation(brand_only) is True
+
+    items = build_preference_memory_items(
+        _interp(goal="find", confidence=0.95, subject={}, preferences={})
+    )
+    assert "last_commerce_theme" not in {item["memory_key"] for item in items}
+
+
+def test_multi_brand_merge_keeps_recent_active():
+    existing = [
+        ContactMemory(
+            id=1,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="brand_preference",
+            memory_kind="brand_preference",
+            value={"brands": ["Seiko", "Tissot"], "active": "Seiko"},
+            safe_summary="brand=Seiko, Tissot",
+            use_in_instructions=True,
+        )
+    ]
+    items = build_preference_memory_items(
+        _interp(subject={"brand": "Bulova"}),
+        existing_memories=existing,
+    )
+    brand = next(item for item in items if item["memory_key"] == "brand_preference")
+    assert brand["value"]["active"] == "Bulova"
+    assert brand["value"]["brands"][:3] == ["Bulova", "Seiko", "Tissot"]
+
+
+def test_rehydrate_fills_empty_fields_without_overwriting():
+    memories = [
+        ContactMemory(
+            id=1,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="brand_preference",
+            memory_kind="brand_preference",
+            value={"brands": ["Bulova", "Seiko"], "active": "Bulova"},
+            safe_summary="brand=Bulova, Seiko",
+            use_in_instructions=True,
+        ),
+        ContactMemory(
+            id=2,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="price_preference",
+            memory_kind="price_preference",
+            value={"min": None, "max": 4500},
+            safe_summary="budget_max=4500",
+            use_in_instructions=True,
+        ),
+        ContactMemory(
+            id=3,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="style_preference",
+            memory_kind="product_preference",
+            value={"value": "clássico"},
+            safe_summary="style=clássico",
+            use_in_instructions=True,
+        ),
+    ]
+    interpretation = _interp(
+        subject={"brand": "Hamilton"},
+        preferences={"color": "preto"},
+        goal="discover",
+    )
+    updated, filled = rehydrate_interpretation_from_memories(interpretation, memories)
+    assert updated.subject.brand == "Hamilton"  # current wins
+    assert "brand" not in filled
+    assert updated.preferences.budget_max == 4500
+    assert updated.preferences.style == "clássico"
+    assert updated.preferences.color == "preto"
+    assert "budget_max" in filled
+    assert "style" in filled
 
 
 def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
@@ -48,12 +157,20 @@ def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
     settings = SimpleNamespace(
         agent_contact_preference_memory_enabled=True,
         agent_contact_preference_summary_enabled=True,
+        agent_contact_preference_rehydrate_enabled=True,
+        agent_contact_preference_ttl_days=60,
+        agent_contact_theme_ttl_days=30,
+        agent_contact_preference_min_confidence=0.7,
         agent_max_conversation_summary_chars=2500,
         agent_max_active_contact_memories=20,
     )
     monkeypatch.setattr(module, "get_settings", lambda: settings)
-    # Prefer the in-memory upsert installed on the repository module.
     monkeypatch.setattr(module, "upsert_contact_memory", mem_repo.upsert_contact_memory)
+    monkeypatch.setattr(
+        module,
+        "get_active_contact_memories",
+        mem_repo.get_active_contact_memories,
+    )
 
     summary_calls: list[dict] = []
 
@@ -67,15 +184,12 @@ def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
         lambda **kwargs: 0,
     )
 
-    interpretation = SalesInterpretation(
-        domain="commerce",
+    interpretation = _interp(
         goal="recommend",
         subject={"brand": "Bulova"},
         preferences={"budget_max": 4500, "style": "esportivo"},
-        references_previous_context=False,
         enough_information_to_search=True,
         ready_for_retrieval=True,
-        needs_clarification=False,
         confidence=0.95,
     )
     result = persist_contact_preferences_from_interpretation(
@@ -90,16 +204,20 @@ def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
     assert result["summary_written"] is True
     assert summary_calls
     assert store.memories
-    kinds = {row["memory_kind"] for row in store.memories}
-    assert "brand_preference" in kinds
-    assert "conversation_goal" in kinds
+    brand_rows = [
+        row
+        for row in store.memories
+        if row["memory_key"] == "brand_preference" and row["status"] == "active"
+    ]
+    assert brand_rows
+    assert brand_rows[0]["expires_at"] is not None
+    assert brand_rows[0]["expires_at"] > datetime.now(timezone.utc) + timedelta(days=20)
 
 
 def test_greeting_domain_includes_prior_commerce_theme(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
     import app.contact_memory_repository as repo
     from app.contact_memory_repository import select_relevant_memories
-    from app.memory_models import ContactMemory
 
     store.memories.extend(
         [
@@ -110,7 +228,7 @@ def test_greeting_domain_includes_prior_commerce_theme(monkeypatch):
                 "memory_key": "last_commerce_theme",
                 "memory_kind": "conversation_goal",
                 "value": {"theme": "Bulova, clássico"},
-                "safe_summary": "Último tema de interesse: Bulova, clássico",
+                "safe_summary": "theme=Bulova, clássico",
                 "status": "active",
                 "importance": 0.95,
                 "confidence": 0.9,

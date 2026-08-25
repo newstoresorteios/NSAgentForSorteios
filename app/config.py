@@ -269,6 +269,29 @@ class Settings(BaseSettings):
         default=True,
         alias="AGENT_CONTACT_PREFERENCE_SUMMARY_ENABLED",
     )
+    # Fill empty interpretation fields from durable contact memory before search.
+    agent_contact_preference_rehydrate_enabled: bool = Field(
+        default=True,
+        alias="AGENT_CONTACT_PREFERENCE_REHYDRATE_ENABLED",
+    )
+    agent_contact_preference_ttl_days: int = Field(
+        default=60,
+        alias="AGENT_CONTACT_PREFERENCE_TTL_DAYS",
+        ge=1,
+        le=365,
+    )
+    agent_contact_theme_ttl_days: int = Field(
+        default=30,
+        alias="AGENT_CONTACT_THEME_TTL_DAYS",
+        ge=1,
+        le=180,
+    )
+    agent_contact_preference_min_confidence: float = Field(
+        default=0.70,
+        alias="AGENT_CONTACT_PREFERENCE_MIN_CONFIDENCE",
+        ge=0.0,
+        le=1.0,
+    )
     agent_instruction_extension_proposals_enabled: bool = Field(
         default=False,
         alias="AGENT_INSTRUCTION_EXTENSION_PROPOSALS_ENABLED",

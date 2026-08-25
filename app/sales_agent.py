@@ -586,6 +586,33 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
     return normalized
 
 
+def _rehydrate_contact_preferences(
+    interpretation: SalesInterpretation,
+    message: IncomingMessage,
+) -> SalesInterpretation:
+    """Seed empty preference fields from durable contact memory."""
+    try:
+        from .contact_preference_memory import (
+            rehydrate_interpretation_from_contact_memory,
+        )
+
+        settings = get_settings()
+        sender_key = message.sender_key or (
+            f"whatsapp:{message.sender_phone}" if message.sender_phone else None
+        )
+        return rehydrate_interpretation_from_contact_memory(
+            interpretation,
+            tenant_id=str(getattr(settings, "agent_persona_tenant_id", "newstore")),
+            sender_key=sender_key,
+        )
+    except Exception as exc:
+        print(
+            "[memory.contact_preference.rehydrate_hook_error]",
+            {"error_type": type(exc).__name__, "error": str(exc)[:120]},
+        )
+        return interpretation
+
+
 def _log_interpretation(
     interpretation: SalesInterpretation,
     model: str,
@@ -929,6 +956,7 @@ async def interpret_message(
             message_text=current_text,
             context_text=recent_user_context_text(recent_turns),
         )
+        interpretation = _rehydrate_contact_preferences(interpretation, message)
         # Re-sync TurnUnderstanding after preference normalization when present.
         if interpretation._turn_understanding is None:
             interpretation._turn_understanding = sales_to_turn_understanding(
@@ -1529,6 +1557,7 @@ async def _handle_sales_message_inner(
             message_text=message.text,
             context_text=recent_user_context_text(recent_turns),
         )
+        interpretation = _rehydrate_contact_preferences(interpretation, message)
     from .commerce_router import (
         is_listed_catalog_follow_up,
         is_outbound_catalog_image_request,
