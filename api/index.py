@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 from json import JSONDecodeError
+from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -284,7 +285,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v44"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v45"
 
 
 @app.get("/api/health")
@@ -1227,41 +1228,72 @@ async def catalog_url_health_cron_manual(
     dependencies=[Depends(verify_remarketing_cron)],
 )
 async def tray_keepalive_cron():
-    """Ping TrayAdaptor /health so deploys stay warm and outages surface early."""
+    """Keep TrayAdaptor warm and refresh OAuth when access looks unhealthy."""
     import httpx
 
     settings = get_settings()
     base = (settings.tray_adapter_url or "").rstrip("/")
     if not base:
         return {"ok": False, "skipped": True, "reason": "tray_adapter_url_missing"}
-    url = f"{base}/health"
     started = __import__("time").monotonic()
+    payload: dict[str, Any] = {
+        "ok": False,
+        "url_host": __import__("urllib.parse").urlparse(base).netloc,
+    }
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url)
-        elapsed_ms = int((__import__("time").monotonic() - started) * 1000)
-        payload = {
-            "ok": response.status_code == 200,
-            "status_code": response.status_code,
-            "elapsed_ms": elapsed_ms,
-            "url_host": __import__("urllib.parse").urlparse(url).netloc,
-        }
-        try:
-            body = response.json()
-            if isinstance(body, dict):
-                payload["tray_status"] = body.get("status")
-                payload["tray_build"] = body.get("build")
-        except ValueError:
-            pass
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            health = await client.get(f"{base}/health")
+            payload["health_status_code"] = health.status_code
+            try:
+                health_body = health.json()
+                if isinstance(health_body, dict):
+                    payload["tray_status"] = health_body.get("status")
+                    payload["tray_build"] = health_body.get("build")
+            except ValueError:
+                pass
+
+            tray_health = await client.get(f"{base}/health/tray")
+            payload["tray_health_status_code"] = tray_health.status_code
+            access_valid = False
+            bootstrap_ok = False
+            db_cache_ok = False
+            try:
+                tray_body = tray_health.json()
+                if isinstance(tray_body, dict):
+                    access_valid = bool(tray_body.get("access_valid"))
+                    bootstrap_ok = bool(tray_body.get("bootstrap_refresh_configured"))
+                    db_cache_ok = bool(tray_body.get("database_cache_configured"))
+                    payload["access_valid"] = access_valid
+                    payload["bootstrap_refresh_configured"] = bootstrap_ok
+                    payload["database_cache_configured"] = db_cache_ok
+                    payload["access_expires_at"] = tray_body.get("access_expires_at")
+            except ValueError:
+                pass
+
+            # Proactive OAuth refresh when access is missing/invalid, or daily soak.
+            # Hobby keepalive is once-daily — force refresh each run to avoid stale
+            # access tokens with null expiry (adaptor reports expires_at=null).
+            auth = await client.get(f"{base}/tray/test-auth")
+            payload["test_auth_status_code"] = auth.status_code
+            try:
+                auth_body = auth.json()
+                if isinstance(auth_body, dict):
+                    payload["test_auth_ok"] = bool(auth_body.get("success"))
+                    payload["authenticated"] = bool(auth_body.get("authenticated"))
+            except ValueError:
+                payload["test_auth_ok"] = False
+
+        payload["elapsed_ms"] = int((__import__("time").monotonic() - started) * 1000)
+        payload["ok"] = (
+            health.status_code == 200
+            and tray_health.status_code == 200
+            and bool(payload.get("test_auth_ok"))
+        )
         log_event("tray.keepalive", payload)
         return payload
     except Exception as exc:  # noqa: BLE001
-        elapsed_ms = int((__import__("time").monotonic() - started) * 1000)
-        payload = {
-            "ok": False,
-            "error": type(exc).__name__,
-            "elapsed_ms": elapsed_ms,
-        }
+        payload["elapsed_ms"] = int((__import__("time").monotonic() - started) * 1000)
+        payload["error"] = type(exc).__name__
         log_event("tray.keepalive", payload)
         return payload
 
