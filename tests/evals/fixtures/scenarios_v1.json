@@ -118,8 +118,9 @@
     {
       "id": "s07_budget_filter",
       "category": "budget",
-      "input": "quero um relógio até 2000 reais",
+      "input": "quero um Citizen até 2000 reais",
       "channel": "whatsapp",
+      "notes": "Brand+budget unlocks qualification; budget filters the catalog shortlist.",
       "tool_fixtures": {
         "search_products": {
           "success": true,
@@ -224,23 +225,12 @@
       "category": "short_msg",
       "input": "tem tissot",
       "channel": "whatsapp",
-      "tool_fixtures": {
-        "search_products": {
-          "success": true,
-          "products": [
-            {
-              "id": "1002",
-              "name": "Relógio Tissot PRC 200",
-              "brand": "Tissot",
-              "price": "2800.00",
-              "stock": 4
-            }
-          ]
-        }
-      },
+      "notes": "Short brand-only ping must qualify first (same gate as s06b).",
+      "tool_fixtures": {},
       "expected": {
         "domain": "commerce",
-        "must_call_tools": ["search_products"],
+        "must_call_tools": [],
+        "must_not_call_tools": ["search_products"],
         "max_openai_calls": 2,
         "handoff_required": false
       }
@@ -319,8 +309,9 @@
     {
       "id": "s15_tray_timeout",
       "category": "tray_timeout",
-      "input": "tem Casio?",
+      "input": "tem Casio até 3000?",
       "channel": "whatsapp",
+      "notes": "Brand+budget unlocks search; empty fixture simulates Tray miss/timeout path.",
       "tool_fixtures": {},
       "expected": {
         "domain": "commerce",
@@ -392,8 +383,9 @@
     {
       "id": "s21_bulova_search",
       "category": "brand_search",
-      "input": "tem Bulova?",
+      "input": "tem Bulova até 4000?",
       "channel": "whatsapp",
+      "notes": "Brand+budget unlocks catalog search for Bulova shortlist.",
       "tool_fixtures": {
         "search_products": {
           "success": true,
@@ -418,8 +410,9 @@
     {
       "id": "s22_gender_budget",
       "category": "budget",
-      "input": "relógio feminino até 1500",
+      "input": "relógio feminino esportivo até 1500",
       "channel": "whatsapp",
+      "notes": "Type+budget+style unlocks search for gendered budget browse.",
       "tool_fixtures": {
         "search_products": {
           "success": true,
