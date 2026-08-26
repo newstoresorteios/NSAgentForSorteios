@@ -337,20 +337,7 @@ def human_takeover_active(incoming: IncomingMessage) -> bool:
     if takeover_row is None:
         return False
 
-    bot_disabled = _bot_explicitly_disabled(takeover_row)
     has_assignee = _has_assigned_human(takeover_row)
-
-    if bot_disabled:
-        log_event(
-            "human_takeover.block",
-            {
-                "reason": "bot_deactivated",
-                "state_key": state_key,
-                "assigned_to_present": has_assignee,
-                "bot_activated": takeover_row.get("bot_activated"),
-            },
-        )
-        return True
 
     if not has_assignee:
         return False

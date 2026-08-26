@@ -69,7 +69,7 @@ def test_human_activity_ignores_customer_last_message():
     )
 
 
-def test_bot_deactivated_blocks_indefinitely(monkeypatch):
+def test_bot_deactivated_without_assignee_allows_bot(monkeypatch):
     monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
     from app.config import get_settings
 
@@ -98,12 +98,12 @@ def test_bot_deactivated_blocks_indefinitely(monkeypatch):
             return_value={"last_human_activity_at": old},
         ),
     ):
-        assert human_takeover_active(incoming) is True
+        assert human_takeover_active(incoming) is False
 
     get_settings.cache_clear()
 
 
-def test_bot_deactivated_blocks_when_persist_fails(monkeypatch):
+def test_bot_deactivated_without_assignee_allows_bot_when_state_load_fails(monkeypatch):
     monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
     from app.config import get_settings
 
@@ -128,7 +128,7 @@ def test_bot_deactivated_blocks_when_persist_fails(monkeypatch):
         ),
         patch("app.human_takeover._load_pause_state", side_effect=RuntimeError("no table")),
     ):
-        assert human_takeover_active(incoming) is True
+        assert human_takeover_active(incoming) is False
 
     get_settings.cache_clear()
 
@@ -254,7 +254,7 @@ def test_human_takeover_active_within_idle(monkeypatch):
             return_value=[
                 {
                     "assigned_to": "agent-1",
-                    "bot_activated": True,
+                    "bot_activated": False,
                     "status": "open",
                 }
             ],
