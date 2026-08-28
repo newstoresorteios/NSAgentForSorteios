@@ -6,6 +6,7 @@ from app.human_takeover import (
     _conversas_has_takeover_signal,
     _human_activity_from_row,
     _lookup_keys,
+    _pick_takeover_row,
     human_takeover_active,
 )
 from app.models import IncomingMessage
@@ -43,6 +44,24 @@ def test_lookup_keys_adds_whatsapp_phone_aliases():
     assert "8TP3QuTjwzgLQp935" in keys
 
 
+def test_pick_takeover_row_prefers_current_thread():
+    rows = [
+        {
+            "external_thread_id": "old-thread",
+            "bot_activated": False,
+            "status": "waiting",
+        },
+        {
+            "external_thread_id": "current-thread",
+            "bot_activated": False,
+            "status": "active",
+        },
+    ]
+    picked = _pick_takeover_row(rows, conversation_id="current-thread")
+    assert picked is not None
+    assert picked["external_thread_id"] == "current-thread"
+
+
 def test_takeover_signal_ignores_closed():
     assert _conversas_has_takeover_signal({"status": "closed", "assigned_to": "u1"}) is False
     assert _conversas_has_takeover_signal({"status": "open", "assigned_to": "u1"}) is True
@@ -69,7 +88,8 @@ def test_human_activity_ignores_customer_last_message():
     )
 
 
-def test_bot_deactivated_without_assignee_allows_bot(monkeypatch):
+def test_bot_deactivated_expires_after_idle(monkeypatch):
+    """bot_activated=false alone must NOT mute forever — idle window applies."""
     monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
     from app.config import get_settings
 
@@ -81,7 +101,7 @@ def test_bot_deactivated_without_assignee_allows_bot(monkeypatch):
         sender_key="conv-bot-off",
         text="oi",
     )
-    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    old = datetime.now(timezone.utc) - timedelta(minutes=20)
     with (
         patch(
             "app.human_takeover._fetch_conversas_rows",
@@ -90,6 +110,7 @@ def test_bot_deactivated_without_assignee_allows_bot(monkeypatch):
                     "assigned_to": None,
                     "bot_activated": False,
                     "status": "waiting",
+                    "external_thread_id": "conv-bot-off",
                 }
             ],
         ),
@@ -97,13 +118,14 @@ def test_bot_deactivated_without_assignee_allows_bot(monkeypatch):
             "app.human_takeover._load_pause_state",
             return_value={"last_human_activity_at": old},
         ),
+        patch("app.human_takeover._upsert_pause_state"),
     ):
         assert human_takeover_active(incoming) is False
 
     get_settings.cache_clear()
 
 
-def test_bot_deactivated_without_assignee_allows_bot_when_state_load_fails(monkeypatch):
+def test_bot_deactivated_mutes_within_idle(monkeypatch):
     monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
     from app.config import get_settings
 
@@ -115,6 +137,7 @@ def test_bot_deactivated_without_assignee_allows_bot_when_state_load_fails(monke
         sender_key="conv-bot-off",
         text="oi",
     )
+    recent = datetime.now(timezone.utc) - timedelta(minutes=5)
     with (
         patch(
             "app.human_takeover._fetch_conversas_rows",
@@ -123,18 +146,23 @@ def test_bot_deactivated_without_assignee_allows_bot_when_state_load_fails(monke
                     "assigned_to": None,
                     "bot_activated": False,
                     "status": "waiting",
+                    "external_thread_id": "conv-bot-off",
                 }
             ],
         ),
-        patch("app.human_takeover._load_pause_state", side_effect=RuntimeError("no table")),
+        patch(
+            "app.human_takeover._load_pause_state",
+            return_value={"last_human_activity_at": recent},
+        ),
+        patch("app.human_takeover._upsert_pause_state"),
     ):
-        assert human_takeover_active(incoming) is False
+        assert human_takeover_active(incoming) is True
 
     get_settings.cache_clear()
 
 
 def test_stuck_assigned_without_activity_allows_bot_when_persist_fails(monkeypatch):
-    """If we cannot store the idle clock, never mute permanently (assigned only)."""
+    """If we cannot store the idle clock, never mute permanently."""
     monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
     from app.config import get_settings
 
