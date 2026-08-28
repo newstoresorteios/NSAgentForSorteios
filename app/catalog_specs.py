@@ -237,7 +237,127 @@ def interpretation_wants_diver(interpretation: Any) -> bool:
     )
 
 
+_CASE_RANGE_RE = re.compile(
+    r"(?:entre|de)\s*(\d{2})\s*(?:a|ate|at[eé]|[-–])\s*(\d{2})\s*mm"
+    r"|(\d{2})\s*(?:a|ate|at[eé]|[-–])\s*(\d{2})\s*mm",
+    re.IGNORECASE,
+)
+_SMALL_WRIST_RE = re.compile(
+    r"\b(pulso\s*(?:pequeno|menor|fin[oa])|caixa\s*menor|tamanho\s*menor)\b",
+    re.IGNORECASE,
+)
+_OTHER_BRANDS_RE = re.compile(
+    r"\b("
+    r"outras?\s+marcas?|"
+    r"de\s+outras?\s+marcas?|"
+    r"qualquer\s+marca|"
+    r"sem\s+prefer[eê]ncia\s+de\s+marca|"
+    r"n[aã]o\s+s[oó]\s+(?:seiko|tissot|certina|orient|citizen|casio|mido|bulova)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def extract_case_size_range_from_text(text: str | None) -> tuple[int, int] | None:
+    """Parse explicit mm ranges such as '36 até 38mm' or 'entre 36 e 38 mm'."""
+    blob = _fold(text)
+    if not blob:
+        return None
+    match = _CASE_RANGE_RE.search(blob)
+    if match:
+        low = int(match.group(1) or match.group(3))
+        high = int(match.group(2) or match.group(4))
+        if low > high:
+            low, high = high, low
+        if 28 <= low <= 55 and 28 <= high <= 55:
+            return low, high
+    singles = [int(item) for item in re.findall(r"\b(3[0-9]|4[0-5])\s*mm\b", blob)]
+    if len(singles) >= 2:
+        low, high = min(singles[:2]), max(singles[:2])
+        if 28 <= low <= 55 and 28 <= high <= 55:
+            return low, high
+    if len(singles) == 1 and 28 <= singles[0] <= 55:
+        return singles[0], singles[0]
+    return None
+
+
+def message_requests_other_brands(text: str | None) -> bool:
+    return bool(_OTHER_BRANDS_RE.search(str(text or "")))
+
+
+def product_case_size_mm(product: dict[str, Any] | None) -> int | None:
+    raw = extract_case_size_mm(product)
+    if raw is None:
+        return None
+    try:
+        size = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if 28 <= size <= 55:
+        return size
+    return None
+
+
+def product_matches_case_size_range(
+    product: dict[str, Any] | None,
+    min_mm: int,
+    max_mm: int,
+) -> bool:
+    size = product_case_size_mm(product)
+    if size is None:
+        return False
+    return min_mm <= size <= max_mm
+
+
+def interpretation_case_size_range(
+    interpretation: Any,
+    *,
+    message_text: str | None = None,
+    context_text: str | None = None,
+) -> tuple[int, int] | None:
+    """Return requested case-size window when the customer gave an explicit mm range."""
+    texts: list[str] = []
+    if message_text:
+        texts.append(message_text)
+    if context_text:
+        texts.append(context_text)
+    prefs = getattr(interpretation, "preferences", None)
+    if prefs is not None:
+        for item in getattr(prefs, "attributes", None) or []:
+            if not item:
+                continue
+            texts.append(str(item))
+            if str(item).startswith("case_size:"):
+                parsed = extract_case_size_range_from_text(str(item).replace("case_size:", ""))
+                if parsed:
+                    return parsed
+    try:
+        from .turn_understanding import get_turn_understanding
+
+        turn = get_turn_understanding(interpretation)
+        if turn is not None:
+            for value in (
+                turn.hard_constraints.case_size,
+                turn.entities.case_size,
+                turn.soft_preferences.case_size,
+            ):
+                if value:
+                    texts.append(str(value))
+    except Exception:
+        pass
+    for text in texts:
+        parsed = extract_case_size_range_from_text(text)
+        if parsed:
+            return parsed
+    blob = _fold(" ".join(texts))
+    if _SMALL_WRIST_RE.search(blob) and not extract_case_size_range_from_text(blob):
+        return 36, 38
+    return None
+
+
 def interpretation_wants_small_case(interpretation: Any) -> bool:
+    if interpretation_case_size_range(interpretation):
+        return True
     prefs = getattr(interpretation, "preferences", None)
     parts: list[Any] = []
     if prefs is not None:
@@ -249,6 +369,8 @@ def interpretation_wants_small_case(interpretation: Any) -> bool:
             ]
         )
     blob = _fold(" ".join(str(p) for p in parts if p))
+    if _SMALL_WRIST_RE.search(blob):
+        return True
     if any(
         token in blob
         for token in ("caixa menor", "menor", "compacto", "39mm", "37mm", "38mm")

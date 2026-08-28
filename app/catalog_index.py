@@ -371,6 +371,7 @@ def _hard_constraints_from_interpretation(
                     "dial_color": hc.dial_color or hc.strap_color,
                     "gender": hc.gender,
                     "material": hc.material,
+                    "case_size": hc.case_size,
                     "must_match_fields": list(hc.must_match_fields or []),
                 }
             )

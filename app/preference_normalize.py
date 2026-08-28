@@ -357,6 +357,48 @@ def normalize_sales_interpretation(
         context_text=context_text,
     )
 
+    try:
+        from .catalog_specs import (
+            extract_case_size_range_from_text,
+            message_requests_other_brands,
+        )
+
+        case_range = extract_case_size_range_from_text(combined_context)
+        if case_range:
+            label = f"case_size:{case_range[0]}-{case_range[1]}mm"
+            if label not in list(preferences.attributes or []):
+                preferences.attributes = list(preferences.attributes or []) + [label]
+            interpretation.enough_information_to_search = True
+            interpretation.ready_for_retrieval = True
+            interpretation.stop_clarification = True
+            interpretation.needs_clarification = False
+            if interpretation.goal in {None, "discover"}:
+                interpretation.goal = "recommend"
+
+        if message_requests_other_brands(message_text or context_text):
+            subject.brand = None
+            explicit = list(preferences.explicit_no_preferences or [])
+            if "brand" not in explicit:
+                preferences.explicit_no_preferences = explicit + ["brand"]
+            interpretation.stop_clarification = True
+            interpretation.ready_for_retrieval = True
+            interpretation.needs_clarification = False
+
+        from .context_resume import is_short_affirmation
+
+        if is_short_affirmation(message_text) and not case_range:
+            case_range = extract_case_size_range_from_text(context_text)
+            if case_range:
+                label = f"case_size:{case_range[0]}-{case_range[1]}mm"
+                if label not in list(preferences.attributes or []):
+                    preferences.attributes = list(preferences.attributes or []) + [label]
+                interpretation.enough_information_to_search = True
+                interpretation.ready_for_retrieval = True
+                interpretation.stop_clarification = True
+                interpretation.needs_clarification = False
+    except Exception:
+        pass
+
     # After gender + budget, discovery answers are usually ready to search.
     if (
         interpretation.domain == "commerce"

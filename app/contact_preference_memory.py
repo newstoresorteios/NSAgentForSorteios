@@ -385,8 +385,14 @@ def rehydrate_interpretation_from_memories(
 
     by_key = {item.memory_key: item for item in memories if item.memory_key}
 
+    explicit_no_brand = any(
+        str(item.memory_key or "") == "explicit_no:brand"
+        for item in memories
+        if getattr(item, "status", "active") == "active"
+    )
+
     brand_mem = by_key.get("brand_preference")
-    if brand_mem and not subject.brand:
+    if brand_mem and not subject.brand and not explicit_no_brand:
         brand = _active_brand_from_memory(brand_mem)
         if brand:
             subject.brand = brand

@@ -1568,6 +1568,18 @@ async def _handle_sales_message_inner(
     recent_turns: list[dict[str, Any]] | None = None,
     commerce_state: CommerceConversationState | None = None,
 ) -> AgentResult | None:
+    if message.input_modality == "audio" and (
+        message.transcription_failed or not (message.text or "").strip()
+    ):
+        return AgentResult(
+            reply_text=(
+                "Recebi seu áudio, mas não consegui transcrever. "
+                "Pode repetir por texto ou enviar outro áudio?"
+            ),
+            intent="audio_transcription_failed",
+            handoff_required=False,
+        )
+
     interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
     if interpretation is not None:
         from .preference_normalize import (

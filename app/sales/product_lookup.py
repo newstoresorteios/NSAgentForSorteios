@@ -1000,6 +1000,49 @@ async def execute_compiled_product_retrieval(
                 safety_reason="product_not_found",
             )
         # Recommendation: offer near-matches before hard no-match.
+        from ..catalog_specs import (
+            interpretation_case_size_range,
+            product_case_size_mm,
+        )
+
+        case_range = interpretation_case_size_range(
+            interpretation,
+            message_text=message_text,
+        )
+        if case_range and candidates:
+            min_mm, max_mm = case_range
+            nearby = [
+                product
+                for product in candidates
+                if (size := product_case_size_mm(product)) is not None
+                and min_mm <= size <= max_mm + 2
+            ]
+            nearby.sort(key=lambda item: product_case_size_mm(item) or 99)
+            if nearby:
+                from ..commerce_router import guided_near_match_result
+
+                refreshed, revalidation_failed = await revalidate_products(
+                    nearby,
+                    interpretation,
+                    _call_execute_tool,
+                )
+                pool = refreshed or nearby
+                if pool and (refreshed or not revalidation_failed):
+                    result = guided_near_match_result(
+                        pool,
+                        brand=(interpretation.subject.brand or None),
+                        limit=customer_result_limit(),
+                        safety_reason="recommendation_near_match",
+                    )
+                    if result and min_mm <= (product_case_size_mm(pool[0]) or 0) <= max_mm + 2:
+                        if max_mm < (product_case_size_mm(pool[0]) or 0):
+                            prefix = (
+                                f"Não achei opções exatas entre {min_mm} e {max_mm} mm. "
+                                f"As mais próximas que encontrei são:\n\n"
+                            )
+                            result.reply_text = prefix + (result.reply_text or "")
+                    return result
+
         soft = soft_confirm_candidates(
             candidates,
             interpretation,

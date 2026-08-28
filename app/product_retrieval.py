@@ -1925,6 +1925,54 @@ def hard_filter_products(
                     return filtered
     except Exception:
         pass
+
+    # Case-size ask: drop watches outside the requested mm window when we have
+    # structured sizes (Ricardo 36–38 mm loop — contact 5511937118008, 27/08).
+    try:
+        from .catalog_specs import (
+            extract_case_size_mm,
+            interpretation_case_size_range,
+            product_matches_case_size_range,
+        )
+
+        case_range = interpretation_case_size_range(interpretation)
+        if case_range and selected:
+            min_mm, max_mm = case_range
+            in_range = [
+                product
+                for product in selected
+                if product_matches_case_size_range(product, min_mm, max_mm)
+            ]
+            if in_range:
+                print(
+                    "[sales.hard_filter.case_size]",
+                    {
+                        "before": len(selected),
+                        "after": len(in_range),
+                        "min_mm": min_mm,
+                        "max_mm": max_mm,
+                    },
+                )
+                return in_range
+            sized = [
+                product
+                for product in selected
+                if product.get("case_size") or extract_case_size_mm(product)
+            ]
+            if sized:
+                print(
+                    "[sales.hard_filter.case_size]",
+                    {
+                        "before": len(selected),
+                        "after": 0,
+                        "min_mm": min_mm,
+                        "max_mm": max_mm,
+                        "reason": "no_in_range_matches",
+                    },
+                )
+                return []
+    except Exception:
+        pass
     return selected
 
 

@@ -9,6 +9,7 @@ from typing import Any
 from ..models import IncomingMessage, SalesInterpretation
 from ..commerce_context import CommerceConversationState
 from ..order_service import has_active_order_context, is_order_lookup_request
+from ..context_resume import is_short_affirmation
 
 
 _OPEN_BROWSE_RE = re.compile(
@@ -65,7 +66,39 @@ def _known_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
         known["brand"] = interpretation.subject.brand
     if preferences.attributes:
         known["attributes"] = preferences.attributes
+    try:
+        from ..catalog_specs import interpretation_case_size_range
+
+        case_range = interpretation_case_size_range(interpretation)
+        if case_range:
+            known["case_size"] = f"{case_range[0]}-{case_range[1]}mm"
+    except Exception:
+        pass
     return known
+
+
+def _recent_clarification_about_size(recent_turns: list[dict[str, Any]] | None) -> bool:
+    for turn in reversed(recent_turns or []):
+        if turn.get("role") == "user":
+            continue
+        if not _is_clarification_turn(turn):
+            break
+        content = _fold(str(turn.get("content") or ""))
+        if any(
+            token in content
+            for token in ("mm", "caixa", "tamanho", "medida", "pulso", "procurar", "buscar")
+        ):
+            return True
+        break
+    return False
+
+
+def _fold(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 
 def message_states_budget(text: str | None) -> bool:
@@ -448,6 +481,20 @@ def _discovery_state(
     ):
         enough_information = False
     comparison_without_sku = _comparison_needs_qualification(interpretation)
+    try:
+        from ..catalog_specs import (
+            interpretation_case_size_range,
+            message_requests_other_brands,
+        )
+
+        case_range = interpretation_case_size_range(
+            interpretation,
+            message_text=message_text,
+        )
+        brand_unlock = message_requests_other_brands(message_text)
+    except Exception:
+        case_range = None
+        brand_unlock = False
     force_retrieval = (
         subject_identifiable
         and not comparison_without_sku
@@ -457,6 +504,17 @@ def _discovery_state(
             interpretation.stop_clarification,
         ))
     )
+    if case_range and subject_identifiable:
+        force_retrieval = True
+        enough_information = True
+    if (
+        is_short_affirmation(message_text)
+        and _recent_clarification_about_size(recent_turns)
+        and subject_identifiable
+        and known_preferences_count >= 2
+    ):
+        force_retrieval = True
+        enough_information = True
     recent_questions = [
         str(turn.get("content") or "").strip()
         for turn in recent_turns or []
@@ -480,6 +538,8 @@ def _discovery_state(
         "force_retrieval": force_retrieval,
         "comparison_without_sku": comparison_without_sku,
         "persona_qualification_required": False,
+        "case_size_range": case_range,
+        "brand_unlock_requested": brand_unlock,
         "order_context_blocks_clarification": (
             has_active_order_context(commerce_state)
             and is_order_lookup_request(
