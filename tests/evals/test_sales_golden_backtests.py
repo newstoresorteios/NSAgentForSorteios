@@ -371,3 +371,292 @@ def test_golden_list_position_one_binds_to_latest_seiko_not_stale_tissot():
     assert ref is not None
     assert ref.product_id == "1429"
     assert "Seiko" in (ref.name or ref.brand or "")
+
+
+def _looks_like_chronograph(product: dict) -> bool:
+    import unicodedata
+
+    name = str(product.get("name") or "")
+    folded = unicodedata.normalize("NFKD", name.casefold())
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return any(token in folded for token in ("cronografo", "chronograph", "chrono", "crono"))
+
+
+def _catalog_pool_certina_and_others() -> list[dict]:
+    return [
+        {
+            "id": "c1",
+            "name": "Certina DS Action Diver Chrono Titânio",
+            "brand": "Certina",
+            "case_size": "44",
+            "current_price": 9499,
+            "available": True,
+        },
+        {
+            "id": "c2",
+            "name": "Certina DS Action Diver Automatico Titânio",
+            "brand": "Certina",
+            "case_size": "44",
+            "current_price": 9199,
+            "available": True,
+        },
+        {
+            "id": "c3",
+            "name": "Certina DS Action Titânio Cinza",
+            "brand": "Certina",
+            "case_size": "41",
+            "current_price": 7899,
+            "available": True,
+        },
+        {
+            "id": "t1",
+            "name": "Tissot PR 100 Cronógrafo Preto",
+            "brand": "Tissot",
+            "case_size": "41",
+            "current_price": 4299,
+            "available": True,
+        },
+        {
+            "id": "s1",
+            "name": "Seiko Chronograph Inox SSB313P1",
+            "brand": "Seiko",
+            "case_size": "42",
+            "current_price": 4499,
+            "available": True,
+        },
+        {
+            "id": "b1",
+            "name": "Bulova Cronógrafo Preto 96B336",
+            "brand": "Bulova",
+            "case_size": "42",
+            "current_price": 3999,
+            "available": True,
+        },
+    ]
+
+
+@pytest.mark.offline_eval
+def test_golden_joao_escape_certina_sticky_on_chrono_other_brands():
+    """Contact 5548999490859 — must leave Certina when customer rejects it."""
+    from app.preference_normalize import normalize_sales_interpretation
+    from app.product_retrieval import hard_filter_products
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        sticky = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"brand": "Certina", "product_type": "relógio"},
+            preferences={
+                "budget_max": 10000,
+                "style": "mergulho",
+                "material": "titânio",
+                "color": "cinza",
+            },
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=False,
+            needs_clarification=True,
+            confidence=0.9,
+        )
+
+        # Turn A: ask chronograph while stuck on Certina — must force search.
+        chrono_ask = normalize_sales_interpretation(
+            sticky.model_copy(deep=True),
+            message_text="queria ver um crono tbm",
+            context_text="queria um relógio de mergulho",
+        )
+        state_a = sales_agent._discovery_state(
+            chrono_ask,
+            [],
+            message_text="queria ver um crono tbm",
+        )
+        assert state_a["force_retrieval"] is True
+        assert state_a["wants_chronograph"] is True
+
+        # Turn B: reject Certina explicitly — brand sticky must die.
+        unlocked = normalize_sales_interpretation(
+            sticky.model_copy(deep=True),
+            message_text="agora quero um crono, não precisa ser certina",
+            context_text="queria ver um crono tbm",
+        )
+        assert unlocked.subject.brand is None
+        assert unlocked.ready_for_retrieval is True
+        assert unlocked.stop_clarification is True
+        assert any(
+            str(item).lower().startswith("exclude_brand:certina")
+            for item in (unlocked.preferences.attributes or [])
+        )
+
+        state_b = sales_agent._discovery_state(
+            unlocked,
+            [
+                {
+                    "role": "assistant",
+                    "content": "Se quiser, eu já peço essa busca de crono Certina.",
+                    "metadata": {"safety_reason": "commerce_clarification"},
+                }
+            ],
+            message_text="agora quero um crono, não precisa ser certina",
+        )
+        assert state_b["force_retrieval"] is True
+        assert state_b["brand_unlock_requested"] is True
+        assert state_b["persona_qualification_required"] is False
+
+        filtered = hard_filter_products(
+            _catalog_pool_certina_and_others(),
+            unlocked,
+            mode="recommendation",
+        )
+        brands = {str(item.get("brand")) for item in filtered}
+        assert "Certina" not in brands
+        assert brands & {"Tissot", "Seiko", "Bulova"}
+        assert filtered
+        assert all(_looks_like_chronograph(item) for item in filtered)
+
+        # Turn C: stronger rejection must still keep Certina out.
+        rejected = normalize_sales_interpretation(
+            unlocked.model_copy(deep=True),
+            message_text="Não quero chrono da certina",
+            context_text="outras opções de marca",
+        )
+        assert rejected.subject.brand is None
+        filtered_c = hard_filter_products(
+            _catalog_pool_certina_and_others(),
+            rejected,
+            mode="recommendation",
+        )
+        assert all(str(item.get("brand")) != "Certina" for item in filtered_c)
+        assert filtered_c
+    finally:
+        reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+def test_golden_ricardo_escape_large_case_when_customer_sets_36_38():
+    """Contact 5511937118008 — size ask must force retrieval and hard-filter mm."""
+    from app.preference_normalize import normalize_sales_interpretation
+    from app.product_retrieval import hard_filter_products
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        sticky = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"brand": "Seiko", "product_type": "relógio"},
+            preferences={"budget_min": 5000, "budget_max": 8000, "style": "versátil"},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=False,
+            ready_for_retrieval=False,
+            needs_clarification=True,
+            confidence=0.85,
+        )
+        sized = normalize_sales_interpretation(
+            sticky,
+            message_text="Me mande opções com tamanhos entre 36 até 38mm",
+            context_text="Mais versátil. Tamanho menor pois meu pulso não é muito grande",
+        )
+        assert sized.ready_for_retrieval is True
+        assert sized.stop_clarification is True
+        state = sales_agent._discovery_state(
+            sized,
+            [],
+            message_text="Me mande opções com tamanhos entre 36 até 38mm",
+        )
+        assert state["force_retrieval"] is True
+        assert state["case_size_range"] == (36, 38)
+
+        pool = [
+            {
+                "id": "sumo",
+                "name": "Seiko Prospex Sumo",
+                "brand": "Seiko",
+                "case_size": "44",
+                "current_price": 7599,
+                "available": True,
+            },
+            {
+                "id": "alpinist",
+                "name": "Seiko Alpinist",
+                "brand": "Seiko",
+                "case_size": "38",
+                "current_price": 6999,
+                "available": True,
+            },
+            {
+                "id": "prx",
+                "name": "Tissot PRX 35mm",
+                "brand": "Tissot",
+                "case_size": "35",
+                "current_price": 6500,
+                "available": True,
+            },
+        ]
+        # Stay on Seiko until customer unlocks brands; size filter still applies.
+        filtered = hard_filter_products(pool, sized, mode="recommendation")
+        assert {str(item["id"]) for item in filtered} == {"alpinist"}
+
+        # Affirmation after size clarification must also force retrieval.
+        affirm_state = sales_agent._discovery_state(
+            sized,
+            [
+                {
+                    "role": "assistant",
+                    "content": "Quer que eu busque opções nessa faixa de 36 a 38 mm?",
+                    "metadata": {"safety_reason": "commerce_clarification"},
+                }
+            ],
+            message_text="Sim",
+        )
+        assert affirm_state["force_retrieval"] is True
+    finally:
+        reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+def test_golden_style_switch_diver_to_chrono_does_not_keep_false_diver_only():
+    """Customer changing feature (diver → chrono) must re-rank to chronographs."""
+    from app.preference_normalize import normalize_sales_interpretation
+    from app.product_retrieval import hard_filter_products
+
+    interpretation = normalize_sales_interpretation(
+        SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"product_type": "relógio"},
+            preferences={
+                "budget_max": 10000,
+                "style": "mergulho",
+                "explicit_no_preferences": ["brand"],
+            },
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            needs_clarification=False,
+            confidence=0.9,
+        ),
+        message_text="agora quero um crono, não precisa ser certina",
+        context_text="queria um relógio de mergulho",
+    )
+    assert interpretation.subject.brand is None
+    filtered = hard_filter_products(
+        _catalog_pool_certina_and_others(),
+        interpretation,
+        mode="recommendation",
+    )
+    assert filtered
+    assert all(str(item.get("brand")) != "Certina" for item in filtered)
+    assert all(_looks_like_chronograph(item) for item in filtered)
