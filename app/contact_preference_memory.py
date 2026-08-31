@@ -184,16 +184,36 @@ def build_preference_memory_items(
         )
 
     brand = _fold_label(subject.brand)
-    if brand:
+    explicit_no = {
+        _fold_key(item) for item in list(prefs.explicit_no_preferences or []) if item
+    }
+    excluded_brand_keys: set[str] = set()
+    for attr in list(prefs.attributes or []):
+        raw = str(attr or "")
+        if raw.lower().startswith("exclude_brand:"):
+            excluded_brand_keys.add(_fold_key(raw.split(":", 1)[1]))
+    if brand and "brand" not in explicit_no and _fold_key(brand) not in excluded_brand_keys:
         merged = _merge_brand_list(existing_by_key.get("brand_preference"), brand)
-        brand_label = ", ".join(merged["brands"][:3])
-        add(
-            memory_key="brand_preference",
-            memory_kind=MemoryKind.brand_preference.value,
-            value=merged,
-            summary=f"brand={brand_label}",
-            importance=0.9,
-        )
+        # Drop brands the customer rejected this turn.
+        if excluded_brand_keys:
+            kept = [
+                item
+                for item in merged.get("brands", [])
+                if _fold_key(item) not in excluded_brand_keys
+            ]
+            active = merged.get("active")
+            if active and _fold_key(active) in excluded_brand_keys:
+                active = kept[0] if kept else None
+            merged = {"brands": kept, "active": active}
+        if merged.get("brands"):
+            brand_label = ", ".join(merged["brands"][:3])
+            add(
+                memory_key="brand_preference",
+                memory_kind=MemoryKind.brand_preference.value,
+                value=merged,
+                summary=f"brand={brand_label}",
+                importance=0.9,
+            )
 
     style = _fold_label(prefs.style)
     if style:
@@ -280,7 +300,7 @@ def build_preference_memory_items(
         )
 
     theme_parts: list[str] = []
-    if brand:
+    if brand and "brand" not in explicit_no and _fold_key(brand) not in excluded_brand_keys:
         theme_parts.append(brand)
     model = _fold_label(subject.model)
     if model:
@@ -390,11 +410,16 @@ def rehydrate_interpretation_from_memories(
         for item in memories
         if getattr(item, "status", "active") == "active"
     )
+    excluded_from_attrs = {
+        _fold_key(str(item).split(":", 1)[1])
+        for item in list(prefs.attributes or [])
+        if str(item).lower().startswith("exclude_brand:")
+    }
 
     brand_mem = by_key.get("brand_preference")
     if brand_mem and not subject.brand and not explicit_no_brand:
         brand = _active_brand_from_memory(brand_mem)
-        if brand:
+        if brand and _fold_key(brand) not in excluded_from_attrs:
             subject.brand = brand
             filled.append("brand")
 

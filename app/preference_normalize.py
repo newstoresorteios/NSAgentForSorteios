@@ -361,6 +361,8 @@ def normalize_sales_interpretation(
         from .catalog_specs import (
             extract_case_size_range_from_text,
             message_requests_other_brands,
+            message_wants_chronograph,
+            apply_brand_unlock_to_interpretation,
         )
 
         case_range = extract_case_size_range_from_text(combined_context)
@@ -375,14 +377,40 @@ def normalize_sales_interpretation(
             if interpretation.goal in {None, "discover"}:
                 interpretation.goal = "recommend"
 
-        if message_requests_other_brands(message_text or context_text):
-            subject.brand = None
-            explicit = list(preferences.explicit_no_preferences or [])
-            if "brand" not in explicit:
-                preferences.explicit_no_preferences = explicit + ["brand"]
+        rejected = apply_brand_unlock_to_interpretation(
+            interpretation,
+            message_text=message_text or context_text,
+        )
+        if rejected or message_requests_other_brands(message_text or context_text):
             interpretation.stop_clarification = True
             interpretation.ready_for_retrieval = True
             interpretation.needs_clarification = False
+            interpretation.enough_information_to_search = True
+            if interpretation.goal in {None, "discover"}:
+                interpretation.goal = "recommend"
+
+        if message_wants_chronograph(combined_context):
+            attrs = list(preferences.attributes or [])
+            if "cronógrafo" not in attrs and "cronografo" not in {_fold(a) for a in attrs}:
+                attrs.append("cronógrafo")
+            preferences.attributes = attrs
+            if not preferences.style or _fold(preferences.style) in {
+                "diver",
+                "mergulho",
+                "versatil",
+                "versátil",
+            }:
+                # Chronograph is a stronger current intent than a soft style leftover.
+                if message_wants_chronograph(message_text):
+                    preferences.style = "cronógrafo"
+            if not subject.product_type:
+                subject.product_type = "relógio"
+            interpretation.enough_information_to_search = True
+            interpretation.ready_for_retrieval = True
+            interpretation.stop_clarification = True
+            interpretation.needs_clarification = False
+            if interpretation.goal in {None, "discover"}:
+                interpretation.goal = "recommend"
 
         from .context_resume import is_short_affirmation
 

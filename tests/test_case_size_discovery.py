@@ -21,6 +21,8 @@ def test_extract_case_size_range_variants():
 def test_message_requests_other_brands():
     assert message_requests_other_brands("pode ser outras marcas") is True
     assert message_requests_other_brands("quero ver opções Tissot") is False
+    assert message_requests_other_brands("outras opções de marca") is True
+    assert message_requests_other_brands("não precisa ser certina") is True
 
 
 def test_hard_filter_case_size_drops_out_of_range():

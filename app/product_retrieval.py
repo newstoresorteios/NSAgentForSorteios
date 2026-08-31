@@ -1847,11 +1847,28 @@ def hard_filter_products(
     except Exception:
         pass
 
+    excluded_brands: list[str] = []
+    try:
+        from .catalog_specs import (
+            excluded_brands_from_interpretation,
+            product_matches_excluded_brand,
+        )
+
+        excluded_brands = excluded_brands_from_interpretation(interpretation)
+        if excluded_brands and expected_brand:
+            if any(_fold(brand) == expected_brand for brand in excluded_brands):
+                expected_brand = ""
+                brand_exclusive = False
+    except Exception:
+        excluded_brands = []
+
     selected: list[dict[str, Any]] = []
     for product in products:
         if not isinstance(product, dict) or not product.get("id"):
             continue
         text = _product_text(product)
+        if excluded_brands and product_matches_excluded_brand(product, excluded_brands):
+            continue
         if expected_brand:
             candidate_brand = _fold(product.get("brand"))
             if candidate_brand and candidate_brand != expected_brand:
@@ -1971,6 +1988,40 @@ def hard_filter_products(
                     },
                 )
                 return []
+    except Exception:
+        pass
+
+    # Chronograph ask: keep chrono-capable rows when the pool already has them
+    # (João contact 5548999490859 — diver Certina served for "crono").
+    try:
+        from .catalog_specs import message_wants_chronograph
+
+        wants_chrono = message_wants_chronograph(
+            " ".join(
+                str(item)
+                for item in (
+                    getattr(interpretation.preferences, "style", None),
+                    *list(interpretation.preferences.attributes or []),
+                )
+                if item
+            )
+        )
+        if wants_chrono and selected:
+            chrono_hits = [
+                product
+                for product in selected
+                if re.search(
+                    r"\b(cron[oó]grafo|chronograph|chrono)\b",
+                    _product_text(product),
+                    re.IGNORECASE,
+                )
+            ]
+            if chrono_hits:
+                print(
+                    "[sales.hard_filter.chronograph]",
+                    {"before": len(selected), "after": len(chrono_hits)},
+                )
+                return chrono_hits
     except Exception:
         pass
     return selected

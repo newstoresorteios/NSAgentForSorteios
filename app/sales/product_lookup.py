@@ -1189,6 +1189,47 @@ async def execute_compiled_product_retrieval(
     from ..commerce_router import _product_result
 
     final_products = refreshed or selected
+    try:
+        from ..catalog_specs import (
+            excluded_brands_from_interpretation,
+            product_matches_excluded_brand,
+        )
+
+        excluded = excluded_brands_from_interpretation(interpretation)
+        if excluded and final_products:
+            kept = [
+                product
+                for product in final_products
+                if not product_matches_excluded_brand(product, excluded)
+            ]
+            if len(kept) != len(final_products):
+                print(
+                    "[sales.retrieval.exclude_brand]",
+                    {
+                        "before": len(final_products),
+                        "after": len(kept),
+                        "excluded": excluded[:5],
+                    },
+                )
+            final_products = kept
+            if not final_products:
+                labels = ", ".join(excluded[:3])
+                return AgentResult(
+                    reply_text=(
+                        f"Entendi — sem {labels}. "
+                        "Não achei opções de outras marcas com esses critérios agora. "
+                        "Quer ajustar orçamento, tamanho ou estilo?"
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="recommendation_no_match",
+                    response_metadata={
+                        "excluded_brands": excluded,
+                        "clear_active_product": True,
+                    },
+                )
+    except Exception:
+        pass
     if retrieval_plan.mode == "exact":
         final_products = [
             {

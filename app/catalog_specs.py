@@ -246,16 +246,51 @@ _SMALL_WRIST_RE = re.compile(
     r"\b(pulso\s*(?:pequeno|menor|fin[oa])|caixa\s*menor|tamanho\s*menor)\b",
     re.IGNORECASE,
 )
+_KNOWN_WATCH_BRANDS: tuple[str, ...] = (
+    "hamilton",
+    "baltic",
+    "tissot",
+    "citizen",
+    "seiko",
+    "bulova",
+    "orient",
+    "casio",
+    "mido",
+    "omega",
+    "longines",
+    "oris",
+    "certina",
+    "tudor",
+    "zenith",
+    "breitling",
+    "panerai",
+    "iwc",
+    "rolex",
+    "tag heuer",
+    "christopher ward",
+)
+
 _OTHER_BRANDS_RE = re.compile(
     r"\b("
     r"outras?\s+marcas?|"
+    r"outras?\s+op(?:ç|c)(?:õ|o)es?\s+(?:de\s+)?marcas?|"
     r"de\s+outras?\s+marcas?|"
+    r"outra\s+marca|"
     r"qualquer\s+marca|"
     r"sem\s+prefer[eê]ncia\s+de\s+marca|"
-    r"n[aã]o\s+s[oó]\s+(?:seiko|tissot|certina|orient|citizen|casio|mido|bulova)"
+    r"n[aã]o\s+precisa\s+ser|"
+    r"n[aã]o\s+s[oó]\s+(?:da|de)?\s*"
+    + "(?:"
+    + "|".join(re.escape(brand) for brand in _KNOWN_WATCH_BRANDS)
+    + r")"
     r")\b",
     re.IGNORECASE,
 )
+_CHRONOGRAPH_RE = re.compile(
+    r"\b(cron[oó]grafo|cronografo|chronograph|chrono|crono)\b",
+    re.IGNORECASE,
+)
+_EXCLUDE_BRAND_ATTR_PREFIX = "exclude_brand:"
 
 
 def extract_case_size_range_from_text(text: str | None) -> tuple[int, int] | None:
@@ -282,7 +317,107 @@ def extract_case_size_range_from_text(text: str | None) -> tuple[int, int] | Non
 
 
 def message_requests_other_brands(text: str | None) -> bool:
-    return bool(_OTHER_BRANDS_RE.search(str(text or "")))
+    """True when the customer opens the search beyond the current sticky brand."""
+    raw = str(text or "")
+    if not raw.strip():
+        return False
+    if extract_rejected_brands_from_text(raw):
+        return True
+    return bool(_OTHER_BRANDS_RE.search(raw))
+
+
+def message_wants_chronograph(text: str | None) -> bool:
+    return bool(_CHRONOGRAPH_RE.search(str(text or "")))
+
+
+def extract_rejected_brands_from_text(text: str | None) -> list[str]:
+    """Brands the customer explicitly does not want (e.g. 'não precisa ser certina')."""
+    blob = _fold(text)
+    if not blob:
+        return []
+    rejected: list[str] = []
+    for brand in _KNOWN_WATCH_BRANDS:
+        if brand not in blob:
+            continue
+        patterns = (
+            rf"\bnao\s+precisa\s+(?:ser|ser\s+da|ser\s+de)\s+{re.escape(brand)}\b",
+            rf"\bnao\s+quero\s+(?:da|de|o|a|um|uma|chrono|crono|cronografo|cronógrafo)?\s*{re.escape(brand)}\b",
+            rf"\bnao\s+quero\s+.*\b{re.escape(brand)}\b",
+            rf"\bnao\s+so\s+(?:da|de)?\s*{re.escape(brand)}\b",
+            rf"\bfora\s+da\s+{re.escape(brand)}\b",
+            rf"\b(?:alem|além)\s+da\s+{re.escape(brand)}\b",
+            rf"\bsem\s+(?:ser\s+)?{re.escape(brand)}\b",
+        )
+        if any(re.search(pattern, blob) for pattern in patterns):
+            label = "TAG Heuer" if brand == "tag heuer" else brand.title()
+            if label not in rejected:
+                rejected.append(label)
+    return rejected
+
+
+def excluded_brands_from_interpretation(interpretation: Any) -> list[str]:
+    """Collect exclude_brand:* attributes already attached to the turn."""
+    prefs = getattr(interpretation, "preferences", None)
+    attrs = list(getattr(prefs, "attributes", None) or []) if prefs is not None else []
+    excluded: list[str] = []
+    for item in attrs:
+        raw = str(item or "")
+        if not raw.lower().startswith(_EXCLUDE_BRAND_ATTR_PREFIX):
+            continue
+        brand = raw.split(":", 1)[1].strip()
+        if brand and brand not in excluded:
+            excluded.append(brand)
+    return excluded
+
+
+def apply_brand_unlock_to_interpretation(
+    interpretation: Any,
+    *,
+    message_text: str | None = None,
+) -> list[str]:
+    """Clear sticky brand and record exclusions. Returns rejected brand labels."""
+    prefs = getattr(interpretation, "preferences", None)
+    subject = getattr(interpretation, "subject", None)
+    if prefs is None or subject is None:
+        return []
+    rejected = extract_rejected_brands_from_text(message_text)
+    unlock = message_requests_other_brands(message_text)
+    if not unlock and not rejected:
+        return []
+    attrs = list(prefs.attributes or [])
+    for brand in rejected:
+        label = f"{_EXCLUDE_BRAND_ATTR_PREFIX}{brand}"
+        if label not in attrs:
+            attrs.append(label)
+        current = _fold(getattr(subject, "brand", None))
+        if current and current == _fold(brand):
+            subject.brand = None
+    if unlock:
+        subject.brand = None
+        explicit = list(prefs.explicit_no_preferences or [])
+        if "brand" not in explicit:
+            prefs.explicit_no_preferences = explicit + ["brand"]
+    prefs.attributes = attrs
+    return rejected
+
+
+def product_matches_excluded_brand(
+    product: dict[str, Any] | None,
+    excluded_brands: list[str] | tuple[str, ...] | None,
+) -> bool:
+    if not product or not excluded_brands:
+        return False
+    candidate = _fold(product.get("brand"))
+    blob = product_spec_blob(product) if isinstance(product, dict) else ""
+    for brand in excluded_brands:
+        folded = _fold(brand)
+        if not folded:
+            continue
+        if candidate and (candidate == folded or folded in candidate or candidate in folded):
+            return True
+        if folded and folded in blob:
+            return True
+    return False
 
 
 def product_case_size_mm(product: dict[str, Any] | None) -> int | None:

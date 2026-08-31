@@ -485,6 +485,9 @@ def _discovery_state(
         from ..catalog_specs import (
             interpretation_case_size_range,
             message_requests_other_brands,
+            message_wants_chronograph,
+            extract_rejected_brands_from_text,
+            excluded_brands_from_interpretation,
         )
 
         case_range = interpretation_case_size_range(
@@ -492,9 +495,22 @@ def _discovery_state(
             message_text=message_text,
         )
         brand_unlock = message_requests_other_brands(message_text)
+        rejected_brands = list(
+            dict.fromkeys(
+                [
+                    *extract_rejected_brands_from_text(message_text),
+                    *excluded_brands_from_interpretation(interpretation),
+                ]
+            )
+        )
+        wants_chrono = message_wants_chronograph(message_text) or message_wants_chronograph(
+            " ".join(str(item) for item in (interpretation.preferences.attributes or []))
+        )
     except Exception:
         case_range = None
         brand_unlock = False
+        rejected_brands = []
+        wants_chrono = False
     force_retrieval = (
         subject_identifiable
         and not comparison_without_sku
@@ -505,6 +521,12 @@ def _discovery_state(
         ))
     )
     if case_range and subject_identifiable:
+        force_retrieval = True
+        enough_information = True
+    if wants_chrono and subject_identifiable:
+        force_retrieval = True
+        enough_information = True
+    if (brand_unlock or rejected_brands) and subject_identifiable:
         force_retrieval = True
         enough_information = True
     if (
@@ -540,6 +562,8 @@ def _discovery_state(
         "persona_qualification_required": False,
         "case_size_range": case_range,
         "brand_unlock_requested": brand_unlock,
+        "rejected_brands": rejected_brands,
+        "wants_chronograph": wants_chrono,
         "order_context_blocks_clarification": (
             has_active_order_context(commerce_state)
             and is_order_lookup_request(
