@@ -1295,3 +1295,271 @@ def test_golden_joao_mk2_37mm_skips_budget_question():
     finally:
         reset_persona_runtime(token)
 
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_golden_joao_full_thread_replay(monkeypatch):
+    """Contact 5548999490859 — full mergulho → qual → shortlist → buy thread (offline)."""
+    from types import SimpleNamespace
+
+    import app.sales_agent as sales_agent
+    from app.commerce_context import CommerceConversationState, evolve_commerce_state
+    from app.models import AgentResult, IncomingMessage
+    from app.preference_normalize import normalize_sales_interpretation
+    from app.sales.purchase_selection import repair_presented_purchase_selection
+    from app.sales.qualification_slots import covered_qualification_dims
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_joao_qualification_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        state = CommerceConversationState(active_domain="commerce")
+        turns: list[dict] = []
+
+        # Turn 1 — mergulho discovery must unlock retrieval, not stay in vague qual.
+        mergulho = normalize_sales_interpretation(
+            SalesInterpretation(
+                domain="commerce",
+                goal="discover",
+                subject={"product_type": "relógio"},
+                preferences={"style": "mergulho"},
+                references_previous_context=False,
+                needs_clarification=False,
+                enough_information_to_search=True,
+                ready_for_retrieval=True,
+                confidence=0.9,
+            ),
+            message_text="queria um relógio de mergulho",
+        )
+        discovery = sales_agent._discovery_state(
+            mergulho,
+            turns,
+            message_text="queria um relógio de mergulho",
+            commerce_state=state,
+        )
+        assert discovery.get("dialogue_phase") in {None, "discovery"}
+        assert mergulho.preferences.style == "mergulho"
+
+        # Turn 2 — shortlist presentation advances dialogue_phase.
+        baltic_list = [
+            {
+                "position": 1,
+                "product_id": "aq1",
+                "name": "Baltic Aquascaphe",
+                "brand": "Baltic",
+            },
+            {
+                "position": 2,
+                "product_id": "sb01",
+                "name": "Baltic Classic SB01",
+                "brand": "Baltic",
+            },
+            {
+                "position": 3,
+                "product_id": "mr01",
+                "name": "Baltic MR01",
+                "brand": "Baltic",
+            },
+        ]
+        shortlist_result = AgentResult(
+            reply_text="Encontrei opções Baltic para mergulho.",
+            intent="commerce",
+            commercial_data={"products": baltic_list},
+            response_metadata={
+                "presented_products": True,
+                "domain": "commerce",
+                "dialogue_phase": "shortlist",
+            },
+        )
+        state = evolve_commerce_state(state, shortlist_result)
+        assert state.dialogue_phase == "shortlist"
+        assert len(state.last_presented_products) == 3
+
+        # Turns 3–7 — qualification loop; answered slots must not re-ask city/name.
+        current = SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"brand": "Baltic", "product_type": "relógio"},
+            preferences={"style": "mergulho"},
+            references_previous_context=True,
+            needs_clarification=True,
+            confidence=0.9,
+        )
+        qual_steps = [
+            ("Para qual cidade seria a entrega?", "Florianópolis"),
+            ("Você já tem um modelo em mente ou quer uma sugestão?", "Quero o Baltic"),
+            ("Qual faixa de investimento você tem em mente?", "Até 10 mil"),
+            (
+                "Você tem pressa para receber ou pode esperar uma peça sob encomenda?",
+                "Posso esperar",
+            ),
+            ("Como posso te chamar?", "João"),
+        ]
+        for question, answer in qual_steps:
+            turns.extend([_clarification_turn(question), {"role": "user", "content": answer}])
+            current = normalize_sales_interpretation(
+                current,
+                message_text=answer,
+                context_text="\n".join(
+                    str(turn.get("content") or "")
+                    for turn in turns
+                    if turn.get("role") == "user"
+                ),
+                recent_turns=turns[:-1],
+            )
+            qual_state = sales_agent._discovery_state(
+                current,
+                turns,
+                message_text=answer,
+                commerce_state=state,
+            )
+            next_q = sales_agent._persona_qualification_question(current, qual_state)
+            if next_q:
+                folded = next_q.casefold()
+                assert "cidade" not in folded
+                assert "chamar" not in folded
+
+        dims = covered_qualification_dims(current)
+        assert "customer_name" in dims
+        assert current.preferences.recipient == "João"
+        assert "shipping_city" in dims or any(
+            str(item).startswith("qual:city:") for item in current.preferences.attributes
+        )
+
+        # Turn 8 — explicit Baltic mk2 37mm sku-lock must skip budget re-ask.
+        mk2 = normalize_sales_interpretation(
+            current,
+            message_text="Que o baltic mk2 37mm",
+            context_text="Quero o Baltic",
+            recent_turns=turns,
+        )
+        mk2_state = sales_agent._discovery_state(
+            mk2,
+            turns,
+            message_text="Que o baltic mk2 37mm",
+            commerce_state=state,
+        )
+        assert mk2_state["persona_qualification_required"] is False
+        assert mk2_state["qualification"]["ready"] is True
+        assert mk2.stop_clarification is True
+        assert mk2.ready_for_retrieval is True
+
+        # Turn 9 — "Quero comprar o 2" must bind list position 2 and create cart.
+        buy_interp = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"brand": "Baltic", "product_type": "relógio"},
+            preferences={"style": "mergulho"},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            needs_clarification=False,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            confidence=0.9,
+        )
+        repaired = repair_presented_purchase_selection(
+            buy_interp,
+            message_text="Quero comprar o 2",
+            state=state,
+        )
+        assert repaired is not None
+        assert repaired.purchase_action == "create_cart"
+        assert repaired.reference_position == 2
+
+        calls: list[tuple[str, dict]] = []
+
+        async def execute(tool, arguments):
+            calls.append((tool, arguments))
+            if tool == "get_product":
+                return {
+                    "id": "sb01",
+                    "name": "Baltic Classic SB01",
+                    "current_price": "8900.00",
+                    "available": True,
+                    "has_variation": False,
+                }
+            if tool == "create_cart":
+                return {
+                    "cart_id": "CART-JOAO-FULL",
+                    "session_id": "SESSION-JOAO-FULL",
+                    "cart_url": "https://loja.example/checkout/SESSION-JOAO-FULL",
+                }
+            if tool == "get_cart_complete":
+                return {
+                    "cart_id": "CART-JOAO-FULL",
+                    "session_id": "SESSION-JOAO-FULL",
+                    "total": "8900.00",
+                    "items": [{"product_id": "sb01", "quantity": 1}],
+                }
+            raise AssertionError(f"unexpected tool {tool}")
+
+        monkeypatch.setattr(sales_agent, "execute_tool", execute)
+        monkeypatch.setattr(
+            sales_agent,
+            "get_settings",
+            lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+        )
+
+        buy_result = await sales_agent.handle_sales_message(
+            IncomingMessage(text="Quero comprar o 2"),
+            {"primary_intent": "commerce"},
+            {},
+            buy_interp,
+            commerce_state=state,
+        )
+        assert buy_result is not None
+        assert any(tool == "create_cart" for tool, _ in calls)
+        assert buy_result.response_metadata.get("purchase_stage") == "cart_created"
+        assert "Sim, encontrei" not in (buy_result.reply_text or "")
+        state = evolve_commerce_state(state, buy_result)
+        assert state.dialogue_phase == "checkout"
+
+        # Turn 10 — bare "Quero comprar" must not reopen city/name qualification.
+        bare_wrong = SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"product_type": "relógio"},
+            preferences={},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            needs_clarification=True,
+            clarification_question="Como posso te chamar?",
+            enough_information_to_search=False,
+            ready_for_retrieval=False,
+            confidence=0.8,
+        )
+        bare_state = CommerceConversationState(
+            active_domain="commerce",
+            dialogue_phase="shortlist",
+            last_presented_products=baltic_list,
+            purchase_stage="selection",
+        )
+        bare_discovery = sales_agent._discovery_state(
+            bare_wrong,
+            turns,
+            message_text="Quero comprar",
+            commerce_state=bare_state,
+        )
+        assert bare_discovery["dialogue_phase"] == "shortlist"
+        assert bare_discovery["persona_qualification_required"] is False
+
+        bare_result = await sales_agent.handle_sales_message(
+            IncomingMessage(text="Quero comprar"),
+            {"primary_intent": "commerce"},
+            {},
+            bare_wrong,
+            commerce_state=bare_state,
+            recent_turns=turns,
+        )
+        assert bare_result is not None
+        reply = (bare_result.reply_text or "").casefold()
+        assert "como posso te chamar" not in reply
+        assert "florian" not in reply
+        assert bare_result.safety_reason != "commerce_clarification" or (
+            "chamar" not in reply and "cidade" not in reply
+        )
+    finally:
+        reset_persona_runtime(token)
+

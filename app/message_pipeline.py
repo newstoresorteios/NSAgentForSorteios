@@ -270,14 +270,16 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             interpretation = SalesInterpretation.model_validate(meta_interp)
         except Exception:
             interpretation = None
-    from .sales.scope_send_gate import apply_scope_send_gate
+    from .sales.scope_send_gate import apply_scope_send_gate_with_retry
 
-    result, _scope_gate = apply_scope_send_gate(
+    result, _scope_gate, corrected_interp = await apply_scope_send_gate_with_retry(
         result,
         interpretation=interpretation,
         message_text=incoming.text,
         commerce_state=commerce_state,
     )
+    if corrected_interp is not None:
+        interpretation = corrected_interp
     # Deterministic preference/link/persona checker (no extra LLM).
     from .outbound_compliance import apply_outbound_compliance
     result, _compliance = apply_outbound_compliance(

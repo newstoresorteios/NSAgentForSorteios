@@ -19,6 +19,13 @@ SCOPE_SEND_FALLBACK = (
     "Me dá um instante que já volto com sugestões certinhas."
 )
 
+_RETRYABLE_SCOPE_GATE_REASONS = frozenset({
+    "all_excluded_brand",
+    "off_scope_brand_list",
+})
+
+_EXCLUDE_BRAND_ATTR_PREFIX = "exclude_brand:"
+
 
 class ScopeSendGateReport(BaseModel):
     valid: bool = True
@@ -160,6 +167,64 @@ def validate_scope_send_gate(
     )
 
 
+def _append_exclude_brand(attrs: list[str], brand: str) -> None:
+    label = f"{_EXCLUDE_BRAND_ATTR_PREFIX}{brand}"
+    if label not in attrs:
+        attrs.append(label)
+
+
+def build_scope_corrected_interpretation(
+    interpretation: SalesInterpretation,
+    report: ScopeSendGateReport,
+    *,
+    message_text: str | None = None,
+) -> SalesInterpretation:
+    """Build a retrieval-ready interpretation after a scope send-gate block."""
+    corrected = interpretation.model_copy(deep=True)
+    attrs = list(corrected.preferences.attributes or [])
+    excluded = list(report.excluded_brands or [])
+    presented = list(report.presented_brands or [])
+    requested = list(report.requested_brands or [])
+
+    if report.reason == "all_excluded_brand":
+        for brand in excluded or presented:
+            _append_exclude_brand(attrs, brand)
+        sticky = str(corrected.subject.brand or "").strip()
+        if sticky and _fold(sticky) in {_fold(brand) for brand in (excluded or presented)}:
+            corrected.subject.brand = None
+
+    elif report.reason == "off_scope_brand_list":
+        presented_fold = {_fold(brand) for brand in presented}
+        sticky = str(corrected.subject.brand or "").strip()
+        if sticky and _fold(sticky) in presented_fold:
+            corrected.subject.brand = None
+        for brand in presented:
+            if brand:
+                _append_exclude_brand(attrs, brand)
+        message_brands: list[str] = []
+        try:
+            from .discovery import _mentioned_watch_brands
+
+            message_brands = _mentioned_watch_brands(message_text)
+        except Exception:
+            message_brands = []
+        if len(message_brands) == 1:
+            corrected.subject.brand = message_brands[0]
+        elif (
+            not corrected.subject.brand
+            and len(requested) == 1
+            and _fold(requested[0]) not in presented_fold
+        ):
+            corrected.subject.brand = requested[0]
+
+    corrected.preferences.attributes = attrs
+    corrected.ready_for_retrieval = True
+    corrected.enough_information_to_search = True
+    corrected.stop_clarification = True
+    corrected.needs_clarification = False
+    return corrected
+
+
 def apply_scope_send_gate(
     result: AgentResult,
     *,
@@ -188,3 +253,67 @@ def apply_scope_send_gate(
     metadata["factual_fallback_text"] = SCOPE_SEND_FALLBACK
     fixed.response_metadata = metadata
     return fixed, report
+
+
+async def apply_scope_send_gate_with_retry(
+    result: AgentResult,
+    *,
+    interpretation: SalesInterpretation | None = None,
+    message_text: str | None = None,
+    commerce_state: CommerceConversationState | None = None,
+) -> tuple[AgentResult, ScopeSendGateReport, SalesInterpretation | None]:
+    """Validate scope gate; on block, re-retrieve once with corrected filters."""
+    report = validate_scope_send_gate(
+        result,
+        interpretation=interpretation,
+        message_text=message_text,
+        commerce_state=commerce_state,
+    )
+    if report.valid:
+        return result, report, interpretation
+
+    blocked, blocked_report = apply_scope_send_gate(
+        result,
+        interpretation=interpretation,
+        message_text=message_text,
+        commerce_state=commerce_state,
+    )
+    if (
+        interpretation is None
+        or blocked_report.reason not in _RETRYABLE_SCOPE_GATE_REASONS
+    ):
+        return blocked, blocked_report, interpretation
+
+    corrected = build_scope_corrected_interpretation(
+        interpretation,
+        blocked_report,
+        message_text=message_text,
+    )
+    try:
+        from .product_lookup import execute_compiled_product_retrieval
+
+        retry_result = await execute_compiled_product_retrieval(corrected)
+    except Exception:
+        return blocked, blocked_report, interpretation
+
+    if retry_result is None:
+        return blocked, blocked_report, interpretation
+
+    retry_report = validate_scope_send_gate(
+        retry_result,
+        interpretation=corrected,
+        message_text=message_text,
+        commerce_state=commerce_state,
+    )
+    if not retry_report.valid:
+        return blocked, blocked_report, None
+
+    metadata = dict(retry_result.response_metadata or {})
+    metadata["scope_send_gate_retry"] = {
+        "original_reason": blocked_report.reason,
+        "corrected": True,
+    }
+    if isinstance(metadata.get("interpretation"), dict):
+        metadata["interpretation"] = corrected.model_dump(mode="json")
+    retry_result.response_metadata = metadata
+    return retry_result, retry_report, corrected

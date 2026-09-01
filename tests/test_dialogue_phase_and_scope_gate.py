@@ -12,7 +12,12 @@ from app.persona_runtime import (
     reset_persona_runtime,
     set_persona_runtime,
 )
-from app.sales.scope_send_gate import apply_scope_send_gate, validate_scope_send_gate
+from app.sales.scope_send_gate import (
+    apply_scope_send_gate,
+    apply_scope_send_gate_with_retry,
+    build_scope_corrected_interpretation,
+    validate_scope_send_gate,
+)
 
 
 def _crono_chatbo_profile() -> dict:
@@ -219,6 +224,217 @@ def test_scope_send_gate_blocks_excluded_brand_list():
     fixed, _ = apply_scope_send_gate(result, interpretation=interpretation)
     assert fixed.safety_reason == "scope_send_gate_blocked"
     assert "catálogo" in fixed.reply_text.casefold()
+
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_scope_send_gate_retries_excluded_certina_list(monkeypatch):
+    """Blocked Certina-only list must re-retrieve once with exclude_brand filters."""
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"brand": "Certina", "product_type": "relógio"},
+        preferences={"attributes": ["exclude_brand:Certina"]},
+        information_needed=["catalog"],
+        references_previous_context=True,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    bad_result = AgentResult(
+        reply_text="Opções Certina",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "c1", "name": "Certina DS Action", "brand": "Certina"},
+                {"id": "c2", "name": "Certina DS-7", "brand": "Certina"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+    good_result = AgentResult(
+        reply_text="Opções Tissot",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "t1", "name": "Tissot PRX", "brand": "Tissot"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+    calls: list[SalesInterpretation] = []
+
+    async def fake_retrieve(interp):
+        calls.append(interp)
+        return good_result
+
+    import app.sales.product_lookup as product_lookup
+
+    monkeypatch.setattr(
+        product_lookup,
+        "execute_compiled_product_retrieval",
+        fake_retrieve,
+    )
+
+    fixed, report, corrected = await apply_scope_send_gate_with_retry(
+        bad_result,
+        interpretation=interpretation,
+    )
+    assert len(calls) == 1
+    assert corrected is not None
+    assert corrected.subject.brand is None
+    assert any(
+        str(item).lower() == "exclude_brand:certina"
+        for item in (corrected.preferences.attributes or [])
+    )
+    assert report.valid is True
+    assert fixed.safety_reason != "scope_send_gate_blocked"
+    assert fixed.commercial_data["products"][0]["brand"] == "Tissot"
+    assert fixed.response_metadata.get("scope_send_gate_retry", {}).get("corrected")
+
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_scope_send_gate_retries_off_scope_tissot_for_baltic_hamilton(monkeypatch):
+    """Baltic/Hamilton ask must not ship Tissot-only list after one re-retrieve."""
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"product_type": "relógio"},
+        preferences={},
+        information_needed=["catalog"],
+        references_previous_context=True,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    bad_result = AgentResult(
+        reply_text="Opções Tissot",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "t1", "name": "Tissot Le Locle", "brand": "Tissot"},
+                {"id": "t2", "name": "Tissot PRX", "brand": "Tissot"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+    good_result = AgentResult(
+        reply_text="Opções Baltic",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "b1", "name": "Baltic Aquascaphe", "brand": "Baltic"},
+                {"id": "h1", "name": "Hamilton Khaki", "brand": "Hamilton"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+
+    async def fake_retrieve(interp):
+        return good_result
+
+    import app.sales.product_lookup as product_lookup
+
+    monkeypatch.setattr(
+        product_lookup,
+        "execute_compiled_product_retrieval",
+        fake_retrieve,
+    )
+
+    fixed, report, corrected = await apply_scope_send_gate_with_retry(
+        bad_result,
+        interpretation=interpretation,
+        message_text="Tem Baltic ou Hamilton disponível?",
+    )
+    assert report.valid is True
+    assert corrected is not None
+    brands = {item["brand"] for item in fixed.commercial_data["products"]}
+    assert "Tissot" not in brands
+    assert brands & {"Baltic", "Hamilton"}
+
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_scope_send_gate_retry_at_most_once(monkeypatch):
+    """Second retrieval failure must fall back to catalog confirmation text."""
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"product_type": "relógio"},
+        preferences={"attributes": ["exclude_brand:Certina"]},
+        information_needed=["catalog"],
+        references_previous_context=True,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    bad_result = AgentResult(
+        reply_text="Opções Certina",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "c1", "name": "Certina DS Action", "brand": "Certina"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+    call_count = 0
+
+    async def still_bad_retrieve(_interp):
+        nonlocal call_count
+        call_count += 1
+        return bad_result
+
+    import app.sales.product_lookup as product_lookup
+
+    monkeypatch.setattr(
+        product_lookup,
+        "execute_compiled_product_retrieval",
+        still_bad_retrieve,
+    )
+
+    fixed, report, corrected = await apply_scope_send_gate_with_retry(
+        bad_result,
+        interpretation=interpretation,
+    )
+    assert call_count == 1
+    assert corrected is None
+    assert report.valid is False
+    assert fixed.safety_reason == "scope_send_gate_blocked"
+    assert "catálogo" in fixed.reply_text.casefold()
+
+
+def test_build_scope_corrected_interpretation_clears_sticky_certina():
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"brand": "Certina"},
+        preferences={"attributes": ["exclude_brand:Certina"]},
+        references_previous_context=True,
+        confidence=0.9,
+    )
+    report = validate_scope_send_gate(
+        AgentResult(
+            reply_text="x",
+            intent="commerce",
+            commercial_data={
+                "products": [{"id": "1", "brand": "Certina"}],
+            },
+            response_metadata={"presented_products": True},
+        ),
+        interpretation=interpretation,
+    )
+    assert report.reason == "all_excluded_brand"
+    corrected = build_scope_corrected_interpretation(
+        interpretation,
+        report,
+    )
+    assert corrected.subject.brand is None
+    assert corrected.ready_for_retrieval is True
 
 
 def test_evolve_commerce_state_advances_dialogue_phase_to_shortlist():
