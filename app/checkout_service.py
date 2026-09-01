@@ -86,6 +86,34 @@ def checkout_capabilities(
         facts["cart_url"] = official_cart_url
     return facts
 
+
+def checkout_channel_choice_prompt(
+    state: CommerceConversationState,
+) -> str:
+    """Deterministic copy when checkout still needs a channel choice."""
+    facts = checkout_capabilities(state)
+    whatsapp = bool(facts.get("whatsapp_order_supported"))
+    site = bool(facts.get("site_checkout_supported"))
+    if whatsapp and site:
+        return (
+            "Seu carrinho está pronto. Prefere fechar por aqui no WhatsApp "
+            "ou continuar pelo site?"
+        )
+    if site and facts.get("cart_url"):
+        return (
+            "Seu carrinho está pronto. Posso te enviar o link para concluir "
+            "pelo site."
+        )
+    if whatsapp:
+        return (
+            "Seu carrinho está pronto. Prefere fechar por aqui no WhatsApp?"
+        )
+    return (
+        "Seu carrinho está pronto. Prefere fechar por aqui no WhatsApp "
+        "ou continuar pelo site?"
+    )
+
+
 def select_checkout_channel(
     state: CommerceConversationState,
     channel: CheckoutChannel,

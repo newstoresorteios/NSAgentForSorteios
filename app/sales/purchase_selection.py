@@ -230,6 +230,13 @@ def blocks_persona_qualification_for_purchase(
     """Purchase closing / shortlist on screen must not reopen ChatBo discovery."""
     if interpretation is None or state is None:
         return False
+    try:
+        from .dialogue_phase import session_in_checkout_phase
+
+        if session_in_checkout_phase(state):
+            return False
+    except Exception:
+        pass
     if state.last_presented_products or state.active_product is not None:
         return True
     if interpretation.goal == "buy":

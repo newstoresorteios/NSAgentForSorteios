@@ -453,7 +453,62 @@ _ACTION_TO_PLAN = {
 
 def _is_greeting(text: str | None) -> bool:
     normalized = " ".join((text or "").lower().strip().split()).strip("!?.,")
-    return normalized in {"oi", "olá", "ola", "bom dia", "boa tarde", "boa noite", "oi tudo bem", "olá tudo bem", "ola tudo bem"}
+    if normalized in {
+        "oi",
+        "olá",
+        "ola",
+        "bom dia",
+        "boa tarde",
+        "boa noite",
+        "oi tudo bem",
+        "olá tudo bem",
+        "ola tudo bem",
+        "tudo bem",
+        "tudo bem?",
+        "como vai",
+        "como vai?",
+        "e ai",
+        "e aí",
+        "eai",
+    }:
+        return True
+    if re.fullmatch(
+        r"(oi|ol[aá]|eai|e ai|e a[ií])([\s,!?.]*(tudo bem|como vai)?)?[\s!?.]*",
+        normalized,
+    ):
+        return True
+    return False
+
+
+def _purchase_close_hold_reply(
+    *,
+    message: IncomingMessage,
+    state: CommerceConversationState | None,
+    interpretation: SalesInterpretation | None,
+) -> str:
+    from .checkout_service import checkout_channel_choice_prompt
+    from .context_resume import is_soft_greeting
+    from .greeting_policy import choose_greeting_reply
+    from .sales.dialogue_phase import session_in_checkout_phase
+
+    if state is not None and session_in_checkout_phase(state):
+        return checkout_channel_choice_prompt(state)
+    if _is_greeting(message.text) or is_soft_greeting(message.text):
+        return choose_greeting_reply(None)
+    clarification = str(
+        (interpretation.clarification_question if interpretation else None) or ""
+    ).strip()
+    if clarification:
+        return html.unescape(clarification)
+    if (
+        state is not None
+        and not state.cart_session_id
+        and (state.last_presented_products or state.active_product is not None)
+    ):
+        return "Qual opção da lista você quer comprar (1, 2 ou 3)?"
+    if state is not None and state.cart_session_id:
+        return checkout_channel_choice_prompt(state)
+    return "Qual opção da lista você quer comprar (1, 2 ou 3)?"
 
 
 def deterministic_scope(text: str | None) -> dict[str, Any]:
@@ -3614,31 +3669,12 @@ async def _handle_sales_message_inner(
                 )
             except Exception:
                 pass
-            clarification = str(
-                (interpretation.clarification_question if interpretation else None)
-                or ""
-            ).strip()
-            if clarification:
-                return _mark_sales_result(
-                    AgentResult(
-                        reply_text=html.unescape(clarification),
-                        intent="commerce",
-                        handoff_required=False,
-                        safety_reason="purchase_close_hold",
-                        response_metadata={"domain": "commerce"},
-                    ),
-                    interpretation=interpretation,
-                    goal=(interpretation.goal if interpretation else "buy"),
-                    response_source="deterministic_fallback",
-                    used_openai_responder=False,
-                    used_tray=False,
-                    fallback_reason="purchase_close_hold",
-                )
             return _mark_sales_result(
                 AgentResult(
-                    reply_text=(
-                        "Qual opção da lista você quer comprar "
-                        "(1, 2 ou 3)?"
+                    reply_text=_purchase_close_hold_reply(
+                        message=message,
+                        state=state,
+                        interpretation=interpretation,
                     ),
                     intent="commerce",
                     handoff_required=False,

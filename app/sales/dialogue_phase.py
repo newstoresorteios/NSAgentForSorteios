@@ -53,6 +53,13 @@ _NEW_BROWSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_SHORTLIST_REJECTION_RE = re.compile(
+    r"^\s*(nenhuma|nenhum|nenhuma dessas|nenhum desses|"
+    r"nao gostei de nenhuma|não gostei de nenhuma|"
+    r"nao gostei de nenhum|não gostei de nenhum)\s*[!.?]*\s*$",
+    re.IGNORECASE,
+)
+
 
 def _fold(value: Any) -> str:
     text = str(value or "").strip().lower()
@@ -70,6 +77,21 @@ def commerce_dialogue_phase(
     return state.dialogue_phase
 
 
+def session_in_checkout_phase(
+    state: CommerceConversationState | None,
+) -> bool:
+    """True when the customer is past shortlist selection into checkout."""
+    if state is None:
+        return False
+    if state.cart_session_id:
+        return True
+    pending = state.pending_action
+    if pending in _CHECKOUT_PENDING_ACTIONS:
+        return True
+    purchase_stage = str(state.purchase_stage or "")
+    return purchase_stage in _CHECKOUT_PURCHASE_STAGES
+
+
 def dialogue_phase_blocks_qualification(phase: DialoguePhase | None) -> bool:
     return phase in {"shortlist", "buy", "checkout"}
 
@@ -78,9 +100,11 @@ def message_resets_dialogue_to_discovery(
     message_text: str | None,
     interpretation: SalesInterpretation | None,
 ) -> bool:
+    folded = _fold(message_text)
+    if _SHORTLIST_REJECTION_RE.match(folded):
+        return True
     if interpretation is None:
         return False
-    folded = _fold(message_text)
     if _NEW_BROWSE_RE.search(folded):
         return True
     try:
@@ -170,7 +194,7 @@ def metadata_dialogue_phase_hint(
 ) -> dict[str, Any]:
     """Optional explicit phase hints for evolve_commerce_state."""
     if message_resets_dialogue_to_discovery(message_text, interpretation):
-        return {"dialogue_phase": "discovery"}
+        return {"dialogue_phase": "discovery", "dialogue_phase_reset": True}
     if presented_products:
         return {"dialogue_phase": "shortlist"}
     if interpretation is not None and (

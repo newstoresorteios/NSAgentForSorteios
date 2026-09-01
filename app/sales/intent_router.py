@@ -74,9 +74,13 @@ def route_sales_intent(
 
     from .purchase_selection import blocks_persona_qualification_for_purchase
 
-    purchase_close = blocks_persona_qualification_for_purchase(
-        interpretation,
-        commerce_state,
+    purchase_close = (
+        False
+        if browse_reset
+        else blocks_persona_qualification_for_purchase(
+            interpretation,
+            commerce_state,
+        )
     )
     skip_qualification = purchase_close
     if discovery_state and not browse_reset and skip_qualification:
@@ -101,8 +105,13 @@ def route_sales_intent(
     vague_query_clarification = (
         vague_query and not force_retrieval and not skip_qualification
     )
-    purchase_close_hold = skip_qualification and (
-        plan_intent == "clarification" or vague_query
+    from .dialogue_phase import session_in_checkout_phase
+
+    purchase_close_hold = (
+        skip_qualification
+        and not browse_reset
+        and not session_in_checkout_phase(commerce_state)
+        and (plan_intent == "clarification" or vague_query)
     )
 
     return SalesIntentRoute(

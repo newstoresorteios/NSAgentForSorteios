@@ -683,9 +683,23 @@ def evolve_commerce_state(
         state.active_topic = str(metadata["active_topic"])
     if metadata.get("purchase_stage"):
         state.purchase_stage = str(metadata["purchase_stage"])
-    try:
-        from .sales.dialogue_phase import resolve_dialogue_phase
+    from .sales.dialogue_phase import (
+        _CHECKOUT_PENDING_ACTIONS,
+        _CHECKOUT_PURCHASE_STAGES,
+        resolve_dialogue_phase,
+    )
 
+    purchase_stage = str(metadata.get("purchase_stage") or state.purchase_stage or "")
+    pending_action = metadata.get("pending_action") or state.pending_action
+    if (
+        metadata.get("dialogue_phase_reset")
+        or pending_action in _CHECKOUT_PENDING_ACTIONS
+        or purchase_stage in _CHECKOUT_PURCHASE_STAGES
+    ):
+        state.last_presented_products = []
+        if metadata.get("dialogue_phase_reset"):
+            state.active_product = None
+    try:
         next_phase = resolve_dialogue_phase(state, metadata, result)
         if next_phase is not None:
             state.dialogue_phase = next_phase
@@ -745,6 +759,8 @@ def evolve_commerce_state(
                     state.cart_items = parsed_items
                 else:
                     setattr(state, field, cart_state[field])
+        if cart_state.get("cart_session_id"):
+            state.last_presented_products = []
     selected_payment_method = metadata.get("selected_payment_method")
     if selected_payment_method in {"pix", "card", "boleto", "other"}:
         state.selected_payment_method = selected_payment_method
