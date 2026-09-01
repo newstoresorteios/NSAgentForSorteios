@@ -3,9 +3,14 @@ from __future__ import annotations
 import json
 import re
 import traceback
+from collections import Counter
+from threading import Lock
 from typing import Any
 
 from .runtime_context import get_current_turn
+
+_IQ_COUNTERS: Counter[str] = Counter()
+_IQ_LOCK = Lock()
 
 
 _CPF_RE = re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b")
@@ -356,6 +361,79 @@ def summarize_webhook_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
         )
         or None,
     }
+
+
+def increment_iq_counter(name: str, *, amount: int = 1) -> int:
+    """Increment a process-wide IQ counter and mirror it on the active turn."""
+    with _IQ_LOCK:
+        _IQ_COUNTERS[name] += amount
+        total = int(_IQ_COUNTERS[name])
+    runtime = get_current_turn()
+    if runtime is not None:
+        turn_counters = runtime.iq_counters
+        turn_counters[name] = int(turn_counters.get(name, 0)) + amount
+    return total
+
+
+def get_iq_counters() -> dict[str, int]:
+    with _IQ_LOCK:
+        return dict(_IQ_COUNTERS)
+
+
+def reset_iq_counters() -> None:
+    with _IQ_LOCK:
+        _IQ_COUNTERS.clear()
+
+
+def record_scope_mismatch(
+    *,
+    reason: str | None = None,
+    channel: str | None = None,
+) -> None:
+    increment_iq_counter("scope_mismatch")
+    log_event(
+        "iq.scope_mismatch",
+        {
+            "reason": reason,
+            "channel": channel,
+        },
+    )
+
+
+def record_close_miss(
+    *,
+    reason: str | None = None,
+    channel: str | None = None,
+    dialogue_phase: str | None = None,
+) -> None:
+    increment_iq_counter("close_miss")
+    log_event(
+        "iq.close_miss",
+        {
+            "reason": reason,
+            "channel": channel,
+            "dialogue_phase": dialogue_phase,
+        },
+    )
+
+
+def record_dialogue_phase_transition(
+    *,
+    from_phase: str | None,
+    to_phase: str | None,
+    channel: str | None = None,
+) -> None:
+    if from_phase == to_phase:
+        return
+    increment_iq_counter("dialogue_phase_transition")
+    log_event(
+        "iq.dialogue_phase_transition",
+        {
+            "from_phase": from_phase,
+            "to_phase": to_phase,
+            "channel": channel,
+        },
+    )
 
 
 def log_event(event: str, payload: dict[str, Any] | None = None) -> None:

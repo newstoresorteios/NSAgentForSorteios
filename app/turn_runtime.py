@@ -82,6 +82,7 @@ class TurnRuntimeContext(BaseModel):
     context_snapshot: dict[str, object] = Field(default_factory=dict)
     inbound_snapshot: dict[str, object] = Field(default_factory=dict)
     outbound_snapshot: dict[str, object] = Field(default_factory=dict)
+    iq_counters: dict[str, int] = Field(default_factory=dict)
 
     _stage_started_at: dict[str, float] = PrivateAttr(default_factory=dict)
 

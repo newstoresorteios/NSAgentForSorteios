@@ -107,4 +107,5 @@ def build_turn_quality_event(
         "cache_stale": int(cache.get("stale") or 0),
         "llm_calls_avoided": runtime.llm_calls_avoided,
         "risk_score": runtime.risk_score,
+        "iq_counters": dict(runtime.iq_counters),
     }

@@ -212,7 +212,16 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
 
     with runtime_stage("agent_decision"):
         result = await generate_agent_reply_async(incoming, customer_context)
+    previous_dialogue_phase = commerce_state.dialogue_phase
     commerce_state = evolve_commerce_state(commerce_state, result)
+    if commerce_state.dialogue_phase != previous_dialogue_phase:
+        from .observability import record_dialogue_phase_transition
+
+        record_dialogue_phase_transition(
+            from_phase=previous_dialogue_phase,
+            to_phase=commerce_state.dialogue_phase,
+            channel=incoming.channel,
+        )
     result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
     result.response_metadata["working_memory"] = build_working_memory(commerce_state)
     upsert_customer_identity_links(incoming, commerce_state)

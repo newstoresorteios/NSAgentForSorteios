@@ -618,6 +618,7 @@ def resolve_system_instructions(
     extra_system_blocks: list[str] | None = None,
     tenant_id: str | None = None,
     persona_key: str | None = None,
+    relevant_knowledge: list[Any] | None = None,
 ) -> str:
     """Return system instructions for Chat Completions.
 
@@ -628,13 +629,52 @@ def resolve_system_instructions(
     resolved_tenant = tenant_id or str(
         getattr(settings, "agent_persona_tenant_id", DEFAULT_TENANT_ID)
     )
+    resolved_knowledge = relevant_knowledge
+    if resolved_knowledge is None and incoming is not None:
+        try:
+            from .store_knowledge import fetch_institutional_knowledge
+
+            persona_metadata = None
+            if bool(getattr(settings, "agent_db_persona_enabled", False)):
+                active_persona = get_active_persona(
+                    resolved_tenant,
+                    persona_key
+                    or str(
+                        getattr(settings, "agent_persona_key", DEFAULT_PERSONA_KEY)
+                    ),
+                )
+                if active_persona is not None:
+                    persona_metadata = active_persona.metadata
+            package = fetch_institutional_knowledge(
+                incoming.text,
+                persona_metadata=persona_metadata,
+            )
+            resolved_knowledge = package.as_relevant_knowledge() or None
+        except Exception as exc:
+            print("[prompt.compiler.institutional_knowledge.error]", {
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:160],
+            })
     if not bool(getattr(settings, "agent_db_persona_enabled", False)):
-        return _append_contact_memory_block(
+        base = _append_contact_memory_block(
             fallback_instructions,
             incoming=incoming,
             conversation_state=conversation_state,
             tenant_id=resolved_tenant,
         )
+        if resolved_knowledge:
+            try:
+                from .persona_knowledge_repository import format_relevant_knowledge_block
+
+                retrieved = format_relevant_knowledge_block(resolved_knowledge)
+                if retrieved.strip():
+                    return f"{base}\n\n{retrieved}"
+            except Exception as exc:
+                print("[prompt.compiler.relevant_knowledge.error]", {
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:160],
+                })
+        return base
     compiled = compile_agent_prompt(
         incoming=incoming,
         tenant_id=resolved_tenant,
@@ -644,6 +684,7 @@ def resolve_system_instructions(
         conversation_state=conversation_state,
         recent_turns=recent_turns,
         extra_system_blocks=extra_system_blocks,
+        relevant_knowledge=resolved_knowledge,
         audit=True,
     )
     return compiled.instructions

@@ -3604,6 +3604,16 @@ async def _handle_sales_message_inner(
         )
     if plan.get("intent") == "clarification" or vague_query:
         if intent_route.purchase_close_hold:
+            try:
+                from .observability import record_close_miss
+
+                record_close_miss(
+                    reason="purchase_close_hold",
+                    channel=message.channel,
+                    dialogue_phase=(state.dialogue_phase if state else None),
+                )
+            except Exception:
+                pass
             clarification = str(
                 (interpretation.clarification_question if interpretation else None)
                 or ""

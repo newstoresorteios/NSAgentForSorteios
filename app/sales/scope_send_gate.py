@@ -251,6 +251,13 @@ def apply_scope_send_gate(
     if report.valid:
         return result, report
 
+    try:
+        from ..observability import record_scope_mismatch
+
+        record_scope_mismatch(reason=report.reason)
+    except Exception:
+        pass
+
     fixed = result.model_copy(deep=True)
     commercial = dict(fixed.commercial_data or {})
     commercial.pop("products", None)
