@@ -3560,18 +3560,18 @@ async def _handle_sales_message_inner(
             used_tray=bool(cart_result.response_metadata.get("used_tray", True)),
             fallback_reason=cart_result.safety_reason or "sales_responder_unavailable",
         )
-    discovery_state = (
-        _discovery_state(
-            interpretation,
-            recent_turns,
-            message_text=message.text,
-            commerce_state=state,
-        )
-        if interpretation
-        else None
+    from .sales.intent_router import route_sales_intent
+
+    intent_route = route_sales_intent(
+        interpretation=interpretation,
+        plan=plan,
+        message_text=message.text,
+        commerce_state=state,
+        recent_turns=recent_turns,
     )
-    if discovery_state and discovery_state["force_retrieval"] and plan.get("intent") == "clarification":
-        plan = {**plan, "intent": "recommendation"}
+    discovery_state = intent_route.discovery_state
+    if intent_route.plan_intent and intent_route.plan_intent != plan.get("intent"):
+        plan = {**plan, "intent": intent_route.plan_intent}
     print("[sales.agent] planner", {
         "source": plan.get("_source", "fallback"),
         "action": plan.get("intent"),
@@ -3587,49 +3587,23 @@ async def _handle_sales_message_inner(
             "stop_clarification": discovery_state["stop_clarification"],
             "known_preferences_count": discovery_state["known_preferences_count"],
         })
-    vague_query = str(plan.get("query") or "").strip().lower() in {"", "alguma coisa", "algo", "qualquer coisa", "um produto", "uma coisa", "produto"}
-    browse_reset = False
-    if interpretation is not None:
-        try:
-            from .sales.dialogue_phase import message_resets_dialogue_to_discovery
-
-            browse_reset = message_resets_dialogue_to_discovery(
-                message.text,
-                interpretation,
-            )
-        except Exception:
-            browse_reset = False
-    if interpretation and discovery_state and not browse_reset:
-        from .sales.purchase_selection import blocks_persona_qualification_for_purchase
-
-        if blocks_persona_qualification_for_purchase(interpretation, state):
-            # Mid-checkout / shortlist close: never reopen persona or fresh browse.
-            discovery_state = {
-                **discovery_state,
-                "persona_qualification_required": False,
-                "force_retrieval": False,
-            }
-    if interpretation and discovery_state and _needs_clarification_before_retrieval(interpretation, plan, discovery_state):
+    vague_query = intent_route.vague_query
+    if interpretation and discovery_state and intent_route.needs_clarification_before_retrieval:
         return await generate_clarification_reply(
             message=message,
             interpretation=interpretation,
             recent_turns=recent_turns,
             discovery_state=discovery_state,
         )
-    if interpretation and discovery_state and vague_query and not discovery_state["force_retrieval"]:
-        from .sales.purchase_selection import blocks_persona_qualification_for_purchase
-
-        if not blocks_persona_qualification_for_purchase(interpretation, state):
-            return await generate_clarification_reply(
-                message=message,
-                interpretation=interpretation,
-                recent_turns=recent_turns,
-                discovery_state=discovery_state,
-            )
+    if interpretation and discovery_state and intent_route.vague_query_clarification:
+        return await generate_clarification_reply(
+            message=message,
+            interpretation=interpretation,
+            recent_turns=recent_turns,
+            discovery_state=discovery_state,
+        )
     if plan.get("intent") == "clarification" or vague_query:
-        from .sales.purchase_selection import blocks_persona_qualification_for_purchase
-
-        if blocks_persona_qualification_for_purchase(interpretation, state):
+        if intent_route.purchase_close_hold:
             clarification = str(
                 (interpretation.clarification_question if interpretation else None)
                 or ""

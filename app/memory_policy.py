@@ -17,6 +17,7 @@ from .memory_models import (
     MemoryProposal,
     MemoryScope,
 )
+from .memory_models import ContactMemory
 from .models import IncomingMessage
 
 
@@ -200,6 +201,28 @@ def is_sender_auto_apply_allowed(
     return str(sender_key) in allowlist
 
 
+_EXPLICIT_NO_BRAND_MEMORY_KEYS = frozenset(
+    {
+        "explicit_no:brand",
+        "explicit_no_preference_brand",
+    }
+)
+
+
+def _contact_has_explicit_no_brand(
+    current_memories: list[ContactMemory] | None,
+) -> bool:
+    for item in current_memories or []:
+        if getattr(item, "status", "active") != "active":
+            continue
+        key = str(item.memory_key or "")
+        if key in _EXPLICIT_NO_BRAND_MEMORY_KEYS:
+            return True
+        if key.startswith("explicit_no:") and key.rsplit(":", 1)[-1] == "brand":
+            return True
+    return False
+
+
 def _normalize_explicit_no_preference(key: str, value: Any) -> Any:
     if isinstance(value, dict) and value.get("state") == "no_preference":
         return {
@@ -272,6 +295,13 @@ def evaluate_memory_proposal(
         )
         if not (normalized_key or "").startswith("explicit_no_preference"):
             normalized_key = f"explicit_no_preference_{normalized_value['preference']}"
+
+    if (
+        proposal.action == MemoryAction.upsert
+        and proposal.kind == MemoryKind.brand_preference
+        and _contact_has_explicit_no_brand(current_memories)
+    ):
+        codes.append("superseded_by_explicit_no_brand")
 
     if proposal.action == MemoryAction.upsert and normalized_value in (None, "", [], {}):
         codes.append("empty_value")

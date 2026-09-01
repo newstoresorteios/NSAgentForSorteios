@@ -372,6 +372,37 @@ def build_summary_delta_from_interpretation(
     )
 
 
+_EXPLICIT_NO_BRAND_KEYS = frozenset(
+    {
+        "explicit_no:brand",
+        "explicit_no_preference_brand",
+    }
+)
+
+
+def _explicit_no_brand_active(
+    memories: list[ContactMemory],
+    interpretation: SalesInterpretation | None = None,
+) -> bool:
+    """True when durable memory or current turn rejects brand preference."""
+    prefs = getattr(interpretation, "preferences", None) if interpretation else None
+    if prefs is not None:
+        explicit_no = {
+            _fold_key(item) for item in list(prefs.explicit_no_preferences or []) if item
+        }
+        if "brand" in explicit_no:
+            return True
+    for item in memories:
+        if getattr(item, "status", "active") != "active":
+            continue
+        key = str(item.memory_key or "")
+        if key in _EXPLICIT_NO_BRAND_KEYS:
+            return True
+        if key.startswith("explicit_no:") and key.split(":", 1)[-1] == "brand":
+            return True
+    return False
+
+
 def _active_brand_from_memory(memory: ContactMemory) -> str | None:
     raw = _unwrap_value(memory.value)
     if isinstance(raw, dict):
@@ -405,11 +436,7 @@ def rehydrate_interpretation_from_memories(
 
     by_key = {item.memory_key: item for item in memories if item.memory_key}
 
-    explicit_no_brand = any(
-        str(item.memory_key or "") == "explicit_no:brand"
-        for item in memories
-        if getattr(item, "status", "active") == "active"
-    )
+    explicit_no_brand = _explicit_no_brand_active(memories, interpretation)
     excluded_from_attrs = {
         _fold_key(str(item).split(":", 1)[1])
         for item in list(prefs.attributes or [])
@@ -577,6 +604,26 @@ def persist_contact_preferences_from_interpretation(
         interpretation,
         existing_memories=existing,
     )
+    explicit_no_brand = _explicit_no_brand_active(existing, interpretation)
+    if explicit_no_brand:
+        try:
+            from .contact_memory_repository import forget_contact_memory
+
+            forgotten = forget_contact_memory(
+                tenant_id=tenant_id,
+                sender_key=sender_key,
+                memory_key="brand_preference",
+            )
+            if forgotten:
+                print(
+                    "[memory.contact_preference.brand_cleared]",
+                    {"reason": "explicit_no_brand", "count": forgotten},
+                )
+        except Exception as exc:
+            print(
+                "[memory.contact_preference.brand_clear_error]",
+                {"error_type": type(exc).__name__, "error": str(exc)[:120]},
+            )
     upserted = 0
     keys: list[str] = []
     for item in items:

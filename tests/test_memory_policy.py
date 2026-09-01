@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.memory_models import (
+    ContactMemory,
     InstructionExtensionProposal,
     MemoryAction,
     MemoryKind,
@@ -30,6 +31,38 @@ def test_explicit_brand_preference_accepted():
     assert decision.accepted is True
     assert decision.normalized_key == "preferred_brands"
     assert decision.normalized_value == "Tissot"
+
+
+def test_brand_preference_rejected_when_explicit_no_brand_in_memory():
+    existing = [
+        ContactMemory(
+            id=1,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="explicit_no:brand",
+            memory_kind="explicit_no_preference",
+            value={"value": "brand"},
+            safe_summary="explicit_no=brand",
+            status="active",
+            use_in_instructions=True,
+        )
+    ]
+    decision = evaluate_memory_proposal(
+        proposal=MemoryProposal(
+            action=MemoryAction.upsert,
+            scope=MemoryScope.contact,
+            kind=MemoryKind.brand_preference,
+            key="preferred_brands",
+            value="Certina",
+            importance=0.9,
+            confidence=0.95,
+            reason_code="explicit_user_preference",
+            use_in_instructions=True,
+        ),
+        current_memories=existing,
+    )
+    assert decision.accepted is False
+    assert "superseded_by_explicit_no_brand" in decision.rejection_codes
 
 
 def test_sensitive_card_rejected():

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from app.contact_preference_memory import (
     build_preference_memory_items,
     persist_contact_preferences_from_interpretation,
@@ -146,6 +148,42 @@ def test_rehydrate_fills_empty_fields_without_overwriting():
     assert updated.preferences.color == "preto"
     assert "budget_max" in filled
     assert "style" in filled
+
+
+@pytest.mark.offline_eval
+def test_golden_explicit_no_brand_blocks_certina_rehydrate():
+    """brand_preference=Certina must lose to explicit_no:brand in contact memory."""
+    memories = [
+        ContactMemory(
+            id=1,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="brand_preference",
+            memory_kind="brand_preference",
+            value={"brands": ["Certina"], "active": "Certina"},
+            safe_summary="brand=Certina",
+            use_in_instructions=True,
+        ),
+        ContactMemory(
+            id=2,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="explicit_no:brand",
+            memory_kind="explicit_no_preference",
+            value={"value": "brand"},
+            safe_summary="explicit_no=brand",
+            use_in_instructions=True,
+        ),
+    ]
+    interpretation = _interp(
+        subject={},
+        preferences={},
+        goal="discover",
+    )
+    updated, filled = rehydrate_interpretation_from_memories(interpretation, memories)
+    assert updated.subject.brand is None
+    assert "brand" not in filled
+    assert "brand" in list(updated.preferences.explicit_no_preferences or [])
 
 
 def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
