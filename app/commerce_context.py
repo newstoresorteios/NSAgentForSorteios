@@ -147,6 +147,7 @@ class CommerceConversationState(BaseModel):
     # found_available | found_unknown | found_unavailable | plausible_matches | None
     product_resolution_state: str | None = None
     active_preferences: dict[str, Any] = Field(default_factory=dict)
+    dialogue_phase: Literal["discovery", "shortlist", "buy", "checkout"] | None = None
     purchase_stage: str | None = None
     cart_id: str | None = None
     cart_session_id: str | None = None
@@ -262,6 +263,7 @@ class CommerceConversationState(BaseModel):
                 for product in self.last_presented_products
             ],
             "active_preferences": self.active_preferences,
+            "dialogue_phase": self.dialogue_phase,
             "purchase_stage": self.purchase_stage,
             "has_cart": bool(self.cart_session_id and self.cart_url),
             "cart_item_count": len(self.cart_items),
@@ -677,6 +679,20 @@ def evolve_commerce_state(
         state.active_topic = str(metadata["active_topic"])
     if metadata.get("purchase_stage"):
         state.purchase_stage = str(metadata["purchase_stage"])
+    try:
+        from .sales.dialogue_phase import resolve_dialogue_phase
+
+        next_phase = resolve_dialogue_phase(state, metadata, result)
+        if next_phase is not None:
+            state.dialogue_phase = next_phase
+    except Exception:
+        if metadata.get("dialogue_phase") in {
+            "discovery",
+            "shortlist",
+            "buy",
+            "checkout",
+        }:
+            state.dialogue_phase = metadata["dialogue_phase"]
     if metadata.get("clear_pending_action"):
         state.pending_action = None
         state.pending_action_product_ids = []

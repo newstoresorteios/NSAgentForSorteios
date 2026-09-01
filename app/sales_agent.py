@@ -3575,7 +3575,18 @@ async def _handle_sales_message_inner(
             "known_preferences_count": discovery_state["known_preferences_count"],
         })
     vague_query = str(plan.get("query") or "").strip().lower() in {"", "alguma coisa", "algo", "qualquer coisa", "um produto", "uma coisa", "produto"}
-    if interpretation and discovery_state:
+    browse_reset = False
+    if interpretation is not None:
+        try:
+            from .sales.dialogue_phase import message_resets_dialogue_to_discovery
+
+            browse_reset = message_resets_dialogue_to_discovery(
+                message.text,
+                interpretation,
+            )
+        except Exception:
+            browse_reset = False
+    if interpretation and discovery_state and not browse_reset:
         from .sales.purchase_selection import blocks_persona_qualification_for_purchase
 
         if blocks_persona_qualification_for_purchase(interpretation, state):
@@ -3743,6 +3754,19 @@ async def _handle_sales_message_inner(
     if tray_result is None:
         return None
     if interpretation is not None:
+        phase_hint: dict[str, Any] = {}
+        try:
+            from .sales.dialogue_phase import metadata_dialogue_phase_hint
+
+            phase_hint = metadata_dialogue_phase_hint(
+                interpretation=interpretation,
+                message_text=message.text,
+                presented_products=bool(
+                    (tray_result.response_metadata or {}).get("presented_products")
+                ),
+            )
+        except Exception:
+            phase_hint = {}
         tray_result.response_metadata.update({
             "active_topic": interpretation.active_topic,
             "purchase_stage": interpretation.purchase_stage,
@@ -3750,6 +3774,7 @@ async def _handle_sales_message_inner(
                 mode="json",
                 exclude_none=True,
             ),
+            **phase_hint,
         })
         if resolved_product is not None:
             tray_result.response_metadata["active_product"] = resolved_product.model_dump(mode="json")

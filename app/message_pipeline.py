@@ -261,9 +261,6 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         trusted_domains=trusted_fact_domains,
         commerce_state=commerce_state.model_dump(mode="json"),
     )
-    # Deterministic preference/link/persona checker (no extra LLM).
-    from .outbound_compliance import apply_outbound_compliance
-
     interpretation = None
     meta_interp = (result.response_metadata or {}).get("interpretation")
     if isinstance(meta_interp, dict):
@@ -273,6 +270,16 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             interpretation = SalesInterpretation.model_validate(meta_interp)
         except Exception:
             interpretation = None
+    from .sales.scope_send_gate import apply_scope_send_gate
+
+    result, _scope_gate = apply_scope_send_gate(
+        result,
+        interpretation=interpretation,
+        message_text=incoming.text,
+        commerce_state=commerce_state,
+    )
+    # Deterministic preference/link/persona checker (no extra LLM).
+    from .outbound_compliance import apply_outbound_compliance
     result, _compliance = apply_outbound_compliance(
         incoming=incoming,
         result=result,

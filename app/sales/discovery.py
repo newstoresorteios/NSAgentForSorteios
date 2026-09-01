@@ -358,6 +358,11 @@ def _persona_qualification_question(
     Containment (which dim is missing) lives in code; the spoken question text
     must come from ChatBo/persona — never invent reply copy here.
     """
+    if isinstance(discovery_state, dict):
+        if discovery_state.get("order_context_blocks_clarification"):
+            return None
+        if discovery_state.get("persona_qualification_required") is False:
+            return None
     try:
         from ..persona_runtime import get_persona_runtime
 
@@ -446,6 +451,8 @@ def _needs_persona_qualification(
     interpretation: SalesInterpretation,
     discovery_state: dict[str, Any],
 ) -> bool:
+    if discovery_state.get("order_context_blocks_clarification"):
+        return False
     snapshot = build_qualification_snapshot(interpretation, discovery_state)
     discovery_state["qualification"] = snapshot
     return bool(snapshot["required"] and not snapshot["ready"])
@@ -636,17 +643,39 @@ def _discovery_state(
     if _needs_persona_qualification(interpretation, state):
         state["force_retrieval"] = False
         state["persona_qualification_required"] = True
+    browse_reset = False
     try:
-        from .purchase_selection import blocks_persona_qualification_for_purchase
+        from .dialogue_phase import message_resets_dialogue_to_discovery
 
-        if blocks_persona_qualification_for_purchase(interpretation, commerce_state):
-            state["persona_qualification_required"] = False
-            # Closing a shortlist purchase must not reopen ChatBo discovery
-            # or force a fresh catalog search.
-            if interpretation.purchase_action == "create_cart" or (
-                interpretation.goal == "buy" and interpretation.stop_clarification
-            ):
-                state["force_retrieval"] = False
+        browse_reset = message_resets_dialogue_to_discovery(
+            message_text,
+            interpretation,
+        )
+    except Exception:
+        browse_reset = False
+    if not browse_reset:
+        try:
+            from .purchase_selection import blocks_persona_qualification_for_purchase
+
+            if blocks_persona_qualification_for_purchase(interpretation, commerce_state):
+                state["persona_qualification_required"] = False
+                # Closing a shortlist purchase must not reopen ChatBo discovery
+                # or force a fresh catalog search.
+                if interpretation.purchase_action == "create_cart" or (
+                    interpretation.goal == "buy" and interpretation.stop_clarification
+                ):
+                    state["force_retrieval"] = False
+        except Exception:
+            pass
+    try:
+        from .dialogue_phase import apply_dialogue_phase_discovery_gates
+
+        state = apply_dialogue_phase_discovery_gates(
+            state,
+            commerce_state,
+            message_text=message_text,
+            interpretation=interpretation,
+        )
     except Exception:
         pass
     return state
