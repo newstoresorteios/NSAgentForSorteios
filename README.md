@@ -160,6 +160,8 @@ Health check:
 curl http://localhost:8000/api/health
 ```
 
+Smoke test cross-project (NSAgent + TRAYadaptor + Chatbo): `python scripts/integration_smoke_test.py` — ver `docs/integration_smoke_test.md`.
+
 Teste do agente:
 
 ```bash
