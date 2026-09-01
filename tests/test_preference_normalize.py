@@ -3,6 +3,9 @@
 from app.models import SalesInterpretation
 from app.preference_normalize import (
     detect_gender_label,
+    extract_stated_color,
+    extract_stated_gender,
+    extract_stated_style,
     is_gender_only_label,
     normalize_sales_interpretation,
     preference_gender_label,
@@ -106,3 +109,11 @@ def test_recent_user_context_text_collects_user_turns():
     ]
     assert "PRX integrado" in recent_user_context_text(turns)
     assert "caixa escovada" in recent_user_context_text(turns)
+
+
+def test_extract_stated_color_style_gender_from_message():
+    assert extract_stated_color("quero um seiko azul") == "azul"
+    assert extract_stated_color("quero um seiko navy") == "azul"
+    assert extract_stated_style("quero um relogio esportivo") == "esportivo"
+    assert extract_stated_gender("quero um relogio feminino") == "feminino"
+    assert extract_stated_color("quero um relogio") is None

@@ -294,9 +294,21 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     )
     if corrected_interp is not None:
         interpretation = corrected_interp
+    from .sales.answer_council import apply_answer_council_with_retry
+
+    result, _council, council_interp = await apply_answer_council_with_retry(
+        result,
+        incoming=incoming,
+        interpretation=interpretation,
+        commerce_state=commerce_state,
+    )
+    if council_interp is not None:
+        interpretation = council_interp
     if result.safety_reason in {
         "commerce_clarification",
         "scope_send_gate_blocked",
+        "answer_council_blocked",
+        "recommendation_budget_miss",
     }:
         try:
             from .attendance_learning import record_pipeline_block_review
@@ -342,6 +354,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         resolve_history_hard_cap,
         resolve_model_history_limit,
         select_model_history_turns,
+        turns_for_conversation,
     )
     from .llm_call_policy import should_run_quality_judge
 
@@ -359,7 +372,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
                 hard_cap=hard_cap,
             )
         model_turns = select_model_history_turns(
-            operational_turns,
+            turns_for_conversation(operational_turns, incoming.conversation_id),
             limit=resolve_model_history_limit(settings),
         )
     factual_ok = bool(validation.get("valid", True))

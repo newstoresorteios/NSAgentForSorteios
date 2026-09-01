@@ -7,6 +7,7 @@ import unicodedata
 from typing import Any
 
 from ..models import SalesInterpretation
+from ..history_window import turns_for_conversation
 
 QUAL_PREFIX = "qual:"
 
@@ -62,9 +63,11 @@ def classify_qualification_question(text: str | None) -> str | None:
 
 def last_assistant_qualification_slot(
     recent_turns: list[dict[str, Any]] | None,
+    *,
+    conversation_id: str | None = None,
 ) -> str | None:
-    """Slot asked in the latest assistant turn, tagged or not."""
-    for turn in reversed(list(recent_turns or [])):
+    """Slot asked in the latest assistant turn of this thread, tagged or not."""
+    for turn in reversed(turns_for_conversation(recent_turns, conversation_id)):
         if not isinstance(turn, dict) or turn.get("role") != "assistant":
             continue
         return classify_qualification_question(str(turn.get("content") or ""))
@@ -74,9 +77,13 @@ def last_assistant_qualification_slot(
 def is_qualification_slot_answer(
     recent_turns: list[dict[str, Any]] | None,
     message_text: str | None,
+    *,
+    conversation_id: str | None = None,
 ) -> bool:
-    """True when the user is answering the last qualification question."""
-    slot = last_assistant_qualification_slot(recent_turns)
+    """True when the user is answering the last qualification question in this thread."""
+    slot = last_assistant_qualification_slot(
+        recent_turns, conversation_id=conversation_id
+    )
     if not slot:
         return False
     text = " ".join(str(message_text or "").strip().split())
@@ -95,11 +102,17 @@ def continue_commerce_from_qualification_answer(
     interpretation: SalesInterpretation,
     recent_turns: list[dict[str, Any]] | None,
     message_text: str | None,
+    *,
+    conversation_id: str | None = None,
 ) -> SalesInterpretation:
     """Keep discovery open when a name/city/urgency answer is misread as greeting."""
-    if not is_qualification_slot_answer(recent_turns, message_text):
+    if not is_qualification_slot_answer(
+        recent_turns, message_text, conversation_id=conversation_id
+    ):
         return interpretation
-    slot = last_assistant_qualification_slot(recent_turns)
+    slot = last_assistant_qualification_slot(
+        recent_turns, conversation_id=conversation_id
+    )
     updated = apply_qualification_slot_answer(interpretation, slot, message_text)
     if updated.domain in {"greeting", "out_of_scope", "store_general", "general"}:
         subject = updated.subject
@@ -152,6 +165,26 @@ def _normalize_urgency_answer(text: str) -> str:
     return folded[:48] or "unknown"
 
 
+_COMMERCE_NAME_BLOCK = frozenset(
+    {
+        "quero",
+        "comprar",
+        "relogio",
+        "omega",
+        "seiko",
+        "tissot",
+        "faixa",
+        "preco",
+        "orcamento",
+        "investimento",
+        "link",
+        "pix",
+        "ola",
+        "oi",
+    }
+)
+
+
 def _is_plausible_name(text: str) -> bool:
     cleaned = " ".join(str(text or "").strip().split())
     if not cleaned or len(cleaned) > 48:
@@ -160,6 +193,9 @@ def _is_plausible_name(text: str) -> bool:
     if folded in _GENDER_LABELS:
         return False
     if _BUDGET_ANSWER_RE.search(cleaned):
+        return False
+    tokens = set(folded.split())
+    if tokens & _COMMERCE_NAME_BLOCK:
         return False
     if any(token in folded for token in ("florian", "rio de", "são paulo", "curitiba")):
         return False
@@ -244,10 +280,11 @@ def rehydrate_qualification_slots_from_turns(
     recent_turns: list[dict[str, Any]] | None,
     *,
     message_text: str | None = None,
+    conversation_id: str | None = None,
 ) -> SalesInterpretation:
-    """Replay clarification Q→A pairs so slots survive across turns."""
+    """Replay clarification Q→A pairs so slots survive across turns in this thread."""
     updated = interpretation
-    turns = list(recent_turns or [])
+    turns = turns_for_conversation(recent_turns, conversation_id)
     pending_question: str | None = None
     for turn in turns:
         if turn.get("role") == "assistant":

@@ -223,3 +223,58 @@ def test_baltic_mk2_37mm_skips_budget_and_forces_retrieval():
         assert question is None or "investimento" not in (question or "").casefold()
     finally:
         reset_persona_runtime(token)
+
+
+def test_commerce_browse_phrase_is_not_a_name_slot_answer():
+    from app.sales.qualification_slots import is_qualification_slot_answer
+
+    turns = [{"role": "assistant", "content": "Claro — como posso te chamar?"}]
+    assert is_qualification_slot_answer(turns, "Tironi") is True
+    assert is_qualification_slot_answer(turns, "quero um relogio") is False
+
+
+def test_name_slot_ignores_other_conversation_on_same_phone():
+    from app.sales.qualification_slots import (
+        covered_qualification_dims,
+        is_qualification_slot_answer,
+        rehydrate_qualification_slots_from_turns,
+    )
+
+    foreign = [
+        {
+            "role": "assistant",
+            "content": "Como posso te chamar?",
+            "conversation_id": "old-thread",
+            "metadata": {"safety_reason": "commerce_clarification"},
+        },
+        {"role": "user", "content": "João", "conversation_id": "old-thread"},
+    ]
+    assert (
+        is_qualification_slot_answer(
+            foreign, "Tironi", conversation_id="new-thread"
+        )
+        is False
+    )
+    assert (
+        is_qualification_slot_answer(
+            foreign, "Tironi", conversation_id="old-thread"
+        )
+        is True
+    )
+    blank = SalesInterpretation(
+        domain="commerce",
+        goal="discover",
+        subject={"product_type": "relógio"},
+        preferences={},
+        references_previous_context=True,
+        needs_clarification=True,
+        confidence=0.9,
+    )
+    skipped = rehydrate_qualification_slots_from_turns(
+        blank, foreign, conversation_id="new-thread"
+    )
+    assert CUSTOMER_NAME not in covered_qualification_dims(skipped)
+    kept = rehydrate_qualification_slots_from_turns(
+        blank, foreign, conversation_id="old-thread"
+    )
+    assert kept.preferences.recipient == "João"

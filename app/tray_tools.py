@@ -659,6 +659,20 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
     client = client or TrayAdapterClient()
     try:
         if name == "search_products":
+            try:
+                from .sales.tray_query_authority import current_catalog_authorization
+
+                auth = current_catalog_authorization()
+                print(
+                    "[tray.search.authority]",
+                    {
+                        "bound": auth is not None,
+                        "budget_max": None if auth is None else auth.budget_max,
+                        "brand": None if auth is None else auth.brand,
+                    },
+                )
+            except Exception:
+                pass
             return await search_products(client, **arguments)
         if name == "get_product":
             payload = await client.get_product(arguments["product_id"])

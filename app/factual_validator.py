@@ -534,6 +534,26 @@ def _risk_from_violations(violations: list[FactualViolation]) -> RiskLevel:
     return "medium"
 
 
+def _budget_max_from_context(
+    result: AgentResult,
+    commerce_state: dict[str, Any] | None,
+) -> float | None:
+    meta = result.response_metadata or {}
+    raw = meta.get("hard_budget_max")
+    if raw is None and isinstance(commerce_state, dict):
+        prefs = commerce_state.get("active_preferences") or {}
+        if not isinstance(prefs, dict):
+            prefs = {}
+        budget = prefs.get("budget") if isinstance(prefs.get("budget"), dict) else {}
+        raw = budget.get("max") if isinstance(budget, dict) else None
+        if raw is None:
+            raw = prefs.get("budget_max")
+    try:
+        return float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _add_violation(
     report: FactualValidationReport,
     *,
@@ -805,6 +825,34 @@ def validate_factual_response(
                     reason="multiple_products_and_prices_in_reply",
                 )
             )
+
+    budget_max = _budget_max_from_context(result, commerce_state)
+    if budget_max is not None:
+        products = (result.commercial_data or {}).get("products") or []
+        for product in products:
+            if not isinstance(product, dict):
+                continue
+            from .product_retrieval import effective_price
+
+            price = effective_price(product)
+            if price is None:
+                continue
+            report.checked_claims += 1
+            if price > float(budget_max):
+                _add_violation(
+                    report,
+                    kind="money",
+                    claim=str(price),
+                    reason="presented_over_budget",
+                )
+            else:
+                report.supported_claims.append(
+                    FactClaim(
+                        kind="money",
+                        claim=str(price),
+                        reason="price_within_budget",
+                    )
+                )
 
     report.valid = not report.violations
     report.risk_level = _risk_from_violations(report.violations)

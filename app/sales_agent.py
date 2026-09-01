@@ -1038,6 +1038,7 @@ async def interpret_message(
             message_text=current_text,
             context_text=recent_user_context_text(recent_turns),
             recent_turns=recent_turns,
+            conversation_id=message.conversation_id,
         )
         from .sales.qualification_slots import continue_commerce_from_qualification_answer
 
@@ -1045,6 +1046,7 @@ async def interpret_message(
             interpretation,
             recent_turns,
             current_text,
+            conversation_id=message.conversation_id,
         )
         interpretation = _rehydrate_contact_preferences(interpretation, message)
         # Re-sync TurnUnderstanding after preference normalization when present.
@@ -1701,6 +1703,7 @@ async def _handle_sales_message_inner(
             message_text=message.text,
             context_text=recent_user_context_text(recent_turns),
             recent_turns=recent_turns,
+            conversation_id=message.conversation_id,
         )
         from .sales.qualification_slots import continue_commerce_from_qualification_answer
 
@@ -1708,6 +1711,7 @@ async def _handle_sales_message_inner(
             interpretation,
             recent_turns,
             message.text,
+            conversation_id=message.conversation_id,
         )
         interpretation = _rehydrate_contact_preferences(interpretation, message)
     from .commerce_router import (
@@ -1763,6 +1767,13 @@ async def _handle_sales_message_inner(
             message_text=message.text,
             state=state,
             recent_turns=recent_turns,
+        )
+        from .sales.answer_council import apply_turn_contract_for_search
+
+        interpretation = apply_turn_contract_for_search(
+            interpretation,
+            message_text=message.text,
+            commerce_state=state,
         )
     deterministic_confirmation = _confirmation_text_kind(state, message.text)
     if deterministic_confirmation == "confirm":
@@ -2620,6 +2631,7 @@ async def _handle_sales_message_inner(
             tray_result = await _execute_compiled_product_retrieval(
                 soft_interp,
                 message_text=message.text,
+                commerce_state=state,
             )
             interpretation._clear_pending_action = True
             pending_action_used = True
@@ -2831,6 +2843,7 @@ async def _handle_sales_message_inner(
                 lookup = await _execute_compiled_product_retrieval(
                     item_interpretation,
                     message_text=message.text,
+                    commerce_state=state,
                 )
                 candidates = (
                     (lookup.commercial_data or {}).get("products")
@@ -2902,6 +2915,7 @@ async def _handle_sales_message_inner(
         lookup = await _execute_compiled_product_retrieval(
             interpretation,
             message_text=message.text,
+            commerce_state=state,
         )
         lookup_products = (
             (lookup.commercial_data or {}).get("products")
@@ -3827,6 +3841,7 @@ async def _handle_sales_message_inner(
         tray_result = await _execute_compiled_product_retrieval(
             interpretation,
             message_text=message.text,
+            commerce_state=state,
         )
     else:
         queries = [str(plan.get("query") or "").strip()]

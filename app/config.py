@@ -410,6 +410,16 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
     )
+    agent_answer_council_enabled: bool = Field(
+        default=True,
+        alias="AGENT_ANSWER_COUNCIL_ENABLED",
+    )
+    agent_answer_council_max_restarts: int = Field(
+        default=1,
+        alias="AGENT_ANSWER_COUNCIL_MAX_RESTARTS",
+        ge=0,
+        le=2,
+    )
     # Dual-agent critique: shadow by default (Etapa 6); LLM only on risk/sample.
     agent_critique_mode: Literal["off", "shadow", "enforce"] = Field(
         default="shadow",

@@ -307,7 +307,7 @@ async def test_scope_send_gate_retries_excluded_certina_list(monkeypatch):
     )
     calls: list[SalesInterpretation] = []
 
-    async def fake_retrieve(interp):
+    async def fake_retrieve(interp, **_kwargs):
         calls.append(interp)
         return good_result
 
@@ -375,7 +375,7 @@ async def test_scope_send_gate_retries_off_scope_tissot_for_baltic_hamilton(monk
         response_metadata={"presented_products": True, "domain": "commerce"},
     )
 
-    async def fake_retrieve(interp):
+    async def fake_retrieve(interp, **_kwargs):
         return good_result
 
     import app.sales.product_lookup as product_lookup
@@ -426,7 +426,7 @@ async def test_scope_send_gate_retry_at_most_once(monkeypatch):
     )
     call_count = 0
 
-    async def still_bad_retrieve(_interp):
+    async def still_bad_retrieve(_interp, **_kwargs):
         nonlocal call_count
         call_count += 1
         return bad_result

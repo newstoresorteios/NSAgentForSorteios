@@ -462,6 +462,44 @@ def _products_from_search_payload(payload: dict[str, Any] | None) -> list[dict[s
     return [item for item in products if isinstance(item, dict)]
 
 
+def _budget_ceiling_for_critique(
+    result: AgentResult,
+    commerce_state: CommerceConversationState | None,
+) -> float | None:
+    metadata = result.response_metadata or {}
+    raw = metadata.get("hard_budget_max")
+    if raw is None:
+        interp = metadata.get("interpretation")
+        if isinstance(interp, dict):
+            prefs = interp.get("preferences") or {}
+            raw = prefs.get("budget_max")
+    if raw is None and commerce_state is not None:
+        packed = commerce_state.active_preferences.get("budget")
+        if isinstance(packed, dict):
+            raw = packed.get("max")
+    try:
+        return float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _filter_critique_search_by_budget(
+    products: list[dict[str, Any]],
+    budget_max: float | None,
+) -> list[dict[str, Any]]:
+    if budget_max is None:
+        return products
+    from .product_retrieval import effective_price
+
+    kept: list[dict[str, Any]] = []
+    for product in products:
+        price = effective_price(product)
+        if price is None or price > budget_max:
+            continue
+        kept.append(product)
+    return kept
+
+
 def apply_search_products_to_result(
     *,
     result: AgentResult,
@@ -475,6 +513,8 @@ def apply_search_products_to_result(
     )
     if products is None:
         return result
+    budget_max = _budget_ceiling_for_critique(result, commerce_state)
+    products = _filter_critique_search_by_budget(products, budget_max)
     updated = result.model_copy(deep=True)
     commercial = dict(updated.commercial_data or {})
     commercial["products"] = products

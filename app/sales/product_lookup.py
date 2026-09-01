@@ -267,7 +267,7 @@ async def _last_chance_from_message_text(
     return _product_result("product_search", pool[: customer_result_limit()])
 
 
-async def execute_compiled_product_retrieval(
+async def _execute_compiled_product_retrieval_unlocked(
     interpretation: SalesInterpretation,
     *,
     message_text: str | None = None,
@@ -305,6 +305,13 @@ async def execute_compiled_product_retrieval(
         "semantic_preferences_count": len(preferences),
         "candidate_limit": retrieval_plan.candidate_limit,
     })
+    from .tray_query_authority import (
+        authorize_catalog_search,
+        bind_catalog_authorization,
+    )
+
+    catalog_authorization = authorize_catalog_search(interpretation)
+    bind_catalog_authorization(catalog_authorization)
     if not retrieval_plan.requests:
         return None
 
@@ -916,6 +923,16 @@ async def execute_compiled_product_retrieval(
     if not hard_filtered:
         reason = "exact_product_not_found" if retrieval_plan.mode == "exact" else "hard_filter_empty"
         print("[sales.retrieval.empty]", {"reason": reason})
+        if retrieval_plan.mode == "recommendation":
+            from .tray_query_authority import budget_hard_miss_result
+
+            budget_miss = budget_hard_miss_result(
+                interpretation,
+                candidates,
+                authorization=catalog_authorization,
+            )
+            if budget_miss is not None:
+                return budget_miss
         if retrieval_plan.mode == "exact":
             if product_lookup_failed and not catalog_probe_ok:
                 fallback = await _serve_index_when_tray_unavailable(
@@ -1307,6 +1324,33 @@ async def execute_compiled_product_retrieval(
     return result
 
 
+async def execute_compiled_product_retrieval(
+    interpretation: SalesInterpretation,
+    *,
+    message_text: str | None = None,
+    commerce_state=None,
+) -> AgentResult | None:
+    from .answer_council import apply_turn_contract_for_search
+    from .tray_query_authority import (
+        authorize_catalog_search,
+        bind_catalog_authorization,
+        reset_catalog_authorization,
+    )
+
+    bound = apply_turn_contract_for_search(
+        interpretation,
+        message_text=message_text,
+        commerce_state=commerce_state,
+    )
+    catalog_authorization = authorize_catalog_search(bound)
+    token = bind_catalog_authorization(catalog_authorization)
+    try:
+        return await _execute_compiled_product_retrieval_unlocked(
+            bound,
+            message_text=message_text,
+        )
+    finally:
+        reset_catalog_authorization(token)
 
 
 _execute_contextual_product_lookup = execute_contextual_product_lookup

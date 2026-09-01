@@ -671,6 +671,7 @@ async def _generate_agent_reply_async_inner(
         resolve_history_hard_cap,
         resolve_model_history_limit,
         select_model_history_turns,
+        turns_for_conversation,
     )
 
     history_limit = resolve_model_history_limit(settings)
@@ -685,7 +686,8 @@ async def _generate_agent_reply_async_inner(
         "hard_cap": history_hard_cap,
     }
     recovery_turns = load_recent_conversation_turns(**history_lookup)
-    model_turns = select_model_history_turns(recovery_turns, limit=history_limit)
+    thread_turns = turns_for_conversation(recovery_turns, message.conversation_id)
+    model_turns = select_model_history_turns(thread_turns, limit=history_limit)
     recent_turns = model_turns
     context_source = (
         "conversation_id"
@@ -814,6 +816,7 @@ async def _generate_agent_reply_async_inner(
     answering_qualification = is_qualification_slot_answer(
         recovery_turns or recent_turns,
         message.text,
+        conversation_id=message.conversation_id,
     )
     soft_greeting = (not answering_qualification) and (
         _is_greeting(message.text) or is_soft_greeting(message.text)
@@ -1248,6 +1251,7 @@ async def _generate_agent_reply_async_inner(
         interpretation,
         recovery_turns or recent_turns,
         message.text,
+        conversation_id=message.conversation_id,
     )
     used_openai_interpreter = interpretation._source == "openai"
     interpreted_domain = interpretation.domain

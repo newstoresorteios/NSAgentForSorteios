@@ -114,6 +114,89 @@ def gender_search_aliases(label: str | None) -> tuple[str, ...]:
     return _GENDER_ALIASES.get(label, (label,))
 
 
+_COLOR_CANON = {
+    "azul": "azul",
+    "blue": "azul",
+    "navy": "azul",
+    "marinho": "azul",
+    "preto": "preto",
+    "black": "preto",
+    "branco": "branco",
+    "white": "branco",
+    "verde": "verde",
+    "green": "verde",
+    "rosa": "rosa",
+    "pink": "rosa",
+    "dourado": "dourado",
+    "gold": "dourado",
+    "golden": "dourado",
+    "ouro": "dourado",
+    "cinza": "cinza",
+    "gray": "cinza",
+    "grey": "cinza",
+    "vermelho": "vermelho",
+    "red": "vermelho",
+    "amarelo": "amarelo",
+    "yellow": "amarelo",
+    "laranja": "laranja",
+    "orange": "laranja",
+}
+_COLOR_IN_MESSAGE_RE = re.compile(
+    r"\b(" + "|".join(sorted(_COLOR_CANON, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+_STYLE_CANON = {
+    "esportivo": "esportivo",
+    "esporte": "esportivo",
+    "sport": "esportivo",
+    "sports": "esportivo",
+    "diver": "diver",
+    "mergulho": "diver",
+    "social": "social",
+    "dress": "social",
+    "casual": "casual",
+    "cronografo": "cronógrafo",
+    "cronógrafo": "cronógrafo",
+    "chrono": "cronógrafo",
+    "chronograph": "cronógrafo",
+}
+_STYLE_IN_MESSAGE_RE = re.compile(
+    r"\b(esportivo|esporte|sports?|diver|mergulho|social|dress|"
+    r"casual|cron[oó]grafo|chrono(?:graph)?)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_stated_color(text: str | None) -> str | None:
+    match = _COLOR_IN_MESSAGE_RE.search(str(text or ""))
+    if not match:
+        return None
+    return _COLOR_CANON.get(_fold(match.group(1)))
+
+
+def extract_stated_style(text: str | None) -> str | None:
+    match = _STYLE_IN_MESSAGE_RE.search(str(text or ""))
+    if not match:
+        return None
+    return _STYLE_CANON.get(_fold(match.group(1)))
+
+
+def extract_stated_gender(text: str | None) -> str | None:
+    return detect_gender_label(text)
+
+
+def message_states_color(text: str | None) -> bool:
+    return extract_stated_color(text) is not None
+
+
+def message_states_style(text: str | None) -> bool:
+    return extract_stated_style(text) is not None
+
+
+def message_states_gender(text: str | None) -> bool:
+    return extract_stated_gender(text) is not None
+
+
 def preference_gender_label(interpretation: SalesInterpretation) -> str | None:
     preferences = interpretation.preferences
     return detect_gender_label(
@@ -368,6 +451,7 @@ def normalize_sales_interpretation(
     message_text: str | None = None,
     context_text: str | None = None,
     recent_turns: list[dict[str, Any]] | None = None,
+    conversation_id: str | None = None,
 ) -> SalesInterpretation:
     """Fix gender misclassified as model/style and keep recommendation mode."""
     try:
@@ -377,6 +461,7 @@ def normalize_sales_interpretation(
             interpretation,
             recent_turns,
             message_text=message_text,
+            conversation_id=conversation_id,
         )
     except Exception:
         pass

@@ -309,7 +309,11 @@ async def apply_scope_send_gate_with_retry(
     try:
         from .product_lookup import execute_compiled_product_retrieval
 
-        retry_result = await execute_compiled_product_retrieval(corrected)
+        retry_result = await execute_compiled_product_retrieval(
+            corrected,
+            message_text=message_text,
+            commerce_state=commerce_state,
+        )
     except Exception:
         return blocked, blocked_report, interpretation
 

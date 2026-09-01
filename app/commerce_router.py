@@ -531,6 +531,18 @@ def guided_near_match_result(
             handoff_required=False,
             safety_reason="product_not_found",
         )
+    from .sales.tray_query_authority import (
+        budget_miss_from_authorization,
+        current_catalog_authorization,
+        products_within_authorization_budget,
+    )
+
+    authorization = current_catalog_authorization()
+    if authorization is not None and authorization.forbid_near_match:
+        in_budget = products_within_authorization_budget(shortlist, authorization)
+        if not in_budget:
+            return budget_miss_from_authorization(authorization, products)
+        return _product_result("product_search", in_budget)
     brand_label = (brand or "").strip()
     if brand_label:
         prefix = (

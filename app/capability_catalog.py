@@ -88,6 +88,8 @@ def build_capability_catalog() -> dict[str, Any]:
         "policy": [
             "Nunca inventar produto, preço, estoque, pedido ou link de pagamento",
             "Usar APIs Tray para fatos comerciais; usar histórico/WORKING_MEMORY para continuidade",
+            "Orçamento informado é teto duro: não apresentar peça acima da faixa",
+            "Em pedido de link/pagamento, recuperar pedido e payment_url antes de responder",
             "Em pedido de link/pagamento, recuperar pedido e payment_url antes de responder",
             "Não afirmar ausência de pedido sem consultar histórico, estado e APIs relevantes",
         ],

@@ -208,7 +208,7 @@ async def test_category_children_contribute_candidates_and_products_are_deduplic
         return products
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
-    monkeypatch.setattr(sales_agent, "rerank_products", rerank)
+    monkeypatch.setattr("app.sales.product_lookup.rerank_products", rerank)
     result = await sales_agent._execute_compiled_product_retrieval(_interpretation())
 
     product_requests = [args for name, args in calls if name == "search_products"]
@@ -239,7 +239,7 @@ async def test_candidate_pool_never_exceeds_twenty(monkeypatch):
         return products
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
-    monkeypatch.setattr(sales_agent, "rerank_products", rerank)
+    monkeypatch.setattr("app.sales.product_lookup.rerank_products", rerank)
     await sales_agent._execute_compiled_product_retrieval(_interpretation())
 
     assert len(captured) == 20

@@ -60,6 +60,8 @@ def test_llm_budget_defaults_are_conservative_etapa6():
     assert Settings.model_fields["agent_quality_judge_mode"].default == "shadow"
     assert Settings.model_fields["agent_quality_judge_risk_threshold"].default == 70
     assert Settings.model_fields["agent_quality_judge_sample_rate"].default == 0.0
+    assert Settings.model_fields["agent_answer_council_enabled"].default is True
+    assert Settings.model_fields["agent_answer_council_max_restarts"].default == 1
     assert Settings.model_fields["agent_presenter_mode"].default == "thin"
 
 

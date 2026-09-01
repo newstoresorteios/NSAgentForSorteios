@@ -111,6 +111,17 @@ def message_states_budget(text: str | None) -> bool:
     return bool(_BUDGET_IN_MESSAGE_RE.search(str(text or "")))
 
 
+_OCCASION_IN_MESSAGE_RE = re.compile(
+    r"\b(trabalho|esporte|esportivo|dia a dia|presente|ocasiao|ocasião|"
+    r"festa|casamento|mergulho|diver)\b",
+    re.IGNORECASE,
+)
+
+
+def message_states_occasion(text: str | None) -> bool:
+    return bool(_OCCASION_IN_MESSAGE_RE.search(str(text or "")))
+
+
 def is_open_catalog_browse_request(
     text: str | None,
     interpretation: SalesInterpretation,
@@ -150,23 +161,37 @@ def _scrub_stale_budget_for_open_browse(
     interpretation: SalesInterpretation,
     message_text: str | None,
 ) -> dict[str, Any]:
-    """Don't let an old budget from chat memory skip Crono's investment question."""
+    """Don't let old budget/occasion from memory skip Crono's qualification."""
     if not is_open_catalog_browse_request(message_text, interpretation):
         return known_preferences
-    if message_states_budget(message_text):
-        return known_preferences
-    if "budget" not in known_preferences:
-        return known_preferences
     cleaned = dict(known_preferences)
-    cleaned.pop("budget", None)
-    print(
-        "[sales.discovery.scrub_stale_budget]",
-        {
-            "brand": interpretation.subject.brand,
-            "goal": interpretation.goal,
-            "had_budget": True,
-        },
-    )
+    dropped: list[str] = []
+    if not message_states_budget(message_text) and "budget" in cleaned:
+        cleaned.pop("budget", None)
+        dropped.append("budget")
+    if not message_states_occasion(message_text) and "occasion" in cleaned:
+        cleaned.pop("occasion", None)
+        dropped.append("occasion")
+    try:
+        from ..preference_normalize import message_states_color, message_states_style
+
+        if not message_states_color(message_text) and "color" in cleaned:
+            cleaned.pop("color", None)
+            dropped.append("color")
+        if not message_states_style(message_text) and "style" in cleaned:
+            cleaned.pop("style", None)
+            dropped.append("style")
+    except Exception:
+        pass
+    if dropped:
+        print(
+            "[sales.discovery.scrub_stale_prefs]",
+            {
+                "brand": interpretation.subject.brand,
+                "goal": interpretation.goal,
+                "dropped": dropped,
+            },
+        )
     return cleaned
 
 

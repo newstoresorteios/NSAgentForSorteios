@@ -68,3 +68,29 @@ def count_user_assistant_turns(turns: list[dict[str, Any]] | None) -> dict[str, 
         "user": sum(1 for turn in values if turn.get("role") == "user"),
         "assistant": sum(1 for turn in values if turn.get("role") == "assistant"),
     }
+
+
+def _turn_conversation_id(turn: dict[str, Any] | None) -> str:
+    if not isinstance(turn, dict):
+        return ""
+    raw = turn.get("conversation_id")
+    if not raw and isinstance(turn.get("metadata"), dict):
+        raw = turn["metadata"].get("conversation_id")
+    return str(raw or "").strip()
+
+
+def turns_for_conversation(
+    turns: list[dict[str, Any]] | None,
+    conversation_id: str | None,
+) -> list[dict[str, Any]]:
+    """Keep this WhatsApp thread. Untagged turns stay (unit tests / sparse rows)."""
+    wanted = str(conversation_id or "").strip()
+    values = list(turns or [])
+    if not wanted:
+        return values
+    scoped: list[dict[str, Any]] = []
+    for turn in values:
+        cid = _turn_conversation_id(turn)
+        if not cid or cid == wanted:
+            scoped.append(turn)
+    return scoped

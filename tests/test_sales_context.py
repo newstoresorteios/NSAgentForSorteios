@@ -117,7 +117,7 @@ async def test_interpreter_uses_recent_turns_for_short_followups(
     assert result.preferences.budget_max == expected_budget
     assert result.references_previous_context is True
     assert captured["messages"][2:-1] == history
-    assert captured["messages"][1]["content"].startswith("COMMERCE_STATE:")
+    assert "COMMERCE_STATE:" in captured["messages"][1]["content"]
     assert captured["messages"][-1] == {"role": "user", "content": current_text}
     assert captured["response_format"] is SalesInterpretation
 
@@ -209,12 +209,19 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
 
     captured = {}
     rows = [
-        {"id": 12, "text": "menos de 5 mil", "reply_text": None, "safety_reason": None},
+        {
+            "id": 12,
+            "text": "menos de 5 mil",
+            "reply_text": None,
+            "safety_reason": None,
+            "conversation_id": "conversation-1",
+        },
         {
             "id": 10,
             "text": "quero comprar um relógio",
             "reply_text": "Qual estilo você prefere?",
             "safety_reason": "commerce_clarification",
+            "conversation_id": "conversation-1",
         },
     ]
 
@@ -260,13 +267,22 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
     )
 
     assert turns == [
-        {"role": "user", "content": "quero comprar um relógio"},
+        {
+            "role": "user",
+            "content": "quero comprar um relógio",
+            "conversation_id": "conversation-1",
+        },
         {
             "role": "assistant",
             "content": "Qual estilo você prefere?",
             "metadata": {"safety_reason": "commerce_clarification"},
+            "conversation_id": "conversation-1",
         },
-        {"role": "user", "content": "menos de 5 mil"},
+        {
+            "role": "user",
+            "content": "menos de 5 mil",
+            "conversation_id": "conversation-1",
+        },
     ]
     assert any(
         params.get("conversation_id") == "conversation-1"

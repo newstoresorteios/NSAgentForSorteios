@@ -170,6 +170,7 @@ class SalesInterpretation(BaseModel):
     _fallback_reason: str | None = PrivateAttr(default=None)
     _clear_pending_action: bool = PrivateAttr(default=False)
     _force_recommendation_mode: bool = PrivateAttr(default=False)
+    _forbid_near_match: bool = PrivateAttr(default=False)
     _turn_understanding: Any = PrivateAttr(default=None)
 
 

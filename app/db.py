@@ -1027,7 +1027,8 @@ def load_recent_conversation_turns(
                 with conn.cursor() as cur:
                     cur.execute(
                         f"""
-                        SELECT inbound.id, inbound.text, delivered.reply_text, delivered.safety_reason
+                        SELECT inbound.id, inbound.text, inbound.conversation_id,
+                               delivered.reply_text, delivered.safety_reason
                         FROM public.ai_inbound_messages AS inbound
                         LEFT JOIN LATERAL (
                             SELECT response.reply_text, response.safety_reason
@@ -1058,12 +1059,18 @@ def load_recent_conversation_turns(
     for row in rows:
         inbound_text = str(row.get("text") or "").strip()
         reply_text = str(row.get("reply_text") or "").strip()
+        conversation_id = str(row.get("conversation_id") or "").strip()
         if inbound_text:
-            turns.append({"role": "user", "content": inbound_text})
+            user_turn: dict[str, Any] = {"role": "user", "content": inbound_text}
+            if conversation_id:
+                user_turn["conversation_id"] = conversation_id
+            turns.append(user_turn)
         if reply_text:
             assistant_turn: dict[str, Any] = {"role": "assistant", "content": reply_text}
             if row.get("safety_reason"):
                 assistant_turn["metadata"] = {"safety_reason": str(row["safety_reason"])}
+            if conversation_id:
+                assistant_turn["conversation_id"] = conversation_id
             turns.append(assistant_turn)
     return turns[-safe_limit:]
 

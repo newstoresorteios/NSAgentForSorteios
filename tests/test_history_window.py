@@ -7,6 +7,7 @@ from app.history_window import (
     resolve_history_hard_cap,
     resolve_model_history_limit,
     select_model_history_turns,
+    turns_for_conversation,
 )
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 
@@ -33,6 +34,18 @@ def test_count_user_assistant_turns():
         ]
     )
     assert counts == {"total": 3, "user": 2, "assistant": 1}
+
+
+def test_turns_for_conversation_drops_foreign_thread():
+    turns = [
+        {"role": "assistant", "content": "Como posso te chamar?", "conversation_id": "old"},
+        {"role": "user", "content": "João", "conversation_id": "old"},
+        {"role": "user", "content": "quero um relogio", "conversation_id": "new"},
+        {"role": "user", "content": "untagged"},
+    ]
+    scoped = turns_for_conversation(turns, "new")
+    assert [turn["content"] for turn in scoped] == ["quero um relogio", "untagged"]
+    assert turns_for_conversation(turns, None) == turns
 
 
 def test_resolve_model_history_limit_prefers_history_limit():

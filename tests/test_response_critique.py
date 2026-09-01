@@ -235,6 +235,32 @@ def test_apply_search_products_replaces_classic_list():
     assert state.last_presented_products[0].product_id == "9001"
 
 
+def test_apply_search_products_drops_over_budget_hits():
+    result = AgentResult(
+        reply_text="Estes Omega mais próximos…",
+        intent="commerce",
+        commercial_data={"products": []},
+        response_metadata={"hard_budget_max": 5000, "presented_products": True},
+    )
+    updated = apply_search_products_to_result(
+        result=result,
+        api_facts={
+            "search_products": {
+                "products": [
+                    {
+                        "id": "10759",
+                        "name": "Omega Seamaster",
+                        "brand": "Omega",
+                        "price": 42754.99,
+                    }
+                ]
+            }
+        },
+    )
+    assert updated.commercial_data["products"] == []
+    assert updated.response_metadata["presented_products"] is False
+
+
 def test_apply_search_products_empty_clears_wrong_list():
     result = AgentResult(
         reply_text="lista errada",
