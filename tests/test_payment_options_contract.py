@@ -273,6 +273,7 @@ def test_responder_contract_keeps_pix_available_when_link_is_pending():
         order_payment_revalidation_status="confirmed",
     )
     assert _responder_contract(state) == {
+        "dialogue_phase": None,
         "product_state": "in_cart",
         "payment_method_state": "available",
         "payment_link_state": "pending",

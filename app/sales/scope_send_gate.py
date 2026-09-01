@@ -72,15 +72,25 @@ def requested_brands_from_context(
     interpretation: SalesInterpretation | None,
     message_text: str | None,
 ) -> list[str]:
-    brands: list[str] = []
-    if interpretation is not None and interpretation.subject.brand:
-        brands.append(str(interpretation.subject.brand).strip())
+    message_brands: list[str] = []
     try:
         from .discovery import _mentioned_watch_brands
 
-        brands.extend(_mentioned_watch_brands(message_text))
+        message_brands = _mentioned_watch_brands(message_text)
     except Exception:
-        pass
+        message_brands = []
+
+    brands: list[str] = []
+    sticky = ""
+    if interpretation is not None and interpretation.subject.brand:
+        sticky = str(interpretation.subject.brand).strip()
+    include_sticky = bool(sticky) and (
+        not message_brands
+        or any(_brands_match(sticky, brand) for brand in message_brands)
+    )
+    if include_sticky:
+        brands.append(sticky)
+    brands.extend(message_brands)
     excluded = (
         excluded_brands_from_interpretation(interpretation)
         if interpretation is not None

@@ -352,11 +352,18 @@ def compile_agent_prompt(
     input_items: list[dict[str, Any]] = []
 
     if conversation_state is not None and hasattr(conversation_state, "interpreter_payload"):
+        contract = (
+            conversation_state.prompt_contract_payload()
+            if hasattr(conversation_state, "prompt_contract_payload")
+            else {"dialogue_phase": getattr(conversation_state, "dialogue_phase", None)}
+        )
         input_items.append(
             {
                 "role": "system",
                 "content": (
-                    "COMMERCE_STATE:\n"
+                    "INTERPRETER_CONTRACT:\n"
+                    + json.dumps(contract, ensure_ascii=False)
+                    + "\n\nCOMMERCE_STATE:\n"
                     + json.dumps(
                         conversation_state.interpreter_payload(),
                         ensure_ascii=False,

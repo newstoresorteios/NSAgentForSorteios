@@ -128,7 +128,9 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
         {
             "role": "system",
             "content": (
-                "COMMERCE_STATE:\n"
+                "INTERPRETER_CONTRACT:\n"
+                + json.dumps(empty_state.prompt_contract_payload(), ensure_ascii=False)
+                + "\n\nCOMMERCE_STATE:\n"
                 + json.dumps(empty_state.interpreter_payload(), ensure_ascii=False)
                 + "\n\nWORKING_MEMORY:\n"
                 + json.dumps(

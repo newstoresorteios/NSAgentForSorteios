@@ -144,6 +144,48 @@ def test_golden_ig_multi_brand_not_tissot_only():
 
 
 @pytest.mark.offline_eval
+def test_scope_gate_blocks_sticky_tissot_for_baltic_hamilton_message():
+    """Sticky Tissot from prior turn must not pass gate on Baltic/Hamilton ask."""
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"brand": "Tissot", "product_type": "relógio"},
+        preferences={},
+        information_needed=["catalog"],
+        references_previous_context=True,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    result = AgentResult(
+        reply_text="Opções:\n1. Tissot Le Locle\n2. Tissot PRX",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "t1", "name": "Tissot Le Locle", "brand": "Tissot"},
+                {"id": "t2", "name": "Tissot PRX", "brand": "Tissot"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+    message = "Tem Baltic ou Hamilton disponível?"
+    from app.sales.scope_send_gate import requested_brands_from_context
+
+    requested = requested_brands_from_context(interpretation, message)
+    assert "Tissot" not in requested
+    assert {"Baltic", "Hamilton"} <= set(requested)
+
+    report = validate_scope_send_gate(
+        result,
+        interpretation=interpretation,
+        message_text=message,
+    )
+    assert report.valid is False
+    assert report.reason == "off_scope_brand_list"
+
+
+@pytest.mark.offline_eval
 def test_dialogue_phase_blocks_qualify_on_shortlist():
     """Shortlist phase must not reopen persona qualification."""
     import app.sales_agent as sales_agent
@@ -475,3 +517,137 @@ def test_evolve_commerce_state_checkout_phase_on_cart():
     )
     updated = evolve_commerce_state(previous, result)
     assert updated.dialogue_phase == "checkout"
+
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_interpreter_prompt_includes_dialogue_phase_contract(monkeypatch):
+    """Interpreter COMMERCE_STATE prompt must expose dialogue_phase contract."""
+    import json
+    from types import SimpleNamespace
+
+    import app.sales_agent as sales_agent
+    from app.models import IncomingMessage
+    from openai_test_utils import install_fake_openai_client
+
+    captured: dict = {}
+
+    class FakeCompletions:
+        async def parse(self, **kwargs):
+            captured.update(kwargs)
+            from app.models import SalesInterpretation
+
+            message = SimpleNamespace(
+                parsed=SalesInterpretation(
+                    domain="commerce",
+                    goal="discover",
+                    subject={"product_type": "relógio"},
+                    preferences={},
+                    references_previous_context=True,
+                    needs_clarification=False,
+                    confidence=0.9,
+                ),
+                refusal=None,
+            )
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openai_api_key="test-key",
+            openai_model="gpt-4.1-mini",
+            openai_main_model="gpt-4.1-mini",
+            openai_fast_model="gpt-4.1-nano",
+            agent_turn_understanding_enabled=False,
+        ),
+    )
+    install_fake_openai_client(monkeypatch, FakeClient)
+
+    state = CommerceConversationState(dialogue_phase="shortlist")
+    await sales_agent.interpret_message(
+        IncomingMessage(text="quero comprar"),
+        commerce_state=state,
+    )
+
+    state_msg = captured["messages"][1]["content"]
+    assert "INTERPRETER_CONTRACT:" in state_msg
+    contract = json.loads(state_msg.split("INTERPRETER_CONTRACT:\n", 1)[1].split("\n\n", 1)[0])
+    assert contract["dialogue_phase"] == "shortlist"
+
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_responder_prompt_includes_dialogue_phase_contract(monkeypatch):
+    """Responder user payload must expose dialogue_phase as hard contract."""
+    import json
+    from types import SimpleNamespace
+
+    import app.sales_agent as sales_agent
+    from app.models import AgentResult, IncomingMessage, SalesInterpretation
+    from openai_test_utils import install_fake_openai_client
+
+    captured: dict = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="Segue a opção."),
+                    )
+                ]
+            )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(
+            openai_api_key="test-key",
+            openai_model="gpt-4.1-mini",
+            agent_db_persona_enabled=False,
+            agent_memory_proposals_enabled=False,
+            agent_instruction_extension_proposals_enabled=False,
+            agent_conversation_summary_enabled=False,
+        ),
+    )
+    install_fake_openai_client(monkeypatch, FakeClient)
+
+    state = CommerceConversationState(dialogue_phase="shortlist")
+    tray_result = AgentResult(
+        reply_text="Opções",
+        intent="commerce",
+        commercial_data={"products": [{"id": "1", "name": "Relógio", "brand": "Seiko"}]},
+        response_metadata={"presented_products": True, "used_tray": True},
+    )
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="buy",
+        subject={"product_type": "relógio"},
+        preferences={},
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+
+    result = await sales_agent._sales_response_with_openai(
+        IncomingMessage(text="quero comprar"),
+        {"goal": "buy"},
+        tray_result,
+        interpretation,
+        state=state,
+    )
+
+    assert result is not None
+    user_payload = json.loads(captured["messages"][-1]["content"])
+    assert user_payload["dialogue_phase"] == "shortlist"
+    assert user_payload["RESPONSE_CONTRACT"]["dialogue_phase"] == "shortlist"

@@ -333,6 +333,10 @@ class CommerceConversationState(BaseModel):
             "pending_action_product_count": len(self.pending_action_product_ids),
         }
 
+    def prompt_contract_payload(self) -> dict[str, Any]:
+        """Hard contract fields mirrored in interpreter/responder prompts."""
+        return {"dialogue_phase": self.dialogue_phase}
+
 
 def _fold(value: Any) -> str:
     return "".join(
