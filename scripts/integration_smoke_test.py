@@ -1,8 +1,6 @@
 """Smoke test de integração: NSAgent + TRAYadaptor + Chatbo (+ Supabase opcional).
 
-Uso (na raiz do repo, com variáveis de ambiente):
-  python scripts/integration_smoke_test.py
-
+Uso: python scripts/integration_smoke_test.py
 Nunca imprime segredos — tokens são mascarados na saída.
 """
 
@@ -13,7 +11,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -68,9 +66,8 @@ def _load_dotenv(path: Path) -> None:
 
 
 def load_local_env() -> None:
-    _load_dotenv(ROOT / ".env.local")
-    _load_dotenv(ROOT / ".env")
-    _load_dotenv(ROOT / ".env.vercel.cron")
+    for name in (".env.local", ".env", ".env.vercel.cron"):
+        _load_dotenv(ROOT / name)
 
 
 def normalize_base(url: str) -> str:
@@ -85,131 +82,115 @@ def _json_body(response: httpx.Response) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def check_nsagent_health(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
-    name = "nsagent_health"
-    label = "NSAgent /api/health"
-    base = normalize_base(cfg.nsagent_base_url)
+def _http_check(
+    client: httpx.Client,
+    cfg: SmokeConfig,
+    *,
+    name: str,
+    label: str,
+    critical: bool,
+    base: str,
+    path: str,
+    missing_msg: str,
+    evaluate: Callable[[httpx.Response, dict[str, Any]], tuple[bool, str]],
+) -> CheckResult:
     if not base:
-        return CheckResult(name, label, True, False, "NSAGENT_BASE_URL não configurada")
-    url = f"{base}/api/health"
+        return CheckResult(name, label, critical, False, missing_msg)
     try:
-        response = client.get(url, timeout=cfg.timeout_s)
+        response = client.get(f"{base}{path}", timeout=cfg.timeout_s)
     except httpx.HTTPError as exc:
-        return CheckResult(name, label, True, False, f"erro HTTP: {type(exc).__name__}")
-    body = _json_body(response)
-    version = body.get("agent_version")
-    probe = body.get("tray_adaptor_probe") or {}
-    probe_ok = bool(probe.get("ok"))
-    ok = response.status_code == 200 and body.get("ok") is True and bool(version) and probe_ok
-    detail = (
-        f"HTTP {response.status_code}; agent_version={version!r}; "
-        f"tray_adaptor_probe.ok={probe_ok}"
+        return CheckResult(name, label, critical, False, f"erro HTTP: {type(exc).__name__}")
+    ok, detail = evaluate(response, _json_body(response))
+    return CheckResult(name, label, critical, ok, detail)
+
+
+def check_nsagent_health(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
+    def evaluate(response: httpx.Response, body: dict[str, Any]) -> tuple[bool, str]:
+        version = body.get("agent_version")
+        probe = body.get("tray_adaptor_probe") or {}
+        probe_ok = bool(probe.get("ok"))
+        ok = response.status_code == 200 and body.get("ok") is True and bool(version) and probe_ok
+        detail = f"HTTP {response.status_code}; agent_version={version!r}; tray_adaptor_probe.ok={probe_ok}"
+        if response.status_code == 200 and not probe_ok:
+            detail += f"; motivo={probe.get('reason') or probe.get('error') or 'probe falhou'}"
+        return ok, detail
+
+    return _http_check(
+        client, cfg, name="nsagent_health", label="NSAgent /api/health", critical=True,
+        base=normalize_base(cfg.nsagent_base_url), path="/api/health",
+        missing_msg="NSAGENT_BASE_URL não configurada", evaluate=evaluate,
     )
-    if response.status_code == 200 and not probe_ok:
-        reason = probe.get("reason") or probe.get("error") or "probe falhou"
-        detail += f"; motivo={reason}"
-    return CheckResult(name, label, True, ok, detail)
 
 
 def check_tray_health_tray(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
-    name = "tray_health_tray"
-    label = "TRAYadaptor /health/tray"
-    base = normalize_base(cfg.tray_adapter_url)
-    if not base:
-        return CheckResult(name, label, True, False, "TRAY_ADAPTER_URL não configurada")
-    url = f"{base}/health/tray"
-    try:
-        response = client.get(url, timeout=cfg.timeout_s)
-    except httpx.HTTPError as exc:
-        return CheckResult(name, label, True, False, f"erro HTTP: {type(exc).__name__}")
-    body = _json_body(response)
-    access_valid = body.get("access_valid") is True
-    ok = response.status_code == 200 and access_valid
-    detail = (
-        f"HTTP {response.status_code}; access_valid={body.get('access_valid')!r}; "
-        f"store_id={body.get('store_id')!r}"
+    def evaluate(response: httpx.Response, body: dict[str, Any]) -> tuple[bool, str]:
+        ok = response.status_code == 200 and body.get("access_valid") is True
+        detail = (
+            f"HTTP {response.status_code}; access_valid={body.get('access_valid')!r}; "
+            f"store_id={body.get('store_id')!r}"
+        )
+        return ok, detail
+
+    return _http_check(
+        client, cfg, name="tray_health_tray", label="TRAYadaptor /health/tray", critical=True,
+        base=normalize_base(cfg.tray_adapter_url), path="/health/tray",
+        missing_msg="TRAY_ADAPTER_URL não configurada", evaluate=evaluate,
     )
-    return CheckResult(name, label, True, ok, detail)
 
 
 def check_tray_health_basic(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
-    name = "tray_health_basic"
-    label = "TRAYadaptor /health"
-    base = normalize_base(cfg.tray_adapter_url)
-    if not base:
-        return CheckResult(name, label, False, False, "TRAY_ADAPTER_URL não configurada")
-    url = f"{base}/health"
-    try:
-        response = client.get(url, timeout=cfg.timeout_s)
-    except httpx.HTTPError as exc:
-        return CheckResult(name, label, False, False, f"erro HTTP: {type(exc).__name__}")
-    body = _json_body(response)
-    ok = response.status_code == 200 and body.get("status") == "ok"
-    detail = f"HTTP {response.status_code}; status={body.get('status')!r}"
-    return CheckResult(name, label, False, ok, detail)
+    def evaluate(response: httpx.Response, body: dict[str, Any]) -> tuple[bool, str]:
+        ok = response.status_code == 200 and body.get("status") == "ok"
+        return ok, f"HTTP {response.status_code}; status={body.get('status')!r}"
+
+    return _http_check(
+        client, cfg, name="tray_health_basic", label="TRAYadaptor /health", critical=False,
+        base=normalize_base(cfg.tray_adapter_url), path="/health",
+        missing_msg="TRAY_ADAPTER_URL não configurada", evaluate=evaluate,
+    )
 
 
 def check_chatbo_health(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
-    name = "chatbo_health"
-    label = "Chatbo /health"
-    base = normalize_base(cfg.chatbo_base_url)
-    if not base:
-        return CheckResult(name, label, True, False, "CHATBO_BASE_URL não configurada")
-    url = f"{base}/health"
-    try:
-        response = client.get(url, timeout=cfg.timeout_s)
-    except httpx.HTTPError as exc:
-        return CheckResult(name, label, True, False, f"erro HTTP: {type(exc).__name__}")
-    body = _json_body(response)
-    status = body.get("status")
-    ok = response.status_code == 200 and status == "ok"
-    detail = f"HTTP {response.status_code}; status={status!r}"
-    if status == "degraded":
-        missing = body.get("missing_env") or []
-        detail += f"; missing_env={missing}"
-    return CheckResult(name, label, True, ok, detail)
+    def evaluate(response: httpx.Response, body: dict[str, Any]) -> tuple[bool, str]:
+        status = body.get("status")
+        ok = response.status_code == 200 and status == "ok"
+        detail = f"HTTP {response.status_code}; status={status!r}"
+        if status == "degraded":
+            detail += f"; missing_env={body.get('missing_env') or []}"
+        return ok, detail
+
+    return _http_check(
+        client, cfg, name="chatbo_health", label="Chatbo /health", critical=True,
+        base=normalize_base(cfg.chatbo_base_url), path="/health",
+        missing_msg="CHATBO_BASE_URL não configurada", evaluate=evaluate,
+    )
 
 
 def check_env_alignment(cfg: SmokeConfig) -> CheckResult:
-    name = "env_alignment"
-    label = "Variáveis TRAY (local)"
     tray_url = normalize_base(cfg.tray_adapter_url)
     token = (cfg.tray_adapter_token or "").strip()
-    parts: list[str] = []
-    if tray_url:
-        parts.append(f"TRAY_ADAPTER_URL={tray_url}")
-    else:
-        parts.append("TRAY_ADAPTER_URL ausente")
-    if token:
-        parts.append(f"TRAY_ADAPTER_TOKEN={mask_secret(token)}")
-    else:
-        parts.append("TRAY_ADAPTER_TOKEN ausente")
-    ok = bool(tray_url and token)
-    return CheckResult(name, label, False, ok, "; ".join(parts))
+    parts = [
+        f"TRAY_ADAPTER_URL={tray_url}" if tray_url else "TRAY_ADAPTER_URL ausente",
+        f"TRAY_ADAPTER_TOKEN={mask_secret(token)}" if token else "TRAY_ADAPTER_TOKEN ausente",
+    ]
+    return CheckResult("env_alignment", "Variáveis TRAY (local)", False, bool(tray_url and token), "; ".join(parts))
 
 
 def check_supabase_ping(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
-    name = "supabase_ping"
-    label = "Supabase REST (opcional)"
+    def evaluate(response: httpx.Response, _body: dict[str, Any]) -> tuple[bool, str]:
+        ok = response.status_code in {200, 400, 401, 404}
+        return ok, f"HTTP {response.status_code} em /rest/v1/"
+
     base = normalize_base(cfg.supabase_url)
     if not base:
-        return CheckResult(name, label, False, True, "ignorado (SUPABASE_URL vazio)")
-    url = f"{base}/rest/v1/"
-    try:
-        response = client.get(url, timeout=cfg.timeout_s)
-    except httpx.HTTPError as exc:
-        return CheckResult(name, label, False, False, f"erro HTTP: {type(exc).__name__}")
-    # 401/400 ainda indicam reachability sem enviar chaves.
-    ok = response.status_code in {200, 400, 401, 404}
-    detail = f"HTTP {response.status_code} em /rest/v1/"
-    return CheckResult(name, label, False, ok, detail)
+        return CheckResult("supabase_ping", "Supabase REST (opcional)", False, True, "ignorado (SUPABASE_URL vazio)")
+    return _http_check(
+        client, cfg, name="supabase_ping", label="Supabase REST (opcional)", critical=False,
+        base=base, path="/rest/v1/", missing_msg="ignorado", evaluate=evaluate,
+    )
 
 
-def run_smoke_tests(
-    cfg: SmokeConfig,
-    *,
-    client: httpx.Client | None = None,
-) -> list[CheckResult]:
+def run_smoke_tests(cfg: SmokeConfig, *, client: httpx.Client | None = None) -> list[CheckResult]:
     owns_client = client is None
     http = client or httpx.Client(follow_redirects=True)
     try:
@@ -227,9 +208,8 @@ def run_smoke_tests(
 
 
 def parse_config_from_env() -> SmokeConfig:
-    timeout_raw = os.getenv("SMOKE_TEST_TIMEOUT_S", str(DEFAULT_TIMEOUT_S))
     try:
-        timeout_s = float(timeout_raw)
+        timeout_s = float(os.getenv("SMOKE_TEST_TIMEOUT_S", str(DEFAULT_TIMEOUT_S)))
     except ValueError:
         timeout_s = DEFAULT_TIMEOUT_S
     return SmokeConfig(
@@ -248,9 +228,7 @@ def print_report(results: list[CheckResult]) -> int:
     print(header)
     print("-" * len(header))
     for row in results:
-        crit = "sim" if row.critical else "não"
-        status = "PASS" if row.passed else "FAIL"
-        print(f"{row.label:<28} {crit:<8} {status:<8} {row.detail}")
+        print(f"{row.label:<28} {'sim' if row.critical else 'não':<8} {'PASS' if row.passed else 'FAIL':<8} {row.detail}")
     critical_failed = [r for r in results if r.critical and not r.passed]
     optional_failed = [r for r in results if not r.critical and not r.passed]
     print()
@@ -258,34 +236,19 @@ def print_report(results: list[CheckResult]) -> int:
         print(f"FALHA: {len(critical_failed)} check(s) crítico(s) com problema.")
         return 1
     if optional_failed:
-        print(
-            f"OK (críticos): {len(optional_failed)} check(s) opcional(is) falharam — "
-            "revise TRAY env ou Supabase se necessário."
-        )
+        print(f"OK (críticos): {len(optional_failed)} check(s) opcional(is) falharam — revise TRAY env ou Supabase.")
     else:
         print("OK: todos os checks passaram.")
     return 0
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Smoke test HTTP dos serviços integrados (sem expor segredos).",
-    )
-    parser.add_argument(
-        "--no-dotenv",
-        action="store_true",
-        help="Não carregar .env / .env.local automaticamente.",
-    )
-    return parser
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = build_arg_parser().parse_args(argv)
+    parser = argparse.ArgumentParser(description="Smoke test HTTP dos serviços integrados.")
+    parser.add_argument("--no-dotenv", action="store_true", help="Não carregar .env automaticamente.")
+    args = parser.parse_args(argv)
     if not args.no_dotenv:
         load_local_env()
-    cfg = parse_config_from_env()
-    results = run_smoke_tests(cfg)
-    return print_report(results)
+    return print_report(run_smoke_tests(parse_config_from_env()))
 
 
 if __name__ == "__main__":
