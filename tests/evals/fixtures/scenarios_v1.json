@@ -477,6 +477,70 @@
         "max_openai_calls": 0,
         "handoff_required": false
       }
+    },
+    {
+      "id": "s26_joao_qual_relogio_redisplay",
+      "category": "multi_turn_resume",
+      "notes": "Contact 5548999490859 inbound 639 (01/09) — catalog question with unpaid shortlist must replay models, not Tray name=Qual.",
+      "input": "Qual relógio?",
+      "channel": "whatsapp",
+      "sender_phone": "5548999490859",
+      "conversation_id": "conv-joao-qual",
+      "initial_state": {
+        "active_domain": "commerce",
+        "dialogue_phase": "checkout",
+        "pending_action": "awaiting_payment",
+        "purchase_stage": "awaiting_payment",
+        "order_id": "25422",
+        "order_payment_url": "https://pay.example/25422",
+        "order_payment_status": "pending",
+        "last_presented_products": [
+          {"position": 1, "product_id": "b1", "name": "Relógio Baltic Aquascaphe Automático Titânio Azul", "brand": "Baltic"},
+          {"position": 2, "product_id": "b2", "name": "Relógio Baltic Aquascaphe Classic Automático Preto SB01", "brand": "Baltic"},
+          {"position": 3, "product_id": "b3", "name": "Relógio Baltic MR01 Automático Preto", "brand": "Baltic"}
+        ]
+      },
+      "expected": {
+        "domain": "commerce",
+        "must_include": ["Baltic"],
+        "must_not_include": ["pay.example/25422", "Não consegui consultar"],
+        "must_call_tools": [],
+        "must_not_call_tools": ["search_products", "create_cart"],
+        "max_openai_calls": 0,
+        "handoff_required": false
+      }
+    },
+    {
+      "id": "s27_joao_quero_comprar_resumes_pix",
+      "category": "multi_turn_resume",
+      "notes": "Same unpaid João session — generic buy phrase resumes PIX, not catalog rediscovery.",
+      "input": "Quero comprar um relógio",
+      "channel": "whatsapp",
+      "sender_phone": "5548999490859",
+      "conversation_id": "conv-joao-pix",
+      "initial_state": {
+        "active_domain": "commerce",
+        "dialogue_phase": "checkout",
+        "pending_action": "awaiting_payment",
+        "purchase_stage": "awaiting_payment",
+        "order_id": "25422",
+        "order_payment_url": "https://pay.example/25422",
+        "order_payment_status": "pending",
+        "last_presented_products": [
+          {"position": 1, "product_id": "b1", "name": "Relógio Baltic Aquascaphe Automático Titânio Azul", "brand": "Baltic"},
+          {"position": 2, "product_id": "b2", "name": "Relógio Baltic Aquascaphe Classic Automático Preto SB01", "brand": "Baltic"},
+          {"position": 3, "product_id": "b3", "name": "Relógio Baltic MR01 Automático Preto", "brand": "Baltic"}
+        ]
+      },
+      "expected": {
+        "domain": "commerce",
+        "must_include": ["25422", "pay.example/25422"],
+        "must_not_include": ["Baltic"],
+        "must_call_tools": [],
+        "must_not_call_tools": ["search_products", "create_cart"],
+        "max_openai_calls": 0,
+        "handoff_required": false
+      }
     }
   ]
 }

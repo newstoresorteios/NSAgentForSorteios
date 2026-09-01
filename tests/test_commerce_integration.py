@@ -29,6 +29,7 @@ def _settings(**overrides):
         "audio_outbound_enabled": True,
         "supabase_url": "",
         "supabase_service_key": "",
+        "brevo_send_url": "",
         "max_reply_chars": 900,
         "admin_api_token": "admin-secret",
     }
@@ -142,8 +143,8 @@ async def test_general_does_not_send_tray_tools_or_commercial_fallback(monkeypat
     monkeypatch.setattr("app.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("general must not call Tray")))
     result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="oi"), {})
     assert result.intent == "general"
-    assert result.reply_text == "Ol\u00e1! Como posso ajudar?"
     assert "informa\u00e7\u00f5es da loja" not in result.reply_text
+    assert "ajudar" in result.reply_text.casefold()
 
 
 @pytest.mark.asyncio

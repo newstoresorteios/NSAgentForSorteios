@@ -210,7 +210,7 @@ async def test_explicit_subject_is_resolved_before_cart_and_payment(monkeypatch)
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
     monkeypatch.setattr(sales_agent, "get_settings", _settings)
 
-    async def retrieve(_interpretation):
+    async def retrieve(_interpretation, **_kwargs):
         return AgentResult(
             reply_text="produto resolvido",
             intent="commerce",

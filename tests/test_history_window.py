@@ -110,7 +110,7 @@ async def test_agent_loads_hard_cap_but_sends_model_window(monkeypatch):
     monkeypatch.setattr(openai_agent, "detect_blocked_request", lambda _t: None)
     monkeypatch.setattr(openai_agent, "_is_greeting", lambda _t: False)
     monkeypatch.setattr(openai_agent, "is_soft_greeting", lambda _t: False)
-    monkeypatch.setattr(openai_agent, "is_order_lookup_request", lambda _t: False)
+    monkeypatch.setattr(openai_agent, "is_order_lookup_request", lambda *_a, **_k: False)
     monkeypatch.setattr(openai_agent, "is_payment_link_request", lambda _t: False)
     monkeypatch.setattr(openai_agent, "is_unpaid_order_resume_request", lambda _t: False)
     monkeypatch.setattr(openai_agent, "extract_order_reference", lambda _t: None)

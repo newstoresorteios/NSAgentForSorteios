@@ -166,7 +166,7 @@ async def test_pipeline_direct_product_resolution_reaches_same_cart_path(
     async def interpret(*_args, **_kwargs):
         return interpretation
 
-    async def resolve_product(_interpretation):
+    async def resolve_product(_interpretation, **_kwargs):
         return AgentResult(
             reply_text="Produto resolvido.",
             intent="commerce",

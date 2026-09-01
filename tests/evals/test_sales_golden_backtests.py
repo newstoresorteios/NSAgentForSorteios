@@ -1560,6 +1560,62 @@ async def test_golden_joao_full_thread_replay(monkeypatch):
         assert bare_result.safety_reason != "commerce_clarification" or (
             "chamar" not in reply and "cidade" not in reply
         )
+
+        # Turns 11–12 — unpaid order 25422 (01/09): Qual relógio? replays the
+        # shortlist; generic buy resumes the PIX link. Neither path hits Tray.
+        import app.openai_agent as openai_agent
+
+        unpaid = {
+            "active_domain": "commerce",
+            "dialogue_phase": "checkout",
+            "pending_action": "awaiting_payment",
+            "purchase_stage": "awaiting_payment",
+            "order_id": "25422",
+            "order_payment_url": "https://pay.example/25422",
+            "order_payment_status": "pending",
+            "last_presented_products": baltic_list,
+        }
+
+        async def no_live_path(*_a, **_k):
+            raise AssertionError("must not interpret, search catalog, or call Tray")
+
+        monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_k: turns)
+        monkeypatch.setattr(openai_agent, "detect_blocked_request", lambda _t: None)
+        monkeypatch.setattr(
+            openai_agent,
+            "should_request_human_handoff",
+            lambda _m, **_k: None,
+        )
+        monkeypatch.setattr(openai_agent, "interpret_message", no_live_path)
+        monkeypatch.setattr(openai_agent, "inspect_order_payment", no_live_path)
+        monkeypatch.setattr(openai_agent, "handle_sales_message", no_live_path)
+
+        qual = await openai_agent.generate_agent_reply_async(
+            IncomingMessage(
+                text="Qual relógio?",
+                conversation_id="conv-joao-full",
+                sender_phone="5548999490859",
+            ),
+            {"_commerce_state": unpaid},
+        )
+        assert "Baltic" in (qual.reply_text or "")
+        assert "pay.example/25422" not in (qual.reply_text or "")
+        assert qual.response_metadata.get("response_source") == "context_resume_presented_catalog"
+        assert qual.response_metadata.get("used_tray") is False
+        assert qual.response_metadata.get("pending_action") == "awaiting_payment"
+
+        pix = await openai_agent.generate_agent_reply_async(
+            IncomingMessage(
+                text="Quero comprar um relógio",
+                conversation_id="conv-joao-full",
+                sender_phone="5548999490859",
+            ),
+            {"_commerce_state": unpaid},
+        )
+        assert "25422" in (pix.reply_text or "")
+        assert "https://pay.example/25422" in (pix.reply_text or "")
+        assert "Baltic" not in (pix.reply_text or "")
+        assert pix.response_metadata.get("response_source") == "context_resume_payment_url"
     finally:
         reset_persona_runtime(token)
 

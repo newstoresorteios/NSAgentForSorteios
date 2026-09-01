@@ -107,7 +107,7 @@ async def test_explicit_product_request_allows_catalog_search(monkeypatch):
 
     calls = []
 
-    async def retrieve(interpretation):
+    async def retrieve(interpretation, **_kwargs):
         calls.append(("search_products", interpretation.subject.model_dump()))
         return _catalog_result("TISSOT-1")
 
@@ -163,7 +163,7 @@ async def test_invalid_create_cart_without_structured_target_never_posts(monkeyp
         calls.append((tool, arguments))
         raise AssertionError(f"unexpected factual action: {tool}")
 
-    async def retrieve(_interpretation):
+    async def retrieve(_interpretation, **_kwargs):
         return _catalog_result("A", "B")
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
@@ -200,7 +200,7 @@ async def test_pending_action_without_persisted_target_does_not_use_active_produ
         calls.append((tool, arguments))
         raise AssertionError(f"unexpected factual action: {tool}")
 
-    async def retrieve(_interpretation):
+    async def retrieve(_interpretation, **_kwargs):
         return _catalog_result("B")
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
@@ -285,7 +285,7 @@ async def test_complete_pipeline_keeps_current_semantics_above_old_state(monkeyp
     async def interpret(*_args, **_kwargs):
         return next(interpretations)
 
-    async def retrieve(interpretation):
+    async def retrieve(interpretation, **_kwargs):
         if interpretation.subject.model == "Coleção Nova":
             return _catalog_result("C", "D")
         return _catalog_result("A", "B")

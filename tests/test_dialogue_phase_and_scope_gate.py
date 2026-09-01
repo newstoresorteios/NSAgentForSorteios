@@ -457,6 +457,7 @@ def test_build_scope_corrected_interpretation_clears_sticky_certina():
         subject={"brand": "Certina"},
         preferences={"attributes": ["exclude_brand:Certina"]},
         references_previous_context=True,
+        needs_clarification=False,
         confidence=0.9,
     )
     report = validate_scope_send_gate(

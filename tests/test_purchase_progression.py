@@ -335,7 +335,7 @@ async def test_new_explicit_product_does_not_execute_old_pending_action(monkeypa
             raise AssertionError("old pending product must not be added")
         raise AssertionError(tool)
 
-    async def retrieve(_interpretation):
+    async def retrieve(_interpretation, **_kwargs):
         return AgentResult(
             reply_text="novo produto",
             intent="commerce",

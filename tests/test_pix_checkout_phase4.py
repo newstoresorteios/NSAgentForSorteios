@@ -248,9 +248,11 @@ async def test_fulfill_uses_pix_when_enabled(monkeypatch):
         from app.models import AgentResult
         return AgentResult(reply_text="order", intent="commerce")
 
-    monkeypatch.setattr(sales, "should_use_direct_pix", lambda _s: True)
-    monkeypatch.setattr(sales, "generate_direct_pix_checkout", fake_pix)
-    monkeypatch.setattr(sales, "_create_order_with_payment_lookup", fake_order)
+    import app.sales.checkout_flow as checkout_flow
+
+    monkeypatch.setattr(checkout_flow, "should_use_direct_pix", lambda _s: True)
+    monkeypatch.setattr(checkout_flow, "generate_direct_pix_checkout", fake_pix)
+    monkeypatch.setattr(checkout_flow, "_create_order_with_payment_lookup", fake_order)
 
     result = await sales._fulfill_confirmed_order(_confirmed_state())
     assert calls == ["pix"]
@@ -268,8 +270,10 @@ async def test_fulfill_uses_tray_order_when_pix_off(monkeypatch):
         from app.models import AgentResult
         return AgentResult(reply_text="order", intent="commerce")
 
-    monkeypatch.setattr(sales, "should_use_direct_pix", lambda _s: False)
-    monkeypatch.setattr(sales, "_create_order_with_payment_lookup", fake_order)
+    import app.sales.checkout_flow as checkout_flow
+
+    monkeypatch.setattr(checkout_flow, "should_use_direct_pix", lambda _s: False)
+    monkeypatch.setattr(checkout_flow, "_create_order_with_payment_lookup", fake_order)
 
     result = await sales._fulfill_confirmed_order(_confirmed_state())
     assert calls == ["order"]
