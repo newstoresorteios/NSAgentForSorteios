@@ -293,6 +293,69 @@ async def test_qual_relogio_redisplays_joao_shortlist_without_tray(monkeypatch):
     assert result.response_metadata.get("used_tray") is False
 
 
+@pytest.mark.asyncio
+async def test_tironi_name_answer_does_not_re_greet(monkeypatch):
+    """Inbound 642: answering 'como posso te chamar?' must not rotate 'Olá de novo'."""
+    import app.openai_agent as openai_agent
+
+    history = [
+        {"role": "user", "content": "quero um relogio"},
+        {"role": "assistant", "content": "Claro — como posso te chamar?"},
+    ]
+    state = {
+        "active_domain": "commerce",
+        "pending_action": "choose_checkout_channel",
+        "purchase_stage": "shipping",
+        "cart_session_id": "stale-cart",
+        "last_presented_products": [
+            {"position": 1, "product_id": "b1", "name": "Bulova"},
+        ],
+    }
+    captured = {}
+
+    async def fake_interpret(message, **_k):
+        return SalesInterpretation(
+            domain="greeting",
+            goal=None,
+            subject={},
+            preferences={},
+            references_previous_context=False,
+            needs_clarification=False,
+            confidence=0.9,
+        )
+
+    async def fake_sales(_message, _facts, _ctx, interpretation, **_k):
+        captured["domain"] = interpretation.domain
+        captured["name"] = interpretation.preferences.recipient
+        return AgentResult(
+            reply_text="Prazer, Tironi. Qual faixa de investimento você tem em mente?",
+            intent="commerce",
+            safety_reason="commerce_clarification",
+        )
+
+    monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_k: history)
+    monkeypatch.setattr(openai_agent, "detect_blocked_request", lambda _t: None)
+    monkeypatch.setattr(openai_agent, "should_request_human_handoff", lambda _m, **_k: None)
+    monkeypatch.setattr(openai_agent, "interpret_message", fake_interpret)
+    monkeypatch.setattr(openai_agent, "handle_sales_message", fake_sales)
+
+    result = await openai_agent.generate_agent_reply_async(
+        IncomingMessage(
+            text="Tironi",
+            conversation_id="QMDoc3wGg7dBp2XyX",
+            sender_phone="5585999498149",
+        ),
+        {"_commerce_state": state},
+    )
+    folded = (result.reply_text or "").casefold()
+    assert "olá de novo" not in folded
+    assert "sou o crono" not in folded
+    assert result.response_metadata.get("response_source") != "context_resume_soft"
+    assert captured.get("domain") == "commerce"
+    assert captured.get("name") == "Tironi"
+    assert "Tironi" in result.reply_text
+
+
 def test_product_match_failed_keeps_awaiting_payment():
     from app.commerce_context import evolve_commerce_state
 

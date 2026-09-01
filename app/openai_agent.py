@@ -809,7 +809,15 @@ async def _generate_agent_reply_async_inner(
             used_openai_responder=False,
             used_tray=False,
         )
-    soft_greeting = _is_greeting(message.text) or is_soft_greeting(message.text)
+    from .sales.qualification_slots import is_qualification_slot_answer
+
+    answering_qualification = is_qualification_slot_answer(
+        recovery_turns or recent_turns,
+        message.text,
+    )
+    soft_greeting = (not answering_qualification) and (
+        _is_greeting(message.text) or is_soft_greeting(message.text)
+    )
     context_handles = extract_handles_from_conversation(
         state=commerce_state,
         recent_turns=recovery_turns or recent_turns,
@@ -1234,6 +1242,13 @@ async def _generate_agent_reply_async_inner(
         recent_turns=model_turns,
         commerce_state=commerce_state,
     )
+    from .sales.qualification_slots import continue_commerce_from_qualification_answer
+
+    interpretation = continue_commerce_from_qualification_answer(
+        interpretation,
+        recovery_turns or recent_turns,
+        message.text,
+    )
     used_openai_interpreter = interpretation._source == "openai"
     interpreted_domain = interpretation.domain
     interpretation, domain_context_applied = apply_commerce_domain_context(
@@ -1269,10 +1284,13 @@ async def _generate_agent_reply_async_inner(
             used_tray=False,
             fallback_reason=interpretation._fallback_reason,
         )
-    if scope_domain == "greeting" or (
-        interpretation._source != "openai"
-        and is_soft_greeting(message.text)
-        and has_resumable_commerce(commerce_state)
+    if (not answering_qualification) and (
+        scope_domain == "greeting"
+        or (
+            interpretation._source != "openai"
+            and is_soft_greeting(message.text)
+            and has_resumable_commerce(commerce_state)
+        )
     ):
         payment_resume = build_pending_payment_resume_result(commerce_state)
         if payment_resume is not None and should_resume_pending_order(

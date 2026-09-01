@@ -60,6 +60,63 @@ def classify_qualification_question(text: str | None) -> str | None:
     return None
 
 
+def last_assistant_qualification_slot(
+    recent_turns: list[dict[str, Any]] | None,
+) -> str | None:
+    """Slot asked in the latest assistant turn, tagged or not."""
+    for turn in reversed(list(recent_turns or [])):
+        if not isinstance(turn, dict) or turn.get("role") != "assistant":
+            continue
+        return classify_qualification_question(str(turn.get("content") or ""))
+    return None
+
+
+def is_qualification_slot_answer(
+    recent_turns: list[dict[str, Any]] | None,
+    message_text: str | None,
+) -> bool:
+    """True when the user is answering the last qualification question."""
+    slot = last_assistant_qualification_slot(recent_turns)
+    if not slot:
+        return False
+    text = " ".join(str(message_text or "").strip().split())
+    if not text:
+        return False
+    if slot == CUSTOMER_NAME:
+        return _is_plausible_name(text)
+    if slot == SHIPPING_CITY:
+        return _is_plausible_city(text)
+    if slot == URGENCY:
+        return len(text) <= 80
+    return False
+
+
+def continue_commerce_from_qualification_answer(
+    interpretation: SalesInterpretation,
+    recent_turns: list[dict[str, Any]] | None,
+    message_text: str | None,
+) -> SalesInterpretation:
+    """Keep discovery open when a name/city/urgency answer is misread as greeting."""
+    if not is_qualification_slot_answer(recent_turns, message_text):
+        return interpretation
+    slot = last_assistant_qualification_slot(recent_turns)
+    updated = apply_qualification_slot_answer(interpretation, slot, message_text)
+    if updated.domain in {"greeting", "out_of_scope", "store_general", "general"}:
+        subject = updated.subject
+        if not str(subject.product_type or "").strip():
+            subject = subject.model_copy(update={"product_type": "relógio"})
+        updated = updated.model_copy(
+            update={
+                "domain": "commerce",
+                "goal": updated.goal or "discover",
+                "subject": subject,
+                "references_previous_context": True,
+                "needs_clarification": True,
+            }
+        )
+    return updated
+
+
 def _qual_attr_key(slot: str) -> str:
     short = {
         CUSTOMER_NAME: "name",
@@ -193,8 +250,10 @@ def rehydrate_qualification_slots_from_turns(
     turns = list(recent_turns or [])
     pending_question: str | None = None
     for turn in turns:
-        if _is_clarification_turn(turn):
-            pending_question = str(turn.get("content") or "").strip() or None
+        if turn.get("role") == "assistant":
+            content = str(turn.get("content") or "").strip() or None
+            if _is_clarification_turn(turn) or classify_qualification_question(content):
+                pending_question = content
             continue
         if turn.get("role") != "user":
             continue
@@ -209,11 +268,14 @@ def rehydrate_qualification_slots_from_turns(
             )
         pending_question = None
 
-    # Current turn: last assistant clarification + this user message.
+    # Current turn: last assistant qualification prompt + this user message.
     last_q: str | None = None
     for turn in reversed(turns):
-        if _is_clarification_turn(turn):
-            last_q = str(turn.get("content") or "").strip() or None
+        if turn.get("role") != "assistant":
+            continue
+        content = str(turn.get("content") or "").strip() or None
+        if _is_clarification_turn(turn) or classify_qualification_question(content):
+            last_q = content
             break
     if last_q and message_text:
         slot = classify_qualification_question(last_q)

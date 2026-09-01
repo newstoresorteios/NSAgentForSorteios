@@ -245,6 +245,13 @@ Atual: vocês estão comprando Certina DS Action seminovo?
 Interpretação: domain=store_general (avaliação/troca/compra de usado).
 Não invente política: o sistema encaminha para atendente humano.
 
+Exemplo 9:
+Histórico: cliente disse "quero um relógio"; atendente perguntou "como posso te chamar?".
+Atual: Tironi
+Interpretação: domain=commerce, goal=discover, product_type=relógio,
+recipient=Tironi, references_previous_context=true. Nunca use domain=greeting
+para um nome respondendo a pergunta de como chamar.
+
 Não copie uma fala anterior como fato comercial. Preserve produto, preferências e
 orçamento que estejam evidentes no contexto. confidence deve refletir a certeza da
 interpretação entre 0 e 1. Em information_needed, indique somente os fatos necessários:
@@ -1030,6 +1037,14 @@ async def interpret_message(
             interpretation,
             message_text=current_text,
             context_text=recent_user_context_text(recent_turns),
+            recent_turns=recent_turns,
+        )
+        from .sales.qualification_slots import continue_commerce_from_qualification_answer
+
+        interpretation = continue_commerce_from_qualification_answer(
+            interpretation,
+            recent_turns,
+            current_text,
         )
         interpretation = _rehydrate_contact_preferences(interpretation, message)
         # Re-sync TurnUnderstanding after preference normalization when present.
@@ -1686,6 +1701,13 @@ async def _handle_sales_message_inner(
             message_text=message.text,
             context_text=recent_user_context_text(recent_turns),
             recent_turns=recent_turns,
+        )
+        from .sales.qualification_slots import continue_commerce_from_qualification_answer
+
+        interpretation = continue_commerce_from_qualification_answer(
+            interpretation,
+            recent_turns,
+            message.text,
         )
         interpretation = _rehydrate_contact_preferences(interpretation, message)
     from .commerce_router import (

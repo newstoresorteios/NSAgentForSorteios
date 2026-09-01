@@ -84,6 +84,54 @@ def test_rehydrate_turns_replays_joao_sequence():
     assert updated.preferences.recipient == "João"
 
 
+def test_rehydrate_name_without_clarification_metadata():
+    interpretation = SalesInterpretation(
+        domain="greeting",
+        goal=None,
+        subject={},
+        preferences={},
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    turns = [
+        {"role": "user", "content": "quero um relogio"},
+        {"role": "assistant", "content": "Claro — como posso te chamar?"},
+    ]
+    updated = rehydrate_qualification_slots_from_turns(
+        interpretation,
+        turns,
+        message_text="Tironi",
+    )
+    assert updated.preferences.recipient == "Tironi"
+    assert CUSTOMER_NAME in covered_qualification_dims(updated)
+
+
+def test_continue_commerce_when_name_answer_misread_as_greeting():
+    from app.sales.qualification_slots import continue_commerce_from_qualification_answer
+
+    interpretation = SalesInterpretation(
+        domain="greeting",
+        goal=None,
+        subject={},
+        preferences={},
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    turns = [
+        {"role": "assistant", "content": "Claro — como posso te chamar?"},
+    ]
+    updated = continue_commerce_from_qualification_answer(
+        interpretation,
+        turns,
+        "Tironi",
+    )
+    assert updated.domain == "commerce"
+    assert updated.preferences.recipient == "Tironi"
+    assert updated.subject.product_type == "relógio"
+
+
 def test_persona_question_never_reasks_city_or_name_after_answered():
     from tests.evals.test_sales_golden_backtests import _crono_chatbo_profile, _persona
 
