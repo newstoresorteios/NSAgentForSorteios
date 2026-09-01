@@ -84,6 +84,50 @@ def _idle_minutes() -> int:
     return max(1, min(minutes, 24 * 60))
 
 
+def _stale_conversa_days() -> int:
+    settings = get_settings()
+    try:
+        days = int(getattr(settings, "human_takeover_stale_conversa_days", 7) or 7)
+    except (TypeError, ValueError):
+        days = 7
+    return max(1, min(days, 90))
+
+
+def _stale_buffer_minutes() -> int:
+    """Extra slack beyond idle window before a conversa row is treated as stale."""
+    return 5
+
+
+def _row_last_activity(row: dict[str, Any]) -> datetime | None:
+    """Last known traffic on the conversa row (customer or attendant)."""
+    for key in ("last_message_at", "updated_at"):
+        stamped = _as_aware_utc(row.get(key))
+        if stamped is not None:
+            return stamped
+    return None
+
+
+def _is_stale_conversa(row: dict[str, Any]) -> bool:
+    """Hard stale: conversa with no activity for N days (ignored for takeover mute)."""
+    last = _row_last_activity(row)
+    if last is None:
+        return False
+
+    now = datetime.now(timezone.utc)
+    return now - last > timedelta(days=_stale_conversa_days())
+
+
+def _is_phone_fallback_stale(row: dict[str, Any]) -> bool:
+    """Phone-only fallback also requires recent conversa traffic (idle + buffer)."""
+    if _is_stale_conversa(row):
+        return True
+    last = _row_last_activity(row)
+    if last is None:
+        return False
+    threshold = timedelta(minutes=_idle_minutes() + _stale_buffer_minutes())
+    return datetime.now(timezone.utc) - last > threshold
+
+
 def _conversas_has_takeover_signal(row: dict[str, Any]) -> bool:
     if row.get("status") == "closed":
         return False
@@ -105,17 +149,21 @@ def _pick_takeover_row(
     *,
     conversation_id: str | None,
 ) -> dict[str, Any] | None:
-    """Prefer the current Brevo thread; fall back to newest matching row."""
-    active = [row for row in rows if _conversas_has_takeover_signal(row)]
+    """Prefer the current Brevo thread; ignore stale rows; phone fallback only when safe."""
+    fresh = [row for row in rows if not _is_stale_conversa(row)]
+    active = [row for row in fresh if _conversas_has_takeover_signal(row)]
     if not active:
         return None
+
     conv = str(conversation_id or "").strip()
     if conv:
         for row in active:
-            # Rows from SELECT may include external_thread_id when available.
             thread = str(row.get("external_thread_id") or "").strip()
             if thread and thread == conv:
                 return row
+        phone_fallback = [row for row in active if not _is_phone_fallback_stale(row)]
+        return phone_fallback[0] if phone_fallback else None
+
     return active[0]
 
 
@@ -310,8 +358,11 @@ def touch_human_activity(incoming: IncomingMessage) -> bool:
         logger.warning("human_takeover touch lookup failed: %s", exc)
         return False
 
-    active_rows = [row for row in rows if _conversas_has_takeover_signal(row)]
-    if not active_rows:
+    takeover_row = _pick_takeover_row(
+        rows,
+        conversation_id=incoming.conversation_id,
+    )
+    if takeover_row is None:
         return False
     if _recent_own_bot_outbound(keys):
         log_event(
@@ -455,3 +506,87 @@ def human_takeover_active(incoming: IncomingMessage) -> bool:
         },
     )
     return True
+
+
+def cleanup_stale_takeover_state(
+    *,
+    stale_days: int | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Remove idle takeover pause rows older than stale_days (admin/cron helper)."""
+    ensure_tables()
+    days = stale_days if stale_days is not None else _stale_conversa_days()
+    days = max(1, min(int(days), 90))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    deleted = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM public.ai_human_takeover_state
+                    WHERE last_human_activity_at < %s
+                    RETURNING state_key
+                    """,
+                    (cutoff,),
+                )
+                deleted = len(cur.fetchall() or [])
+                if deleted > limit:
+                    conn.rollback()
+                    return {
+                        "ok": False,
+                        "error": "limit_exceeded",
+                        "would_delete": deleted,
+                        "limit": limit,
+                    }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("human_takeover cleanup failed: %s", exc)
+        return {"ok": False, "error": type(exc).__name__}
+
+    log_event(
+        "human_takeover.cleanup",
+        {"deleted": deleted, "stale_days": days},
+    )
+    return {"ok": True, "deleted": deleted, "stale_days": days}
+
+
+def cleanup_stale_takeover_state(
+    *,
+    stale_days: int | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Remove idle takeover pause rows older than stale_days (admin/cron helper)."""
+    ensure_tables()
+    days = stale_days if stale_days is not None else _stale_conversa_days()
+    days = max(1, min(int(days), 90))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    deleted = 0
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM public.ai_human_takeover_state
+                    WHERE last_human_activity_at < %s
+                    RETURNING state_key
+                    """,
+                    (cutoff,),
+                )
+                deleted = len(cur.fetchall() or [])
+                if deleted > limit:
+                    conn.rollback()
+                    return {
+                        "ok": False,
+                        "error": "limit_exceeded",
+                        "would_delete": deleted,
+                        "limit": limit,
+                    }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("human_takeover cleanup failed: %s", exc)
+        return {"ok": False, "error": type(exc).__name__}
+
+    log_event(
+        "human_takeover.cleanup",
+        {"deleted": deleted, "stale_days": days},
+    )
+    return {"ok": True, "deleted": deleted, "stale_days": days}

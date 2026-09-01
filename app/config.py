@@ -387,6 +387,13 @@ class Settings(BaseSettings):
         ge=1,
         le=1440,
     )
+    # ChatBô conversas with no activity for this many days are ignored for takeover mute.
+    human_takeover_stale_conversa_days: int = Field(
+        default=7,
+        alias="HUMAN_TAKEOVER_STALE_CONVERSA_DAYS",
+        ge=1,
+        le=90,
+    )
     agent_quality_judge_mode: Literal["off", "shadow", "enforce"] = Field(
         default="shadow",
         alias="AGENT_QUALITY_JUDGE_MODE",

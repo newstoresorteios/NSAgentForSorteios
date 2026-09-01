@@ -285,7 +285,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v61"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v62"
 
 
 @app.get("/api/health")
@@ -1578,6 +1578,14 @@ async def admin_integrity_kpis(days: int = 7):
     from app.integrity_kpis import build_integrity_kpi_report
 
     return {"ok": True, **build_integrity_kpi_report(days=days)}
+
+
+@app.post("/api/admin/human-takeover/cleanup", dependencies=[Depends(verify_admin_token)])
+async def admin_cleanup_human_takeover(stale_days: int = 7, limit: int = 500):
+    """Purge stale rows from ai_human_takeover_state (does not mutate ChatBô conversas)."""
+    from app.human_takeover import cleanup_stale_takeover_state
+
+    return cleanup_stale_takeover_state(stale_days=stale_days, limit=limit)
 
 
 @app.get(

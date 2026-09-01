@@ -5,6 +5,8 @@ from app.human_takeover import (
     _candidate_keys,
     _conversas_has_takeover_signal,
     _human_activity_from_row,
+    _is_phone_fallback_stale,
+    _is_stale_conversa,
     _lookup_keys,
     _pick_takeover_row,
     human_takeover_active,
@@ -284,6 +286,134 @@ def test_human_takeover_active_within_idle(monkeypatch):
                     "assigned_to": "agent-1",
                     "bot_activated": False,
                     "status": "open",
+                }
+            ],
+        ),
+        patch(
+            "app.human_takeover._load_pause_state",
+            return_value={"last_human_activity_at": recent},
+        ),
+        patch("app.human_takeover._upsert_pause_state"),
+    ):
+        assert human_takeover_active(incoming) is True
+
+    get_settings.cache_clear()
+
+
+def test_is_stale_conversa_by_days(monkeypatch):
+    monkeypatch.setenv("HUMAN_TAKEOVER_STALE_CONVERSA_DAYS", "7")
+    monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    old = datetime.now(timezone.utc) - timedelta(days=8)
+    assert _is_stale_conversa({"last_message_at": old}) is True
+    recent = datetime.now(timezone.utc) - timedelta(days=1)
+    assert _is_stale_conversa({"last_message_at": recent}) is False
+
+    get_settings.cache_clear()
+
+
+def test_is_stale_conversa_by_idle_buffer(monkeypatch):
+    monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
+    monkeypatch.setenv("HUMAN_TAKEOVER_STALE_CONVERSA_DAYS", "30")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    borderline = datetime.now(timezone.utc) - timedelta(minutes=25)
+    assert _is_phone_fallback_stale({"updated_at": borderline}) is True
+    active = datetime.now(timezone.utc) - timedelta(minutes=10)
+    assert _is_phone_fallback_stale({"updated_at": active}) is False
+
+    get_settings.cache_clear()
+
+
+def test_pick_takeover_row_ignores_stale_phone_match(monkeypatch):
+    monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
+    monkeypatch.setenv("HUMAN_TAKEOVER_STALE_CONVERSA_DAYS", "7")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    stale_at = datetime.now(timezone.utc) - timedelta(days=10)
+    rows = [
+        {
+            "external_thread_id": "old-thread",
+            "assigned_to": "agent-1",
+            "bot_activated": False,
+            "status": "open",
+            "last_message_at": stale_at,
+        },
+    ]
+    picked = _pick_takeover_row(rows, conversation_id="new-brevo-thread")
+    assert picked is None
+
+    get_settings.cache_clear()
+
+
+def test_phone_with_only_stale_row_allows_bot(monkeypatch):
+    """Regression: stale assigned_to on old thread must not mute new Brevo conversation."""
+    monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
+    monkeypatch.setenv("HUMAN_TAKEOVER_STALE_CONVERSA_DAYS", "7")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    incoming = IncomingMessage(
+        channel="whatsapp",
+        conversation_id="new-brevo-thread",
+        sender_key="whatsapp:5548999490859",
+        sender_phone="5548999490859",
+        text="oi",
+    )
+    stale_at = datetime.now(timezone.utc) - timedelta(days=30)
+    with (
+        patch(
+            "app.human_takeover._fetch_conversas_rows",
+            return_value=[
+                {
+                    "external_thread_id": "old-thread-aug5",
+                    "assigned_to": "agent-1",
+                    "bot_activated": False,
+                    "status": "open",
+                    "last_message_at": stale_at,
+                    "contact_phone": "5548999490859",
+                }
+            ],
+        ),
+        patch("app.human_takeover._load_pause_state", return_value=None),
+        patch("app.human_takeover._upsert_pause_state"),
+    ):
+        assert human_takeover_active(incoming) is False
+
+    get_settings.cache_clear()
+
+
+def test_current_thread_takeover_still_blocks(monkeypatch):
+    monkeypatch.setenv("HUMAN_TAKEOVER_IDLE_MINUTES", "15")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    incoming = IncomingMessage(
+        channel="whatsapp",
+        conversation_id="current-thread",
+        sender_key="current-thread",
+        text="oi",
+    )
+    recent = datetime.now(timezone.utc) - timedelta(minutes=3)
+    with (
+        patch(
+            "app.human_takeover._fetch_conversas_rows",
+            return_value=[
+                {
+                    "external_thread_id": "current-thread",
+                    "assigned_to": "agent-1",
+                    "bot_activated": False,
+                    "status": "open",
+                    "last_message_at": recent,
                 }
             ],
         ),
