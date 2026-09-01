@@ -210,6 +210,46 @@ def is_payment_link_request(text: str | None) -> bool:
     return any(signal in folded for signal in signals)
 
 
+def is_generic_buy_continue(text: str | None) -> bool:
+    """Buy/close phrasing that is not an explicit new-browse request."""
+    folded = _fold(text)
+    if not folded:
+        return False
+    signals = (
+        "quero comprar",
+        "vamos fechar",
+        "fechar a compra",
+        "fechar compra",
+        "finalizar compra",
+        "finalizar o pedido",
+        "continuar a compra",
+        "continuar compra",
+        "continuar o pedido",
+        "fechar pedido",
+        "comprar um relogio",
+        "comprar relogio",
+    )
+    return any(signal in folded for signal in signals)
+
+
+def session_has_unpaid_order(state: CommerceConversationState) -> bool:
+    status = str(state.order_payment_status or "").casefold()
+    if status in {"paid", "confirmed", "approved"}:
+        return False
+    has_handle = bool(
+        state.order_id
+        or state.order_lookup_id
+        or state.order_payment_url
+    )
+    if not has_handle:
+        return False
+    return (
+        state.pending_action == "awaiting_payment"
+        or state.purchase_stage == "awaiting_payment"
+        or status in {"pending", "unpaid", "awaiting"}
+    )
+
+
 def is_unpaid_order_resume_request(text: str | None) -> bool:
     folded = _fold(text)
     if is_payment_link_request(text):
@@ -254,7 +294,7 @@ def should_resume_pending_order(
     is_greeting: bool = False,
     allow_without_state: bool = False,
 ) -> bool:
-    """Resume payment/order only when the customer asks — not on bare greetings."""
+    """Resume unpaid checkout instead of restarting discovery."""
     has_order_handle = bool(
         state.order_id
         or state.order_lookup_id
@@ -263,17 +303,65 @@ def should_resume_pending_order(
     )
     if not has_order_handle and not allow_without_state:
         return False
-    # Soft greetings keep memory loaded but must not dump payment links.
-    if is_greeting or is_soft_greeting(text):
+    folded = _fold(text)
+    if re.match(
+        r"^\s*(nenhuma|nenhum|nenhuma dessas|nenhum desses)\s*[!.?]*\s*$",
+        folded,
+    ):
+        return False
+    unpaid = session_has_unpaid_order(state) or (
+        state.pending_action == "awaiting_payment" and has_order_handle
+    )
+    greeting = is_greeting or is_soft_greeting(text)
+    if unpaid and (greeting or is_generic_buy_continue(text)):
+        return True
+    if greeting:
         return False
     if is_payment_link_request(text) or is_unpaid_order_resume_request(text):
         return True
-    if (
-        state.pending_action == "awaiting_payment"
-        and is_short_affirmation(text)
-    ):
+    if unpaid and is_short_affirmation(text):
         return True
     return False
+
+
+def build_pending_payment_resume_result(
+    state: CommerceConversationState,
+) -> AgentResult | None:
+    url = str(state.order_payment_url or "").strip()
+    if not url:
+        return None
+    order_label = state.order_id or state.order_lookup_id
+    reply = (
+        f"Seu pedido {order_label} ainda está aguardando pagamento. "
+        f"Segue o link: {url}"
+        if order_label
+        else (
+            "Seu pedido ainda está aguardando pagamento. "
+            f"Segue o link: {url}"
+        )
+    )
+    return AgentResult(
+        reply_text=reply,
+        intent="commerce",
+        commercial_data={
+            "order_id": order_label,
+            "payment": {
+                "payment_url": url,
+                "status": state.order_payment_status or "awaiting_payment",
+            },
+        },
+        response_metadata={
+            "domain": "commerce",
+            "pending_action": "awaiting_payment",
+            "response_source": "context_resume_payment_url",
+            "order_state": {"order_id": order_label} if order_label else {},
+            "payment_state": {
+                "order_payment_url": url,
+                "order_payment_status": state.order_payment_status or "awaiting_payment",
+            },
+            "used_tray": False,
+        },
+    )
 
 
 def build_contextual_greeting(

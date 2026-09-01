@@ -124,6 +124,37 @@ async def test_openai_429_greeting_not_shortlist_prompt(monkeypatch):
     assert "WhatsApp" in defensive or "Como posso" in defensive or "ajudar" in defensive.lower()
 
 
+@pytest.mark.asyncio
+async def test_clarification_openai_fail_never_empty_reply(monkeypatch):
+    import app.sales_agent as sales_agent
+    from app.openai_errors import OpenAIRateLimitGatewayError
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="sk-test", openai_model="gpt-4.1-mini"),
+    )
+
+    async def boom(**_kwargs):
+        raise OpenAIRateLimitGatewayError("no credits")
+
+    monkeypatch.setattr("app.openai_gateway.generate_text_output", boom)
+
+    interp = _interp()
+    interp._source = "deterministic_fallback"
+    interp.clarification_question = None
+
+    result = await sales_agent.generate_clarification_reply(
+        message=IncomingMessage(text="Trabalho"),
+        interpretation=interp,
+        discovery_state={"persona_qualification_required": False},
+    )
+
+    assert (result.reply_text or "").strip()
+    assert result.reply_text != "Resposta em áudio"
+    assert "marca" in result.reply_text.casefold() or "investimento" in result.reply_text.casefold()
+
+
 @pytest.mark.offline_eval
 def test_nenhuma_clears_shortlist_or_resets_discovery():
     assert message_resets_dialogue_to_discovery("nenhuma", None) is True

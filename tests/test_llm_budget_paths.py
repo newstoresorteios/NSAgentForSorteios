@@ -148,7 +148,7 @@ async def test_deterministic_greeting_records_zero_llm_avoided(monkeypatch):
         monkeypatch.setattr(
             openai_agent,
             "should_request_human_handoff",
-            lambda _m: None,
+            lambda _m, **_k: None,
         )
         monkeypatch.setattr(
             openai_agent,
@@ -172,7 +172,7 @@ async def test_deterministic_greeting_records_zero_llm_avoided(monkeypatch):
             "hydrate_state_from_handles",
             lambda state, _h: state,
         )
-        monkeypatch.setattr(openai_agent, "is_order_lookup_request", lambda _t: False)
+        monkeypatch.setattr(openai_agent, "is_order_lookup_request", lambda _t, **_k: False)
         monkeypatch.setattr(openai_agent, "is_payment_link_request", lambda _t: False)
         monkeypatch.setattr(
             openai_agent,
@@ -186,7 +186,7 @@ async def test_deterministic_greeting_records_zero_llm_avoided(monkeypatch):
         monkeypatch.setattr(
             openai_agent,
             "build_contextual_greeting",
-            lambda _s: AgentResult(
+            lambda _s, **_k: AgentResult(
                 reply_text="Oi! Posso ajudar com seu pedido.",
                 intent="general",
                 response_metadata={"domain": "greeting", "response_source": "context_resume_soft"},

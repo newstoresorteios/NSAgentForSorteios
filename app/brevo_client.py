@@ -12,6 +12,29 @@ from .repository import normalize_phone
 BREVO_WHATSAPP_SEND_URL = "https://api.brevo.com/v3/whatsapp/sendMessage"
 BREVO_CONVERSATIONS_SEND_URL = "https://api.brevo.com/v3/conversations/messages"
 
+# Never send this caption to the customer — WhatsApp shows it as a failed PTT.
+_AUDIO_CAPTION_PLACEHOLDER = "Resposta em áudio"
+_EMPTY_REPLY_FALLBACK = (
+    "Não consegui montar a resposta agora. Me diz em uma frase o que você busca "
+    "(marca, modelo ou faixa de investimento)?"
+)
+
+
+def customer_visible_reply_text(
+    text: str | None,
+    *,
+    audio_url: str | None = None,
+) -> str:
+    """Strip media placeholders; empty outbound must become useful copy."""
+    cleaned = (text or "").strip()
+    if cleaned.casefold() == _AUDIO_CAPTION_PLACEHOLDER.casefold():
+        cleaned = ""
+    if audio_url and not cleaned:
+        return f"Ouça: {audio_url}"
+    if cleaned:
+        return cleaned
+    return _EMPTY_REPLY_FALLBACK
+
 
 def _agent_payload(settings: Any) -> dict[str, str]:
     if settings.brevo_agent_id:
@@ -60,7 +83,7 @@ async def _send_conversations_reply(
         return BrevoSendResult(ok=False, dry_run=False, error="brevo_agent_not_configured")
 
     payload: dict[str, Any] = {
-        "text": text or "Resposta em áudio",
+        "text": customer_visible_reply_text(text),
         "visitorId": incoming.visitor_id,
         **agent_payload,
     }
@@ -168,6 +191,11 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
     )
     audio_file: dict[str, Any] | None = None
     mode = (settings.brevo_reply_mode or "dry_run").lower()
+    audio_url = (
+        result.reply_audio_url
+        if isinstance(result, AgentResult)
+        else None
+    )
 
     if (
         isinstance(result, AgentResult)
@@ -181,10 +209,9 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
             filename="resposta.ogg" if result.reply_audio_url.endswith(".ogg") else "resposta.mp3",
             mime_type=result.reply_audio_mime_type or "audio/ogg; codecs=opus",
         )
-        if not text.strip():
-            text = "Resposta em áudio"
     elif isinstance(result, AgentResult) and result.reply_audio_url and not settings.brevo_send_audio_as_attachment:
         text = f"{text}\n\nOuça: {result.reply_audio_url}".strip()
+    text = customer_visible_reply_text(text, audio_url=audio_url)
 
     if isinstance(result, AgentResult) and result.reply_modality == "audio" and not result.reply_audio_url:
         log_event(
@@ -217,7 +244,12 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
         # "send as agent" can return HTTP 200 while the message stays only in
         # the Brevo inbox (not pushed to the customer's WhatsApp).
         # Ignore BREVO_REPLY_MODE=conversations for WhatsApp+phone.
-        if audio_file and isinstance(result, AgentResult) and result.reply_audio_url:
+        if (
+            audio_file
+            and isinstance(result, AgentResult)
+            and result.reply_audio_url
+            and result.reply_audio_url not in text
+        ):
             text = f"{text}\n\nOuça: {result.reply_audio_url}".strip()
         tx = await _send_whatsapp_transactional_reply(incoming, text)
         if tx.ok:

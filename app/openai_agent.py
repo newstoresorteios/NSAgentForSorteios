@@ -35,6 +35,7 @@ from .models import IncomingMessage, AgentResult
 from .turn_runtime import LLMCallBudgetExceeded
 from .context_resume import (
     build_contextual_greeting,
+    build_pending_payment_resume_result,
     has_resumable_commerce,
     is_payment_link_request,
     is_soft_greeting,
@@ -814,10 +815,22 @@ async def _generate_agent_reply_async_inner(
     )
     commerce_state = hydrate_state_from_handles(commerce_state, context_handles)
     customer_context["_commerce_state"] = commerce_state.model_dump(mode="json")
-    # Keep memory loaded on soft greetings without dumping order/payment unsolicited.
+    resume_pending_order_early = should_resume_pending_order(
+        message.text,
+        commerce_state,
+        is_greeting=soft_greeting,
+        allow_without_state=bool(
+            context_handles.get("order_ids")
+            or context_handles.get("payment_urls")
+            or context_handles.get("documents")
+            or context_handles.get("emails")
+        ),
+    )
+    # Soft greetings keep memory without dumping payment — unless checkout is unpaid.
     if (
         soft_greeting
         and has_resumable_commerce(commerce_state)
+        and not resume_pending_order_early
         and not is_order_lookup_request(message.text, commerce_state=commerce_state)
         and not is_unpaid_order_resume_request(message.text)
         and not is_payment_link_request(message.text)
@@ -833,6 +846,25 @@ async def _generate_agent_reply_async_inner(
                 "response_source",
                 "context_resume_soft",
             ),
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+        )
+    stored_payment = build_pending_payment_resume_result(commerce_state)
+    if stored_payment is not None and (
+        is_payment_link_request(message.text) or resume_pending_order_early
+    ):
+        order_label = commerce_state.order_id or commerce_state.order_lookup_id
+        print("[sales.order.route]", {
+            "route": "transcript_payment_url",
+            "order_id_present": bool(order_label),
+            "payment_url_present": True,
+            "resume_pending_order": resume_pending_order_early,
+        })
+        return _annotate_agent_result(
+            stored_payment,
+            domain="commerce",
+            response_source="context_resume_payment_url",
             used_openai_interpreter=False,
             used_openai_responder=False,
             used_tray=False,
@@ -1229,6 +1261,21 @@ async def _generate_agent_reply_async_inner(
         and is_soft_greeting(message.text)
         and has_resumable_commerce(commerce_state)
     ):
+        payment_resume = build_pending_payment_resume_result(commerce_state)
+        if payment_resume is not None and should_resume_pending_order(
+            message.text,
+            commerce_state,
+            is_greeting=True,
+        ):
+            return _annotate_agent_result(
+                payment_resume,
+                domain="commerce",
+                response_source="context_resume_payment_url",
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=interpretation._fallback_reason,
+            )
         if has_resumable_commerce(commerce_state):
             # Keep soft: don't dump order/payment; still use Crono greeting text.
             resume = build_contextual_greeting(

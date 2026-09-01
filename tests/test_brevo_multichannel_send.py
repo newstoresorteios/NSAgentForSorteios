@@ -190,3 +190,86 @@ async def test_whatsapp_falls_back_to_conversations_when_transactional_fails(mon
     assert calls == ["whatsapp", ("conversations", "visitor-wa", "Fallback", None)]
     assert sent.provider_response["route"] == "brevo_conversations_fallback"
     assert sent.provider_response["transactional_error"] == "brevo_sender_number_missing"
+
+
+def test_customer_visible_reply_text_strips_audio_placeholder():
+    from app.brevo_client import customer_visible_reply_text
+
+    assert customer_visible_reply_text("Resposta em áudio") != "Resposta em áudio"
+    assert "áudio" not in customer_visible_reply_text("").casefold() or "faixa" in customer_visible_reply_text("").casefold()
+    assert customer_visible_reply_text("", audio_url="https://cdn.example/a.ogg") == "Ouça: https://cdn.example/a.ogg"
+    assert customer_visible_reply_text("Olá") == "Olá"
+
+
+@pytest.mark.asyncio
+async def test_empty_reply_never_sends_audio_placeholder(monkeypatch):
+    import app.brevo_client as brevo
+
+    captured = {}
+    monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
+
+    async def whatsapp(_incoming, text):
+        captured["tx"] = text
+        return BrevoSendResult(ok=False, dry_run=False, error="brevo_send_failed", status_code=404)
+
+    async def conversations(_incoming, text, audio_file=None):
+        captured["conv"] = text
+        return BrevoSendResult(ok=True, dry_run=False, status_code=200)
+
+    monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
+    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
+
+    sent = await brevo.send_brevo_reply(
+        IncomingMessage(
+            channel="whatsapp",
+            sender_phone="5585999498149",
+            visitor_id="visitor-wa",
+        ),
+        AgentResult(reply_text="", reply_modality="audio"),
+    )
+
+    assert sent.ok is True
+    assert captured["tx"]
+    assert captured["tx"] != "Resposta em áudio"
+    assert captured["conv"] != "Resposta em áudio"
+    assert "faixa de investimento" in captured["tx"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_conversations_empty_text_never_uses_audio_caption(monkeypatch):
+    import app.brevo_client as brevo
+
+    captured = {}
+
+    class Response:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {"id": "outbound-empty"}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, *, json, headers):
+            captured.update(json)
+            return Response()
+
+    monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
+    monkeypatch.setattr(brevo.httpx, "AsyncClient", Client)
+
+    result = await brevo._send_conversations_reply(
+        IncomingMessage(channel="whatsapp", visitor_id="visitor-wa"),
+        "",
+    )
+
+    assert result.ok is True
+    assert captured["text"] != "Resposta em áudio"
+    assert "faixa de investimento" in captured["text"].casefold()

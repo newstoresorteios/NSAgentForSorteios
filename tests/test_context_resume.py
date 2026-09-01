@@ -71,14 +71,17 @@ def test_soft_greeting_and_unpaid_resume_detection():
         order_payment_url="https://pay.example/1",
         pending_action="awaiting_payment",
     )
-    # Greeting keeps memory loaded but must not auto-dump payment.
-    assert should_resume_pending_order("Opa, boa noite", state) is False
+    # Unpaid checkout: greeting and generic buy resume the payment link.
+    assert should_resume_pending_order("Opa, boa noite", state) is True
+    assert should_resume_pending_order("BOm dia", state) is True
+    assert should_resume_pending_order("Quero comprar um relógio", state) is True
     assert should_resume_pending_order("como esta meu pedido?", state) is False
     assert should_resume_pending_order(
         "acabamos de conversar, eu nao fiz o pagamento ainda",
         state,
     ) is True
     assert should_resume_pending_order("sim", state) is True
+    assert should_resume_pending_order("nenhuma", state) is False
 
 
 def test_contextual_greeting_is_soft_and_non_intrusive():
@@ -96,7 +99,7 @@ def test_contextual_greeting_is_soft_and_non_intrusive():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_greeting_keeps_memory_without_dumping_order(monkeypatch):
+async def test_pipeline_greeting_resumes_unpaid_order_link(monkeypatch):
     import app.message_pipeline as pipeline
     import app.openai_agent as openai_agent
 
@@ -153,10 +156,52 @@ async def test_pipeline_greeting_keeps_memory_without_dumping_order(monkeypatch)
         raw={"inbound_id": 10},
     )
     result = await pipeline.process_incoming_message(incoming, {"found": False})
-    assert "0CC131B51070AEF" not in result.reply_text
-    assert "https://pay.example/pedido" not in result.reply_text
+    assert "0CC131B51070AEF" in result.reply_text
+    assert "https://pay.example/pedido" in result.reply_text
     assert result.response_metadata["commerce_state"]["order_id"] == "0CC131B51070AEF"
     assert result.response_metadata["working_memory"]["payment_pending"] is True
+
+
+@pytest.mark.asyncio
+async def test_quero_comprar_relogio_resumes_joao_awaiting_payment(monkeypatch):
+    import app.openai_agent as openai_agent
+
+    state = {
+        "order_id": "25422",
+        "order_payment_url": "https://pay.example/25422",
+        "pending_action": "awaiting_payment",
+        "purchase_stage": "awaiting_payment",
+        "order_payment_status": "pending",
+        "cart_session_id": "cart-joao",
+        "last_presented_products": [
+            {"position": 1, "product_id": "b1", "name": "Baltic Aquascaphe"},
+            {"position": 2, "product_id": "b2", "name": "Baltic Classic"},
+            {"position": 3, "product_id": "b3", "name": "Baltic MR01"},
+        ],
+    }
+
+    async def boom(*_a, **_k):
+        raise AssertionError("must not interpret, search catalog, or call Tray payment")
+
+    monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_k: [])
+    monkeypatch.setattr(openai_agent, "detect_blocked_request", lambda _t: None)
+    monkeypatch.setattr(openai_agent, "should_request_human_handoff", lambda _m, **_k: None)
+    monkeypatch.setattr(openai_agent, "interpret_message", boom)
+    monkeypatch.setattr(openai_agent, "inspect_order_payment", boom)
+    monkeypatch.setattr(openai_agent, "handle_sales_message", boom)
+
+    result = await openai_agent.generate_agent_reply_async(
+        IncomingMessage(
+            text="Quero comprar um relógio",
+            conversation_id="conv-joao",
+            sender_phone="5548999490859",
+        ),
+        {"_commerce_state": state},
+    )
+    assert "25422" in result.reply_text
+    assert "https://pay.example/25422" in result.reply_text
+    assert "Baltic" not in result.reply_text
+    assert result.response_metadata.get("response_source") == "context_resume_payment_url"
 
 
 @pytest.mark.asyncio

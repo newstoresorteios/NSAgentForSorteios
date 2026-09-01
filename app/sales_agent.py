@@ -1272,11 +1272,14 @@ async def generate_clarification_reply(
             used_openai_responder=False,
             used_tray=used_tray,
         )
+    _clarification_empty_fallback = (
+        "Me diz em uma frase o que você busca — marca, modelo ou faixa de investimento."
+    )
     if not settings.openai_api_key:
         reply = (deterministic_question or "").strip()
         return _mark_sales_result(
             AgentResult(
-                reply_text=reply or (persona_question or ""),
+                reply_text=reply or (persona_question or "").strip() or _clarification_empty_fallback,
                 intent="commerce",
                 handoff_required=False,
                 safety_reason="commerce_clarification",
@@ -1350,7 +1353,10 @@ async def generate_clarification_reply(
         )
     except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
         print("[sales.clarification] failed", {"error_type": type(exc).__name__})
-        fallback = (deterministic_question or persona_question or "").strip()
+        fallback = (
+            (deterministic_question or persona_question or "").strip()
+            or _clarification_empty_fallback
+        )
         return _mark_sales_result(
             AgentResult(
                 reply_text=fallback,
@@ -1673,6 +1679,27 @@ async def _handle_sales_message_inner(
     if interpretation is not None and is_outbound_catalog_image_request(message.text):
         interpretation = interpretation.model_copy(update={"image_request": True})
     state = commerce_state or CommerceConversationState()
+    from .context_resume import (
+        build_pending_payment_resume_result,
+        is_soft_greeting as _resume_is_soft_greeting,
+        should_resume_pending_order,
+    )
+
+    if should_resume_pending_order(
+        message.text,
+        state,
+        is_greeting=_is_greeting(message.text) or _resume_is_soft_greeting(message.text),
+    ):
+        stored_payment = build_pending_payment_resume_result(state)
+        if stored_payment is not None:
+            return _mark_sales_result(
+                stored_payment,
+                interpretation=interpretation,
+                goal=(interpretation.goal if interpretation is not None else "buy"),
+                response_source="context_resume_payment_url",
+                used_openai_responder=False,
+                used_tray=False,
+            )
     if interpretation is not None:
         from .sales.purchase_selection import repair_presented_purchase_selection
 
