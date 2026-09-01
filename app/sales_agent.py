@@ -1593,6 +1593,7 @@ async def _handle_sales_message_inner(
             interpretation,
             message_text=message.text,
             context_text=recent_user_context_text(recent_turns),
+            recent_turns=recent_turns,
         )
         interpretation = _rehydrate_contact_preferences(interpretation, message)
     from .commerce_router import (

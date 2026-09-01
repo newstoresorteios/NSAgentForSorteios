@@ -227,11 +227,13 @@ def blocks_persona_qualification_for_purchase(
     interpretation: SalesInterpretation | None,
     state: CommerceConversationState | None,
 ) -> bool:
-    """Purchase closing against a shortlist must not reopen ChatBo discovery."""
+    """Purchase closing / shortlist on screen must not reopen ChatBo discovery."""
     if interpretation is None or state is None:
         return False
-    if not state.last_presented_products and state.active_product is None:
-        return False
+    if state.last_presented_products or state.active_product is not None:
+        return True
+    if interpretation.goal == "buy":
+        return True
     if interpretation.purchase_action == "create_cart":
         return True
     if interpretation.goal == "buy" and interpretation.stop_clarification:

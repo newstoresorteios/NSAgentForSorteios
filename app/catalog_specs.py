@@ -238,8 +238,8 @@ def interpretation_wants_diver(interpretation: Any) -> bool:
 
 
 _CASE_RANGE_RE = re.compile(
-    r"(?:entre|de)\s*(\d{2})\s*(?:a|ate|at[eé]|[-–])\s*(\d{2})\s*mm"
-    r"|(\d{2})\s*(?:a|ate|at[eé]|[-–])\s*(\d{2})\s*mm",
+    r"(?:entre|de)\s*(\d{2})\s*(?:a|ate|at[eé]|[-–/])\s*(\d{2})\s*mm"
+    r"|(\d{2})\s*(?:a|ate|at[eé]|[-–/])\s*(\d{2})\s*mm",
     re.IGNORECASE,
 )
 _SMALL_WRIST_RE = re.compile(

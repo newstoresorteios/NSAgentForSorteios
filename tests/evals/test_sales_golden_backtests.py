@@ -852,3 +852,446 @@ async def test_golden_joao_bare_quero_comprar_does_not_ask_name(monkeypatch):
         assert "qual" in reply and ("opção" in reply or "opcao" in reply or "1" in reply)
     finally:
         reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+def test_golden_ricardo_other_brands_unlocks_seiko_sticky():
+    """Contact 5511937118008 — 'outras marcas, não precisa ser seiko' clears brand lock."""
+    from app.preference_normalize import normalize_sales_interpretation
+    from app.product_retrieval import hard_filter_products
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        sticky = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"brand": "Seiko", "product_type": "relógio"},
+            preferences={
+                "budget_min": 5000,
+                "budget_max": 8000,
+                "style": "versátil",
+                "attributes": ["case_size:36-38mm"],
+            },
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            needs_clarification=False,
+            confidence=0.9,
+        )
+        unlocked = normalize_sales_interpretation(
+            sticky,
+            message_text=(
+                "Pode ser outras marcas, não precisa ser necessariamente um seiko"
+            ),
+            context_text="Me mande opções com tamanhos entre 36 até 38mm",
+        )
+        assert unlocked.subject.brand is None
+        assert unlocked.ready_for_retrieval is True
+        state = sales_agent._discovery_state(
+            unlocked,
+            [],
+            message_text=(
+                "Pode ser outras marcas, não precisa ser necessariamente um seiko"
+            ),
+        )
+        assert state["force_retrieval"] is True
+        assert state["brand_unlock_requested"] is True
+
+        pool = [
+            {
+                "id": "sumo44",
+                "name": "Seiko Prospex Sumo",
+                "brand": "Seiko",
+                "case_size": "44",
+                "current_price": 7599,
+                "available": True,
+            },
+            {
+                "id": "prx40",
+                "name": "Tissot PRX Powermatic 80",
+                "brand": "Tissot",
+                "case_size": "40",
+                "current_price": 6599,
+                "available": True,
+            },
+            {
+                "id": "alpinist38",
+                "name": "Seiko Alpinist",
+                "brand": "Seiko",
+                "case_size": "38",
+                "current_price": 6999,
+                "available": True,
+            },
+            {
+                "id": "prx35",
+                "name": "Tissot PRX 35mm",
+                "brand": "Tissot",
+                "case_size": "35",
+                "current_price": 6500,
+                "available": True,
+            },
+        ]
+        filtered = hard_filter_products(pool, unlocked, mode="recommendation")
+        # Size hard-filter still applies; brand is unlocked so non-Seiko may appear.
+        assert all(
+            36 <= float(str(item.get("case_size") or 0)) <= 38 for item in filtered
+        )
+        assert {str(item["id"]) for item in filtered} == {"alpinist38"}
+    finally:
+        reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_golden_dark_orange_list_position_one_creates_cart(monkeypatch):
+    """Contact 5585999498149 — bare '1' after shortlist must bind position 1 to cart."""
+    from types import SimpleNamespace
+
+    import app.sales_agent as sales_agent
+    from app.commerce_context import CommerceConversationState
+    from app.models import IncomingMessage
+    from app.sales.purchase_selection import repair_presented_purchase_selection
+
+    seiko_list = [
+        {
+            "position": 1,
+            "product_id": "samurai",
+            "name": "Seiko Prospex King Samurai",
+            "brand": "Seiko",
+        },
+        {
+            "position": 2,
+            "product_id": "srpb55",
+            "name": "Seiko Prospex Automático Preto",
+            "brand": "Seiko",
+        },
+        {
+            "position": 3,
+            "product_id": "turtle",
+            "name": "Seiko King Turtle",
+            "brand": "Seiko",
+        },
+    ]
+    state = CommerceConversationState(
+        active_domain="commerce",
+        last_presented_products=seiko_list,
+        purchase_stage="selection",
+        product_resolution_state="options_presented",
+    )
+    wrong = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"brand": "Seiko", "product_type": "relógio"},
+        preferences={},
+        information_needed=["catalog"],
+        references_previous_context=True,
+        needs_clarification=False,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        confidence=0.85,
+    )
+    repaired = repair_presented_purchase_selection(
+        wrong,
+        message_text="1",
+        state=state,
+    )
+    assert repaired is not None
+    assert repaired.purchase_action == "create_cart"
+    assert repaired.reference_position == 1
+
+    calls: list[tuple[str, dict]] = []
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_product":
+            return {
+                "id": "samurai",
+                "name": "Seiko Prospex King Samurai",
+                "current_price": "5399.99",
+                "available": True,
+                "has_variation": False,
+            }
+        if tool == "create_cart":
+            return {
+                "cart_id": "CART-DO",
+                "session_id": "SESSION-DO",
+                "cart_url": "https://loja.example/checkout/SESSION-DO",
+            }
+        if tool == "get_cart_complete":
+            return {
+                "cart_id": "CART-DO",
+                "session_id": "SESSION-DO",
+                "total": "5399.99",
+                "items": [{"product_id": "samurai", "quantity": 1}],
+            }
+        raise AssertionError(f"unexpected tool {tool}")
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="1"),
+        {"primary_intent": "commerce"},
+        {},
+        wrong,
+        commerce_state=state,
+    )
+    assert result is not None
+    assert any(tool == "create_cart" for tool, _ in calls)
+    create = next(args for tool, args in calls if tool == "create_cart")
+    assert create["product_id"] == "samurai"
+
+
+@pytest.mark.offline_eval
+def test_golden_arthur_named_sku_skips_budget_qualification():
+    """Contact 5543988601234 — full Seiko SPB515 name must sku-lock, not re-ask budget."""
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="find",
+            subject={
+                "brand": "Seiko",
+                "model": "Prospex Speedtimer",
+                "reference": "SPB515",
+                "product_type": "relógio",
+            },
+            preferences={},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            needs_clarification=False,
+            confidence=0.97,
+        )
+        state = sales_agent._discovery_state(
+            interpretation,
+            [],
+            message_text=(
+                "Relógio Seiko Prospex Speedtimer Automático Preto SPB515 "
+                "é esse que eu quero, consegue achar pra mim?"
+            ),
+        )
+        # Discovery must unlock via sku_lock; callers only ask persona questions
+        # when persona_qualification_required is True.
+        assert state["persona_qualification_required"] is False
+        assert state["qualification"]["satisfied_by"] == "sku_lock"
+        assert state["force_retrieval"] is True
+    finally:
+        reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+def test_golden_ig_le_locle_size_ask_forces_case_filter():
+    """IG 172796… — 'Gostei desse, 43/44mm' must extract size range and hard-filter."""
+    from app.preference_normalize import normalize_sales_interpretation
+    from app.product_retrieval import hard_filter_products
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        base = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"brand": "Tissot", "model": "Le Locle", "product_type": "relógio"},
+            preferences={},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            needs_clarification=False,
+            confidence=0.9,
+        )
+        sized = normalize_sales_interpretation(
+            base,
+            message_text="Gostei desse, 43/44mm",
+            context_text="Você tem a venda esse novo tissot lê locle?",
+        )
+        state = sales_agent._discovery_state(
+            sized,
+            [],
+            message_text="Gostei desse, 43/44mm",
+        )
+        assert state["case_size_range"] == (43, 44)
+        assert state["force_retrieval"] is True
+
+        pool = [
+            {
+                "id": "ll39",
+                "name": "Tissot Le Locle Powermatic 80",
+                "brand": "Tissot",
+                "case_size": "39.3",
+                "current_price": 7199,
+                "available": True,
+            },
+            {
+                "id": "ll44",
+                "name": "Tissot Le Locle 44mm",
+                "brand": "Tissot",
+                "case_size": "44",
+                "current_price": 7499,
+                "available": True,
+            },
+        ]
+        filtered = hard_filter_products(pool, sized, mode="recommendation")
+        assert {str(item["id"]) for item in filtered} == {"ll44"}
+    finally:
+        reset_persona_runtime(token)
+
+
+def _joao_qualification_profile() -> dict:
+    return {
+        **_crono_chatbo_profile(),
+        "qualification_rules": [
+            "Para qual cidade seria a entrega?",
+            "Você já tem um modelo em mente ou quer uma sugestão?",
+            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
+            "Qual faixa de investimento você tem em mente?",
+            "Você tem pressa para receber ou pode esperar uma peça sob encomenda?",
+            "Como posso te chamar?",
+        ],
+    }
+
+
+def _clarification_turn(content: str) -> dict:
+    return {
+        "role": "assistant",
+        "content": content,
+        "metadata": {"safety_reason": "commerce_clarification"},
+    }
+
+
+@pytest.mark.offline_eval
+def test_golden_joao_qual_loop_does_not_reask_city_or_name():
+    """Contact 5548999490859 (31/08) — answered slots must not restart from city/name."""
+    from app.preference_normalize import normalize_sales_interpretation
+    from app.sales.qualification_slots import covered_qualification_dims
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_joao_qualification_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        base = SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"brand": "Baltic", "product_type": "relógio"},
+            preferences={},
+            references_previous_context=True,
+            needs_clarification=True,
+            confidence=0.9,
+        )
+        turns: list[dict] = []
+        steps = [
+            ("Para qual cidade seria a entrega?", "Florianópolis"),
+            ("Você já tem um modelo em mente ou quer uma sugestão?", "Quero o Baltic"),
+            ("Qual faixa de investimento você tem em mente?", "Até 10 mil"),
+            (
+                "Você tem pressa para receber ou pode esperar uma peça sob encomenda?",
+                "Posso esperar",
+            ),
+            ("Como posso te chamar?", "João"),
+        ]
+        current = base
+        for question, answer in steps:
+            turns.extend([_clarification_turn(question), {"role": "user", "content": answer}])
+            current = normalize_sales_interpretation(
+                current,
+                message_text=answer,
+                context_text="\n".join(
+                    str(turn.get("content") or "")
+                    for turn in turns
+                    if turn.get("role") == "user"
+                ),
+                recent_turns=turns[:-1],
+            )
+
+        mk2 = normalize_sales_interpretation(
+            current,
+            message_text="Que o baltic mk2 37mm",
+            context_text="Quero o Baltic",
+            recent_turns=turns,
+        )
+        dims = covered_qualification_dims(mk2)
+        assert "shipping_city" in dims or any(
+            str(item).startswith("qual:city:") for item in mk2.preferences.attributes
+        )
+        assert "customer_name" in dims
+        assert mk2.preferences.recipient == "João"
+
+        state = sales_agent._discovery_state(
+            mk2,
+            turns,
+            message_text="Que o baltic mk2 37mm",
+        )
+        next_q = sales_agent._persona_qualification_question(mk2, state)
+        if next_q:
+            folded = next_q.casefold()
+            assert "cidade" not in folded
+            assert "chamar" not in folded
+        assert state["qualification"]["ready"] or state["force_retrieval"]
+    finally:
+        reset_persona_runtime(token)
+
+
+@pytest.mark.offline_eval
+def test_golden_joao_mk2_37mm_skips_budget_question():
+    """Explicit Baltic mk2 37mm must sku-lock and skip budget qualification."""
+    from app.preference_normalize import normalize_sales_interpretation
+    import app.sales_agent as sales_agent
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_joao_qualification_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        interpretation = normalize_sales_interpretation(
+            SalesInterpretation(
+                domain="commerce",
+                goal="discover",
+                subject={"brand": "Baltic", "product_type": "relógio"},
+                preferences={},
+                references_previous_context=True,
+                needs_clarification=True,
+                confidence=0.9,
+            ),
+            message_text="Que o baltic mk2 37mm",
+            context_text="Quero o Baltic",
+        )
+        assert interpretation.stop_clarification is True
+        assert interpretation.ready_for_retrieval is True
+        state = sales_agent._discovery_state(
+            interpretation,
+            [],
+            message_text="Que o baltic mk2 37mm",
+        )
+        assert state["persona_qualification_required"] is False
+        assert state["force_retrieval"] is True
+        assert state["qualification"]["ready"] is True
+        assert state["qualification"]["satisfied_by"] in {"sku_lock", "stop_clarification"}
+    finally:
+        reset_persona_runtime(token)
+

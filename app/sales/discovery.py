@@ -58,10 +58,16 @@ def _known_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
             "min": preferences.budget_min,
             "max": preferences.budget_max,
         }
-    for field in ("color", "style", "material", "occasion", "recipient"):
+    for field in ("color", "style", "material", "occasion"):
         value = getattr(preferences, field)
         if value:
             known[field] = value
+    try:
+        from .qualification_slots import known_preferences_from_qualification_slots
+
+        known.update(known_preferences_from_qualification_slots(interpretation))
+    except Exception:
+        pass
     if interpretation.subject.brand:
         known["brand"] = interpretation.subject.brand
     if preferences.attributes:
@@ -223,11 +229,30 @@ def _preference_key_set(discovery_state: dict[str, Any]) -> set[str]:
 
 
 def _has_urgency_signal(interpretation: SalesInterpretation) -> bool:
+    try:
+        from .qualification_slots import URGENCY, covered_qualification_dims
+
+        if URGENCY in covered_qualification_dims(interpretation):
+            return True
+    except Exception:
+        pass
     attrs = list(interpretation.preferences.attributes or [])
     blob = " ".join(str(item) for item in attrs).casefold()
     return any(
         token in blob
-        for token in ("pronta", "urgência", "urgencia", "rápido", "rapido", "hoje", "amanhã", "amanha")
+        for token in (
+            "pronta",
+            "urgência",
+            "urgencia",
+            "rápido",
+            "rapido",
+            "hoje",
+            "amanhã",
+            "amanha",
+            "can_wait",
+            "rush",
+            "qual:urgency",
+        )
     )
 
 
@@ -239,6 +264,12 @@ def build_qualification_snapshot(
     known = _preference_key_set(discovery_state)
     explicit_no = set(discovery_state.get("explicit_no_preferences") or [])
     covered = known | explicit_no
+    try:
+        from .qualification_slots import covered_qualification_dims
+
+        covered |= covered_qualification_dims(interpretation)
+    except Exception:
+        pass
     has_brand = bool(interpretation.subject.brand) or "brand" in covered
     has_product_type = bool(interpretation.subject.product_type)
     # Budget/style come from known_preferences (includes rehydrated prefs).
@@ -246,7 +277,7 @@ def build_qualification_snapshot(
     # do not re-read interpretation.preferences here or scrub is bypassed.
     has_budget = bool(covered & _QUAL_BUDGET_DIMS)
     has_style = bool(covered & _QUAL_STYLE_DIMS)
-    has_recipient = "recipient" in covered
+    has_recipient = "customer_name" in covered
     has_urgency = _has_urgency_signal(interpretation)
     clarification_count = int(discovery_state.get("clarification_count") or 0)
 
@@ -281,6 +312,15 @@ def build_qualification_snapshot(
     elif has_product_type and has_budget and (has_recipient or has_urgency):
         ready = True
         satisfied_by = "type+budget+signal"
+    else:
+        try:
+            from .qualification_slots import qualification_slots_sufficient
+
+            if qualification_slots_sufficient(interpretation, covered):
+                ready = True
+                satisfied_by = "qual_slots_complete"
+        except Exception:
+            pass
 
     missing: list[str] = []
     if not has_budget:
@@ -348,6 +388,9 @@ def _persona_qualification_question(
     if not isinstance(snap, dict):
         snap = build_qualification_snapshot(interpretation, discovery_state or {})
 
+    if snap.get("ready"):
+        return None
+
     known = set(snap.get("covered_dims") or [])
     recent = [
         str(item or "").casefold()
@@ -376,7 +419,14 @@ def _persona_qualification_question(
         preference_hints.append(
             ("model_intent", ("modelo em mente", "sugestão", "sugestao", "marca"))
         )
-    preference_hints.append(("recipient", ("chamar", "nome", "para quem", "cidade")))
+    if "customer_name" not in known:
+        preference_hints.append(("customer_name", ("chamar", "como posso te chamar", "seu nome")))
+    if "shipping_city" not in known:
+        preference_hints.append(("shipping_city", ("para qual cidade", "cidade", "entrega")))
+    if not snap.get("has_urgency") and "urgency" not in known:
+        preference_hints.append(
+            ("urgency", ("pressa para receber", "pode esperar", "sob encomenda"))
+        )
 
     for field, needles in preference_hints:
         if field in known and field not in {"model_intent"}:
@@ -542,7 +592,18 @@ def _discovery_state(
         for turn in recent_turns or []
         if _is_clarification_turn(turn) and str(turn.get("content") or "").strip()
     ][-5:]
-    preference_fields = {"budget", "brand", "color", "style", "material", "occasion", "recipient", "attributes"}
+    preference_fields = {
+        "budget",
+        "brand",
+        "color",
+        "style",
+        "material",
+        "occasion",
+        "customer_name",
+        "shipping_city",
+        "urgency",
+        "attributes",
+    }
     unknown_preferences = sorted(
         preference_fields - set(known_preferences) - set(explicit_no_preferences)
     )

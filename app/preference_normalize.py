@@ -308,13 +308,78 @@ def repair_dial_and_case_preferences(
     return preferences
 
 
+_MODEL_LINE_RE = re.compile(
+    r"\b(mk\s*2|mk2|mr\s*0?1|aquascaphe|speedtimer|king\s+turtle|samurai)\b",
+    flags=re.IGNORECASE,
+)
+_SINGLE_MM_RE = re.compile(r"\b(3[0-9]|4[0-5])\s*mm\b", re.IGNORECASE)
+
+
+def repair_specific_model_tokens(
+    subject: Any,
+    preferences: ProductPreferences,
+    *,
+    message_text: str | None = None,
+    context_text: str | None = None,
+) -> None:
+    """Lock Baltic mk2 / explicit mm into subject + attributes for sku_lock."""
+    combined = "\n".join(
+        part for part in (context_text or "", message_text or "") if part
+    )
+    folded = _fold(combined)
+    if not folded:
+        return
+
+    brand_fold = _fold(subject.brand)
+    if "baltic" in folded and not brand_fold:
+        subject.brand = "Baltic"
+        brand_fold = "baltic"
+
+    model_fold = _fold(subject.model)
+    line_match = _MODEL_LINE_RE.search(combined)
+    if line_match:
+        token = _fold(line_match.group(1)).replace(" ", "")
+        if token in {"mk2", "mk02"}:
+            token = "mk2"
+        if not model_fold or model_fold in {brand_fold, "relogio", "watch"}:
+            subject.model = "Aquascaphe mk2" if token == "mk2" else token
+        elif token not in model_fold:
+            subject.model = f"{subject.model} {token}".strip()
+
+    mm_match = _SINGLE_MM_RE.search(combined)
+    try:
+        from .catalog_specs import extract_case_size_range_from_text
+
+        if extract_case_size_range_from_text(combined):
+            mm_match = None
+    except Exception:
+        pass
+    if mm_match:
+        size = int(mm_match.group(1))
+        label = f"case_size:{size}-{size}mm"
+        existing = {_fold(item) for item in preferences.attributes}
+        if _fold(label) not in existing:
+            preferences.attributes = [*preferences.attributes, label]
+
+
 def normalize_sales_interpretation(
     interpretation: SalesInterpretation,
     *,
     message_text: str | None = None,
     context_text: str | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> SalesInterpretation:
     """Fix gender misclassified as model/style and keep recommendation mode."""
+    try:
+        from .sales.qualification_slots import rehydrate_qualification_slots_from_turns
+
+        interpretation = rehydrate_qualification_slots_from_turns(
+            interpretation,
+            recent_turns,
+            message_text=message_text,
+        )
+    except Exception:
+        pass
     preferences = interpretation.preferences
     subject = interpretation.subject
     combined_context = "\n".join(
@@ -356,6 +421,25 @@ def normalize_sales_interpretation(
         message_text=message_text,
         context_text=context_text,
     )
+    repair_specific_model_tokens(
+        subject,
+        preferences,
+        message_text=message_text,
+        context_text=combined_context,
+    )
+
+    try:
+        from .sales.discovery import _specific_product_lock
+
+        if _specific_product_lock(interpretation):
+            interpretation.enough_information_to_search = True
+            interpretation.ready_for_retrieval = True
+            interpretation.stop_clarification = True
+            interpretation.needs_clarification = False
+            if interpretation.goal in {None, "discover"}:
+                interpretation.goal = "find"
+    except Exception:
+        pass
 
     try:
         from .catalog_specs import (

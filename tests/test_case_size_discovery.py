@@ -15,6 +15,7 @@ from app.sales.discovery import _discovery_state
 def test_extract_case_size_range_variants():
     assert extract_case_size_range_from_text("Me mande opções entre 36 até 38mm") == (36, 38)
     assert extract_case_size_range_from_text("tamanhos de 36 a 38 mm") == (36, 38)
+    assert extract_case_size_range_from_text("Gostei desse, 43/44mm") == (43, 44)
     assert extract_case_size_range_from_text("pulso pequeno") is None
 
 
