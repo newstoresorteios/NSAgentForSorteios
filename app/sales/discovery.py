@@ -575,6 +575,19 @@ def _discovery_state(
     if _needs_persona_qualification(interpretation, state):
         state["force_retrieval"] = False
         state["persona_qualification_required"] = True
+    try:
+        from .purchase_selection import blocks_persona_qualification_for_purchase
+
+        if blocks_persona_qualification_for_purchase(interpretation, commerce_state):
+            state["persona_qualification_required"] = False
+            # Closing a shortlist purchase must not reopen ChatBo discovery
+            # or force a fresh catalog search.
+            if interpretation.purchase_action == "create_cart" or (
+                interpretation.goal == "buy" and interpretation.stop_clarification
+            ):
+                state["force_retrieval"] = False
+    except Exception:
+        pass
     return state
 
 

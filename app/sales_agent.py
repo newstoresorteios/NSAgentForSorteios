@@ -741,7 +741,9 @@ def interpretation_to_plan(
         interpretation.ready_for_retrieval,
         interpretation.stop_clarification,
     ))
-    if retrieval_signal and interpretation.goal in {"discover", "recommend", "buy"}:
+    if interpretation.purchase_action == "create_cart":
+        intent = "purchase_intent"
+    elif retrieval_signal and interpretation.goal in {"discover", "recommend", "buy"}:
         intent = "recommendation"
     else:
         intent = "clarification" if interpretation.needs_clarification else goal_to_intent.get(
@@ -1602,6 +1604,15 @@ async def _handle_sales_message_inner(
     if interpretation is not None and is_outbound_catalog_image_request(message.text):
         interpretation = interpretation.model_copy(update={"image_request": True})
     state = commerce_state or CommerceConversationState()
+    if interpretation is not None:
+        from .sales.purchase_selection import repair_presented_purchase_selection
+
+        interpretation = repair_presented_purchase_selection(
+            interpretation,
+            message_text=message.text,
+            state=state,
+            recent_turns=recent_turns,
+        )
     deterministic_confirmation = _confirmation_text_kind(state, message.text)
     if deterministic_confirmation == "confirm":
         return await _confirm_current_order_review(
@@ -1664,7 +1675,9 @@ async def _handle_sales_message_inner(
         )
 
     log_purchase_progress("interpretation", "start")
-    if isinstance(semantic_plan, SalesInterpretation):
+    if interpretation is not None:
+        plan = interpretation_to_plan(interpretation, message.text)
+    elif isinstance(semantic_plan, SalesInterpretation):
         plan = interpretation_to_plan(semantic_plan, message.text)
     elif semantic_plan and semantic_plan.get("domain") == "commerce":
         plan = semantic_plan
@@ -1678,6 +1691,29 @@ async def _handle_sales_message_inner(
         )
         return None
     log_purchase_progress("interpretation", "success")
+    if (
+        interpretation is not None
+        and interpretation.active_topic == "purchase_option_choice"
+        and interpretation.needs_clarification
+        and str(interpretation.clarification_question or "").strip()
+    ):
+        return _mark_sales_result(
+            AgentResult(
+                reply_text=html.unescape(
+                    str(interpretation.clarification_question).strip()
+                ),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="purchase_option_choice",
+                response_metadata={"domain": "commerce"},
+            ),
+            interpretation=interpretation,
+            goal="buy",
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason="purchase_option_choice",
+        )
     if interpretation is not None:
         print("[sales.semantic.result]", {
             "scope_domain": interpretation.domain,
@@ -3538,6 +3574,16 @@ async def _handle_sales_message_inner(
             "known_preferences_count": discovery_state["known_preferences_count"],
         })
     vague_query = str(plan.get("query") or "").strip().lower() in {"", "alguma coisa", "algo", "qualquer coisa", "um produto", "uma coisa", "produto"}
+    if interpretation and discovery_state:
+        from .sales.purchase_selection import blocks_persona_qualification_for_purchase
+
+        if blocks_persona_qualification_for_purchase(interpretation, state):
+            # Mid-checkout / shortlist close: never reopen persona or fresh browse.
+            discovery_state = {
+                **discovery_state,
+                "persona_qualification_required": False,
+                "force_retrieval": False,
+            }
     if interpretation and discovery_state and _needs_clarification_before_retrieval(interpretation, plan, discovery_state):
         return await generate_clarification_reply(
             message=message,
@@ -3546,13 +3592,57 @@ async def _handle_sales_message_inner(
             discovery_state=discovery_state,
         )
     if interpretation and discovery_state and vague_query and not discovery_state["force_retrieval"]:
-        return await generate_clarification_reply(
-            message=message,
-            interpretation=interpretation,
-            recent_turns=recent_turns,
-            discovery_state=discovery_state,
-        )
+        from .sales.purchase_selection import blocks_persona_qualification_for_purchase
+
+        if not blocks_persona_qualification_for_purchase(interpretation, state):
+            return await generate_clarification_reply(
+                message=message,
+                interpretation=interpretation,
+                recent_turns=recent_turns,
+                discovery_state=discovery_state,
+            )
     if plan.get("intent") == "clarification" or vague_query:
+        from .sales.purchase_selection import blocks_persona_qualification_for_purchase
+
+        if blocks_persona_qualification_for_purchase(interpretation, state):
+            clarification = str(
+                (interpretation.clarification_question if interpretation else None)
+                or ""
+            ).strip()
+            if clarification:
+                return _mark_sales_result(
+                    AgentResult(
+                        reply_text=html.unescape(clarification),
+                        intent="commerce",
+                        handoff_required=False,
+                        safety_reason="purchase_close_hold",
+                        response_metadata={"domain": "commerce"},
+                    ),
+                    interpretation=interpretation,
+                    goal=(interpretation.goal if interpretation else "buy"),
+                    response_source="deterministic_fallback",
+                    used_openai_responder=False,
+                    used_tray=False,
+                    fallback_reason="purchase_close_hold",
+                )
+            return _mark_sales_result(
+                AgentResult(
+                    reply_text=(
+                        "Qual opção da lista você quer comprar "
+                        "(1, 2 ou 3)?"
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="purchase_close_hold",
+                    response_metadata={"domain": "commerce"},
+                ),
+                interpretation=interpretation,
+                goal=(interpretation.goal if interpretation else "buy"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason="purchase_close_hold",
+            )
         clarification = str(plan.get("clarification_question") or "").strip()
         if not clarification and interpretation is not None:
             clarification = (

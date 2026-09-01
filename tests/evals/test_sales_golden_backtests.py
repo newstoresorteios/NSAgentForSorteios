@@ -660,3 +660,195 @@ def test_golden_style_switch_diver_to_chrono_does_not_keep_false_diver_only():
     assert filtered
     assert all(str(item.get("brand")) != "Certina" for item in filtered)
     assert all(_looks_like_chronograph(item) for item in filtered)
+
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_golden_joao_close_buy_list_position_two_creates_cart(monkeypatch):
+    """Contact 5548999490859 (31/08) — 'Quero comprar o 2' must create cart, not re-list."""
+    from types import SimpleNamespace
+
+    import app.sales_agent as sales_agent
+    from app.commerce_context import CommerceConversationState
+    from app.models import IncomingMessage
+    from app.sales.purchase_selection import repair_presented_purchase_selection
+
+    baltic_list = [
+        {
+            "position": 1,
+            "product_id": "aq1",
+            "name": "Baltic Aquascaphe",
+            "brand": "Baltic",
+        },
+        {
+            "position": 2,
+            "product_id": "sb01",
+            "name": "Baltic Classic SB01",
+            "brand": "Baltic",
+        },
+        {
+            "position": 3,
+            "product_id": "mr01",
+            "name": "Baltic MR01",
+            "brand": "Baltic",
+        },
+    ]
+    state = CommerceConversationState(
+        active_domain="commerce",
+        last_presented_products=baltic_list,
+        purchase_stage="selection",
+        product_resolution_state="options_presented",
+    )
+    # LLM wrongly re-opens discovery/recommendation instead of buying #2.
+    wrong = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"brand": "Baltic", "product_type": "relógio"},
+        preferences={"style": "mergulho"},
+        information_needed=["catalog"],
+        references_previous_context=True,
+        needs_clarification=False,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        confidence=0.9,
+    )
+    repaired = repair_presented_purchase_selection(
+        wrong,
+        message_text="Quero comprar o 2",
+        state=state,
+    )
+    assert repaired is not None
+    assert repaired.purchase_action == "create_cart"
+    assert repaired.reference_position == 2
+
+    calls: list[tuple[str, dict]] = []
+
+    async def execute(tool, arguments):
+        calls.append((tool, arguments))
+        if tool == "get_product":
+            return {
+                "id": "sb01",
+                "name": "Baltic Classic SB01",
+                "current_price": "8900.00",
+                "available": True,
+                "has_variation": False,
+            }
+        if tool == "create_cart":
+            return {
+                "cart_id": "CART-JOAO",
+                "session_id": "SESSION-JOAO",
+                "cart_url": "https://loja.example/checkout/SESSION-JOAO",
+            }
+        if tool == "get_cart_complete":
+            return {
+                "cart_id": "CART-JOAO",
+                "session_id": "SESSION-JOAO",
+                "total": "8900.00",
+                "items": [{"product_id": "sb01", "quantity": 1}],
+            }
+        raise AssertionError(f"unexpected tool {tool}")
+
+    monkeypatch.setattr(sales_agent, "execute_tool", execute)
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+
+    result = await sales_agent.handle_sales_message(
+        IncomingMessage(text="Quero comprar o 2"),
+        {"primary_intent": "commerce"},
+        {},
+        wrong,
+        commerce_state=state,
+    )
+    assert result is not None
+    assert any(tool == "create_cart" for tool, _ in calls)
+    create = next(args for tool, args in calls if tool == "create_cart")
+    assert create["product_id"] == "sb01"
+    assert result.response_metadata.get("purchase_stage") == "cart_created"
+    # Must not re-list the three Baltic options as a fresh search.
+    assert "Sim, encontrei" not in (result.reply_text or "")
+
+
+@pytest.mark.offline_eval
+@pytest.mark.asyncio
+async def test_golden_joao_bare_quero_comprar_does_not_ask_name(monkeypatch):
+    """Bare 'Quero comprar' with shortlist must not reopen persona qualification."""
+    from types import SimpleNamespace
+
+    import app.sales_agent as sales_agent
+    from app.commerce_context import CommerceConversationState
+    from app.models import IncomingMessage
+    from app.persona_runtime import (
+        build_persona_runtime,
+        reset_persona_runtime,
+        set_persona_runtime,
+    )
+
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile=_crono_chatbo_profile(),
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        state = CommerceConversationState(
+            active_domain="commerce",
+            last_presented_products=[
+                {
+                    "position": 1,
+                    "product_id": "aq1",
+                    "name": "Baltic Aquascaphe",
+                    "brand": "Baltic",
+                },
+                {
+                    "position": 2,
+                    "product_id": "sb01",
+                    "name": "Baltic Classic SB01",
+                    "brand": "Baltic",
+                },
+                {
+                    "position": 3,
+                    "product_id": "mr01",
+                    "name": "Baltic MR01",
+                    "brand": "Baltic",
+                },
+            ],
+            purchase_stage="selection",
+        )
+        wrong = SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"product_type": "relógio"},
+            preferences={},
+            information_needed=["catalog"],
+            references_previous_context=True,
+            needs_clarification=True,
+            clarification_question="Como posso te chamar?",
+            enough_information_to_search=False,
+            ready_for_retrieval=False,
+            confidence=0.8,
+        )
+        monkeypatch.setattr(
+            sales_agent,
+            "get_settings",
+            lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+        )
+
+        result = await sales_agent.handle_sales_message(
+            IncomingMessage(text="Quero comprar"),
+            {"primary_intent": "commerce"},
+            {},
+            wrong,
+            commerce_state=state,
+            recent_turns=[],
+        )
+        assert result is not None
+        reply = (result.reply_text or "").casefold()
+        assert "como posso te chamar" not in reply
+        assert "florian" not in reply
+        assert "ocasi" not in reply
+        assert "orçamento" not in reply and "orcamento" not in reply
+        assert "qual" in reply and ("opção" in reply or "opcao" in reply or "1" in reply)
+    finally:
+        reset_persona_runtime(token)
