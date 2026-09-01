@@ -9,6 +9,8 @@ def test_extract_product_query_removes_commercial_prefixes():
     assert extract_product_query("Vocês têm o T120.417.11.051.00?") == "T120.417.11.051.00"
     assert extract_product_query("Quanto custa o Citizen?") == "Citizen"
     assert extract_product_query("Tem estoque de EAN 7611608287637?") == "EAN 7611608287637"
+    assert extract_product_query("Qual relógio?") == "relógio"
+    assert extract_product_query("Qual relógio Seiko") == "relógio Seiko"
 
 
 def test_resolve_commerce_actions():

@@ -633,8 +633,10 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
     interpretation._source = "deterministic_fallback"
     from .preference_normalize import normalize_sales_interpretation
     from .turn_understanding import sales_to_turn_understanding
+    from .context_resume import scrub_catalog_question_interpretation
 
     normalized = normalize_sales_interpretation(interpretation, message_text=text)
+    normalized = scrub_catalog_question_interpretation(normalized, text)
     normalized._turn_understanding = sales_to_turn_understanding(
         normalized, message_text=text
     )
@@ -666,6 +668,16 @@ def _rehydrate_contact_preferences(
             {"error_type": type(exc).__name__, "error": str(exc)[:120]},
         )
         return interpretation
+
+
+def _finalize_fallback_interpretation(
+    fallback: SalesInterpretation,
+    message: IncomingMessage,
+) -> SalesInterpretation:
+    from .context_resume import scrub_catalog_question_interpretation
+
+    fallback = _rehydrate_contact_preferences(fallback, message)
+    return scrub_catalog_question_interpretation(fallback, message.text)
 
 
 def _log_interpretation(
@@ -1031,14 +1043,14 @@ async def interpret_message(
         print("[sales.interpreter.error]", _bad_request_details(exc, interpreter_model))
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "openai_bad_request"
-        fallback = _rehydrate_contact_preferences(fallback, message)
+        fallback = _finalize_fallback_interpretation(fallback, message)
         _log_interpretation(fallback, interpreter_model, fallback_reason="openai_bad_request")
         return fallback
     except OpenAIRefusalError as exc:
         print("[sales.interpreter] failed", {"error_type": type(exc).__name__})
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "openai_invalid_response"
-        fallback = _rehydrate_contact_preferences(fallback, message)
+        fallback = _finalize_fallback_interpretation(fallback, message)
         _log_interpretation(
             fallback,
             interpreter_model,
@@ -1057,7 +1069,7 @@ async def interpret_message(
         fallback = _fallback_interpretation(message.text)
         fallback_reason = "openai_request_failed" if isinstance(exc, APIError) else "openai_invalid_response"
         fallback._fallback_reason = fallback_reason
-        fallback = _rehydrate_contact_preferences(fallback, message)
+        fallback = _finalize_fallback_interpretation(fallback, message)
         _log_interpretation(fallback, interpreter_model, fallback_reason=fallback_reason)
         return fallback
 
@@ -1093,6 +1105,12 @@ def deterministic_sales_plan(text: str | None) -> dict[str, Any] | None:
             fallback_model = query
         else:
             fallback_product_type = query.split()[0] if action == "purchase_intent" else query
+    from .context_resume import is_non_model_query, is_presented_catalog_question
+
+    if is_presented_catalog_question(text) or is_non_model_query(fallback_model or query):
+        if re.search(r"rel[oó]gio|watch", str(query or ""), flags=re.IGNORECASE):
+            fallback_product_type = fallback_product_type or "relógio"
+        fallback_model = None
     from .sales.discovery import _mentioned_watch_brands
 
     brands = _mentioned_watch_brands(text)
@@ -1681,7 +1699,9 @@ async def _handle_sales_message_inner(
     state = commerce_state or CommerceConversationState()
     from .context_resume import (
         build_pending_payment_resume_result,
+        build_presented_catalog_resume_result,
         is_soft_greeting as _resume_is_soft_greeting,
+        should_redisplay_presented_catalog,
         should_resume_pending_order,
     )
 
@@ -1697,6 +1717,19 @@ async def _handle_sales_message_inner(
                 interpretation=interpretation,
                 goal=(interpretation.goal if interpretation is not None else "buy"),
                 response_source="context_resume_payment_url",
+                used_openai_responder=False,
+                used_tray=False,
+            )
+    if should_redisplay_presented_catalog(message.text, state):
+        presented = build_presented_catalog_resume_result(state)
+        if presented is not None:
+            if interpretation is not None:
+                interpretation._clear_pending_action = False
+            return _mark_sales_result(
+                presented,
+                interpretation=interpretation,
+                goal=(interpretation.goal if interpretation is not None else "find"),
+                response_source="context_resume_presented_catalog",
                 used_openai_responder=False,
                 used_tray=False,
             )
@@ -2060,6 +2093,7 @@ async def _handle_sales_message_inner(
     if (
         interpretation is not None
         and state.pending_action
+        and state.pending_action != "awaiting_payment"
         and interpretation.confirmation == "none"
     ):
         interpretation._clear_pending_action = True
@@ -2604,7 +2638,7 @@ async def _handle_sales_message_inner(
     if (
         interpretation is not None
         and state.pending_action
-        and state.pending_action != "show_nearby_line"
+        and state.pending_action not in {"show_nearby_line", "awaiting_payment"}
         and interpretation.confirmation == "confirm"
         and interpretation.goal in {"discover", "find", "recommend", "compare"}
     ):

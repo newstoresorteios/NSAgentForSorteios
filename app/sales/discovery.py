@@ -188,7 +188,13 @@ def _specific_product_lock(interpretation: SalesInterpretation) -> bool:
     for token in ("relógio", "relogio", "watch"):
         leftover = leftover.replace(token, " ")
     leftover = " ".join(leftover.split())
-    return bool(leftover)
+    if not leftover:
+        return False
+    from ..context_resume import is_non_model_query
+
+    if is_non_model_query(leftover):
+        return False
+    return True
 
 
 def _subject_identifiable(interpretation: SalesInterpretation) -> bool:

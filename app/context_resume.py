@@ -210,6 +210,112 @@ def is_payment_link_request(text: str | None) -> bool:
     return any(signal in folded for signal in signals)
 
 
+_PRESENTED_CATALOG_QUESTION_RE = re.compile(
+    r"^"
+    r"(?:e\s+)?"
+    r"(?:"
+    r"(?:me\s+)?mostra(?:r)?"
+    r"(?:\s+(?:os relogios|as opcoes|os modelos|a opcao|a lista|"
+    r"de novo|novamente|eles|elas|ai|os|as))?"
+    r"|"
+    r"(?:qual|quais)(?:\s+(?:era|eram|e|eh|sao))?"
+    r"(?:\s+(?:o|os|a|as))?"
+    r"\s+"
+    r"(?:relogio|relogios|modelo|modelos|opcao|opcoes|"
+    r"desses|destes|deles|desse|dessa|desta|da lista|mesmo)"
+    r")"
+    r"(?:\s+por favor)?"
+    r"$"
+)
+
+
+_NON_MODEL_QUERY_TOKENS = frozenset(
+    {
+        "qual",
+        "quais",
+        "quanto",
+        "quantos",
+        "onde",
+        "como",
+        "quando",
+        "relogio",
+        "relogios",
+        "watch",
+        "modelo",
+        "modelos",
+        "opcao",
+        "opcoes",
+        "lista",
+        "esses",
+        "essas",
+        "desse",
+        "dessa",
+        "deste",
+        "desta",
+        "desses",
+        "destes",
+        "deles",
+        "o",
+        "a",
+        "os",
+        "as",
+        "um",
+        "uma",
+        "me",
+        "mostra",
+        "mostrar",
+        "mesmo",
+        "ai",
+    }
+)
+
+
+def is_non_model_query(text: str | None) -> bool:
+    """True when leftover tokens are interrogatives/type words, not a SKU."""
+    tokens = [token.strip("!?.,") for token in _fold(text).split()]
+    tokens = [token for token in tokens if token]
+    return bool(tokens) and all(token in _NON_MODEL_QUERY_TOKENS for token in tokens)
+
+
+def scrub_catalog_question_interpretation(interpretation: Any, text: str | None) -> Any:
+    """Stop fallback from treating 'Qual relógio?' as model=Qual and searching Tray."""
+    if interpretation is None:
+        return interpretation
+    subject = getattr(interpretation, "subject", None)
+    if is_non_model_query(getattr(subject, "model", None) if subject is not None else None):
+        subject.model = None
+    if not is_presented_catalog_question(text):
+        return interpretation
+    interpretation.references_previous_context = True
+    interpretation.enough_information_to_search = False
+    interpretation.ready_for_retrieval = False
+    interpretation.stop_clarification = False
+    return interpretation
+
+
+def is_presented_catalog_question(text: str | None) -> bool:
+    """Short ask about the current shortlist — not a new brand/model search."""
+    folded = _fold(text).strip("!?.,")
+    if not folded:
+        return False
+    if re.match(
+        r"^\s*(nenhuma|nenhum|nenhuma dessas|nenhum desses)\s*$",
+        folded,
+    ):
+        return False
+    return bool(_PRESENTED_CATALOG_QUESTION_RE.match(folded))
+
+
+def should_redisplay_presented_catalog(
+    text: str | None,
+    state: CommerceConversationState,
+) -> bool:
+    """Replay last_presented_products instead of searching Tray for 'Qual'."""
+    if not state.last_presented_products:
+        return False
+    return is_presented_catalog_question(text)
+
+
 def is_generic_buy_continue(text: str | None) -> bool:
     """Buy/close phrasing that is not an explicit new-browse request."""
     folded = _fold(text)
@@ -313,6 +419,9 @@ def should_resume_pending_order(
         state.pending_action == "awaiting_payment" and has_order_handle
     )
     greeting = is_greeting or is_soft_greeting(text)
+    if unpaid and is_presented_catalog_question(text):
+        # Shortlist present → redisplay those models; otherwise dump PIX.
+        return not bool(state.last_presented_products)
     if unpaid and (greeting or is_generic_buy_continue(text)):
         return True
     if greeting:
@@ -322,6 +431,59 @@ def should_resume_pending_order(
     if unpaid and is_short_affirmation(text):
         return True
     return False
+
+
+def build_presented_catalog_resume_result(
+    state: CommerceConversationState,
+) -> AgentResult | None:
+    """Replay the numbered shortlist from memory — no Tray search."""
+    items = list(state.last_presented_products[:3])
+    if not items:
+        return None
+    products: list[dict[str, Any]] = []
+    numbered: list[str] = []
+    for position, item in enumerate(items, start=1):
+        payload = {
+            "id": item.product_id,
+            "product_id": item.product_id,
+            "name": item.name,
+            "brand": item.brand,
+            "reference": item.reference,
+            "product_url": item.product_url,
+            "url": item.product_url,
+        }
+        products.append(payload)
+        parts = [item.name or f"opção {position}"]
+        if item.reference:
+            parts.append(f"Ref.: {item.reference}")
+        if item.product_url:
+            parts.append(f"Link: {item.product_url}")
+        numbered.append(f"{position}. " + "\n".join(parts))
+    metadata: dict[str, Any] = {
+        "domain": "commerce",
+        "presented_products": True,
+        "product_resolution_state": state.product_resolution_state
+        or "options_presented",
+        "response_source": "context_resume_presented_catalog",
+        "used_tray": False,
+    }
+    if state.pending_action == "awaiting_payment" or session_has_unpaid_order(state):
+        metadata["pending_action"] = "awaiting_payment"
+        if state.purchase_stage:
+            metadata["purchase_stage"] = state.purchase_stage
+        if state.order_id or state.order_lookup_id:
+            metadata["order_state"] = {
+                "order_id": state.order_id or state.order_lookup_id
+            }
+    return AgentResult(
+        reply_text=(
+            "Estes são os modelos que te mostrei:\n\n"
+            + "\n\n".join(numbered)
+        ),
+        intent="commerce",
+        commercial_data={"products": products},
+        response_metadata=metadata,
+    )
 
 
 def build_pending_payment_resume_result(

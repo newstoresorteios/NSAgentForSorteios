@@ -712,8 +712,14 @@ def evolve_commerce_state(
         }:
             state.dialogue_phase = metadata["dialogue_phase"]
     if metadata.get("clear_pending_action"):
-        state.pending_action = None
-        state.pending_action_product_ids = []
+        keep_unpaid = (
+            state.pending_action == "awaiting_payment"
+            and result.safety_reason
+            in {"product_match_failed", "tray_adapter_unavailable"}
+        )
+        if not keep_unpaid:
+            state.pending_action = None
+            state.pending_action_product_ids = []
     pending_action = metadata.get("pending_action")
     if pending_action in {
         "send_product_link",

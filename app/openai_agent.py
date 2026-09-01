@@ -36,10 +36,12 @@ from .turn_runtime import LLMCallBudgetExceeded
 from .context_resume import (
     build_contextual_greeting,
     build_pending_payment_resume_result,
+    build_presented_catalog_resume_result,
     has_resumable_commerce,
     is_payment_link_request,
     is_soft_greeting,
     is_unpaid_order_resume_request,
+    should_redisplay_presented_catalog,
     should_resume_pending_order,
 )
 from .order_context_recovery import (
@@ -869,6 +871,17 @@ async def _generate_agent_reply_async_inner(
             used_openai_responder=False,
             used_tray=False,
         )
+    if should_redisplay_presented_catalog(message.text, commerce_state):
+        presented = build_presented_catalog_resume_result(commerce_state)
+        if presented is not None:
+            return _annotate_agent_result(
+                presented,
+                domain="commerce",
+                response_source="context_resume_presented_catalog",
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=False,
+            )
     # Fast path: customer asks for the link and we already recovered it from transcript.
     if is_payment_link_request(message.text) and commerce_state.order_payment_url:
         order_label = commerce_state.order_id or commerce_state.order_lookup_id

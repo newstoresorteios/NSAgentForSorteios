@@ -5,12 +5,14 @@ from app.context_resume import (
     build_contextual_greeting,
     commerce_state_resumable_score,
     has_resumable_commerce,
+    is_presented_catalog_question,
     is_soft_greeting,
     is_unpaid_order_resume_request,
     merge_commerce_states,
+    should_redisplay_presented_catalog,
     should_resume_pending_order,
 )
-from app.models import AgentResult, IncomingMessage
+from app.models import AgentResult, IncomingMessage, SalesInterpretation
 
 
 def test_merge_recovers_order_wiped_by_later_greeting():
@@ -82,6 +84,49 @@ def test_soft_greeting_and_unpaid_resume_detection():
     ) is True
     assert should_resume_pending_order("sim", state) is True
     assert should_resume_pending_order("nenhuma", state) is False
+    assert should_resume_pending_order("Qual relógio?", state) is True
+
+    listed = CommerceConversationState(
+        order_id="25422",
+        order_payment_url="https://pay.example/1",
+        pending_action="awaiting_payment",
+        last_presented_products=[
+            {"position": 1, "product_id": "b1", "name": "Baltic Aquascaphe"},
+        ],
+    )
+    assert should_resume_pending_order("Qual relógio?", listed) is False
+    assert should_redisplay_presented_catalog("Qual relógio?", listed) is True
+    assert should_redisplay_presented_catalog("qual desses?", listed) is True
+    assert should_redisplay_presented_catalog("me mostra", listed) is True
+    assert should_redisplay_presented_catalog("Qual relógio Seiko", listed) is False
+    assert is_presented_catalog_question("qual o preço") is False
+    assert should_redisplay_presented_catalog("nenhuma", listed) is False
+
+
+def test_fallback_does_not_treat_qual_relogio_as_model():
+    from app.sales.discovery import _specific_product_lock
+    from app.sales_agent import _fallback_interpretation, deterministic_sales_plan
+
+    plan = deterministic_sales_plan("Qual relógio?")
+    assert plan is not None
+    assert plan["subject"].get("model") in (None, "")
+    interp = _fallback_interpretation("Qual relógio?")
+    assert interp.subject.model in (None, "")
+    assert interp.enough_information_to_search is False
+    assert interp.ready_for_retrieval is False
+    assert _specific_product_lock(
+        SalesInterpretation(
+            domain="commerce",
+            goal="find",
+            subject={"model": "Qual relógio"},
+            references_previous_context=False,
+            needs_clarification=False,
+            confidence=0.6,
+        )
+    ) is False
+    seiko = deterministic_sales_plan("Qual relógio Seiko")
+    assert seiko is not None
+    assert (seiko["subject"].get("brand") or "").casefold() == "seiko"
 
 
 def test_contextual_greeting_is_soft_and_non_intrusive():
@@ -202,6 +247,99 @@ async def test_quero_comprar_relogio_resumes_joao_awaiting_payment(monkeypatch):
     assert "https://pay.example/25422" in result.reply_text
     assert "Baltic" not in result.reply_text
     assert result.response_metadata.get("response_source") == "context_resume_payment_url"
+
+
+@pytest.mark.asyncio
+async def test_qual_relogio_redisplays_joao_shortlist_without_tray(monkeypatch):
+    import app.openai_agent as openai_agent
+
+    state = {
+        "order_id": "25422",
+        "order_payment_url": "https://pay.example/25422",
+        "pending_action": "awaiting_payment",
+        "purchase_stage": "awaiting_payment",
+        "order_payment_status": "pending",
+        "cart_session_id": "cart-joao",
+        "last_presented_products": [
+            {"position": 1, "product_id": "b1", "name": "Relógio Baltic Aquascaphe Automático Titânio Azul"},
+            {"position": 2, "product_id": "b2", "name": "Relógio Baltic Aquascaphe Classic Automático Preto SB01"},
+            {"position": 3, "product_id": "b3", "name": "Relógio Baltic MR01 Automático Preto"},
+        ],
+    }
+
+    async def boom(*_a, **_k):
+        raise AssertionError("must not interpret, search catalog, or call Tray")
+
+    monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_k: [])
+    monkeypatch.setattr(openai_agent, "detect_blocked_request", lambda _t: None)
+    monkeypatch.setattr(openai_agent, "should_request_human_handoff", lambda _m, **_k: None)
+    monkeypatch.setattr(openai_agent, "interpret_message", boom)
+    monkeypatch.setattr(openai_agent, "inspect_order_payment", boom)
+    monkeypatch.setattr(openai_agent, "handle_sales_message", boom)
+
+    result = await openai_agent.generate_agent_reply_async(
+        IncomingMessage(
+            text="Qual relógio?",
+            conversation_id="conv-joao",
+            sender_phone="5548999490859",
+        ),
+        {"_commerce_state": state},
+    )
+    assert "Baltic Aquascaphe" in result.reply_text
+    assert "Baltic MR01" in result.reply_text
+    assert "https://pay.example/25422" not in result.reply_text
+    assert result.response_metadata.get("response_source") == "context_resume_presented_catalog"
+    assert result.response_metadata.get("pending_action") == "awaiting_payment"
+    assert result.response_metadata.get("used_tray") is False
+
+
+def test_product_match_failed_keeps_awaiting_payment():
+    from app.commerce_context import evolve_commerce_state
+
+    state = CommerceConversationState(
+        order_id="25422",
+        order_payment_url="https://pay.example/25422",
+        pending_action="awaiting_payment",
+        purchase_stage="awaiting_payment",
+        last_presented_products=[
+            {"position": 1, "product_id": "b1", "name": "Baltic Aquascaphe"},
+        ],
+    )
+    result = AgentResult(
+        reply_text="Não consegui consultar as informações da loja neste momento.",
+        intent="commerce",
+        safety_reason="product_match_failed",
+        response_metadata={"clear_pending_action": True, "domain": "commerce"},
+    )
+    updated = evolve_commerce_state(state, result)
+    assert updated.pending_action == "awaiting_payment"
+    assert updated.order_id == "25422"
+
+
+def test_presented_catalog_resume_survives_checkout_evolve():
+    from app.commerce_context import evolve_commerce_state
+    from app.context_resume import build_presented_catalog_resume_result
+
+    state = CommerceConversationState(
+        order_id="25422",
+        order_payment_url="https://pay.example/25422",
+        pending_action="awaiting_payment",
+        purchase_stage="awaiting_payment",
+        last_presented_products=[
+            {"position": 1, "product_id": "b1", "name": "Baltic Aquascaphe"},
+            {"position": 2, "product_id": "b2", "name": "Baltic Classic"},
+            {"position": 3, "product_id": "b3", "name": "Baltic MR01"},
+        ],
+    )
+    result = build_presented_catalog_resume_result(state)
+    assert result is not None
+    updated = evolve_commerce_state(state, result)
+    assert updated.pending_action == "awaiting_payment"
+    assert [item.product_id for item in updated.last_presented_products] == [
+        "b1",
+        "b2",
+        "b3",
+    ]
 
 
 @pytest.mark.asyncio

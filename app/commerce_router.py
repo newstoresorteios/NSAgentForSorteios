@@ -56,6 +56,13 @@ def extract_product_query(text: str | None) -> str:
             break
     value = value.strip(" ?!.,;:")
     value = re.sub(r"^(?:o|a|um|uma)\s+", "", value, flags=re.IGNORECASE)
+    value = re.sub(
+        r"^(?:qual|quais)(?:\s+(?:e|eh|é|são|sao|era|eram))?(?:\s+(?:o|os|a|as))?\s+",
+        "",
+        value,
+        count=1,
+        flags=re.IGNORECASE,
+    )
     return value.strip(" ?!.,;:")
 
 
