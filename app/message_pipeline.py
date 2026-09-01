@@ -289,6 +289,30 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     )
     if corrected_interp is not None:
         interpretation = corrected_interp
+    if result.safety_reason in {
+        "commerce_clarification",
+        "scope_send_gate_blocked",
+    }:
+        try:
+            from .attendance_learning import record_pipeline_block_review
+
+            record_pipeline_block_review(
+                conversation_key=(
+                    incoming.conversation_id
+                    or incoming.sender_key
+                    or incoming.sender_phone
+                ),
+                sender_key=incoming.sender_key,
+                inbound_id=inbound_id,
+                channel=incoming.channel,
+                customer_text=incoming.text,
+                agent_reply=result.reply_text,
+                safety_reason=result.safety_reason,
+                intent=result.intent,
+                result_metadata=result.response_metadata,
+            )
+        except Exception as exc:
+            log_exception("attendance.pipeline_review.error", exc)
     # Deterministic preference/link/persona checker (no extra LLM).
     from .outbound_compliance import apply_outbound_compliance
     result, _compliance = apply_outbound_compliance(

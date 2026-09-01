@@ -23,6 +23,10 @@ _TRADE_DENIAL_RE = re.compile(
     r"n[aã]o compramos|apenas vendemos|s[oó] vendemos produtos novos",
     flags=re.IGNORECASE,
 )
+_PIPELINE_CAPTURE_REASONS = frozenset({
+    "commerce_clarification",
+    "scope_send_gate_blocked",
+})
 
 
 def _fold(text: str) -> str:
@@ -107,6 +111,17 @@ def classify_attendance(row: dict[str, Any]) -> dict[str, Any]:
     if isinstance(critique, dict) and critique.get("approved") is False:
         failure_codes.append("critique_failed")
         outcome = "failure"
+    safety_reason = str(row.get("safety_reason") or "").strip()
+    if safety_reason == "commerce_clarification":
+        failure_codes.append("commerce_clarification")
+        if outcome == "success":
+            outcome = "unclear"
+    elif safety_reason == "scope_send_gate_blocked":
+        failure_codes.append("scope_send_gate_blocked")
+        outcome = "failure"
+        gate = metadata.get("scope_send_gate") if isinstance(metadata, dict) else None
+        if isinstance(gate, dict) and gate.get("reason"):
+            failure_codes.append(str(gate["reason"]))
     if failure_codes and outcome == "success":
         outcome = "failure"
     return {
@@ -154,6 +169,98 @@ def persist_attendance_review(
                 ),
             )
             return get_returning_id(cur.fetchone())
+
+
+def classify_pipeline_block(
+    *,
+    safety_reason: str,
+    result_metadata: dict[str, Any] | None = None,
+    intent: str | None = None,
+    channel: str | None = None,
+) -> dict[str, Any]:
+    reason = str(safety_reason or "").strip()
+    metadata = dict(result_metadata or {})
+    failure_codes = [reason] if reason else []
+    outcome = "unclear"
+    if reason == "scope_send_gate_blocked":
+        outcome = "failure"
+        gate = metadata.get("scope_send_gate")
+        if isinstance(gate, dict) and gate.get("reason"):
+            failure_codes.append(str(gate["reason"]))
+    elif reason == "commerce_clarification":
+        outcome = "unclear"
+    return {
+        "outcome": outcome,
+        "failure_codes": failure_codes,
+        "signals": {
+            "intent": intent,
+            "safety_reason": reason,
+            "channel": channel,
+            "capture_source": "pipeline",
+        },
+    }
+
+
+def record_pipeline_block_review(
+    *,
+    tenant_id: str | None = None,
+    conversation_key: str | None = None,
+    sender_key: str | None = None,
+    inbound_id: int | None = None,
+    response_id: int | None = None,
+    channel: str | None = None,
+    customer_text: str | None = None,
+    agent_reply: str | None = None,
+    safety_reason: str | None = None,
+    intent: str | None = None,
+    result_metadata: dict[str, Any] | None = None,
+) -> int | None:
+    reason = str(safety_reason or "").strip()
+    if reason not in _PIPELINE_CAPTURE_REASONS:
+        return None
+    settings = get_settings()
+    resolved_tenant = str(
+        tenant_id
+        or getattr(settings, "agent_persona_tenant_id", "newstore")
+        or "newstore"
+    )
+    classification = classify_pipeline_block(
+        safety_reason=reason,
+        result_metadata=result_metadata,
+        intent=intent,
+        channel=channel,
+    )
+    row = {
+        "conversation_id": conversation_key,
+        "sender_key": sender_key,
+        "inbound_id": inbound_id,
+        "response_id": response_id,
+        "channel": channel,
+        "customer_text": customer_text,
+        "agent_reply": agent_reply,
+        "intent": intent,
+        "safety_reason": reason,
+    }
+    try:
+        review_id = persist_attendance_review(
+            tenant_id=resolved_tenant,
+            row=row,
+            classification=classification,
+        )
+    except Exception as exc:
+        print("[attendance.learning.pipeline_review_error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:160],
+            "safety_reason": reason,
+        })
+        return None
+    if review_id is not None:
+        print("[attendance.learning.pipeline_review]", {
+            "review_id": review_id,
+            "safety_reason": reason,
+            "outcome": classification["outcome"],
+        })
+    return review_id
 
 
 def upsert_learning_insight(
@@ -269,6 +376,24 @@ _INSIGHT_TEMPLATES: dict[str, tuple[str, str, str, str]] = {
             "não inventa fatos comerciais e não repete saudação genérica."
         ),
         "persona",
+    ),
+    "commerce_clarification": (
+        "retrieval",
+        "Loops de clarificação comercial",
+        (
+            "Quando o cliente já deu sinais de preferência (marca, gênero, orçamento, "
+            "estilo), avance para busca ou shortlist — evite repetir perguntas genéricas."
+        ),
+        "persona",
+    ),
+    "scope_send_gate_blocked": (
+        "retrieval",
+        "Produtos fora do escopo enviados ao cliente",
+        (
+            "Antes de listar produtos, confirme marcas/modelos pedidos versus excluídos "
+            "e sticky brand da conversa; nunca apresente SKU de marca fora do escopo."
+        ),
+        "knowledge",
     ),
 }
 

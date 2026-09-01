@@ -6,7 +6,9 @@ import pytest
 
 from app.attendance_learning import (
     classify_attendance,
+    classify_pipeline_block,
     promote_insights_to_extensions,
+    record_pipeline_block_review,
 )
 
 
@@ -190,3 +192,74 @@ async def test_batch_default_does_not_promote(monkeypatch):
     summary = await run_attendance_learning_batch()
     assert summary["extensions_promoted"] == 0
     assert summary["insights_upserted"] == 0
+
+
+def test_classify_pipeline_block_scope_gate():
+    result = classify_pipeline_block(
+        safety_reason="scope_send_gate_blocked",
+        result_metadata={
+            "scope_send_gate": {"reason": "all_excluded_brand", "valid": False},
+        },
+        intent="commerce",
+        channel="whatsapp",
+    )
+    assert result["outcome"] == "failure"
+    assert "scope_send_gate_blocked" in result["failure_codes"]
+    assert "all_excluded_brand" in result["failure_codes"]
+    assert result["signals"]["capture_source"] == "pipeline"
+
+
+def test_classify_attendance_from_safety_reason_clarification():
+    row = {
+        "customer_text": "quero um relógio",
+        "agent_reply": "Qual estilo você prefere?",
+        "handoff_required": False,
+        "intent": "commerce",
+        "safety_reason": "commerce_clarification",
+        "response_metadata": {},
+    }
+    result = classify_attendance(row)
+    assert result["outcome"] == "unclear"
+    assert "commerce_clarification" in result["failure_codes"]
+
+
+def test_record_pipeline_block_review_persists(monkeypatch):
+    captured: dict = {}
+
+    def fake_persist(*, tenant_id, row, classification):
+        captured["tenant_id"] = tenant_id
+        captured["row"] = row
+        captured["classification"] = classification
+        return 901
+
+    monkeypatch.setattr(
+        "app.attendance_learning.get_settings",
+        lambda: SimpleNamespace(agent_persona_tenant_id="newstore"),
+    )
+    monkeypatch.setattr(
+        "app.attendance_learning.persist_attendance_review",
+        fake_persist,
+    )
+
+    review_id = record_pipeline_block_review(
+        conversation_key="wa:5511999999999",
+        sender_key="whatsapp:5511999999999",
+        inbound_id=42,
+        channel="whatsapp",
+        customer_text="quero Hamilton",
+        agent_reply="Qual faixa de preço?",
+        safety_reason="commerce_clarification",
+        intent="commerce",
+    )
+    assert review_id == 901
+    assert captured["tenant_id"] == "newstore"
+    assert captured["row"]["inbound_id"] == 42
+    assert captured["classification"]["outcome"] == "unclear"
+
+
+def test_record_pipeline_block_review_ignores_other_reasons(monkeypatch):
+    monkeypatch.setattr(
+        "app.attendance_learning.persist_attendance_review",
+        lambda **_k: (_ for _ in ()).throw(AssertionError("must not persist")),
+    )
+    assert record_pipeline_block_review(safety_reason="handoff_required") is None
