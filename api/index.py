@@ -21,7 +21,13 @@ from app.webhook_parser import (
 )
 from app.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
-from app.brevo_client import send_brevo_reply
+from app.config import (
+    audio_outbound_ready,
+    get_allowed_channels,
+    get_settings,
+    supabase_storage_configured,
+)
+from app.brevo_client import resolved_brevo_whatsapp_send_url, send_brevo_reply
 from app.models import AgentResult
 from app.db import (
     claim_inbound_message,
@@ -32,7 +38,6 @@ from app.db import (
     is_latest_inbound_message,
 )
 from app.inbound_coalesce import is_caption_echo_of_recent_image
-from app.config import get_allowed_channels, get_settings
 from app.rollout import build_rollout_status
 from app.tray_circuit_breaker import circuit_status_dict
 from app.tray_health_probe import probe_tray_adaptor, tray_ha_checklist
@@ -285,7 +290,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v66"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v67"
 
 
 @app.get("/api/health")
@@ -300,6 +305,9 @@ async def health():
     ]
     ordered_channels.extend(sorted(allowed_channels.difference(ordered_channels)))
     tray_probe = await probe_tray_adaptor()
+    brevo_send_resolved, brevo_send_rewrite = resolved_brevo_whatsapp_send_url(
+        settings.brevo_send_url
+    )
     return {
         "ok": True,
         "agent_version": AGENT_VERSION,
@@ -391,9 +399,15 @@ async def health():
         "brevo_reply_mode": settings.brevo_reply_mode,
         "brevo_live_send_enabled": (not settings.dry_run and settings.brevo_reply_mode.lower() != "dry_run"),
         "brevo_webhook_secret_configured": bool(settings.brevo_webhook_secret),
+        "brevo_whatsapp_send_url": {
+            "uses_sendmessage_path": "/whatsapp/sendMessage" in brevo_send_resolved,
+            "rewritten_from_env": bool(brevo_send_rewrite),
+            "rewrite_reason": brevo_send_rewrite,
+        },
         "audio_inbound_enabled": settings.audio_inbound_enabled,
         "audio_outbound_enabled": settings.audio_outbound_enabled,
-        "supabase_storage_configured": bool(settings.supabase_url and settings.supabase_service_key),
+        "audio_outbound_ready": audio_outbound_ready(settings),
+        "supabase_storage_configured": supabase_storage_configured(settings),
         "dry_run": settings.dry_run,
         "tray_adapter_configured": bool(settings.tray_adapter_url and settings.tray_adapter_token),
         "tray_circuit_breaker": circuit_status_dict(),

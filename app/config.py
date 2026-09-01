@@ -1030,6 +1030,20 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def supabase_storage_configured(settings: Settings | None = None) -> bool:
+    cfg = settings or get_settings()
+    return bool(
+        str(getattr(cfg, "supabase_url", "") or "").strip()
+        and str(getattr(cfg, "supabase_service_key", "") or "").strip()
+    )
+
+
+def audio_outbound_ready(settings: Settings | None = None) -> bool:
+    """TTS upload only works when storage credentials exist."""
+    cfg = settings or get_settings()
+    return bool(cfg.audio_outbound_enabled and supabase_storage_configured(cfg))
+
+
 def resolved_sorteio_database_url(settings: Settings | None = None) -> str:
     """Raffle DB URL; falls back to agent DATABASE_URL for legacy shared setups."""
     cfg = settings or get_settings()

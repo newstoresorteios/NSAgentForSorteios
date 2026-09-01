@@ -192,6 +192,138 @@ async def test_whatsapp_falls_back_to_conversations_when_transactional_fails(mon
     assert sent.provider_response["transactional_error"] == "brevo_sender_number_missing"
 
 
+def test_truncated_brevo_send_url_rewrites_to_whatsapp_path():
+    from app.brevo_client import (
+        BREVO_WHATSAPP_SEND_URL,
+        resolved_brevo_whatsapp_send_url,
+    )
+
+    empty, empty_reason = resolved_brevo_whatsapp_send_url("")
+    assert empty == BREVO_WHATSAPP_SEND_URL
+    assert empty_reason is None
+
+    truncated, truncated_reason = resolved_brevo_whatsapp_send_url(
+        "https://api.brevo.com/v3"
+    )
+    assert truncated == BREVO_WHATSAPP_SEND_URL
+    assert truncated_reason == "truncated_api_root"
+
+    slash, slash_reason = resolved_brevo_whatsapp_send_url("https://api.brevo.com/v3/")
+    assert slash == BREVO_WHATSAPP_SEND_URL
+    assert slash_reason == "truncated_api_root"
+
+    conversations, conv_reason = resolved_brevo_whatsapp_send_url(
+        "https://api.brevo.com/v3/conversations/messages"
+    )
+    assert conversations == BREVO_WHATSAPP_SEND_URL
+    assert conv_reason == "missing_whatsapp_path"
+
+    kept, keep_reason = resolved_brevo_whatsapp_send_url(BREVO_WHATSAPP_SEND_URL)
+    assert kept == BREVO_WHATSAPP_SEND_URL
+    assert keep_reason is None
+
+    custom, custom_reason = resolved_brevo_whatsapp_send_url(
+        "https://proxy.internal/whatsapp/sendMessage"
+    )
+    assert custom == "https://proxy.internal/whatsapp/sendMessage"
+    assert custom_reason is None
+
+
+def test_audio_outbound_ready_requires_storage():
+    from app.config import audio_outbound_ready, supabase_storage_configured
+
+    missing = SimpleNamespace(
+        audio_outbound_enabled=True,
+        supabase_url="",
+        supabase_service_key="",
+    )
+    ready = SimpleNamespace(
+        audio_outbound_enabled=True,
+        supabase_url="https://example.supabase.co",
+        supabase_service_key="service-key",
+    )
+    assert supabase_storage_configured(missing) is False
+    assert audio_outbound_ready(missing) is False
+    assert supabase_storage_configured(ready) is True
+    assert audio_outbound_ready(ready) is True
+    assert audio_outbound_ready(
+        SimpleNamespace(
+            audio_outbound_enabled=False,
+            supabase_url="https://example.supabase.co",
+            supabase_service_key="service-key",
+        )
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_transactional_posts_to_sendmessage_when_env_is_v3_root(monkeypatch):
+    import app.brevo_client as brevo
+
+    captured = {}
+
+    class Response:
+        status_code = 201
+        text = ""
+
+        def json(self):
+            return {"messageId": "wa-1"}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, *, json, headers):
+            captured["url"] = url
+            return Response()
+
+    monkeypatch.setattr(
+        brevo,
+        "get_settings",
+        lambda: _settings(brevo_send_url="https://api.brevo.com/v3"),
+    )
+    monkeypatch.setattr(brevo.httpx, "AsyncClient", Client)
+
+    result = await brevo._send_whatsapp_transactional_reply(
+        IncomingMessage(channel="whatsapp", sender_phone="5511999999999"),
+        "Olá",
+    )
+
+    assert result.ok is True
+    assert captured["url"] == brevo.BREVO_WHATSAPP_SEND_URL
+
+
+@pytest.mark.asyncio
+async def test_audio_outbound_skipped_without_supabase_storage(monkeypatch):
+    import app.message_pipeline as pipeline
+
+    def boom(*_a, **_k):
+        raise AssertionError("TTS must not run without storage")
+
+    monkeypatch.setattr(
+        pipeline,
+        "get_settings",
+        lambda: SimpleNamespace(
+            audio_outbound_enabled=True,
+            supabase_url="",
+            supabase_service_key="",
+        ),
+    )
+    monkeypatch.setattr("app.audio_service.synthesize_reply_audio", boom)
+
+    result = await pipeline.enrich_agent_result(
+        IncomingMessage(input_modality="audio", text="oi"),
+        AgentResult(reply_text="Olá"),
+    )
+    assert result.reply_modality == "text"
+    assert not result.reply_audio_url
+
+
 def test_customer_visible_reply_text_strips_audio_placeholder():
     from app.brevo_client import customer_visible_reply_text
 

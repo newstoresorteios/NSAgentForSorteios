@@ -11,6 +11,25 @@ from .repository import normalize_phone
 
 BREVO_WHATSAPP_SEND_URL = "https://api.brevo.com/v3/whatsapp/sendMessage"
 BREVO_CONVERSATIONS_SEND_URL = "https://api.brevo.com/v3/conversations/messages"
+_BREVO_API_ROOTS = {
+    "https://api.brevo.com",
+    "http://api.brevo.com",
+    "https://api.brevo.com/v3",
+    "http://api.brevo.com/v3",
+}
+
+
+def resolved_brevo_whatsapp_send_url(raw: str | None) -> tuple[str, str | None]:
+    """Ignore truncated BREVO_SEND_URL values like https://api.brevo.com/v3."""
+    value = (raw or "").strip()
+    if not value:
+        return BREVO_WHATSAPP_SEND_URL, None
+    folded = value.rstrip("/").casefold()
+    if folded in {root.casefold() for root in _BREVO_API_ROOTS}:
+        return BREVO_WHATSAPP_SEND_URL, "truncated_api_root"
+    if "api.brevo.com" in folded and "/whatsapp/" not in folded:
+        return BREVO_WHATSAPP_SEND_URL, "missing_whatsapp_path"
+    return value, None
 
 # Never send this caption to the customer — WhatsApp shows it as a failed PTT.
 _AUDIO_CAPTION_PLACEHOLDER = "Resposta em áudio"
@@ -139,7 +158,12 @@ async def _send_whatsapp_transactional_reply(incoming: IncomingMessage, text: st
     if not sender:
         return BrevoSendResult(ok=False, dry_run=False, error="brevo_sender_number_invalid")
 
-    send_url = (settings.brevo_send_url or BREVO_WHATSAPP_SEND_URL).strip()
+    send_url, rewrite_reason = resolved_brevo_whatsapp_send_url(settings.brevo_send_url)
+    if rewrite_reason:
+        log_event(
+            "brevo.send.url_rewritten",
+            {"reason": rewrite_reason},
+        )
 
     payload: dict[str, Any] = {
         "contactNumbers": [recipient],

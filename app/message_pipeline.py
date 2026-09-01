@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.config import get_settings
+from app.config import audio_outbound_ready, get_settings
 from app.agent_contracts import (
     apply_policy_enforcement,
     build_agent_decision,
@@ -77,13 +77,12 @@ async def enrich_agent_result(incoming: IncomingMessage, result: AgentResult) ->
     settings = get_settings()
     if incoming.input_modality != "audio":
         return result
-    if not settings.audio_outbound_enabled:
-        return result
-    if not settings.supabase_url or not settings.supabase_service_key:
-        log_event(
-            "audio.outbound.skipped",
-            {"reason": "supabase_storage_not_configured"},
-        )
+    if not audio_outbound_ready(settings):
+        if settings.audio_outbound_enabled:
+            log_event(
+                "audio.outbound.skipped",
+                {"reason": "supabase_storage_not_configured"},
+            )
         return result
 
     from app.audio_service import synthesize_reply_audio
