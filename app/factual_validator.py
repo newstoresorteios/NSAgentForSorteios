@@ -91,6 +91,7 @@ class FactualViolation(BaseModel):
         "promo",
         "payment",
         "product_mix",
+        "product",
         "other",
     ]
     claim: str
@@ -527,7 +528,7 @@ def _risk_from_violations(violations: list[FactualViolation]) -> RiskLevel:
     kinds = {item.kind for item in violations}
     if "payment" in kinds or "order_id" in kinds:
         return "critical"
-    if "money" in kinds or "url" in kinds or "promo" in kinds or "stock" in kinds:
+    if "money" in kinds or "url" in kinds or "promo" in kinds or "stock" in kinds or "product" in kinds:
         return "high"
     if "product_mix" in kinds:
         return "medium"
@@ -552,6 +553,28 @@ def _budget_max_from_context(
         return float(raw) if raw is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _locked_model_from_context(
+    result: AgentResult,
+    commerce_state: dict[str, Any] | None,
+) -> str | None:
+    prefs: dict[str, Any] = {}
+    meta = result.response_metadata or {}
+    raw_prefs = meta.get("active_preferences")
+    if isinstance(raw_prefs, dict):
+        prefs = raw_prefs
+    if not prefs and isinstance(commerce_state, dict):
+        raw = commerce_state.get("active_preferences") or {}
+        if isinstance(raw, dict):
+            prefs = raw
+    locked = prefs.get("locked_identity")
+    if isinstance(locked, dict):
+        model = str(locked.get("model") or "").strip()
+        if model:
+            return model
+    model = str(prefs.get("model") or "").strip()
+    return model or None
 
 
 def _add_violation(
@@ -851,6 +874,41 @@ def validate_factual_response(
                         kind="money",
                         claim=str(price),
                         reason="price_within_budget",
+                    )
+                )
+
+    locked_model = _locked_model_from_context(result, commerce_state)
+    if locked_model and decision.domain == "commerce":
+        from .product_retrieval import required_model_tokens
+
+        tokens = required_model_tokens(locked_model)
+        products = (result.commercial_data or {}).get("products") or []
+        for product in products:
+            if not isinstance(product, dict) or not tokens:
+                continue
+            hay = " ".join(
+                str(part or "")
+                for part in (
+                    product.get("name"),
+                    product.get("brand"),
+                    product.get("reference"),
+                    product.get("model"),
+                )
+            ).casefold()
+            report.checked_claims += 1
+            if not all(token in hay for token in tokens):
+                _add_violation(
+                    report,
+                    kind="product",
+                    claim=str(product.get("name") or product.get("id") or ""),
+                    reason="presented_model_mismatch",
+                )
+            else:
+                report.supported_claims.append(
+                    FactClaim(
+                        kind="product",
+                        claim=str(product.get("name") or ""),
+                        reason="presented_model_matches_lock",
                     )
                 )
 

@@ -6,7 +6,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from .openai_strict_schema import apply_openai_strict_schema
 
 
 class MemoryScope(str, Enum):
@@ -56,6 +57,8 @@ MemoryReasonCode = Literal[
 
 
 class MemoryProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     action: MemoryAction = MemoryAction.none
     scope: MemoryScope = MemoryScope.contact
     kind: MemoryKind = MemoryKind.stable_customer_fact
@@ -79,6 +82,8 @@ class MemoryProposal(BaseModel):
 
 
 class InstructionExtensionProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     extension_key: str = ""
     proposed_instruction: str = ""
 
@@ -113,6 +118,8 @@ class InstructionExtensionProposal(BaseModel):
 
 
 class ConversationSummaryDelta(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     current_goal: str | None = None
     resolved_points: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
@@ -122,6 +129,8 @@ class ConversationSummaryDelta(BaseModel):
 
 
 class ResponseClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: str = "generic"
     value: str | None = None
     fact_key: str | None = None
@@ -129,6 +138,8 @@ class ResponseClaim(BaseModel):
 
 class AgentTurnEnvelope(BaseModel):
     """Side-channel envelope for natural reply + memory proposals."""
+
+    model_config = ConfigDict(extra="forbid")
 
     reply: str
     claims: list[ResponseClaim] = Field(default_factory=list)
@@ -140,6 +151,11 @@ class AgentTurnEnvelope(BaseModel):
     )
 
     conversation_summary_delta: ConversationSummaryDelta | None = None
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        schema = handler(core_schema)
+        return apply_openai_strict_schema(schema)
 
 
 class MemoryPolicyDecision(BaseModel):

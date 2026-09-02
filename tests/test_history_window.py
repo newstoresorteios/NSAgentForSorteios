@@ -46,6 +46,13 @@ def test_turns_for_conversation_drops_foreign_thread():
     scoped = turns_for_conversation(turns, "new")
     assert [turn["content"] for turn in scoped] == ["quero um relogio", "untagged"]
     assert turns_for_conversation(turns, None) == turns
+    open_sale = turns_for_conversation(turns, "new", include_other_threads=True)
+    assert [turn["content"] for turn in open_sale] == [
+        "Como posso te chamar?",
+        "João",
+        "quero um relogio",
+        "untagged",
+    ]
 
 
 def test_resolve_model_history_limit_prefers_history_limit():

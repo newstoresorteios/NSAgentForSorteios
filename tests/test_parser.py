@@ -34,6 +34,7 @@ def test_parse_conversations_fragment_payload():
     assert msg.visitor_id == "visitor123"
     assert msg.sender_phone == "+55 85 99949 8149"
     assert msg.text == "Ola"
+    assert msg.sender_name is None
 
 
 def test_should_skip_when_last_message_is_agent():

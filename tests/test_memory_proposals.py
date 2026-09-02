@@ -178,3 +178,24 @@ def test_auto_apply_when_enabled(monkeypatch):
     assert result.proposals_applied == 1
     assert len(store.memories) == 1
     assert store.memories[0]["value"]["value"] == "Hamilton"
+
+
+def _schema_objects_are_closed(node, path="$"):
+    if isinstance(node, list):
+        for item in node:
+            _schema_objects_are_closed(item, path)
+        return
+    if not isinstance(node, dict):
+        return
+    if node.get("type") == "object" or "properties" in node:
+        props = node.get("properties")
+        if isinstance(props, dict) and props:
+            assert node.get("additionalProperties") is False, path
+    for key, child in node.items():
+        if key in {"properties", "$defs", "definitions", "anyOf", "oneOf", "allOf", "items", "prefixItems"}:
+            _schema_objects_are_closed(child, f"{path}.{key}")
+
+
+def test_agent_turn_envelope_schema_is_openai_strict():
+    schema = AgentTurnEnvelope.model_json_schema()
+    _schema_objects_are_closed(schema)

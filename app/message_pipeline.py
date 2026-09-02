@@ -395,21 +395,30 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             )
             if critique_report.applied_handoff and runtime is not None:
                 runtime.register_fallback("response_critique_failed")
-            # Critique may regenerate wording/products — re-validate before send.
-            result = apply_factual_validation(
-                result,
-                decision=decision,
-                mode=getattr(
-                    settings,
-                    "agent_factual_validation_mode",
-                    "enforce",
-                ),
-                trusted_domains=trusted_fact_domains,
-                commerce_state=commerce_state.model_dump(mode="json"),
+            critique_meta = (result.response_metadata or {}).get("response_critique") or {}
+            critique_changed = bool(
+                getattr(critique_report, "regenerated", False)
+                or getattr(critique_report, "applied_handoff", False)
+                or (
+                    isinstance(critique_meta, dict)
+                    and critique_meta.get("fast_path")
+                )
             )
-            validation = result.response_metadata.get("factual_validation") or {}
-            result.response_metadata["factual_validation_post_critique"] = True
-            factual_ok = bool(validation.get("valid", True))
+            if critique_changed:
+                result = apply_factual_validation(
+                    result,
+                    decision=decision,
+                    mode=getattr(
+                        settings,
+                        "agent_factual_validation_mode",
+                        "enforce",
+                    ),
+                    trusted_domains=trusted_fact_domains,
+                    commerce_state=commerce_state.model_dump(mode="json"),
+                )
+                validation = result.response_metadata.get("factual_validation") or {}
+                result.response_metadata["factual_validation_post_critique"] = True
+                factual_ok = bool(validation.get("valid", True))
         # Quality judge: shadow by default; runs on risk even when critique is shadow.
         # Skip when critique already enforced a regenerate to avoid double LLM spend.
         run_judge, judge_gate_reason, _judge_signals = should_run_quality_judge(

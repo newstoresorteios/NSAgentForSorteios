@@ -654,3 +654,106 @@ def test_evolve_clears_leftover_cart_after_stale_checkout_stamp():
     assert evolved.pending_action is None
     assert evolved.active_product is None
     assert evolved.dialogue_phase == "discovery"
+
+
+def test_mk2_plus_color_does_not_force_recommendation():
+    from app.preference_normalize import normalize_sales_interpretation
+
+    interp = normalize_sales_interpretation(
+        _interpretation(brand="Baltic", model=None, preferences={"color": "cinza"}),
+        message_text="quero o mk2 cinza 37mm",
+    )
+    bound = apply_turn_contract_for_search(
+        interp,
+        message_text="quero o mk2 cinza 37mm",
+        commerce_state=None,
+    )
+    assert bound._forbid_near_match is True
+    assert bound._force_recommendation_mode is False
+    assert "mk2" in (bound.subject.model or "").casefold()
+
+
+def test_color_refinement_keeps_presented_mk2():
+    from app.commerce_context import PresentedCommerceProduct
+    from app.preference_normalize import normalize_sales_interpretation
+
+    interp = normalize_sales_interpretation(
+        _interpretation(brand=None, model=None, preferences={"color": "cinza"}),
+        message_text="quero o cinza com caixa de 37mm",
+    )
+    state = CommerceConversationState(
+        last_presented_products=[
+            PresentedCommerceProduct(
+                product_id="1",
+                name="Relógio Baltic Aquascaphe MK2 Automático Prata",
+                brand="Baltic",
+                position=1,
+            )
+        ],
+        active_preferences={
+            "locked_identity": {"brand": "Baltic", "model": "Aquascaphe mk2"}
+        },
+    )
+    contract = build_turn_contract(
+        message_text="quero o cinza com caixa de 37mm",
+        interpretation=interp,
+        commerce_state=state,
+    )
+    assert contract.sku_lock is True
+    assert "mk2" in (contract.model or "").casefold()
+    bound = apply_turn_contract_for_search(
+        interp,
+        message_text="quero o cinza com caixa de 37mm",
+        commerce_state=state,
+    )
+    assert bound._force_recommendation_mode is False
+    assert "mk2" in (bound.subject.model or "").casefold()
+    assert (bound.subject.brand or "").casefold() == "baltic"
+
+
+def test_checker_rejects_hermetique_when_mk2_locked():
+    contract = build_turn_contract(
+        message_text="quero o mk2 cinza 37mm",
+        interpretation=_interpretation(
+            brand="Baltic",
+            model="Aquascaphe mk2",
+            preferences={"color": "cinza"},
+        ),
+        commerce_state=None,
+    )
+    draft = AgentResult(
+        reply_text="Encontrei: 1. Relógio Baltic Hermétique Tourer...",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "9",
+                    "name": "Relógio Baltic Hermétique Tourer Azul",
+                    "brand": "Baltic",
+                }
+            ]
+        },
+    )
+    report = check_pedido(draft, contract)
+    assert "ignored_model" in report.issues
+
+
+def test_purchase_close_cart_sku_skips_model_mismatch():
+    interp = _interpretation(brand="Marca", model="Modelo", preferences={})
+    interp = interp.model_copy(update={"purchase_action": "create_cart", "goal": "buy"})
+    contract = build_turn_contract(
+        message_text="compra direta de produto",
+        interpretation=interp,
+        commerce_state=None,
+    )
+    assert contract.purchase_close is True
+    draft = AgentResult(
+        reply_text="Carrinho pronto.",
+        intent="commerce",
+        commercial_data={
+            "cart": {"status": "created", "session_id": "SESSION-1"},
+            "products": [{"id": "P1", "name": "Produto P1", "brand": "Marca"}],
+        },
+    )
+    assert "ignored_model" not in check_pedido(draft, contract).issues
+    assert "fact_model_mismatch" not in check_fatos(draft, contract).issues

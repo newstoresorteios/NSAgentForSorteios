@@ -67,6 +67,26 @@ def test_objection_wins_over_checkout_payment_kind():
     assert "pix" in result.reply_text.lower()
 
 
+def test_objection_does_not_steal_informational_payment_kind():
+    message = IncomingMessage(channel="whatsapp", text="faz 20% no pix de desconto")
+    state = CommerceConversationState()
+    from app.models import SalesInterpretation
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="inspect",
+        subject={},
+        preferences={},
+        information_needed=[],
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.8,
+        payment_method_preference="pix",
+        payment_request_kind="informational",
+    )
+    assert try_objection_authority_result(message, interpretation, state) is None
+
+
 def test_stale_cart_session_detects_404():
     assert _is_stale_cart_session({"error": "not_found", "status_code": 404}) is True
     assert _is_stale_cart_session({"error": "timeout", "status_code": 503}) is False

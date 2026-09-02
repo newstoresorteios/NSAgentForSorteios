@@ -66,9 +66,11 @@ OMEGA_OVER_BUDGET = [
 def test_tray_contract_documents_price_gap_vs_adaptor():
     contract = consult_tray_list_products_contract()
     assert "brand" in contract.adapter_params
+    assert "current_price_range" in contract.adapter_params
+    assert "property_name" in contract.adapter_params
     assert "price" in contract.unmapped_price_params
     assert "price_range" in contract.unmapped_price_params
-    assert contract.budget_enforcement == "local_hard_filter_and_catalog_index"
+    assert contract.budget_enforcement == "tray_current_price_range_and_local_hard_filter"
     assert contract.docs_url.startswith("https://developers.tray.com.br")
 
 
@@ -131,6 +133,41 @@ def test_factual_validator_flags_presented_over_budget():
     assert any(item.reason == "presented_over_budget" for item in report.violations)
     assert report.risk_level == "high"
     assert report.fallback_required is True
+
+
+def test_factual_validator_flags_hermetique_when_mk2_locked():
+    result = AgentResult(
+        reply_text="O Hermétique cinza 37mm cabe no que você pediu.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "h1",
+                    "name": "Relógio Baltic Hermétique Summer Automático Cinza",
+                    "brand": "Baltic",
+                    "price": 8900,
+                }
+            ]
+        },
+        response_metadata={
+            "domain": "commerce",
+            "used_tray": True,
+            "active_preferences": {
+                "locked_identity": {"brand": "Baltic", "model": "Aquascaphe mk2"}
+            },
+        },
+    )
+    report = validate_factual_response(
+        result,
+        decision=build_agent_decision(
+            IncomingMessage(channel="whatsapp", sender_key="whatsapp:test", text="mk2 cinza"),
+            result,
+            openai_call_count=1,
+        ),
+        mode="enforce",
+    )
+    assert any(item.reason == "presented_model_mismatch" for item in report.violations)
+    assert report.valid is False
 
 
 @pytest.mark.asyncio

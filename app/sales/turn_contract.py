@@ -25,10 +25,110 @@ from ..preference_normalize import (
 )
 from .discovery import (
     _mentioned_watch_brands,
+    _specific_product_lock,
     is_open_catalog_browse_request,
     message_states_budget,
     message_states_occasion,
 )
+
+
+def _fold_identity(value: Any) -> str:
+    text = str(value or "").strip().casefold()
+    return " ".join(text.split())
+
+
+def _infer_identity_from_presented(
+    presented: Any,
+) -> tuple[str | None, str | None]:
+    """Recover brand/model from the live shortlist (MK2 names, shared brand)."""
+    if not presented:
+        return None, None
+    brands: list[str] = []
+    names: list[str] = []
+    for item in presented:
+        if item is None:
+            continue
+        brand = getattr(item, "brand", None)
+        name = getattr(item, "name", None)
+        if isinstance(item, dict):
+            brand = brand or item.get("brand")
+            name = name or item.get("name")
+        if brand:
+            brands.append(str(brand).strip())
+        if name:
+            names.append(str(name).strip())
+    common_brand = None
+    if brands:
+        folded = [_fold_identity(item) for item in brands]
+        if folded and all(item == folded[0] for item in folded):
+            common_brand = brands[0]
+    blob = " ".join(part for part in names if part)
+    if not blob:
+        return common_brand, None
+    from ..models import ProductPreferences, ProductSubject
+    from ..preference_normalize import repair_specific_model_tokens
+
+    subject = ProductSubject(brand=common_brand)
+    prefs = ProductPreferences()
+    repair_specific_model_tokens(
+        subject,
+        prefs,
+        message_text=blob,
+        context_text=blob,
+    )
+    return subject.brand or common_brand, subject.model
+
+
+def locked_identity_from_state(
+    commerce_state: Any | None,
+) -> tuple[str | None, str | None]:
+    """Durable line chosen this session, else infer from presented SKUs."""
+    prefs: dict[str, Any] = {}
+    if commerce_state is not None:
+        raw = getattr(commerce_state, "active_preferences", None)
+        if isinstance(raw, dict):
+            prefs = raw
+    locked = prefs.get("locked_identity")
+    brand = None
+    model = None
+    if isinstance(locked, dict):
+        brand = str(locked.get("brand") or "").strip() or None
+        model = str(locked.get("model") or "").strip() or None
+    if model:
+        return brand, model
+    presented = getattr(commerce_state, "last_presented_products", None) or []
+    return _infer_identity_from_presented(presented)
+
+
+def next_locked_identity(
+    interpretation: SalesInterpretation | None,
+    commerce_state: Any | None,
+    message_text: str | None,
+) -> dict[str, str] | None:
+    """Persist the chosen line unless the customer opened a new browse."""
+    try:
+        from .dialogue_phase import message_resets_dialogue_to_discovery
+
+        if message_resets_dialogue_to_discovery(message_text, interpretation):
+            return None
+    except Exception:
+        pass
+    if interpretation is not None and _specific_product_lock(interpretation):
+        payload: dict[str, str] = {}
+        if interpretation.subject.brand:
+            payload["brand"] = str(interpretation.subject.brand).strip()
+        if interpretation.subject.model:
+            payload["model"] = str(interpretation.subject.model).strip()
+        if interpretation.subject.reference:
+            payload["reference"] = str(interpretation.subject.reference).strip()
+        return payload or None
+    brand, model = locked_identity_from_state(commerce_state)
+    if not model:
+        return None
+    payload = {"model": model}
+    if brand:
+        payload["brand"] = brand
+    return payload
 
 
 _GREETING_RE = re.compile(
@@ -61,6 +161,7 @@ _CHECKOUT_CLAIM_RE = re.compile(
 class InboundView(BaseModel):
     source: str
     brand: str | None = None
+    model: str | None = None
     budget_max: float | None = None
     occasion: str | None = None
     color: str | None = None
@@ -76,6 +177,7 @@ class InboundView(BaseModel):
 class TurnContract(BaseModel):
     asked_text: str = ""
     brand: str | None = None
+    model: str | None = None
     budget_max: float | None = None
     budget_from_this_message: bool = False
     occasion_from_this_message: bool = False
@@ -134,6 +236,11 @@ def inbound_from_message(
     return InboundView(
         source="message",
         brand=brand,
+        model=(
+            interpretation.subject.model
+            if interpretation is not None
+            else None
+        ),
         budget_max=budget,
         occasion=occasion,
         color=color,
@@ -177,8 +284,15 @@ def inbound_from_memory(
         except (TypeError, ValueError):
             budget = None
     brand = None
+    model = None
     if interpretation is not None:
         brand = interpretation.subject.brand
+        model = interpretation.subject.model
+    locked_brand, locked_model = locked_identity_from_state(commerce_state)
+    if not brand:
+        brand = locked_brand
+    if not model:
+        model = locked_model
     occasion = None
     if interpretation is not None:
         occasion = interpretation.preferences.occasion
@@ -213,6 +327,7 @@ def inbound_from_memory(
     return InboundView(
         source="memory",
         brand=brand,
+        model=str(model).strip() if model else None,
         budget_max=budget,
         occasion=str(occasion).strip() if occasion else None,
         color=str(color).strip() if color else None,
@@ -289,6 +404,11 @@ def merge_inbound_views(
     )
 
     brand = message_view.brand or memory_view.brand
+    model = message_view.model
+    if message_view.commerce_browse:
+        model = message_view.model
+    else:
+        model = message_view.model or memory_view.model
     codes = ["dual_inbound_merged"]
     if stale:
         codes.append("stale_memory")
@@ -296,6 +416,8 @@ def merge_inbound_views(
         codes.append("hard_budget")
     if brand:
         codes.append("brand_lock")
+    if model:
+        codes.append("model_lock")
     if message_view.asks_price_range:
         codes.append("honor_stated_range")
     if color:
@@ -310,6 +432,13 @@ def merge_inbound_views(
         sku_lock = bool(
             interpretation.subject.reference or interpretation.subject.ean
         )
+        if not sku_lock:
+            sku_lock = _specific_product_lock(interpretation)
+        if sku_lock:
+            codes.append("sku_lock")
+    if model and not sku_lock and not message_view.commerce_browse:
+        sku_lock = True
+        codes.append("sku_lock")
     purchase_close = False
     if memory_view.live_shortlist:
         from .purchase_selection import (
@@ -339,6 +468,14 @@ def merge_inbound_views(
         )
     except Exception:
         browse_reset = message_view.commerce_browse
+    if browse_reset and not (
+        interpretation is not None and _specific_product_lock(interpretation)
+    ):
+        model = message_view.model
+        if interpretation is None or not (
+            interpretation.subject.reference or interpretation.subject.ean
+        ):
+            sku_lock = bool(purchase_close)
     if (
         live_checkout
         and (
@@ -353,6 +490,19 @@ def merge_inbound_views(
         live_checkout = False
     if live_checkout:
         codes.append("checkout_lock")
+    if (
+        interpretation is not None
+        and interpretation.purchase_action in {
+            "create_cart",
+            "checkout_question",
+            "show_cart_link",
+        }
+        and not browse_reset
+        and not message_view.commerce_browse
+    ):
+        purchase_close = True
+        sku_lock = True
+        codes.append("sku_lock")
 
     must_not_re_greet = bool(
         message_view.commerce_browse
@@ -365,6 +515,7 @@ def merge_inbound_views(
     return TurnContract(
         asked_text=str(message_text or "").strip(),
         brand=brand,
+        model=model,
         budget_max=budget,
         budget_from_this_message=budget_from_message,
         occasion_from_this_message=occasion_from_message,

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .audio_service import extract_audio_attachment, is_audio_attachment, is_placeholder_audio_text
+from .identity_names import looks_like_whatsapp_nick
 from .models import IncomingMessage
 
 
@@ -540,6 +541,8 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
         _get_nested(payload, "sender", "name"),
         _get_nested(effective_message, "profile", "name"),
     )
+    if looks_like_whatsapp_nick(sender_name):
+        sender_name = None
 
     visitor_id = _first_non_empty(
         payload.get("visitorId"),

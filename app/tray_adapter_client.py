@@ -460,12 +460,24 @@ class TrayAdapterClient:
                               category_id: str | int | None = None, available: Any = None,
                               available_in_store: Any = None, stock: Any = None,
                               promotion: Any = None, limit: int = 5,
-                              page: int | None = None) -> Any:
+                              page: int | None = None,
+                              current_price_range: str | None = None,
+                              property_name: str | None = None,
+                              property_value: str | None = None,
+                              model: str | None = None,
+                              price: Any = None,
+                              price_range: str | None = None) -> Any:
         return await self._request("GET", "/internal/products", params={
             "name": name, "reference": reference, "ean": ean, "brand": brand,
             "category_id": category_id, "available": available,
             "available_in_store": available_in_store, "stock": stock,
             "promotion": promotion, "limit": min(max(limit, 1), 20), "page": page,
+            "current_price_range": current_price_range,
+            "property_name": property_name,
+            "property_value": property_value,
+            "model": model,
+            "price": price,
+            "price_range": price_range,
         })
 
     async def search_products_by_tokens(

@@ -171,6 +171,8 @@ class SalesInterpretation(BaseModel):
     _clear_pending_action: bool = PrivateAttr(default=False)
     _force_recommendation_mode: bool = PrivateAttr(default=False)
     _forbid_near_match: bool = PrivateAttr(default=False)
+    _turn_contract_bound: bool = PrivateAttr(default=False)
+    _excluded_product_ids: list[str] = PrivateAttr(default_factory=list)
     _turn_understanding: Any = PrivateAttr(default=None)
 
 

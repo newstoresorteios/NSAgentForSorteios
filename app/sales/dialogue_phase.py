@@ -96,6 +96,36 @@ def dialogue_phase_blocks_qualification(phase: DialoguePhase | None) -> bool:
     return phase in {"shortlist", "buy", "checkout"}
 
 
+def is_open_sale_state(state: CommerceConversationState | None) -> bool:
+    """Phone-level continuity: a live shortlist, lock, cart, or checkout."""
+    if state is None:
+        return False
+    if state.dialogue_phase in {"shortlist", "buy", "checkout"}:
+        return True
+    if state.last_presented_products:
+        return True
+    prefs = state.active_preferences or {}
+    if isinstance(prefs, dict) and prefs.get("locked_identity"):
+        return True
+    if state.cart_session_id or state.order_id:
+        return True
+    return False
+
+
+def blocks_greeting_fast_path(state: CommerceConversationState | None) -> bool:
+    """Skip Crono intro while a shortlist/lock is live. Checkout small-talk may greet."""
+    if state is None:
+        return False
+    if session_in_checkout_phase(state) or state.dialogue_phase == "checkout":
+        return False
+    if state.dialogue_phase in {"shortlist", "buy"}:
+        return True
+    if state.last_presented_products:
+        return True
+    prefs = state.active_preferences or {}
+    return bool(isinstance(prefs, dict) and prefs.get("locked_identity"))
+
+
 def message_resets_dialogue_to_discovery(
     message_text: str | None,
     interpretation: SalesInterpretation | None,

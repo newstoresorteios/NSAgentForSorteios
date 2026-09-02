@@ -327,8 +327,15 @@ def try_objection_authority_result(
     if kind is None:
         return None
 
-    # Discount policy must win over checkout/payment orchestration (persona P0).
+    # Discount policy must win over checkout orchestration (persona P0).
+    # Informational PIX/payment questions keep the payment policy path so we
+    # do not create a cart or collide with require_cart_for_informational_payment.
     if kind == "extra_discount":
+        if (
+            interpretation is not None
+            and interpretation.payment_request_kind == "informational"
+        ):
+            return None
         return objection_policy_result(kind, state=state)
 
     # Don't steal active checkout / payment orchestration turns.

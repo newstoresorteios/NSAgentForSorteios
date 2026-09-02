@@ -328,6 +328,11 @@ async def _execute_compiled_product_retrieval_unlocked(
     catalog_index_seeded = 0
     search_term_count = len(specific_product_search_terms(interpretation))
     catalog_discovered_count = 0
+    excluded_ids = {
+        str(item)
+        for item in (getattr(interpretation, "_excluded_product_ids", None) or [])
+        if str(item).strip()
+    }
     discovery_strategies = {"brand_candidates", "category_candidates"}
     probe_requests = [
         request
@@ -364,7 +369,7 @@ async def _execute_compiled_product_retrieval_unlocked(
             if not isinstance(product, dict) or product.get("id") is None:
                 continue
             product_id = str(product["id"])
-            if product_id in seen_ids:
+            if product_id in seen_ids or product_id in excluded_ids:
                 continue
             is_color_hit = bool(
                 color_tokens
@@ -402,7 +407,10 @@ async def _execute_compiled_product_retrieval_unlocked(
             )
 
     async def _run_probe(request: Any) -> tuple[Any, dict[str, Any]]:
+        from .tray_refresh import tray_list_query_extras
+
         arguments = {
+            **tray_list_query_extras(interpretation),
             **request.tool_arguments(),
             "limit": request.limit,
             "page": request.page,
@@ -468,6 +476,20 @@ async def _execute_compiled_product_retrieval_unlocked(
                     "skip_tray_fanout": catalog_index_primary,
                 },
             )
+            from .tray_refresh import constraint_requires_tray_refresh
+
+            if catalog_index_primary and constraint_requires_tray_refresh(
+                interpretation, message_text
+            ):
+                catalog_index_primary = False
+                print(
+                    "[catalog.index.primary.force_tray]",
+                    {
+                        "reason": "constraint_changed_this_turn",
+                        "mode": retrieval_plan.mode,
+                        "seeded": catalog_index_seeded,
+                    },
+                )
         elif bool(getattr(get_settings(), "agent_catalog_index_read_enabled", True)):
             print(
                 "[catalog.index.primary]",

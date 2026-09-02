@@ -452,6 +452,7 @@ def normalize_sales_interpretation(
     context_text: str | None = None,
     recent_turns: list[dict[str, Any]] | None = None,
     conversation_id: str | None = None,
+    include_other_threads: bool = False,
 ) -> SalesInterpretation:
     """Fix gender misclassified as model/style and keep recommendation mode."""
     try:
@@ -462,6 +463,7 @@ def normalize_sales_interpretation(
             recent_turns,
             message_text=message_text,
             conversation_id=conversation_id,
+            include_other_threads=include_other_threads,
         )
     except Exception:
         pass

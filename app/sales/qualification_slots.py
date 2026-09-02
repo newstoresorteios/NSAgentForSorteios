@@ -65,9 +65,16 @@ def last_assistant_qualification_slot(
     recent_turns: list[dict[str, Any]] | None,
     *,
     conversation_id: str | None = None,
+    include_other_threads: bool = False,
 ) -> str | None:
     """Slot asked in the latest assistant turn of this thread, tagged or not."""
-    for turn in reversed(turns_for_conversation(recent_turns, conversation_id)):
+    for turn in reversed(
+        turns_for_conversation(
+            recent_turns,
+            conversation_id,
+            include_other_threads=include_other_threads,
+        )
+    ):
         if not isinstance(turn, dict) or turn.get("role") != "assistant":
             continue
         return classify_qualification_question(str(turn.get("content") or ""))
@@ -79,10 +86,13 @@ def is_qualification_slot_answer(
     message_text: str | None,
     *,
     conversation_id: str | None = None,
+    include_other_threads: bool = False,
 ) -> bool:
     """True when the user is answering the last qualification question in this thread."""
     slot = last_assistant_qualification_slot(
-        recent_turns, conversation_id=conversation_id
+        recent_turns,
+        conversation_id=conversation_id,
+        include_other_threads=include_other_threads,
     )
     if not slot:
         return False
@@ -104,14 +114,39 @@ def continue_commerce_from_qualification_answer(
     message_text: str | None,
     *,
     conversation_id: str | None = None,
+    include_other_threads: bool = False,
 ) -> SalesInterpretation:
     """Keep discovery open when a name/city/urgency answer is misread as greeting."""
+    introduced = extract_introduced_name(message_text)
+    if introduced:
+        updated = apply_qualification_slot_answer(
+            interpretation, CUSTOMER_NAME, introduced
+        )
+        if updated.domain in {"greeting", "out_of_scope", "store_general", "general"}:
+            subject = updated.subject
+            if not str(subject.product_type or "").strip():
+                subject = subject.model_copy(update={"product_type": "relógio"})
+            updated = updated.model_copy(
+                update={
+                    "domain": "commerce",
+                    "goal": updated.goal or "discover",
+                    "subject": subject,
+                    "references_previous_context": True,
+                    "needs_clarification": False,
+                }
+            )
+        return updated
     if not is_qualification_slot_answer(
-        recent_turns, message_text, conversation_id=conversation_id
+        recent_turns,
+        message_text,
+        conversation_id=conversation_id,
+        include_other_threads=include_other_threads,
     ):
         return interpretation
     slot = last_assistant_qualification_slot(
-        recent_turns, conversation_id=conversation_id
+        recent_turns,
+        conversation_id=conversation_id,
+        include_other_threads=include_other_threads,
     )
     updated = apply_qualification_slot_answer(interpretation, slot, message_text)
     if updated.domain in {"greeting", "out_of_scope", "store_general", "general"}:
@@ -124,7 +159,7 @@ def continue_commerce_from_qualification_answer(
                 "goal": updated.goal or "discover",
                 "subject": subject,
                 "references_previous_context": True,
-                "needs_clarification": True,
+                "needs_clarification": False,
             }
         )
     return updated
@@ -185,6 +220,30 @@ _COMMERCE_NAME_BLOCK = frozenset(
 )
 
 
+_INTRO_SOU_RE = re.compile(
+    r"^\s*(?:eu\s+)?sou\s+(?:o|a)\s+(.+?)\s*$",
+    re.IGNORECASE,
+)
+_INTRO_CHAMO_RE = re.compile(
+    r"^\s*(?:me\s+chamo|meu\s+nome\s+(?:[eé]\s+)?)\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def extract_introduced_name(text: str | None) -> str | None:
+    """'Sou o João' / 'me chamo João' → João. None when it is not an intro."""
+    raw = " ".join(str(text or "").strip().split())
+    if not raw:
+        return None
+    match = _INTRO_SOU_RE.match(raw) or _INTRO_CHAMO_RE.match(raw)
+    if not match:
+        return None
+    captured = " ".join(str(match.group(1) or "").split())
+    if captured and _is_plausible_name(captured):
+        return captured
+    return None
+
+
 def _is_plausible_name(text: str) -> bool:
     cleaned = " ".join(str(text or "").strip().split())
     if not cleaned or len(cleaned) > 48:
@@ -199,6 +258,13 @@ def _is_plausible_name(text: str) -> bool:
         return False
     if any(token in folded for token in ("florian", "rio de", "são paulo", "curitiba")):
         return False
+    try:
+        from ..identity_names import looks_like_whatsapp_nick
+
+        if looks_like_whatsapp_nick(cleaned):
+            return False
+    except Exception:
+        pass
     return bool(_NAME_RE.match(cleaned))
 
 
@@ -258,9 +324,14 @@ def apply_qualification_slot_answer(
     prefs = interpretation.preferences.model_copy(deep=True)
     attrs = list(prefs.attributes or [])
 
-    if slot == CUSTOMER_NAME and _is_plausible_name(answer):
-        prefs.recipient = answer
-        attrs = _set_qual_value(attrs, CUSTOMER_NAME, answer)
+    if slot == CUSTOMER_NAME:
+        name = extract_introduced_name(answer) or (
+            answer if _is_plausible_name(answer) else None
+        )
+        if not name:
+            return interpretation
+        prefs.recipient = name
+        attrs = _set_qual_value(attrs, CUSTOMER_NAME, name)
     elif slot == SHIPPING_CITY and _is_plausible_city(answer):
         attrs = _set_qual_value(attrs, SHIPPING_CITY, answer)
     elif slot == URGENCY:
@@ -281,10 +352,15 @@ def rehydrate_qualification_slots_from_turns(
     *,
     message_text: str | None = None,
     conversation_id: str | None = None,
+    include_other_threads: bool = False,
 ) -> SalesInterpretation:
     """Replay clarification Q→A pairs so slots survive across turns in this thread."""
     updated = interpretation
-    turns = turns_for_conversation(recent_turns, conversation_id)
+    turns = turns_for_conversation(
+        recent_turns,
+        conversation_id,
+        include_other_threads=include_other_threads,
+    )
     pending_question: str | None = None
     for turn in turns:
         if turn.get("role") == "assistant":

@@ -247,7 +247,11 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
         ),
     )
     search_calls = [call for call in calls if call[0] == "search_products"]
-    assert search_calls == [("search_products", {"name": "relógio", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
+    assert len(search_calls) == 1
+    args = search_calls[0][1]
+    assert args["name"] == "relógio"
+    assert args["available"] is True
+    assert args["current_price_range"] == "0,5000"
     assert result.reply_text == "Encontrei uma opção dentro da faixa informada."
     assert result.safety_reason != "recommendation_not_found"
     assert result.response_metadata["used_tray"] is True

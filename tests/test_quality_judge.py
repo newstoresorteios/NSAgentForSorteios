@@ -196,3 +196,51 @@ async def test_greeting_does_not_call_judge_llm(monkeypatch):
     )
     assert report.triggered is False
     assert report.skipped_reason == "deterministic:local_greeting"
+
+
+@pytest.mark.asyncio
+async def test_judge_schema_failure_fail_closed_on_locked_catalog(monkeypatch):
+    incoming = IncomingMessage(channel="whatsapp", text="quero o mk2 cinza")
+    result = AgentResult(
+        reply_text="Olha o Hermétique cinza.",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "h1", "name": "Hermétique Summer Cinza"}]
+        },
+        response_metadata={
+            "active_preferences": {
+                "locked_identity": {"model": "Aquascaphe mk2"},
+                "color": "cinza",
+            },
+            "used_tray": True,
+        },
+    )
+
+    async def boom(*_a, **_k):
+        raise ValueError("structured_output_missing")
+
+    monkeypatch.setattr("app.openai_gateway.parse_structured_output", boom)
+    monkeypatch.setattr(
+        "app.quality_judge.get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "openai_api_key": "sk-test",
+                "openai_model": "gpt",
+                "agent_quality_judge_risk_threshold": 10,
+            },
+        )(),
+    )
+    report = await run_quality_judge(
+        incoming,
+        result,
+        mode="shadow",
+        risk_score=90,
+        factual_valid=False,
+        openai_call_count=1,
+    )
+    assert report.triggered is True
+    assert report.verdict is not None
+    assert report.verdict.pass_check is False
+    assert any("judge_failed" in item for item in report.verdict.issues)

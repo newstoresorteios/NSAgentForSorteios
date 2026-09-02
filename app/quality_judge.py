@@ -5,7 +5,7 @@ import re
 from typing import Any, Literal
 
 from openai import APIError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .config import get_settings
 from .models import AgentResult, IncomingMessage
@@ -43,10 +43,19 @@ _LOW_RISK_SOURCES = {
 
 
 class JudgeVerdict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     score: int = Field(default=100, ge=0, le=100)
     pass_check: bool = True
     issues: list[str] = Field(default_factory=list)
     summary: str = ""
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        from .openai_strict_schema import apply_openai_strict_schema
+
+        schema = handler(core_schema)
+        return apply_openai_strict_schema(schema)
 
 
 class JudgeReport(BaseModel):
@@ -262,6 +271,33 @@ def _judge_evidence_payload(result: AgentResult) -> dict[str, Any]:
     }
 
 
+def _judge_must_fail_closed(result: AgentResult) -> bool:
+    """Do not pass a constrained catalog turn when the judge call itself failed."""
+    meta = result.response_metadata or {}
+    prefs = meta.get("active_preferences") or {}
+    if not isinstance(prefs, dict):
+        prefs = {}
+    if meta.get("hard_budget_max") is not None:
+        return True
+    if prefs.get("locked_identity") or prefs.get("color") or prefs.get("budget_max"):
+        return True
+    products = (result.commercial_data or {}).get("products") or []
+    return bool(products and (prefs.get("color") or prefs.get("budget_max")))
+
+
+def _failed_open_verdict(exc: BaseException, *, fail_closed: bool) -> JudgeVerdict:
+    return JudgeVerdict(
+        score=40,
+        pass_check=not fail_closed,
+        issues=[f"judge_failed:{type(exc).__name__}"],
+        summary=(
+            "Judge failed closed because the turn has sku/color/budget constraints."
+            if fail_closed
+            else "Judge failed open; shadow/off keeps original reply."
+        ),
+    )
+
+
 async def run_quality_judge(
     incoming: IncomingMessage,
     result: AgentResult,
@@ -309,11 +345,16 @@ async def run_quality_judge(
         return report
 
     if not settings.openai_api_key:
+        fail_closed = _judge_must_fail_closed(result)
         report.verdict = JudgeVerdict(
             score=50,
-            pass_check=True,
+            pass_check=not fail_closed,
             issues=["openai_unavailable"],
-            summary="Judge skipped because OpenAI is unavailable.",
+            summary=(
+                "Judge unavailable on a constrained catalog turn."
+                if fail_closed
+                else "Judge skipped because OpenAI is unavailable."
+            ),
         )
         return report
 
@@ -365,11 +406,8 @@ async def run_quality_judge(
         TypeError,
         AttributeError,
     ) as exc:
-        report.verdict = JudgeVerdict(
-            score=50,
-            pass_check=True,
-            issues=[f"judge_failed:{type(exc).__name__}"],
-            summary="Judge failed open; shadow/off keeps original reply.",
+        report.verdict = _failed_open_verdict(
+            exc, fail_closed=_judge_must_fail_closed(result)
         )
 
     if (

@@ -132,6 +132,42 @@ def test_continue_commerce_when_name_answer_misread_as_greeting():
     assert updated.subject.product_type == "relógio"
 
 
+def test_sou_o_joao_is_name_intro_not_greeting():
+    from app.sales.qualification_slots import (
+        continue_commerce_from_qualification_answer,
+        extract_introduced_name,
+    )
+
+    assert extract_introduced_name("Sou o João") == "João"
+    assert extract_introduced_name("me chamo Tironi") == "Tironi"
+    assert extract_introduced_name("Dark Orange") is None
+    interpretation = SalesInterpretation(
+        domain="greeting",
+        goal=None,
+        subject={},
+        preferences={},
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    updated = continue_commerce_from_qualification_answer(
+        interpretation,
+        [],
+        "Sou o João",
+    )
+    assert updated.domain == "commerce"
+    assert updated.preferences.recipient == "João"
+
+
+def test_brevo_color_nick_is_not_a_person_name():
+    from app.sales.qualification_slots import _is_plausible_name
+
+    assert _is_plausible_name("Dark Orange") is False
+    assert _is_plausible_name("Razor Blue") is False
+    assert _is_plausible_name("João") is True
+    assert _is_plausible_name("Tironi") is True
+
+
 def test_persona_question_never_reasks_city_or_name_after_answered():
     from tests.evals.test_sales_golden_backtests import _crono_chatbo_profile, _persona
 
@@ -278,3 +314,16 @@ def test_name_slot_ignores_other_conversation_on_same_phone():
         blank, foreign, conversation_id="old-thread"
     )
     assert kept.preferences.recipient == "João"
+    resumed = rehydrate_qualification_slots_from_turns(
+        blank,
+        foreign,
+        conversation_id="new-thread",
+        include_other_threads=True,
+    )
+    assert resumed.preferences.recipient == "João"
+    assert is_qualification_slot_answer(
+        foreign,
+        "Tironi",
+        conversation_id="new-thread",
+        include_other_threads=True,
+    )

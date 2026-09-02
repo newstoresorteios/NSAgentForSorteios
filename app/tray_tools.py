@@ -13,7 +13,7 @@ from .tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 
 TOOL_SCHEMAS = [
-    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "tokens": {"type": "array", "items": {"type": "string"}, "description": "AND search tokens (ILIKE %token% each)"}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "tokens": {"type": "array", "items": {"type": "string"}, "description": "AND search tokens (ILIKE %token% each)"}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "current_price_range": {"type": "string", "description": "Tray current_price_range, e.g. 0,5000"}, "property_name": {"type": "string"}, "property_value": {"type": "string"}, "model": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product", "description": "Consultar detalhes atuais de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product_link", "description": "Obter o link oficial de um produto real já identificado.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_inventory", "description": "Confirmar estoque e regras de disponibilidade de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
@@ -427,7 +427,22 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
     limit = min(max(int(args.get("limit", 5)), 1), 20)
 
     query = (args.pop("query", None) or "").strip()
-    supported = ("name", "reference", "ean", "brand", "category_id", "available", "available_in_store", "stock", "promotion", "page")
+    supported = (
+        "name",
+        "reference",
+        "ean",
+        "brand",
+        "category_id",
+        "available",
+        "available_in_store",
+        "stock",
+        "promotion",
+        "page",
+        "current_price_range",
+        "property_name",
+        "property_value",
+        "model",
+    )
     explicit = {key: args.get(key) for key in supported if args.get(key) is not None}
     # Merge free-text query filters with explicit filters (e.g. brand + name from query).
     # Previously `explicit or filters` dropped the query entirely whenever brand/name was set.

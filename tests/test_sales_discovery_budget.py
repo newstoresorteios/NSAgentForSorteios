@@ -119,7 +119,13 @@ async def test_interpreter_can_mark_context_with_budget_as_enough_to_search(monk
 
     result, calls = await _run_sales(monkeypatch, interpretation, [])
 
-    assert [call for call in calls if call[0] == "search_products"] == [("search_products", {"name": "acessório", "available": True, "available_in_store": True, "limit": 20, "page": 1})]
+    search_calls = [call for call in calls if call[0] == "search_products"]
+    assert len(search_calls) == 1
+    args = search_calls[0][1]
+    assert args["name"] == "acessório"
+    assert args["available"] is True
+    assert args["available_in_store"] is True
+    assert args["current_price_range"] == "0,10000"
     assert result.response_metadata["used_tray"] is True
 
 

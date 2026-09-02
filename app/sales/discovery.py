@@ -380,6 +380,43 @@ def build_qualification_snapshot(
     }
 
 
+def _is_fulfillment_qualification_turn(interpretation: SalesInterpretation) -> bool:
+    """Name/city/urgency belong to checkout, not to the catalog script."""
+    if interpretation.checkout_action:
+        return True
+    if interpretation.purchase_action in {"create_cart", "create_order"}:
+        return True
+    if interpretation.shipping_action:
+        return True
+    stage = str(interpretation.purchase_stage or "")
+    return stage in {
+        "cart_created",
+        "checkout_channel_selection",
+        "shipping",
+        "checkout_ready",
+        "checkout_data",
+        "payment_discussion",
+        "order_review",
+        "order_created",
+        "awaiting_payment",
+    }
+
+
+def _is_fulfillment_persona_prompt(prompt: str) -> bool:
+    folded = prompt.casefold()
+    return any(
+        needle in folded
+        for needle in (
+            "chamar",
+            "seu nome",
+            "cidade",
+            "pressa para receber",
+            "pode esperar",
+            "sob encomenda",
+        )
+    )
+
+
 def _persona_qualification_question(
     interpretation: SalesInterpretation,
     discovery_state: dict[str, Any] | None = None,
@@ -455,14 +492,15 @@ def _persona_qualification_question(
         preference_hints.append(
             ("model_intent", ("modelo em mente", "sugestão", "sugestao", "marca"))
         )
-    if "customer_name" not in known:
-        preference_hints.append(("customer_name", ("chamar", "como posso te chamar", "seu nome")))
-    if "shipping_city" not in known:
-        preference_hints.append(("shipping_city", ("para qual cidade", "cidade", "entrega")))
-    if not snap.get("has_urgency") and "urgency" not in known:
-        preference_hints.append(
-            ("urgency", ("pressa para receber", "pode esperar", "sob encomenda"))
-        )
+    if _is_fulfillment_qualification_turn(interpretation):
+        if "customer_name" not in known:
+            preference_hints.append(("customer_name", ("chamar", "como posso te chamar", "seu nome")))
+        if "shipping_city" not in known:
+            preference_hints.append(("shipping_city", ("para qual cidade", "cidade", "entrega")))
+        if not snap.get("has_urgency") and "urgency" not in known:
+            preference_hints.append(
+                ("urgency", ("pressa para receber", "pode esperar", "sob encomenda"))
+            )
 
     for field, needles in preference_hints:
         if field in known and field not in {"model_intent"}:
@@ -472,9 +510,15 @@ def _persona_qualification_question(
             if any(needle in folded for needle in needles) and _unused(prompt):
                 return prompt
 
+    fulfillment = _is_fulfillment_qualification_turn(interpretation)
     for prompt in prompts:
-        if _unused(prompt):
-            return prompt
+        if not _unused(prompt):
+            continue
+        if not fulfillment and _is_fulfillment_persona_prompt(prompt):
+            continue
+        return prompt
+    if not fulfillment:
+        return None
     return prompts[0] if prompts else None
 
 

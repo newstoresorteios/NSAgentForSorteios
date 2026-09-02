@@ -120,8 +120,10 @@ def test_resolve_address_name_prefers_checkout_over_whatsapp_nick():
     from app.greeting_policy import looks_like_whatsapp_nick, resolve_address_name
 
     assert looks_like_whatsapp_nick("Razor Blue") is True
+    assert looks_like_whatsapp_nick("Dark Orange") is True
     assert looks_like_whatsapp_nick("João Paulo Firmino") is False
     assert looks_like_whatsapp_nick("Felipe Newbold") is False
+    assert looks_like_whatsapp_nick("Cliente Instagram") is False
     assert (
         resolve_address_name(
             checkout_name="João Paulo Firmino",
@@ -129,3 +131,16 @@ def test_resolve_address_name_prefers_checkout_over_whatsapp_nick():
         ).startswith("João")
     )
     assert resolve_address_name(whatsapp_profile_name="Razor Blue") is None
+
+
+def test_greeting_detectors_live_in_one_module():
+    from app.greeting_policy import (
+        is_any_greeting,
+        is_greeting_message,
+        is_soft_greeting,
+    )
+
+    assert is_greeting_message("tudo bem") is True
+    assert is_soft_greeting("Opa, boa noite") is True
+    assert is_any_greeting("eai") is True
+    assert is_greeting_message("quero um relógio") is False

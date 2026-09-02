@@ -18,7 +18,7 @@ from typing import Any, FrozenSet
 
 TRAY_DOCS_URL = "https://developers.tray.com.br/"
 TRAY_DOCS_SECTION = "API de Produtos / Listagem de Produtos GET"
-TRAY_DOCS_REVIEWED_ON = "2026-09-01"
+TRAY_DOCS_REVIEWED_ON = "2026-09-02"
 
 # GET https://{api_address}/products — query params from Tray docs.
 TRAY_LIST_PRODUCTS_DOC_PARAMS: FrozenSet[str] = frozenset(
@@ -65,20 +65,23 @@ ADAPTER_SEARCH_PRODUCTS_PARAMS: FrozenSet[str] = frozenset(
         "promotion",
         "limit",
         "page",
+        "current_price_range",
+        "property_name",
+        "property_value",
+        "model",
     }
 )
 
-# Documented on Tray, not forwarded by the adaptor. Do not send these on
-# search_products until TRAYadaptor maps them. `price` is an exact match;
-# `price_range` is a string field — not a documented max_price.
+# Documented on Tray, not forwarded by the adaptor as a max-price API.
+# `price` is exact equality; `price_range` is a string field. Budget uses
+# `current_price_range` plus local hard_filter.
 ADAPTER_UNMAPPED_DOC_PARAMS: FrozenSet[str] = (
     TRAY_LIST_PRODUCTS_DOC_PARAMS
     - ADAPTER_SEARCH_PRODUCTS_PARAMS
     - {"access_token", "id", "rand", "sort", "attrs", "created", "modified"}
 )
 
-# NSAgent applies budget locally (hard_filter + catalog_index max_price).
-BUDGET_ENFORCEMENT = "local_hard_filter_and_catalog_index"
+BUDGET_ENFORCEMENT = "tray_current_price_range_and_local_hard_filter"
 
 
 @dataclass(frozen=True)
@@ -113,8 +116,10 @@ def consult_tray_list_products_contract() -> TrayListProductsContract:
             "Tray GET /products accepts brand, name, reference, ean, category_id.",
             "Tray `price` is exact equality, not a ceiling.",
             "Tray `price_range` is a string filter; format is not a max_price API.",
-            "TRAYadaptor search_products does not forward price or price_range.",
-            "Budget must stay a hard local constraint after the Tray payload returns.",
+            "TRAYadaptor forwards current_price_range, property_name/value, model.",
+            "Tray `price` is exact equality, not a ceiling — do not send it as max_price.",
+            "Tray `price_range` is a string filter; format is not a max_price API.",
+            "Budget is sent as current_price_range and still hard-filtered locally.",
         ),
     )
 

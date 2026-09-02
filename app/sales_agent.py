@@ -62,6 +62,7 @@ from .guardrails import (
 )
 from .models import AgentResult, IncomingMessage, SalesInterpretation
 from .context_resume import is_short_affirmation
+from .greeting_policy import GREETING_REPLY, is_any_greeting, is_greeting_message
 from .turn_runtime import LLMCallBudgetExceeded
 from .payment_service import (
     inspect_current_cart,
@@ -183,7 +184,6 @@ Regras de contenção (não invente política comercial):
 """.strip()
 
 OUT_OF_SCOPE_REPLY = "Posso ajudar com produtos, compras, pedidos e informações da NewStore, além dos sorteios da loja."
-GREETING_REPLY = "Olá! Como posso ajudar?"
 SALES_INTERPRETER_INSTRUCTIONS = """
 Você interpreta mensagens do atendimento da NewStore.
 
@@ -458,35 +458,6 @@ _ACTION_TO_PLAN = {
 }
 
 
-def _is_greeting(text: str | None) -> bool:
-    normalized = " ".join((text or "").lower().strip().split()).strip("!?.,")
-    if normalized in {
-        "oi",
-        "olá",
-        "ola",
-        "bom dia",
-        "boa tarde",
-        "boa noite",
-        "oi tudo bem",
-        "olá tudo bem",
-        "ola tudo bem",
-        "tudo bem",
-        "tudo bem?",
-        "como vai",
-        "como vai?",
-        "e ai",
-        "e aí",
-        "eai",
-    }:
-        return True
-    if re.fullmatch(
-        r"(oi|ol[aá]|eai|e ai|e a[ií])([\s,!?.]*(tudo bem|como vai)?)?[\s!?.]*",
-        normalized,
-    ):
-        return True
-    return False
-
-
 def _purchase_close_hold_reply(
     *,
     message: IncomingMessage,
@@ -494,13 +465,12 @@ def _purchase_close_hold_reply(
     interpretation: SalesInterpretation | None,
 ) -> str:
     from .checkout_service import checkout_channel_choice_prompt
-    from .context_resume import is_soft_greeting
     from .greeting_policy import choose_greeting_reply
     from .sales.dialogue_phase import session_in_checkout_phase
 
     if state is not None and session_in_checkout_phase(state):
         return checkout_channel_choice_prompt(state)
-    if _is_greeting(message.text) or is_soft_greeting(message.text):
+    if is_any_greeting(message.text):
         return choose_greeting_reply(None)
     clarification = str(
         (interpretation.clarification_question if interpretation else None) or ""
@@ -521,7 +491,7 @@ def _purchase_close_hold_reply(
 def deterministic_scope(text: str | None) -> dict[str, Any]:
     value = (text or "").strip()
     normalized = value.lower()
-    if _is_greeting(value):
+    if is_greeting_message(value):
         return {"domain": "greeting", "action": "greeting", "_source": "fallback"}
     if detect_balance_inquiry(value) or detect_coupon_code_inquiry(value) or detect_raffle_history_inquiry(value) or detect_current_raffle_inquiry(value) or detect_rules_inquiry(value) or "sorteio" in normalized:
         return {"domain": "raffle", "action": "local_flow", "_source": "fallback"}
@@ -885,6 +855,12 @@ def interpretation_to_plan(
     }
 
 
+def _open_sale_history(commerce_state: CommerceConversationState | None) -> bool:
+    from .sales.dialogue_phase import is_open_sale_state
+
+    return is_open_sale_state(commerce_state)
+
+
 async def interpret_message(
     message: IncomingMessage,
     *,
@@ -892,7 +868,9 @@ async def interpret_message(
     commerce_state: CommerceConversationState | None = None,
 ) -> SalesInterpretation:
     settings = get_settings()
-    if _is_greeting(message.text):
+    from .sales.dialogue_phase import blocks_greeting_fast_path
+
+    if is_greeting_message(message.text) and not blocks_greeting_fast_path(commerce_state):
         fallback = _fallback_interpretation(message.text)
         fallback._fallback_reason = "greeting_fast_path"
         fallback = _rehydrate_contact_preferences(fallback, message)
@@ -1039,6 +1017,7 @@ async def interpret_message(
             context_text=recent_user_context_text(recent_turns),
             recent_turns=recent_turns,
             conversation_id=message.conversation_id,
+            include_other_threads=_open_sale_history(commerce_state),
         )
         from .sales.qualification_slots import continue_commerce_from_qualification_answer
 
@@ -1047,6 +1026,7 @@ async def interpret_message(
             recent_turns,
             current_text,
             conversation_id=message.conversation_id,
+            include_other_threads=_open_sale_history(commerce_state),
         )
         interpretation = _rehydrate_contact_preferences(interpretation, message)
         # Re-sync TurnUnderstanding after preference normalization when present.
@@ -1671,6 +1651,44 @@ async def handle_sales_message(
         _sales_recent_turns.reset(history_token)
 
 
+def _hydrate_sales_interpretation(
+    semantic_plan: dict[str, Any] | SalesInterpretation | None,
+    message: IncomingMessage,
+    recent_turns: list[dict[str, Any]] | None,
+    commerce_state: CommerceConversationState | None = None,
+) -> SalesInterpretation | None:
+    """Normalize + qualification + memory — one place before the sales handler."""
+    if not isinstance(semantic_plan, SalesInterpretation):
+        return None
+    from .preference_normalize import (
+        normalize_sales_interpretation,
+        recent_user_context_text,
+    )
+    from .sales.qualification_slots import continue_commerce_from_qualification_answer
+    from .commerce_router import is_outbound_catalog_image_request
+
+    open_sale = _open_sale_history(commerce_state)
+    interpretation = normalize_sales_interpretation(
+        semantic_plan,
+        message_text=message.text,
+        context_text=recent_user_context_text(recent_turns),
+        recent_turns=recent_turns,
+        conversation_id=message.conversation_id,
+        include_other_threads=open_sale,
+    )
+    interpretation = continue_commerce_from_qualification_answer(
+        interpretation,
+        recent_turns,
+        message.text,
+        conversation_id=message.conversation_id,
+        include_other_threads=open_sale,
+    )
+    interpretation = _rehydrate_contact_preferences(interpretation, message)
+    if is_outbound_catalog_image_request(message.text):
+        interpretation = interpretation.model_copy(update={"image_request": True})
+    return interpretation
+
+
 async def _handle_sales_message_inner(
     message: IncomingMessage,
     facts: dict[str, Any],
@@ -1691,42 +1709,18 @@ async def _handle_sales_message_inner(
             handoff_required=False,
         )
 
-    interpretation = semantic_plan if isinstance(semantic_plan, SalesInterpretation) else None
-    if interpretation is not None:
-        from .preference_normalize import (
-            normalize_sales_interpretation,
-            recent_user_context_text,
-        )
-
-        interpretation = normalize_sales_interpretation(
-            interpretation,
-            message_text=message.text,
-            context_text=recent_user_context_text(recent_turns),
-            recent_turns=recent_turns,
-            conversation_id=message.conversation_id,
-        )
-        from .sales.qualification_slots import continue_commerce_from_qualification_answer
-
-        interpretation = continue_commerce_from_qualification_answer(
-            interpretation,
-            recent_turns,
-            message.text,
-            conversation_id=message.conversation_id,
-        )
-        interpretation = _rehydrate_contact_preferences(interpretation, message)
+    interpretation = _hydrate_sales_interpretation(
+        semantic_plan, message, recent_turns, commerce_state=commerce_state
+    )
     from .commerce_router import (
         is_listed_catalog_follow_up,
         is_outbound_catalog_image_request,
         wants_all_listed_product_images,
     )
-
-    if interpretation is not None and is_outbound_catalog_image_request(message.text):
-        interpretation = interpretation.model_copy(update={"image_request": True})
     state = commerce_state or CommerceConversationState()
     from .context_resume import (
         build_pending_payment_resume_result,
         build_presented_catalog_resume_result,
-        is_soft_greeting as _resume_is_soft_greeting,
         should_redisplay_presented_catalog,
         should_resume_pending_order,
     )
@@ -1734,7 +1728,7 @@ async def _handle_sales_message_inner(
     if should_resume_pending_order(
         message.text,
         state,
-        is_greeting=_is_greeting(message.text) or _resume_is_soft_greeting(message.text),
+        is_greeting=is_any_greeting(message.text),
     ):
         stored_payment = build_pending_payment_resume_result(state)
         if stored_payment is not None:
@@ -2171,6 +2165,76 @@ async def _handle_sales_message_inner(
             interpretation = interpretation.model_copy(
                 update={"reference_type": None, "reference_position": None}
             )
+        if resolved_product is not None:
+            from .sales.discovery import _specific_product_lock
+            from .product_retrieval import required_model_tokens
+            from .sales.purchase_selection import (
+                is_bare_purchase_closing,
+                parse_list_position_selection,
+            )
+
+            purchase_close = bool(
+                parse_list_position_selection(message.text)
+                or is_bare_purchase_closing(message.text)
+                or interpretation.reference_position is not None
+                or interpretation.purchase_action
+            )
+            if _specific_product_lock(interpretation) and not purchase_close:
+                tokens = required_model_tokens(interpretation.subject.model)
+                hay = " ".join(
+                    part
+                    for part in (
+                        resolved_product.name,
+                        resolved_product.brand,
+                        resolved_product.reference,
+                    )
+                    if part
+                ).casefold()
+                if tokens and not all(token in hay for token in tokens):
+                    print(
+                        "[sales.reference.ignore_model_mismatch]",
+                        {
+                            "product_id": resolved_product.product_id,
+                            "wanted_model": interpretation.subject.model,
+                            "resolved_name": resolved_product.name,
+                        },
+                    )
+                    resolved_product = None
+                    resolved_by = "none"
+                    interpretation = interpretation.model_copy(
+                        update={"reference_type": None, "reference_position": None}
+                    )
+        if resolved_product is not None:
+            from .sales.tray_refresh import should_drop_contextual_resolve
+            from .sales.purchase_selection import (
+                is_bare_purchase_closing,
+                parse_list_position_selection,
+            )
+
+            purchase_close = bool(
+                parse_list_position_selection(message.text)
+                or is_bare_purchase_closing(message.text)
+                or interpretation.reference_position is not None
+                or interpretation.purchase_action
+            )
+            if should_drop_contextual_resolve(
+                interpretation=interpretation,
+                message_text=message.text,
+                purchase_close=purchase_close,
+            ):
+                print(
+                    "[sales.reference.ignore_constraint_change]",
+                    {
+                        "product_id": resolved_product.product_id,
+                        "color": interpretation.preferences.color,
+                        "model": interpretation.subject.model,
+                    },
+                )
+                resolved_product = None
+                resolved_by = "none"
+                interpretation = interpretation.model_copy(
+                    update={"reference_type": None, "reference_position": None}
+                )
         # Inbound photo must re-identify — never answer price from a stale
         # Kingfisher/sibling left in active/presented context.
         from .image_product_id import (
@@ -3898,13 +3962,27 @@ async def _handle_sales_message_inner(
             )
         except Exception:
             phase_hint = {}
+        prefs_dump = interpretation.preferences.model_dump(
+            mode="json",
+            exclude_none=True,
+        )
+        try:
+            from .sales.turn_contract import next_locked_identity
+
+            identity = next_locked_identity(interpretation, state, message.text)
+            if identity:
+                prefs_dump = {**prefs_dump, "locked_identity": identity}
+            excluded = list(getattr(interpretation, "_excluded_product_ids", None) or [])
+            prior = (state.active_preferences or {}).get("excluded_product_ids") or []
+            merged = list(dict.fromkeys([*[str(item) for item in prior if item], *excluded]))
+            if merged:
+                prefs_dump = {**prefs_dump, "excluded_product_ids": merged}
+        except Exception:
+            pass
         tray_result.response_metadata.update({
             "active_topic": interpretation.active_topic,
             "purchase_stage": interpretation.purchase_stage,
-            "active_preferences": interpretation.preferences.model_dump(
-                mode="json",
-                exclude_none=True,
-            ),
+            "active_preferences": prefs_dump,
             **phase_hint,
         })
         if resolved_product is not None:

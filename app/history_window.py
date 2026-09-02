@@ -82,10 +82,18 @@ def _turn_conversation_id(turn: dict[str, Any] | None) -> str:
 def turns_for_conversation(
     turns: list[dict[str, Any]] | None,
     conversation_id: str | None,
+    *,
+    include_other_threads: bool = False,
 ) -> list[dict[str, Any]]:
-    """Keep this WhatsApp thread. Untagged turns stay (unit tests / sparse rows)."""
-    wanted = str(conversation_id or "").strip()
+    """Keep this WhatsApp thread. Untagged turns stay (unit tests / sparse rows).
+
+    When a sale is already open, pass include_other_threads=True so a new Brevo
+    conversation_id on the same phone still sees the shortlist / qualification.
+    """
     values = list(turns or [])
+    if include_other_threads:
+        return values
+    wanted = str(conversation_id or "").strip()
     if not wanted:
         return values
     scoped: list[dict[str, Any]] = []

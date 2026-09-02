@@ -5,6 +5,7 @@ import unicodedata
 from typing import Any
 
 from .commerce_context import CommerceConversationState
+from .greeting_policy import is_soft_greeting
 from .models import AgentResult
 
 
@@ -149,35 +150,6 @@ def merge_commerce_states(
 def is_short_affirmation(text: str | None) -> bool:
     folded = _fold(text).strip("!?.,")
     return folded in _SHORT_AFFIRMATIONS
-
-
-def is_soft_greeting(text: str | None) -> bool:
-    folded = _fold(text).strip("!?.,")
-    if folded in {
-        "oi",
-        "ola",
-        "olá",
-        "bom dia",
-        "boa tarde",
-        "boa noite",
-        "noite",
-        "tarde",
-        "oi tudo bem",
-        "ola tudo bem",
-        "olá tudo bem",
-    }:
-        return True
-    return bool(
-        re.fullmatch(
-            r"(opa|oie|eai|e ai|hey|ola|olá|oi)?[,\s]*"
-            r"(boa noite|bom dia|boa tarde|ola|olá|oi|tudo bem)?",
-            folded,
-        )
-        and any(
-            token in folded
-            for token in ("oi", "ola", "olá", "bom dia", "boa tarde", "boa noite", "opa")
-        )
-    )
 
 
 def is_payment_link_request(text: str | None) -> bool:

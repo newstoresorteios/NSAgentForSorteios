@@ -72,17 +72,17 @@ from .vip_profiles import (
 from .user_preferences import detect_preferred_name_update
 from .tray_tools import TOOL_SCHEMAS, execute_tool
 from .sales_agent import (
-    GREETING_REPLY,
     OUT_OF_SCOPE_REPLY,
     deterministic_scope,
     handle_sales_message,
     interpret_message,
-    _is_greeting,
 )
 from .greeting_policy import (
+    GREETING_REPLY,
     choose_farewell_reply,
     choose_greeting_reply,
     is_farewell_message,
+    is_greeting_message as _is_greeting,
     resolve_address_name,
     sanitize_greeting_reply,
 )
@@ -686,7 +686,16 @@ async def _generate_agent_reply_async_inner(
         "hard_cap": history_hard_cap,
     }
     recovery_turns = load_recent_conversation_turns(**history_lookup)
-    thread_turns = turns_for_conversation(recovery_turns, message.conversation_id)
+    commerce_state = CommerceConversationState.from_payload(
+        customer_context.get("_commerce_state")
+    )
+    from .sales.dialogue_phase import is_open_sale_state
+
+    thread_turns = turns_for_conversation(
+        recovery_turns,
+        message.conversation_id,
+        include_other_threads=is_open_sale_state(commerce_state),
+    )
     model_turns = select_model_history_turns(thread_turns, limit=history_limit)
     recent_turns = model_turns
     context_source = (
@@ -720,9 +729,6 @@ async def _generate_agent_reply_async_inner(
     )
     customer_context["_conversation_turns"] = recovery_turns
     customer_context["_model_conversation_turns"] = model_turns
-    commerce_state = CommerceConversationState.from_payload(
-        customer_context.get("_commerce_state")
-    )
     accepted_handoff = should_request_human_handoff(
         message,
         recent_turns=recovery_turns,
@@ -811,13 +817,19 @@ async def _generate_agent_reply_async_inner(
             used_openai_responder=False,
             used_tray=False,
         )
-    from .sales.qualification_slots import is_qualification_slot_answer
+    from .sales.qualification_slots import (
+        extract_introduced_name,
+        is_qualification_slot_answer,
+    )
+
+    from .sales.dialogue_phase import is_open_sale_state
 
     answering_qualification = is_qualification_slot_answer(
         recovery_turns or recent_turns,
         message.text,
         conversation_id=message.conversation_id,
-    )
+        include_other_threads=is_open_sale_state(commerce_state),
+    ) or bool(extract_introduced_name(message.text))
     soft_greeting = (not answering_qualification) and (
         _is_greeting(message.text) or is_soft_greeting(message.text)
     )
@@ -839,10 +851,13 @@ async def _generate_agent_reply_async_inner(
             or context_handles.get("emails")
         ),
     )
+    from .sales.dialogue_phase import blocks_greeting_fast_path
+
     # Soft greetings keep memory without dumping payment — unless checkout is unpaid.
     if (
         soft_greeting
         and has_resumable_commerce(commerce_state)
+        and not blocks_greeting_fast_path(commerce_state)
         and not resume_pending_order_early
         and not is_order_lookup_request(message.text, commerce_state=commerce_state)
         and not is_unpaid_order_resume_request(message.text)
@@ -1289,6 +1304,8 @@ async def _generate_agent_reply_async_inner(
             fallback_reason=interpretation._fallback_reason,
         )
     if (not answering_qualification) and (
+        not blocks_greeting_fast_path(commerce_state)
+    ) and (
         scope_domain == "greeting"
         or (
             interpretation._source != "openai"
@@ -1311,7 +1328,9 @@ async def _generate_agent_reply_async_inner(
                 used_tray=False,
                 fallback_reason=interpretation._fallback_reason,
             )
-        if has_resumable_commerce(commerce_state):
+        if has_resumable_commerce(commerce_state) and not blocks_greeting_fast_path(
+            commerce_state
+        ):
             # Keep soft: don't dump order/payment; still use Crono greeting text.
             resume = build_contextual_greeting(
                 commerce_state,

@@ -44,6 +44,7 @@ _MUST_RETRIEVE_CODES = frozenset(
         "enforce_color",
         "enforce_gender",
         "enforce_style",
+        "model_lock",
     }
 )
 _SKIP_RETRIEVAL_CODES = frozenset(
@@ -89,6 +90,13 @@ def _presented(result: AgentResult) -> list[dict[str, Any]]:
     return [item for item in products if isinstance(item, dict)]
 
 
+def _catalog_identity_applies(result: AgentResult, contract: TurnContract) -> bool:
+    """A purchase-close of one SKU is not a shortlist to re-filter on Tray."""
+    if not contract.purchase_close:
+        return True
+    return len(_presented(result)) >= 2
+
+
 _STYLE_MATCH_RE = {
     "esportivo": re.compile(
         r"\b(esportivo|sport|diver|mergulho|khaki)\b", re.IGNORECASE
@@ -111,6 +119,20 @@ def _product_catalog_text(product: dict[str, Any]) -> str:
     from ..product_retrieval import _product_text
 
     return _product_text(product)
+
+
+def _presented_conflicts_model(products: list[dict[str, Any]], model: str) -> bool:
+    from ..product_retrieval import required_model_tokens
+
+    tokens = required_model_tokens(model)
+    if not tokens or not products:
+        return False
+
+    def _matches(product: dict[str, Any]) -> bool:
+        text = _product_catalog_text(product)
+        return all(token in text for token in tokens)
+
+    return not any(_matches(item) for item in products)
 
 
 def _presented_conflicts_color(products: list[dict[str, Any]], color: str) -> bool:
@@ -201,9 +223,11 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
         issues.append("requalify_after_sku")
     if contract.must_not_claim_stale_checkout and reply_claims_checkout(reply):
         issues.append("claimed_stale_checkout")
-    if products:
+    if products and _catalog_identity_applies(result, contract):
         if contract.color and _presented_conflicts_color(products, contract.color):
             issues.append("ignored_color")
+        if contract.model and _presented_conflicts_model(products, contract.model):
+            issues.append("ignored_model")
         if contract.gender and _presented_conflicts_gender(products, contract.gender):
             issues.append("ignored_gender")
         if contract.style and _presented_conflicts_style(products, contract.style):
@@ -224,13 +248,16 @@ def check_fatos(result: AgentResult, contract: TurnContract) -> CheckerReport:
                 issues.append("fact_price_over_budget")
                 break
     brand = (contract.brand or "").strip().casefold()
-    if brand and products:
+    identity = _catalog_identity_applies(result, contract)
+    if identity and brand and products:
         labels = [str(item.get("brand") or "").strip().casefold() for item in products]
         if labels and all(label and brand not in label and label not in brand for label in labels):
             issues.append("fact_brand_mismatch")
-    if products:
+    if products and identity:
         if contract.color and _presented_conflicts_color(products, contract.color):
             issues.append("fact_color_mismatch")
+        if contract.model and _presented_conflicts_model(products, contract.model):
+            issues.append("fact_model_mismatch")
         if contract.gender and _presented_conflicts_gender(products, contract.gender):
             issues.append("fact_gender_mismatch")
         if contract.style and _presented_conflicts_style(products, contract.style):
@@ -269,6 +296,9 @@ def judge_council(
         codes.append("stop_requalify")
     if "ignored_color" in issues or "fact_color_mismatch" in issues:
         codes.append("enforce_color")
+        codes.append("forbid_near_match")
+    if "ignored_model" in issues or "fact_model_mismatch" in issues:
+        codes.append("model_lock")
         codes.append("forbid_near_match")
     if "ignored_gender" in issues or "fact_gender_mismatch" in issues:
         codes.append("enforce_gender")
@@ -360,6 +390,14 @@ def apply_corrections(
             updated.subject = updated.subject.model_copy(
                 update={"brand": contract.brand}
             )
+    if "model_lock" in codes and contract.model:
+        updates: dict[str, Any] = {}
+        if not (updated.subject.model or "").strip():
+            updates["model"] = contract.model
+        if contract.brand and not (updated.subject.brand or "").strip():
+            updates["brand"] = contract.brand
+        if updates:
+            updated.subject = updated.subject.model_copy(update=updates)
     if "honor_sku_lock" in codes:
         updated.goal = "buy"
         updated.stop_clarification = True
@@ -396,7 +434,15 @@ def apply_corrections(
         updated.enough_information_to_search = True
     if "forbid_near_match" in codes:
         updated._forbid_near_match = True
-        updated._force_recommendation_mode = True
+        from .discovery import _specific_product_lock
+
+        keep_exact = bool(
+            contract.sku_lock
+            or (contract.model or "").strip()
+            or _specific_product_lock(updated)
+        )
+        if not keep_exact:
+            updated._force_recommendation_mode = True
     return updated
 
 
@@ -436,6 +482,10 @@ def pre_search_correction_codes(
             codes.append("clear_fake_name")
         if contract.brand and not (interpretation.subject.brand or "").strip():
             codes.append("brand_lock")
+        if contract.model and not (interpretation.subject.model or "").strip():
+            codes.append("model_lock")
+    elif contract.model:
+        codes.append("model_lock")
     return list(dict.fromkeys(codes))
 
 
@@ -446,6 +496,13 @@ def apply_turn_contract_for_search(
     commerce_state: CommerceConversationState | None = None,
 ) -> SalesInterpretation:
     """Bind dual-inbound contract onto the interpretation used to search Tray."""
+    from .tray_refresh import excluded_product_ids_for_turn
+
+    if getattr(interpretation, "_turn_contract_bound", False):
+        interpretation._excluded_product_ids = excluded_product_ids_for_turn(
+            interpretation, message_text, commerce_state
+        )
+        return interpretation
     contract = build_turn_contract(
         message_text=message_text,
         interpretation=interpretation,
@@ -455,12 +512,17 @@ def apply_turn_contract_for_search(
     updated = (
         apply_corrections(interpretation, contract, codes) if codes else interpretation
     )
+    updated._turn_contract_bound = True
+    updated._excluded_product_ids = excluded_product_ids_for_turn(
+        updated, message_text, commerce_state
+    )
     print(
         "[sales.turn_contract.bind]",
         {
             "codes": codes,
             "budget_max": updated.preferences.budget_max,
             "brand": updated.subject.brand,
+            "model": updated.subject.model,
             "occasion": updated.preferences.occasion,
             "color": updated.preferences.color,
             "style": updated.preferences.style,
@@ -486,10 +548,12 @@ def _should_retrieve_on_restart(
     contract: TurnContract | None = None,
 ) -> bool:
     code_set = set(codes)
-    if code_set & _MUST_RETRIEVE_CODES:
-        return True
     if code_set & _SKIP_RETRIEVAL_CODES:
         return False
+    if contract is not None and contract.purchase_close:
+        return False
+    if code_set & _MUST_RETRIEVE_CODES:
+        return True
     if "drop_stale_checkout" in code_set:
         return bool(contract and (contract.brand or "").strip())
     return True
@@ -769,6 +833,7 @@ async def apply_answer_council_with_retry(
             current_interp = apply_corrections(
                 current_interp, contract, decision.correction_codes
             )
+            current_interp._turn_contract_bound = False
         if not _should_retrieve_on_restart(
             decision.correction_codes, contract=contract
         ):
