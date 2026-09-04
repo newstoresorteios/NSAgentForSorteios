@@ -383,6 +383,38 @@ async def test_council_replays_shortlist_only_when_customer_asks(monkeypatch):
     assert result.response_metadata.get("answer_council_continue") is True
 
 
+@pytest.mark.asyncio
+async def test_council_must_retrieve_discards_prior_llm_copy_on_failed_search(
+    monkeypatch,
+):
+    from app.sales.answer_council import apply_answer_council_with_retry
+
+    async def fake_retrieval(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.sales.product_lookup.execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+    incoming = IncomingMessage(
+        channel="whatsapp",
+        text="tem algum omega nessa faixa de preço?",
+    )
+    result, _decision, _interp = await apply_answer_council_with_retry(
+        _omega_draft(),
+        incoming=incoming,
+        interpretation=_interpretation(),
+        commerce_state=CommerceConversationState(
+            active_preferences={"budget": {"max": 5000}}
+        ),
+    )
+    text = result.reply_text or ""
+    assert "mais próximos" not in text
+    assert "Omega" not in text or "Não encontrei" in text
+    assert (result.commercial_data or {}).get("products") == []
+    assert result.response_metadata.get("answer_council_discarded_prior") is True
+
+
 def test_first_search_binds_memory_budget_and_forbids_near_match():
     interp = _interpretation(preferences={"budget_max": None, "occasion": "trabalho"})
     bound = apply_turn_contract_for_search(

@@ -669,6 +669,21 @@ def _continue_commerce_reply(
     return None
 
 
+def _discard_prior_reply_for_retrieve(result: AgentResult) -> AgentResult:
+    """MUST retrieve discards the previous LLM catalog copy before re-search."""
+    discarded = result.model_copy(deep=True)
+    discarded.reply_text = ""
+    commercial = dict(discarded.commercial_data or {})
+    commercial["products"] = []
+    discarded.commercial_data = commercial
+    metadata = dict(discarded.response_metadata or {})
+    metadata["presented_products"] = False
+    metadata["guided_near_match"] = False
+    metadata["answer_council_discarded_prior"] = True
+    discarded.response_metadata = metadata
+    return discarded
+
+
 def _fallback_blocked_reply(
     result: AgentResult,
     contract: TurnContract,
@@ -691,7 +706,12 @@ def _fallback_blocked_reply(
             return result
         if continue_only or skip_retrieve:
             return _continue_prompt_result()
-    return _honest_constraint_reply(result, contract, interpretation)
+    blocked = _honest_constraint_reply(result, contract, interpretation)
+    if (result.response_metadata or {}).get("answer_council_discarded_prior"):
+        metadata = dict(blocked.response_metadata or {})
+        metadata["answer_council_discarded_prior"] = True
+        blocked.response_metadata = metadata
+    return blocked
 
 
 def _honest_constraint_reply(
@@ -898,6 +918,7 @@ async def apply_answer_council_with_retry(
             return _finish_council(
                 blocked, decision, current_interp, contract, commerce_state
             )
+        current = _discard_prior_reply_for_retrieve(current)
         try:
             from .product_lookup import execute_compiled_product_retrieval
 

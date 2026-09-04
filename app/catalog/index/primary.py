@@ -51,6 +51,7 @@ def fetch_primary_index_candidates(
     *,
     limit: int | None = None,
     tenant_id: str | None = None,
+    message_text: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Return Tray-shaped products from ``ai_catalog_index`` and a strategy tag.
 
@@ -88,11 +89,23 @@ def fetch_primary_index_candidates(
             strategy = "exact_reference" if rows else None
 
         gender = preference_gender_label(interpretation)
+        case_range = None
+        try:
+            from app.catalog.specs.catalog_specs import interpretation_case_size_range
+
+            case_range = interpretation_case_size_range(
+                interpretation,
+                message_text=message_text,
+            )
+        except Exception:
+            case_range = None
+        min_case_mm, max_case_mm = case_range if case_range else (None, None)
         has_constraints = any(
             (
                 subject.brand,
                 prefs.budget_max is not None,
                 gender,
+                case_range,
             )
         )
         if not rows and has_constraints:
@@ -101,6 +114,8 @@ def fetch_primary_index_candidates(
                 brand=subject.brand,
                 gender=gender,
                 max_price=prefs.budget_max,
+                min_case_size_mm=min_case_mm,
+                max_case_size_mm=max_case_mm,
                 limit=lim,
             )
             if rows:

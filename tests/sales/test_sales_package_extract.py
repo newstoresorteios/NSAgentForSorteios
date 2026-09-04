@@ -64,6 +64,26 @@ def test_iq08_modules_reexported_from_sales_agent():
     assert respond_to_commerce_service.__name__ == "respond_to_commerce_service"
 
 
+def test_interpreter_and_responder_facades_reexport_from_sales_agent():
+    from app.sales.interpreter import interpretation_to_plan as pkg_plan
+    from app.sales.responder import (
+        generate_clarification_reply as pkg_clarify,
+        responder_contract as pkg_contract,
+        sales_response_with_openai as pkg_respond,
+    )
+    from app.sales_agent import (
+        _responder_contract,
+        _sales_response_with_openai,
+        generate_clarification_reply,
+        interpretation_to_plan as agent_plan,
+    )
+
+    assert pkg_plan is agent_plan
+    assert pkg_clarify is generate_clarification_reply
+    assert pkg_respond is _sales_response_with_openai
+    assert pkg_contract is _responder_contract
+
+
 def test_informational_payment_policy_without_cart():
     from app.sales.policies.action_authority import (
         informational_payment_policy_result,

@@ -411,6 +411,33 @@ async def search_products_by_tokens(
         return result
 
 
+async def _search_products_payload(
+    client: TrayAdapterClient,
+    filters: dict[str, Any],
+    limit: int,
+) -> Any:
+    """GET /internal/products. On adaptor 5xx, retry once without current_price_range."""
+    try:
+        return await client.search_products(**filters, limit=limit)
+    except TrayAdapterError as exc:
+        if (
+            filters.get("current_price_range")
+            and exc.status_code is not None
+            and int(exc.status_code) >= 500
+        ):
+            retry = {
+                key: value
+                for key, value in filters.items()
+                if key != "current_price_range"
+            }
+            print(
+                "[tray.search] retry_without_price_range",
+                {"status_code": exc.status_code},
+            )
+            return await client.search_products(**retry, limit=limit)
+        raise
+
+
 async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, Any]:
     tokens = _parse_search_tokens(args.pop("tokens", None))
     brand = args.get("brand")
@@ -459,7 +486,7 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
     for filters in attempts:
         if not filters:
             continue
-        payload = await client.search_products(**filters, limit=limit)
+        payload = await _search_products_payload(client, filters, limit)
         result = _reduce_products(payload, limit)
         if result["products"] or len(attempts) == 1:
             return result

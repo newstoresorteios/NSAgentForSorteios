@@ -83,6 +83,54 @@ def test_recommend_with_retrieval_stays_recommendation():
     assert plan["intent"] == "recommendation"
 
 
+def test_inspect_answer_directly_is_not_product_search():
+    from app.sales_agent import interpretation_to_plan
+
+    interpretation = _interpretation(
+        goal="inspect",
+        subject={"product_type": "relógio", "brand": "Bulova"},
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        information_needed=["catalog"],
+        purchase_action=None,
+        answer_strategy="answer_directly",
+    )
+    plan = interpretation_to_plan(interpretation, "usa bateria?")
+    assert plan["intent"] != "product_search"
+
+
+def test_inspect_without_strategy_is_not_product_search():
+    from app.sales_agent import interpretation_to_plan
+
+    interpretation = _interpretation(
+        goal="inspect",
+        subject={"product_type": "relógio", "brand": "Bulova"},
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        information_needed=["catalog"],
+        purchase_action=None,
+        answer_strategy=None,
+    )
+    plan = interpretation_to_plan(interpretation, "usa bateria?")
+    assert plan["intent"] != "product_search"
+
+
+def test_inspect_search_catalog_can_be_product_search():
+    from app.sales_agent import interpretation_to_plan
+
+    interpretation = _interpretation(
+        goal="inspect",
+        subject={"product_type": "relógio", "brand": "Tissot"},
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        information_needed=["catalog"],
+        purchase_action=None,
+        answer_strategy="search_catalog",
+    )
+    plan = interpretation_to_plan(interpretation, "tem Tissot PRX?")
+    assert plan["intent"] == "product_search"
+
+
 def test_find_with_retrieval_is_product_search_not_recommendation():
     from app.sales_agent import interpretation_to_plan
 

@@ -12,7 +12,7 @@ from app.learning.attendance_learning import (
     record_pipeline_block_review,
     run_attendance_learning_batch,
 )
-from app.learning.cases import format_learned_cases_block
+from app.learning.cases import format_learned_cases_block, list_active_cases, upsert_learning_case
 from app.learning.constitution import check_instruction_delta
 from app.learning.rollback import evaluate_canaries
 
@@ -154,6 +154,64 @@ def test_promote_creates_pending_extension_without_auto_activate(monkeypatch):
     assert params == (42, 7)
 
 
+def test_promote_flag_true_without_review_stays_pending(monkeypatch):
+    calls = {"approve": 0}
+
+    monkeypatch.setattr(
+        "app.learning.promote.get_settings",
+        lambda: SimpleNamespace(
+            agent_learning_auto_activate=True,
+            agent_learning_canary_hours=6,
+            agent_learning_max_instruction_chars=800,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.learning.constitution.get_settings",
+        lambda: SimpleNamespace(agent_learning_max_instruction_chars=800),
+    )
+    monkeypatch.setattr(
+        "app.learning.promote.create_extension_proposal",
+        lambda **_k: {"id": 77, "status": "pending_review"},
+    )
+    monkeypatch.setattr(
+        "app.learning.promote.approve_extension",
+        lambda *_a, **_k: calls.update(approve=calls["approve"] + 1) or {"id": 77},
+    )
+
+    class FakeCursor:
+        def execute(self, sql, params=None):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("app.learning.promote.get_conn", lambda: FakeConn())
+
+    ext_id = promote_insights_to_extensions(
+        tenant_id="newstore",
+        insight_id=8,
+        category="policy",
+        insight_text="Não recusar o pedido de seminovo com política inventada; siga o handler de trade-in.",
+        confidence=0.8,
+        importance=0.7,
+    )
+    assert ext_id == 77
+    assert calls["approve"] == 0
+
+
 def test_promote_auto_approves_when_flag_true(monkeypatch):
     calls: dict = {}
     monkeypatch.setattr(
@@ -198,6 +256,7 @@ def test_promote_auto_approves_when_flag_true(monkeypatch):
         ),
         confidence=0.9,
         importance=0.8,
+        reviewed=True,
     )
     assert ext_id == 99
     assert calls["approve"]["approved_by"] == "learning_auto"
@@ -668,3 +727,45 @@ def test_format_learned_cases_block():
     assert "<learned_cases>" in block
     assert "Baltic MK2" in block
     assert "Busque o modelo pedido" in block
+
+
+def test_learning_cases_silence_missing_table(monkeypatch):
+    import psycopg
+
+    class MissingTable(psycopg.Error):
+        sqlstate = "42P01"
+
+        def __str__(self):
+            return 'relation "ai_learning_cases" does not exist'
+
+    class BoomCursor:
+        def execute(self, *_a, **_k):
+            raise MissingTable()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class BoomConn:
+        def cursor(self):
+            return BoomCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("app.learning.cases.get_conn", lambda: BoomConn())
+
+    assert upsert_learning_case(
+        tenant_id="newstore",
+        failure_code="ignored_model",
+        conversation_key="c1",
+        customer_excerpt="quero o Baltic",
+        bad_reply="Separei outro",
+        correction="Busque o modelo pedido.",
+    ) is None
+    assert list_active_cases(tenant_id="newstore") == []

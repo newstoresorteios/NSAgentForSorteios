@@ -165,6 +165,14 @@ class SalesInterpretation(BaseModel):
     ] | None = None
     domain_change_explicit: bool = Field(default_factory=bool)
     confidence: float = Field(ge=0.0, le=1.0)
+    answer_strategy: Literal[
+        "answer_directly",
+        "search_catalog",
+        "clarify",
+        "handoff",
+        "refuse",
+        "acknowledge",
+    ] | None = None
 
     _source: str = PrivateAttr(default="openai")
     _fallback_reason: str | None = PrivateAttr(default=None)
@@ -174,6 +182,13 @@ class SalesInterpretation(BaseModel):
     _turn_contract_bound: bool = PrivateAttr(default=False)
     _excluded_product_ids: list[str] = PrivateAttr(default_factory=list)
     _turn_understanding: Any = PrivateAttr(default=None)
+
+    def resolved_answer_strategy(self) -> str | None:
+        """Public field first; private TurnUnderstanding is only a fallback."""
+        if self.answer_strategy:
+            return self.answer_strategy
+        turn = self._turn_understanding
+        return getattr(turn, "answer_strategy", None)
 
 
 class IncomingMessage(BaseModel):

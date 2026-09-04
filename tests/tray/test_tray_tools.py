@@ -242,6 +242,35 @@ async def test_category_and_variant_tools_reduce_payloads():
 
 
 @pytest.mark.asyncio
+async def test_search_retries_without_price_range_on_adaptor_500():
+    class PriceRangeBoomTray:
+        def __init__(self):
+            self.calls = []
+
+        async def search_products(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("current_price_range"):
+                raise TrayAdapterError("tray_adapter_http_500", status_code=500)
+            return {
+                "products": [
+                    {"id": "1", "name": "Seiko 5", "current_price": 1800},
+                ]
+            }
+
+    client = PriceRangeBoomTray()
+    result = await search_products(
+        client,
+        brand="Seiko",
+        current_price_range="0,2500",
+        limit=5,
+    )
+    assert len(client.calls) == 2
+    assert client.calls[0].get("current_price_range") == "0,2500"
+    assert "current_price_range" not in client.calls[1]
+    assert result["products"][0]["id"] == "1"
+
+
+@pytest.mark.asyncio
 async def test_category_http_422_is_preserved_as_invalid_request():
     class InvalidCategoryTray:
         async def list_categories(self, **kwargs):

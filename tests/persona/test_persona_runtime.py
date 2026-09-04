@@ -99,6 +99,25 @@ def test_build_runtime_reads_chatbo_greeting_and_tone():
     assert "Limite operacional" in runtime.sales_skills_block()
 
 
+def test_interpreter_policy_omits_example_prompts():
+    runtime = build_persona_runtime(
+        active=_persona(),
+        chatbo_profile={
+            "examples": [
+                "Oi Tironi, sou o Crono da New Store.",
+                "Posso te mostrar três opções.",
+            ],
+            "recommendation_rules": ["Nunca apresentar mais de 3 peças de uma vez"],
+        },
+    )
+    skills = runtime.sales_skills_block()
+    policy = runtime.interpreter_policy_block()
+    assert "Exemplos de boa resposta:" in skills
+    assert "Tironi" in skills
+    assert "Exemplos de boa resposta:" not in policy
+    assert "Tironi" not in policy
+
+
 def test_contextvar_roundtrip():
     runtime = build_persona_runtime(active=_persona())
     token = set_persona_runtime(runtime)

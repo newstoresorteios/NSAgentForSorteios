@@ -26,6 +26,7 @@ async def serve_index_when_tray_unavailable(
     interpretation: SalesInterpretation,
     *,
     reason: str,
+    message_text: str | None = None,
 ) -> AgentResult | None:
     """IQ-06: exact/SKU turns must not die on Tray auth 503 if the durable index has hits."""
     if not bool(getattr(_runtime.get_settings(), "agent_catalog_index_read_enabled", True)):
@@ -35,6 +36,7 @@ async def serve_index_when_tray_unavailable(
     index_rows, strategy = fetch_primary_index_candidates(
         interpretation,
         limit=max(customer_result_limit() * 4, 20),
+        message_text=message_text,
     )
     if not index_rows:
         print(
@@ -164,6 +166,7 @@ async def handle_empty_candidates(session: RetrievalSession) -> AgentResult | No
         fallback = await serve_index_when_tray_unavailable(
             interpretation,
             reason="catalog_lookup_failed",
+            message_text=session.message_text,
         )
         if fallback is not None:
             return fallback
@@ -181,6 +184,7 @@ async def handle_empty_candidates(session: RetrievalSession) -> AgentResult | No
         index_rows, _strategy = fetch_primary_index_candidates(
             interpretation,
             limit=max(plan.candidate_limit, 30),
+            message_text=session.message_text,
         )
         if index_rows:
             soft = prefer_dial_and_case_matches(
@@ -232,11 +236,20 @@ async def handle_hard_filter_miss(session: RetrievalSession) -> AgentResult | No
         budget_miss = session.budget_hard_miss(interpretation, session.candidates)
         if budget_miss is not None:
             return budget_miss
+        if session.product_lookup_failed and not session.catalog_probe_ok:
+            fallback = await serve_index_when_tray_unavailable(
+                interpretation,
+                reason="recommendation_hard_filter_empty_tray_down",
+                message_text=session.message_text,
+            )
+            if fallback is not None:
+                return fallback
     if plan.mode == "exact":
         if session.product_lookup_failed and not session.catalog_probe_ok:
             fallback = await serve_index_when_tray_unavailable(
                 interpretation,
                 reason="exact_hard_filter_empty_tray_down",
+                message_text=session.message_text,
             )
             if fallback is not None:
                 return fallback

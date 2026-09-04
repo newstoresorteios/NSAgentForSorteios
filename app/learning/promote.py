@@ -67,8 +67,9 @@ def promote_insights_to_extensions(
     importance: float,
     baseline_fail_rate: float | None = None,
     baseline_reviews: int | None = None,
+    reviewed: bool = False,
 ) -> int | None:
-    """Create an instruction extension and optionally auto-activate as canary."""
+    """Create an instruction extension. Activate only after explicit review."""
     settings = get_settings()
     ok, reason = check_instruction_delta(insight_text)
     if not ok:
@@ -86,7 +87,9 @@ def promote_insights_to_extensions(
     extension_key = f"learning:{category}:{insight_id}"
     canary_hours = int(getattr(settings, "agent_learning_canary_hours", 6) or 6)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=max(1, canary_hours))
-    auto_activate = bool(getattr(settings, "agent_learning_auto_activate", False))
+    auto_activate = bool(getattr(settings, "agent_learning_auto_activate", False)) and bool(
+        reviewed
+    )
     meta = {
         "source": "attendance_learning",
         "insight_id": insight_id,

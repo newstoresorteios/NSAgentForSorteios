@@ -123,6 +123,16 @@ def _clean_url(value: str) -> str:
     return value.rstrip(".,;:!?)]}\"'")
 
 
+def _is_customer_budget_amount(amount: Decimal, budget: Decimal) -> bool:
+    """True when the reply restates the customer's teto, including 'R$ 2.500'."""
+    quantized = budget.quantize(Decimal("0.01"))
+    if amount == quantized:
+        return True
+    if quantized >= 1000 and (amount * Decimal(1000)).quantize(Decimal("0.01")) == quantized:
+        return True
+    return False
+
+
 def _money_decimal(value: Any) -> Decimal | None:
     if value is None or isinstance(value, bool):
         return None
@@ -694,9 +704,31 @@ def validate_factual_response(
         safe_money.discard(None)
         trusted_amounts = set(safe_money) | set(pack.monetary_values)
         trusted_amounts.discard(None)
+        customer_budget = _budget_max_from_context(result, commerce_state)
+        customer_budget_amount = (
+            _money_decimal(customer_budget) if customer_budget is not None else None
+        )
+        products = (result.commercial_data or {}).get("products") or []
+        has_products = isinstance(products, list) and any(
+            isinstance(item, dict) for item in products
+        )
         for amount_text in _MONEY_RE.findall(text):
             amount = _money_decimal(amount_text)
             if amount is None:
+                continue
+            if (
+                not has_products
+                and customer_budget_amount is not None
+                and _is_customer_budget_amount(amount, customer_budget_amount)
+            ):
+                report.checked_claims += 1
+                report.supported_claims.append(
+                    FactClaim(
+                        kind="money",
+                        claim=str(amount),
+                        reason="customer_budget_restated",
+                    )
+                )
                 continue
             report.checked_claims += 1
             matching = [
@@ -938,7 +970,16 @@ def apply_factual_validation(
         trusted_domains=trusted_domains,
         commerce_state=commerce_state,
     )
-    if mode == "enforce" and report.fallback_required and report.violations:
+    keep_honest_miss = result.safety_reason in {
+        "recommendation_budget_miss",
+        "answer_council_blocked",
+    }
+    if (
+        mode == "enforce"
+        and report.fallback_required
+        and report.violations
+        and not keep_honest_miss
+    ):
         fallback = str(
             (result.response_metadata or {}).get("factual_fallback_text")
             or ""

@@ -66,6 +66,10 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
     if incoming is None:
         mark_inbox_failed(inbox_id, error="invalid_inbox_payload", dead=True)
         return {"ok": False, "inbox_id": inbox_id, "error": "invalid_inbox_payload"}
+    if not incoming.conversation_id:
+        row_cid = str(row.get("conversation_key") or "").strip()
+        if row_cid:
+            incoming.conversation_id = row_cid
 
     if not (incoming.image_url or "").strip() and is_caption_echo_of_recent_image(
         incoming
@@ -120,10 +124,26 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
         mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
         return {"ok": True, "inbox_id": inbox_id, "skipped": "already_sent"}
 
+    from app.llm.llm_call_policy import build_llm_call_budget
     from app.message_pipeline import process_incoming_message
+    from app.ops.runtime_context import reset_current_turn, set_current_turn
+    from app.ops.turn_runtime import LLMCallBudget, TurnRuntimeContext
 
     customer_context = await _customer_context_for(incoming)
-    result = await process_incoming_message(incoming, customer_context)
+    budget_cfg = build_llm_call_budget(execution_path="normal")
+    turn = TurnRuntimeContext(
+        trace_id=f"inbox-{inbox_id}",
+        llm_budget=LLMCallBudget(
+            max_calls=int(budget_cfg.get("max_calls") or 2),
+            enforce=True,
+        ),
+    )
+    turn.execution_path = str(budget_cfg.get("execution_path") or "normal")
+    token = set_current_turn(turn)
+    try:
+        result = await process_incoming_message(incoming, customer_context)
+    finally:
+        reset_current_turn(token)
     send_info = await _send_reply(incoming, result)
     send_ok = bool(send_info.get("ok"))
 

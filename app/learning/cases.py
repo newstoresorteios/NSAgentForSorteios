@@ -5,7 +5,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import psycopg
+
 from app.db import get_conn, get_returning_id, to_jsonb
+
+
+def _is_undefined_table(exc: BaseException) -> bool:
+    sqlstate = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
+    if str(sqlstate or "") == "42P01":
+        return True
+    message = str(exc).casefold()
+    return "42p01" in message or (
+        "ai_learning_cases" in message and "does not exist" in message
+    )
 
 
 def upsert_learning_case(
@@ -21,52 +33,58 @@ def upsert_learning_case(
 ) -> int | None:
     now = datetime.now(timezone.utc)
     case_key = f"learning:{failure_code}"
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO public.ai_learning_cases (
-                    tenant_id, case_key, conversation_key, failure_codes,
-                    customer_excerpt, bad_reply, correction, status,
-                    insight_id, importance, created_at, updated_at, metadata
-                )
-                VALUES (
-                    %s, %s, %s, %s,
-                    %s, %s, %s, 'active',
-                    %s, %s, %s, %s, %s
-                )
-                ON CONFLICT (tenant_id, case_key) DO UPDATE SET
-                    conversation_key = EXCLUDED.conversation_key,
-                    failure_codes = EXCLUDED.failure_codes,
-                    customer_excerpt = EXCLUDED.customer_excerpt,
-                    bad_reply = EXCLUDED.bad_reply,
-                    correction = EXCLUDED.correction,
-                    status = 'active',
-                    insight_id = COALESCE(EXCLUDED.insight_id, public.ai_learning_cases.insight_id),
-                    importance = GREATEST(
-                        public.ai_learning_cases.importance,
-                        EXCLUDED.importance
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO public.ai_learning_cases (
+                        tenant_id, case_key, conversation_key, failure_codes,
+                        customer_excerpt, bad_reply, correction, status,
+                        insight_id, importance, created_at, updated_at, metadata
+                    )
+                    VALUES (
+                        %s, %s, %s, %s,
+                        %s, %s, %s, 'active',
+                        %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (tenant_id, case_key) DO UPDATE SET
+                        conversation_key = EXCLUDED.conversation_key,
+                        failure_codes = EXCLUDED.failure_codes,
+                        customer_excerpt = EXCLUDED.customer_excerpt,
+                        bad_reply = EXCLUDED.bad_reply,
+                        correction = EXCLUDED.correction,
+                        status = 'active',
+                        insight_id = COALESCE(EXCLUDED.insight_id, public.ai_learning_cases.insight_id),
+                        importance = GREATEST(
+                            public.ai_learning_cases.importance,
+                            EXCLUDED.importance
+                        ),
+                        updated_at = EXCLUDED.updated_at,
+                        metadata = EXCLUDED.metadata
+                    RETURNING id
+                    """,
+                    (
+                        tenant_id,
+                        case_key,
+                        conversation_key,
+                        to_jsonb([failure_code]),
+                        (customer_excerpt or "")[:400],
+                        (bad_reply or "")[:400],
+                        (correction or "")[:800],
+                        insight_id,
+                        importance,
+                        now,
+                        now,
+                        to_jsonb({"failure_code": failure_code}),
                     ),
-                    updated_at = EXCLUDED.updated_at,
-                    metadata = EXCLUDED.metadata
-                RETURNING id
-                """,
-                (
-                    tenant_id,
-                    case_key,
-                    conversation_key,
-                    to_jsonb([failure_code]),
-                    (customer_excerpt or "")[:400],
-                    (bad_reply or "")[:400],
-                    (correction or "")[:800],
-                    insight_id,
-                    importance,
-                    now,
-                    now,
-                    to_jsonb({"failure_code": failure_code}),
-                ),
-            )
-            return get_returning_id(cur.fetchone())
+                )
+                return get_returning_id(cur.fetchone())
+    except psycopg.Error as exc:
+        if _is_undefined_table(exc):
+            print("[learning.cases] table_missing", {"op": "upsert", "sqlstate": "42P01"})
+            return None
+        raise
 
 
 def list_active_cases(
@@ -77,20 +95,26 @@ def list_active_cases(
     safe_limit = max(0, min(int(limit), 20))
     if safe_limit == 0:
         return []
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT *
-                FROM public.ai_learning_cases
-                WHERE tenant_id = %s
-                  AND status = 'active'
-                ORDER BY importance DESC NULLS LAST, updated_at DESC
-                LIMIT %s
-                """,
-                (tenant_id, safe_limit),
-            )
-            return [dict(row) for row in (cur.fetchall() or [])]
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM public.ai_learning_cases
+                    WHERE tenant_id = %s
+                      AND status = 'active'
+                    ORDER BY importance DESC NULLS LAST, updated_at DESC
+                    LIMIT %s
+                    """,
+                    (tenant_id, safe_limit),
+                )
+                return [dict(row) for row in (cur.fetchall() or [])]
+    except psycopg.Error as exc:
+        if _is_undefined_table(exc):
+            print("[learning.cases] table_missing", {"op": "list", "sqlstate": "42P01"})
+            return []
+        raise
 
 
 def format_learned_cases_block(

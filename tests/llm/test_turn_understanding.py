@@ -173,6 +173,7 @@ def test_roundtrip_adapters_preserve_commerce_fields():
     sales = turn_understanding_to_sales(understanding)
     assert sales.domain == "commerce"
     assert sales.goal == "recommend"
+    assert sales.answer_strategy == "search_catalog"
     assert sales.preferences.budget_max == 3000
     assert sales.preferences.recipient == "feminino"
     assert sales.needs_clarification is False

@@ -295,9 +295,35 @@ def build_qualification_snapshot(
     # do not re-read interpretation.preferences here or scrub is bypassed.
     has_budget = bool(covered & _QUAL_BUDGET_DIMS)
     has_style = bool(covered & _QUAL_STYLE_DIMS)
-    has_recipient = "customer_name" in covered
     has_urgency = _has_urgency_signal(interpretation)
     clarification_count = int(discovery_state.get("clarification_count") or 0)
+    fulfillment_dims: set[str] = set()
+    try:
+        from .qualification_slots import (
+            QUALIFICATION_SLOT_DIMS,
+            covered_fulfillment_dims,
+        )
+
+        fulfillment_dims = covered_fulfillment_dims(interpretation)
+        fulfillment_dims |= covered & {
+            "brand",
+            "budget",
+            "style",
+            "occasion",
+            "product_type",
+            "case_size",
+            "sku",
+        }
+        if "occasion" in fulfillment_dims:
+            fulfillment_dims.add("style")
+        qualification_dims = (covered & QUALIFICATION_SLOT_DIMS) | (
+            {"urgency"} if has_urgency else set()
+        )
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.fulfillment_dims", exc)
+        qualification_dims = {"urgency"} if has_urgency else set()
 
     required = _persona_requires_qualification()
     satisfied_by: str | None = None
@@ -321,26 +347,10 @@ def build_qualification_snapshot(
     elif has_brand and has_style:
         ready = True
         satisfied_by = "brand+style"
-    elif has_brand and has_urgency:
-        ready = True
-        satisfied_by = "brand+urgency"
     elif has_product_type and has_budget and has_style:
         ready = True
         satisfied_by = "type+budget+style"
-    elif has_product_type and has_budget and (has_recipient or has_urgency):
-        ready = True
-        satisfied_by = "type+budget+signal"
-    else:
-        try:
-            from .qualification_slots import qualification_slots_sufficient
-
-            if qualification_slots_sufficient(interpretation, covered):
-                ready = True
-                satisfied_by = "qual_slots_complete"
-        except Exception as exc:
-            from app.sales import log_swallowed
-
-            log_swallowed("discovery.qual_slots_sufficient", exc)
+    # Name/city/urgency never unlock catalog search.
 
     missing: list[str] = []
     if not has_budget:
@@ -349,9 +359,8 @@ def build_qualification_snapshot(
         missing.append("style")
     if not has_brand and not has_product_type:
         missing.append("subject")
-    if has_brand and not has_budget and not has_style and not has_urgency:
-        # Still need one unlocking signal beyond brand.
-        pass
+    if has_brand and not has_budget and not has_style:
+        missing.append("fulfillment")
 
     return {
         "required": required,
@@ -364,6 +373,19 @@ def build_qualification_snapshot(
         "has_budget": has_budget,
         "has_style": has_style,
         "has_urgency": has_urgency,
+        "fulfillment_ready": ready
+        and satisfied_by
+        in {
+            "brand+budget",
+            "brand+style",
+            "type+budget+style",
+            "sku_lock",
+            "stop_clarification",
+            "max_questions",
+            "persona_qualification_off",
+        },
+        "fulfillment_dims": sorted(fulfillment_dims),
+        "qualification_dims": sorted(qualification_dims),
         "clarification_count": clarification_count,
         "max_questions": _QUAL_MAX_QUESTIONS,
     }
@@ -617,6 +639,9 @@ def _discovery_state(
     ):
         force_retrieval = True
         enough_information = True
+    if message_states_budget(message_text) and subject_identifiable:
+        force_retrieval = True
+        enough_information = True
     recent_questions = [
         str(turn.get("content") or "").strip()
         for turn in recent_turns or []
@@ -705,6 +730,11 @@ def _discovery_state(
         from app.sales import log_swallowed
 
         log_swallowed("discovery.dialogue_phase_gates", exc)
+    strategy = interpretation.resolved_answer_strategy()
+    if strategy in {"acknowledge", "clarify", "handoff", "refuse"}:
+        state["force_retrieval"] = False
+    elif strategy == "answer_directly" and interpretation.goal == "inspect":
+        state["force_retrieval"] = False
     return state
 
 

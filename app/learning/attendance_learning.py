@@ -257,7 +257,7 @@ async def run_attendance_learning_batch(
     )
     row_limit = limit or int(getattr(settings, "agent_learning_batch_limit", 500) or 500)
     if auto_promote is None:
-        auto_apply = bool(getattr(settings, "agent_learning_auto_promote", True))
+        auto_apply = bool(getattr(settings, "agent_learning_auto_promote", False))
     else:
         auto_apply = bool(auto_promote)
     max_clusters = int(getattr(settings, "agent_learning_max_clusters", 5) or 5)

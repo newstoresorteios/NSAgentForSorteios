@@ -655,6 +655,7 @@ def turn_understanding_to_sales(
         purchase_stage=understanding.purchase_stage,
         domain_change_explicit=understanding.domain_change_explicit,
         confidence=understanding.confidence,
+        answer_strategy=understanding.answer_strategy,
     )
     interpretation._source = understanding._source
     interpretation._fallback_reason = understanding._fallback_reason
@@ -770,8 +771,18 @@ def sales_to_turn_understanding(
     if not tools:
         tools = ["none"]
 
-    if interpretation.needs_clarification:
-        strategy: AnswerStrategy = "clarify"
+    persisted = interpretation.resolved_answer_strategy()
+    if persisted in {
+        "answer_directly",
+        "search_catalog",
+        "clarify",
+        "handoff",
+        "refuse",
+        "acknowledge",
+    }:
+        strategy: AnswerStrategy = persisted  # type: ignore[assignment]
+    elif interpretation.needs_clarification:
+        strategy = "clarify"
     elif interpretation.ready_for_retrieval or interpretation.enough_information_to_search:
         strategy = "search_catalog"
     elif interpretation.domain == "greeting":
@@ -846,4 +857,5 @@ def attach_turn_understanding(
     understanding: TurnUnderstanding,
 ) -> SalesInterpretation:
     interpretation._turn_understanding = understanding  # type: ignore[attr-defined]
+    interpretation.answer_strategy = understanding.answer_strategy
     return interpretation

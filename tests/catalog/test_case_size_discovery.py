@@ -15,11 +15,20 @@ from app.sales.discovery import _discovery_state
 def test_extract_case_size_range_variants():
     assert extract_case_size_range_from_text("Me mande opções entre 36 até 38mm") == (36, 38)
     assert extract_case_size_range_from_text("tamanhos de 36 a 38 mm") == (36, 38)
+    assert extract_case_size_range_from_text("entre 36 e 38 milímetros") == (36, 38)
     assert extract_case_size_range_from_text("Gostei desse, 43/44mm") == (43, 44)
     assert extract_case_size_range_from_text("pulso pequeno") is None
     assert extract_case_size_range_from_text("caixa acima de 40mm") == (40, 55)
     assert extract_case_size_range_from_text("maior que 40 mm") == (40, 55)
     assert extract_case_size_range_from_text("a partir de 42mm") == (42, 55)
+    assert extract_case_size_range_from_text("quero caixa até 40mm") == (28, 40)
+    assert extract_case_size_range_from_text("até 38 milímetros") == (28, 38)
+    assert extract_case_size_range_from_text("menor que 42mm") == (28, 41)
+    assert extract_case_size_range_from_text("caixa menor que 40") == (28, 39)
+    assert extract_case_size_range_from_text("abaixo de 40 milímetros") == (28, 39)
+    assert extract_case_size_range_from_text("no máximo 42mm") == (28, 42)
+    assert extract_case_size_range_from_text("Até 3500") is None
+    assert extract_case_size_range_from_text("até 2500 reais") is None
 
 
 def test_message_requests_other_brands():

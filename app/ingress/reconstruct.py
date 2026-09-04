@@ -90,4 +90,17 @@ def incoming_from_inbox_payload(payload: Any) -> IncomingMessage | None:
         return None
     if story_obj is not None:
         incoming.instagram_story = story_obj
+    if not incoming.conversation_id:
+        raw = incoming.raw if isinstance(incoming.raw, dict) else {}
+        for candidate in (
+            data.get("conversation_id"),
+            data.get("conversationId"),
+            data.get("conversation_key"),
+            raw.get("conversation_id") if isinstance(raw, dict) else None,
+            raw.get("conversationId") if isinstance(raw, dict) else None,
+        ):
+            value = str(candidate or "").strip()
+            if value:
+                incoming.conversation_id = value
+                break
     return incoming

@@ -4,7 +4,7 @@ import pytest
 
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.llm.openai_runtime import execute_openai_call_sync
-from app.ops.runtime_context import reset_current_turn, set_current_turn
+from app.ops.runtime_context import get_current_turn, reset_current_turn, set_current_turn
 from app.ops.turn_runtime import (
     LLMCallBudget,
     LLMCallBudgetExceeded,
@@ -286,3 +286,34 @@ async def test_budget_exceeded_on_clarification_uses_deterministic_fallback(monk
 
     assert result.response_metadata.get("response_source") == "deterministic_fallback"
     assert "modelo" in result.reply_text.lower()
+
+
+def test_pipeline_budget_does_not_override_eval_enforce_false():
+    from app.message_pipeline import _ensure_live_turn_budget
+
+    token = set_current_turn(_turn(max_calls=6, enforce=False))
+    try:
+        owned = _ensure_live_turn_budget(IncomingMessage(text="oi"))
+        assert owned is None
+        runtime = get_current_turn()
+        assert runtime is not None
+        assert runtime.llm_budget.enforce is False
+        assert runtime.llm_budget.max_calls == 6
+    finally:
+        reset_current_turn(token)
+
+
+def test_pipeline_budget_creates_enforced_turn_when_missing():
+    from app.message_pipeline import _ensure_live_turn_budget
+    from app.ops.runtime_context import get_current_turn
+
+    assert get_current_turn() is None
+    token = _ensure_live_turn_budget(IncomingMessage(text="oi", sender_phone="5511999999999"))
+    try:
+        runtime = get_current_turn()
+        assert runtime is not None
+        assert runtime.llm_budget.enforce is True
+        assert runtime.llm_budget.max_calls >= 1
+    finally:
+        if token is not None:
+            reset_current_turn(token)

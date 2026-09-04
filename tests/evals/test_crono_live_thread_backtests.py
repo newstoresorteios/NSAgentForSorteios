@@ -273,6 +273,7 @@ def test_golden_inspect_battery_skips_catalog_fanout():
         ready_for_retrieval=True,
         needs_clarification=False,
     )
+    inspect.answer_strategy = "answer_directly"
     attach_turn_understanding(
         inspect,
         TurnUnderstanding(
@@ -318,6 +319,8 @@ async def test_golden_budget_this_turn_uses_index_not_tray_fanout(monkeypatch):
                 "available": True,
                 "available_in_store": True,
             }
+        if name == "list_product_variants":
+            return {"variants": []}
         raise AssertionError(f"unexpected tray call: {name} {arguments}")
 
     index_products = [

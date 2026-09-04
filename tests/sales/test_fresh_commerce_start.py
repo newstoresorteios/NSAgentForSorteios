@@ -174,6 +174,25 @@ def test_idle_position_pick_keeps_shortlist():
     ) is False
 
 
+def test_same_thread_new_catalog_ask_resets_shortlist():
+    state = _shortlist_state()
+    assert should_reset_browse_memory(
+        "quero relógios até 2500",
+        conversation_id="thread-old",
+        state=state,
+    )
+    assert should_reset_browse_memory(
+        "qualquer marca",
+        conversation_id="thread-old",
+        state=state,
+    )
+    assert should_reset_browse_memory(
+        "quero um seiko",
+        conversation_id="thread-old",
+        state=state,
+    )
+
+
 def test_filling_in_conversation_id_is_not_a_new_thread():
     state = _shortlist_state(last_conversation_id=None)
     assert should_reset_browse_memory(

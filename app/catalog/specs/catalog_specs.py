@@ -231,15 +231,42 @@ def interpretation_wants_diver(interpretation: Any) -> bool:
     )
 
 
+_MM_UNIT = r"(?:mm|milimetros?)"
+_CASE_CONTEXT = r"(?:caixa|tamanho|medida|pulso|diametro)"
 _CASE_RANGE_RE = re.compile(
-    r"(?:entre|de)\s*(\d{2})\s*(?:a|ate|at[eé]|[-–/])\s*(\d{2})\s*mm"
-    r"|(\d{2})\s*(?:a|ate|at[eé]|[-–/])\s*(\d{2})\s*mm",
+    rf"(?:entre|de)\s*(\d{{2}})\s*(?:a|ate|at[eé]|e|[-–/])\s*(\d{{2}})\s*{_MM_UNIT}"
+    rf"|(\d{{2}})\s*(?:a|ate|at[eé]|[-–/])\s*(\d{{2}})\s*{_MM_UNIT}",
     re.IGNORECASE,
 )
 _CASE_OPEN_MIN_RE = re.compile(
-    r"(?:acima\s+de|maior\s+(?:que|do\s+que)|a\s+partir\s+de|mais\s+de)\s*(\d{2})\s*mm",
+    rf"(?:acima\s+de|maior\s+(?:que|do\s+que)|a\s+partir\s+de|mais\s+de)\s*(\d{{2}})\s*{_MM_UNIT}",
     re.IGNORECASE,
 )
+_CASE_OPEN_MAX_INCLUSIVE_RE = re.compile(
+    rf"(?:ate|at[eé]|no\s+m[aá]ximo|menor\s+ou\s+igual(?:\s+a)?)\s*(\d{{2}})\s*{_MM_UNIT}",
+    re.IGNORECASE,
+)
+_CASE_OPEN_MAX_EXCLUSIVE_RE = re.compile(
+    rf"(?:menor\s+que|abaixo\s+de)\s*(\d{{2}})\s*{_MM_UNIT}",
+    re.IGNORECASE,
+)
+_CASE_OPEN_MIN_CTX_RE = re.compile(
+    rf"{_CASE_CONTEXT}\s+(?:de\s+)?(?:acima\s+de|maior\s+(?:que|do\s+que)|a\s+partir\s+de|mais\s+de)\s*(\d{{2}})\b",
+    re.IGNORECASE,
+)
+_CASE_OPEN_MAX_INCLUSIVE_CTX_RE = re.compile(
+    rf"{_CASE_CONTEXT}\s+(?:de\s+)?(?:ate|at[eé]|no\s+m[aá]ximo|menor\s+ou\s+igual(?:\s+a)?)\s*(\d{{2}})\b",
+    re.IGNORECASE,
+)
+_CASE_OPEN_MAX_EXCLUSIVE_CTX_RE = re.compile(
+    rf"{_CASE_CONTEXT}\s+(?:de\s+)?(?:menor\s+que|abaixo\s+de)\s*(\d{{2}})\b",
+    re.IGNORECASE,
+)
+_CASE_SINGLE_RE = re.compile(
+    rf"\b(3[0-9]|4[0-5])\s*{_MM_UNIT}\b",
+    re.IGNORECASE,
+)
+_CASE_SIZE_ABS_MIN_MM = 28
 _CASE_SIZE_ABS_MAX_MM = 55
 _SMALL_WRIST_RE = re.compile(
     r"\b(pulso\s*(?:pequeno|menor|fin[oa])|caixa\s*menor|tamanho\s*menor)\b",
@@ -292,8 +319,20 @@ _CHRONOGRAPH_RE = re.compile(
 _EXCLUDE_BRAND_ATTR_PREFIX = "exclude_brand:"
 
 
+def _valid_case_mm(value: int) -> bool:
+    return _CASE_SIZE_ABS_MIN_MM <= value <= _CASE_SIZE_ABS_MAX_MM
+
+
+def _open_max_range(high: int, *, exclusive: bool) -> tuple[int, int] | None:
+    if exclusive:
+        high -= 1
+    if not _valid_case_mm(high):
+        return None
+    return _CASE_SIZE_ABS_MIN_MM, high
+
+
 def extract_case_size_range_from_text(text: str | None) -> tuple[int, int] | None:
-    """Parse explicit mm ranges such as '36 até 38mm' or 'entre 36 e 38 mm'."""
+    """Parse explicit mm ranges such as '36 até 38mm', 'até 40mm', 'menor que 42 milímetros'."""
     blob = _fold(text)
     if not blob:
         return None
@@ -303,19 +342,33 @@ def extract_case_size_range_from_text(text: str | None) -> tuple[int, int] | Non
         high = int(match.group(2) or match.group(4))
         if low > high:
             low, high = high, low
-        if 28 <= low <= _CASE_SIZE_ABS_MAX_MM and 28 <= high <= _CASE_SIZE_ABS_MAX_MM:
+        if _valid_case_mm(low) and _valid_case_mm(high):
             return low, high
-    open_min = _CASE_OPEN_MIN_RE.search(blob)
+    open_min = _CASE_OPEN_MIN_RE.search(blob) or _CASE_OPEN_MIN_CTX_RE.search(blob)
     if open_min:
         low = int(open_min.group(1))
-        if 28 <= low <= _CASE_SIZE_ABS_MAX_MM:
+        if _valid_case_mm(low):
             return low, _CASE_SIZE_ABS_MAX_MM
-    singles = [int(item) for item in re.findall(r"\b(3[0-9]|4[0-5])\s*mm\b", blob)]
+    exclusive_max = _CASE_OPEN_MAX_EXCLUSIVE_RE.search(blob) or _CASE_OPEN_MAX_EXCLUSIVE_CTX_RE.search(
+        blob
+    )
+    if exclusive_max:
+        parsed = _open_max_range(int(exclusive_max.group(1)), exclusive=True)
+        if parsed:
+            return parsed
+    inclusive_max = _CASE_OPEN_MAX_INCLUSIVE_RE.search(blob) or _CASE_OPEN_MAX_INCLUSIVE_CTX_RE.search(
+        blob
+    )
+    if inclusive_max:
+        parsed = _open_max_range(int(inclusive_max.group(1)), exclusive=False)
+        if parsed:
+            return parsed
+    singles = [int(item) for item in _CASE_SINGLE_RE.findall(blob)]
     if len(singles) >= 2:
         low, high = min(singles[:2]), max(singles[:2])
-        if 28 <= low <= _CASE_SIZE_ABS_MAX_MM and 28 <= high <= _CASE_SIZE_ABS_MAX_MM:
+        if _valid_case_mm(low) and _valid_case_mm(high):
             return low, high
-    if len(singles) == 1 and 28 <= singles[0] <= _CASE_SIZE_ABS_MAX_MM:
+    if len(singles) == 1 and _valid_case_mm(singles[0]):
         return singles[0], singles[0]
     return None
 

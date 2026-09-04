@@ -39,15 +39,17 @@ class SalesIntentRoute:
     skip_catalog_fanout: bool = False
 
 
+_TALK_STRATEGIES = frozenset(
+    {"acknowledge", "clarify", "handoff", "refuse"}
+)
+
+
 def should_skip_catalog_fanout(interpretation: SalesInterpretation | None) -> bool:
     """Talk/inspect turns must not fan-out Tray list search."""
     if interpretation is None or interpretation.purchase_action:
         return False
-    from app.llm.turn_understanding import get_turn_understanding
-
-    turn = get_turn_understanding(interpretation)
-    strategy = getattr(turn, "answer_strategy", None) if turn is not None else None
-    if strategy == "acknowledge":
+    strategy = interpretation.resolved_answer_strategy()
+    if strategy in _TALK_STRATEGIES:
         return True
     if strategy == "answer_directly" and interpretation.goal == "inspect":
         return True

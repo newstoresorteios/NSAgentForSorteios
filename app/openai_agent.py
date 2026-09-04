@@ -436,6 +436,14 @@ def generate_openai_reply(
 
 
 def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> AgentResult:
+    from app.channels.audio_service import (
+        audio_transcription_failed_result,
+        inbound_audio_failed,
+    )
+
+    if inbound_audio_failed(message):
+        return audio_transcription_failed_result()
+
     blocked_reason = detect_blocked_request(message.text)
     if blocked_reason:
         return AgentResult(
@@ -460,16 +468,6 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
     third_party_reply = _third_party_guardrail(message, primary_intent)
     if third_party_reply:
         return third_party_reply
-
-    if message.input_modality == "audio" and message.transcription_failed:
-        from app.channels.audio_service import audio_transcription_failed_result
-
-        return audio_transcription_failed_result()
-
-    if message.input_modality == "audio" and not (message.text or "").strip():
-        from app.channels.audio_service import audio_transcription_failed_result
-
-        return audio_transcription_failed_result()
 
     facts = gather_customer_facts(message, customer_context)
     facts["scope_domain"] = scope.get("domain")
@@ -584,6 +582,129 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
     ) as exc:
         print("[openai.agent] tools_request_failed", {"error_type": type(exc).__name__, "message": _sanitize_log_message(str(exc))})
         return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tools_request_failed")
+
+
+async def _resolve_greeting_door(
+    *,
+    message: IncomingMessage,
+    customer_context: dict,
+    recent_turns: list[dict] | None,
+    commerce_state,
+    phrase_restart: bool,
+    used_openai_interpreter: bool = False,
+    fallback_reason: str | None = None,
+    interpretation_goal=None,
+    allow_payment_resume: bool = True,
+    allow_persona_greeting: bool = True,
+) -> AgentResult | None:
+    """Single greeting/resume door. Never opens sales handle or the tool loop."""
+    from .sales.dialogue_phase import blocks_greeting_fast_path
+
+    if blocks_greeting_fast_path(commerce_state):
+        return None
+    if allow_payment_resume:
+        payment_resume = build_pending_payment_resume_result(commerce_state)
+        if (
+            payment_resume is not None
+            and not phrase_restart
+            and should_resume_pending_order(
+                message.text,
+                commerce_state,
+                is_greeting=True,
+            )
+        ):
+            return _annotate_agent_result(
+                payment_resume,
+                domain="commerce",
+                response_source="context_resume_payment_url",
+                used_openai_interpreter=False,
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason=fallback_reason,
+            )
+    if has_resumable_commerce(commerce_state):
+        resume = build_contextual_greeting(
+            commerce_state,
+            recent_turns=recent_turns,
+        )
+        return _annotate_agent_result(
+            resume,
+            domain=resume.response_metadata.get("domain") or "commerce",
+            response_source=resume.response_metadata.get(
+                "response_source",
+                "context_resume",
+            ),
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason=fallback_reason,
+        )
+    if not allow_persona_greeting:
+        return None
+    settings = get_settings()
+    from app.persona.persona_runtime import get_persona_runtime
+
+    runtime = get_persona_runtime()
+    greeting_mode = (
+        runtime.greeting_mode
+        if runtime is not None
+        else "persona_text"
+    )
+    has_official_greeting = bool(
+        runtime is not None and (runtime.greeting_text or "").strip()
+    )
+    if has_official_greeting and greeting_mode != "persona_llm":
+        return _annotate_agent_result(
+            AgentResult(
+                reply_text=choose_greeting_reply(recent_turns),
+                intent="general",
+                handoff_required=False,
+            ),
+            domain="greeting",
+            response_source="persona_greeting",
+            used_openai_interpreter=used_openai_interpreter,
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason=fallback_reason,
+        )
+    if (
+        greeting_mode == "persona_llm"
+        and bool(getattr(settings, "agent_db_persona_enabled", False))
+        and settings.openai_api_key
+    ):
+        persona_reply = await generate_persona_greeting_reply(
+            message,
+            customer_context,
+            recent_turns=recent_turns,
+            conversation_state=commerce_state,
+        )
+        if persona_reply and not persona_reply.safety_reason:
+            cleaned = sanitize_greeting_reply(persona_reply.reply_text)
+            if cleaned and "saudação padrão" not in cleaned.casefold():
+                persona_reply.reply_text = cleaned
+                return _annotate_agent_result(
+                    persona_reply,
+                    domain="greeting",
+                    goal=interpretation_goal,
+                    response_source="openai",
+                    used_openai_interpreter=used_openai_interpreter,
+                    used_openai_responder=True,
+                    used_tray=False,
+                    fallback_reason=fallback_reason,
+                )
+    return _annotate_agent_result(
+        AgentResult(
+            reply_text=choose_greeting_reply(recent_turns),
+            intent="general",
+            handoff_required=False,
+        ),
+        domain="greeting",
+        response_source="persona_greeting" if has_official_greeting else "local_greeting",
+        used_openai_interpreter=used_openai_interpreter if has_official_greeting else False,
+        used_openai_responder=False,
+        used_tray=False,
+        fallback_reason=fallback_reason,
+    )
 
 
 async def generate_agent_reply_async(message: IncomingMessage, customer_context: dict) -> AgentResult:
@@ -866,21 +987,17 @@ async def _generate_agent_reply_async_inner(
         and not is_unpaid_order_resume_request(message.text)
         and not is_payment_link_request(message.text)
     ):
-        resume = build_contextual_greeting(
-            commerce_state,
+        greeting = await _resolve_greeting_door(
+            message=message,
+            customer_context=customer_context,
             recent_turns=recent_turns,
+            commerce_state=commerce_state,
+            phrase_restart=phrase_restart,
+            allow_payment_resume=False,
+            allow_persona_greeting=False,
         )
-        return _annotate_agent_result(
-            resume,
-            domain=resume.response_metadata.get("domain") or "greeting",
-            response_source=resume.response_metadata.get(
-                "response_source",
-                "context_resume_soft",
-            ),
-            used_openai_interpreter=False,
-            used_openai_responder=False,
-            used_tray=False,
-        )
+        if greeting is not None:
+            return greeting
     stored_payment = build_pending_payment_resume_result(commerce_state)
     if stored_payment is not None and (
         is_payment_link_request(message.text) or resume_pending_order_early
@@ -1316,113 +1433,18 @@ async def _generate_agent_reply_async_inner(
             and has_resumable_commerce(commerce_state)
         )
     ):
-        payment_resume = build_pending_payment_resume_result(commerce_state)
-        if (
-            payment_resume is not None
-            and not phrase_restart
-            and should_resume_pending_order(
-                message.text,
-                commerce_state,
-                is_greeting=True,
-            )
-        ):
-            return _annotate_agent_result(
-                payment_resume,
-                domain="commerce",
-                response_source="context_resume_payment_url",
-                used_openai_interpreter=False,
-                used_openai_responder=False,
-                used_tray=False,
-                fallback_reason=interpretation._fallback_reason,
-            )
-        if has_resumable_commerce(commerce_state) and not blocks_greeting_fast_path(
-            commerce_state
-        ):
-            # Keep soft: don't dump order/payment; still use Crono greeting text.
-            resume = build_contextual_greeting(
-                commerce_state,
-                recent_turns=recent_turns,
-            )
-            return _annotate_agent_result(
-                resume,
-                domain=resume.response_metadata.get("domain") or "commerce",
-                response_source=resume.response_metadata.get(
-                    "response_source",
-                    "context_resume",
-                ),
-                used_openai_interpreter=False,
-                used_openai_responder=False,
-                used_tray=False,
-                fallback_reason=interpretation._fallback_reason,
-            )
-        settings = get_settings()
-        from app.persona.persona_runtime import get_persona_runtime
-
-        runtime = get_persona_runtime()
-        greeting_mode = (
-            runtime.greeting_mode
-            if runtime is not None
-            else "persona_text"
-        )
-        # Prefer ChatBo "Saudação inicial" text when available — avoids the LLM
-        # echoing instruction labels like "Saudação padrão (adapte ao contexto):".
-        has_official_greeting = bool(
-            runtime is not None and (runtime.greeting_text or "").strip()
-        )
-        if has_official_greeting and greeting_mode != "persona_llm":
-            return _annotate_agent_result(
-                AgentResult(
-                    reply_text=choose_greeting_reply(recent_turns),
-                    intent="general",
-                    handoff_required=False,
-                ),
-                domain="greeting",
-                response_source="persona_greeting",
-                used_openai_interpreter=used_openai_interpreter,
-                used_openai_responder=False,
-                used_tray=False,
-                fallback_reason=interpretation._fallback_reason,
-            )
-        # Crono (DB persona) is the attendance reference — greet via the compiled
-        # persona prompt, not canned local phrases (unless policy says otherwise).
-        if (
-            greeting_mode == "persona_llm"
-            and bool(getattr(settings, "agent_db_persona_enabled", False))
-            and settings.openai_api_key
-        ):
-            persona_reply = await generate_persona_greeting_reply(
-                message,
-                customer_context,
-                recent_turns=recent_turns,
-                conversation_state=commerce_state,
-            )
-            if persona_reply and not persona_reply.safety_reason:
-                cleaned = sanitize_greeting_reply(persona_reply.reply_text)
-                if cleaned and "saudação padrão" not in cleaned.casefold():
-                    persona_reply.reply_text = cleaned
-                    return _annotate_agent_result(
-                        persona_reply,
-                        domain="greeting",
-                        goal=interpretation.goal,
-                        response_source="openai",
-                        used_openai_interpreter=used_openai_interpreter,
-                        used_openai_responder=True,
-                        used_tray=False,
-                        fallback_reason=interpretation._fallback_reason,
-                    )
-        return _annotate_agent_result(
-            AgentResult(
-                reply_text=choose_greeting_reply(recent_turns),
-                intent="general",
-                handoff_required=False,
-            ),
-            domain="greeting",
-            response_source="persona_greeting" if has_official_greeting else "local_greeting",
-            used_openai_interpreter=False,
-            used_openai_responder=False,
-            used_tray=False,
+        greeting = await _resolve_greeting_door(
+            message=message,
+            customer_context=customer_context,
+            recent_turns=recent_turns,
+            commerce_state=commerce_state,
+            phrase_restart=phrase_restart,
+            used_openai_interpreter=used_openai_interpreter,
             fallback_reason=interpretation._fallback_reason,
+            interpretation_goal=interpretation.goal,
         )
+        if greeting is not None:
+            return greeting
     print("[agent.route]", {"inbound_id": (message.raw or {}).get("inbound_id"), "primary_intent": primary_intent})
     third_party_reply = _third_party_guardrail(message, primary_intent)
     if third_party_reply:

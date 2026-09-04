@@ -103,8 +103,8 @@ def test_persona_and_memory_rollout_defaults():
         is True
     )
     assert Settings.model_fields["agent_conversation_summary_enabled"].default is True
-    assert Settings.model_fields["agent_learning_auto_promote"].default is True
-    assert Settings.model_fields["agent_learning_auto_activate"].default is True
+    assert Settings.model_fields["agent_learning_auto_promote"].default is False
+    assert Settings.model_fields["agent_learning_auto_activate"].default is False
     assert Settings.model_fields["agent_learning_reflect_enabled"].default is True
     assert Settings.model_fields["agent_learning_batch_limit"].default == 500
     assert Settings.model_fields["agent_learning_batch_limit"].metadata[-1].le == 2000

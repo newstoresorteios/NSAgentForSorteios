@@ -67,6 +67,15 @@ _NEW_BROWSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_FRESH_CATALOG_ASK_RE = re.compile(
+    r"\b("
+    r"quero\s+rel[oó]gios|procuro\s+rel[oó]gio|busco\s+rel[oó]gio|"
+    r"qualquer\s+marca|outras?\s+marcas|"
+    r"quero\s+um\s+(?!d[eo]s?\b)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _FRESH_START_RE = re.compile(
     r"\b("
     r"come[cç]ar\s+(de\s+novo|outra|do\s+zero|uma\s+nova|uma\s+conversa)|"
@@ -198,6 +207,17 @@ def should_reset_browse_memory(
         return False
     if is_commerce_continuation(message_text):
         return False
+    try:
+        from app.catalog.specs.catalog_specs import message_requests_other_brands
+
+        if message_requests_other_brands(message_text):
+            return True
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("dialogue_phase.other_brands_reset", exc)
+    if _FRESH_CATALOG_ASK_RE.search(_fold(message_text)):
+        return True
     if is_session_opener_greeting(message_text):
         return True
     if getattr(state, "closed_by_farewell", False):

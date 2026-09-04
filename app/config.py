@@ -465,14 +465,14 @@ class Settings(BaseSettings):
         ge=10,
         le=2000,
     )
-    # Continuous learning: auto-promote + auto-activate with constitution/canary.
-    # Kill-switch: set both false.
+    # Continuous learning: promote stays pending until review.
+    # Opt-in only: set AGENT_LEARNING_AUTO_PROMOTE / AUTO_ACTIVATE true.
     agent_learning_auto_promote: bool = Field(
-        default=True,
+        default=False,
         alias="AGENT_LEARNING_AUTO_PROMOTE",
     )
     agent_learning_auto_activate: bool = Field(
-        default=True,
+        default=False,
         alias="AGENT_LEARNING_AUTO_ACTIVATE",
     )
     agent_learning_reflect_enabled: bool = Field(

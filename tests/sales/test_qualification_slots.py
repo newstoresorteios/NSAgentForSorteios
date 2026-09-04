@@ -327,3 +327,98 @@ def test_name_slot_ignores_other_conversation_on_same_phone():
         conversation_id="new-thread",
         include_other_threads=True,
     )
+
+
+def test_name_city_urgency_do_not_unlock_catalog_search():
+    from app.sales.discovery import build_qualification_snapshot
+    from app.sales.qualification_slots import (
+        fulfillment_slots_ready,
+        qualification_slots_sufficient,
+    )
+    from app.persona.persona_runtime import (
+        PersonaRuntimeConfig,
+        reset_persona_runtime,
+        set_persona_runtime,
+    )
+
+    runtime = PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=["Qual faixa de investimento você tem em mente?"],
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"product_type": "relógio"},
+            preferences={
+                "attributes": [
+                    "qual:name:João",
+                    "qual:city:Fortaleza",
+                    "qual:urgency:can_wait",
+                ],
+                "recipient": "João",
+            },
+            references_previous_context=True,
+            enough_information_to_search=False,
+            ready_for_retrieval=False,
+            needs_clarification=True,
+            confidence=0.9,
+        )
+        covered = covered_qualification_dims(interpretation)
+        assert qualification_slots_sufficient(interpretation, covered) is True
+        assert fulfillment_slots_ready(interpretation, covered) is False
+        snap = build_qualification_snapshot(
+            interpretation,
+            {"known_preferences": {}, "clarification_count": 0},
+        )
+        assert snap["ready"] is False
+        assert snap["satisfied_by"] is None
+        assert "customer_name" in snap["qualification_dims"]
+    finally:
+        reset_persona_runtime(token)
+
+
+def test_brand_plus_budget_unlocks_without_persona_slots():
+    from app.sales.discovery import build_qualification_snapshot
+    from app.sales.qualification_slots import fulfillment_slots_ready
+    from app.persona.persona_runtime import (
+        PersonaRuntimeConfig,
+        reset_persona_runtime,
+        set_persona_runtime,
+    )
+
+    runtime = PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=["Como posso te chamar?"],
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="recommend",
+            subject={"brand": "Seiko", "product_type": "relógio"},
+            preferences={"budget_max": 3500},
+            references_previous_context=True,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            needs_clarification=False,
+            confidence=0.95,
+        )
+        assert fulfillment_slots_ready(interpretation) is True
+        snap = build_qualification_snapshot(
+            interpretation,
+            {
+                "known_preferences": {"brand": "Seiko", "budget": {"max": 3500}},
+                "clarification_count": 0,
+            },
+        )
+        assert snap["ready"] is True
+        assert snap["satisfied_by"] == "brand+budget"
+        assert snap["fulfillment_ready"] is True
+    finally:
+        reset_persona_runtime(token)

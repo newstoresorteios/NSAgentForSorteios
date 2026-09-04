@@ -220,6 +220,8 @@ class CatalogIndexRepository:
         mechanism: str | None = None,
         gender: str | None = None,
         max_price: float | None = None,
+        min_case_size_mm: int | None = None,
+        max_case_size_mm: int | None = None,
         limit: int = 30,
     ) -> list[dict[str, Any]]:
         tenant = str(tenant_id or "").strip()
@@ -246,6 +248,18 @@ class CatalogIndexRepository:
         if max_price is not None:
             clauses.append("price IS NOT NULL AND price <= %(max_price)s")
             params["max_price"] = float(max_price)
+        if min_case_size_mm is not None or max_case_size_mm is not None:
+            clauses.append(
+                "CASE WHEN coalesce(case_size, '') ~ '[0-9]{2}' "
+                "THEN substring(case_size from '[0-9]{2}')::int END "
+                "BETWEEN %(min_mm)s AND %(max_mm)s"
+            )
+            params["min_mm"] = int(
+                min_case_size_mm if min_case_size_mm is not None else 28
+            )
+            params["max_mm"] = int(
+                max_case_size_mm if max_case_size_mm is not None else 55
+            )
         sql = f"""
             SELECT *
             FROM public.ai_catalog_index

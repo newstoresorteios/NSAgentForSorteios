@@ -136,6 +136,20 @@ class ResponseClaim(BaseModel):
     fact_key: str | None = None
 
 
+class AgentTurnReplyEnvelope(BaseModel):
+    """Minimal structured reply — avoids gpt-5.4-mini 400 on nested memory unions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reply: str
+    claims: list[ResponseClaim] = Field(default_factory=list)
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        schema = handler(core_schema)
+        return apply_openai_strict_schema(schema)
+
+
 class AgentTurnEnvelope(BaseModel):
     """Side-channel envelope for natural reply + memory proposals."""
 

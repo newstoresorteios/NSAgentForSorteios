@@ -32,6 +32,7 @@ async def seed_from_catalog_index(session: RetrievalSession) -> None:
                 or 30
             ),
         ),
+        message_text=session.message_text,
     )
     if index_products:
         session.absorb_products(index_products)

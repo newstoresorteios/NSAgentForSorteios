@@ -33,9 +33,18 @@ from app.openai_agent import generate_agent_reply_async
 from app.verify.quality_judge import attach_judge_report, run_quality_judge
 from app.llm.response_composer import compose_outbound_reply
 from app.verify.response_critique import apply_response_critique_loop
-from app.ops.runtime_context import get_current_turn, runtime_stage
+from app.ops.runtime_context import get_current_turn, reset_current_turn, runtime_stage, set_current_turn
 from app.identity.user_preferences import enrich_customer_context, learn_from_incoming_message, record_interaction_memory
 from app.channels.audio_service import should_transcribe_incoming
+
+
+def commercial_products_present(result: AgentResult) -> bool:
+    """True when this turn already listed catalog products."""
+    data = result.commercial_data if isinstance(result.commercial_data, dict) else {}
+    products = data.get("products")
+    if not isinstance(products, list):
+        return False
+    return any(isinstance(item, dict) for item in products)
 
 
 async def prepare_incoming_message(incoming: IncomingMessage) -> IncomingMessage:
@@ -159,7 +168,44 @@ def _realign_commerce_state_to_reply(
     return state
 
 
+def _ensure_live_turn_budget(incoming: IncomingMessage):
+    """Attach an enforced LLM ceiling when the caller did not start a turn.
+
+    Live webhook and evals already own a TurnRuntimeContext. Inbox / bare
+    pipeline calls get enforce=True here. Existing enforce=False is left alone.
+    """
+    if get_current_turn() is not None:
+        return None
+    settings = get_settings()
+    if not bool(getattr(settings, "agent_llm_budget_enabled", True)):
+        return None
+    from app.llm.llm_call_policy import build_llm_call_budget
+    from app.ops.turn_runtime import LLMCallBudget, TurnRuntimeContext
+
+    cfg = build_llm_call_budget(execution_path="normal")
+    context = TurnRuntimeContext(
+        trace_id=(
+            f"pipeline:{incoming.message_id or incoming.sender_key or incoming.sender_phone or 'anon'}"
+        ),
+        llm_budget=LLMCallBudget(
+            max_calls=int(cfg.get("max_calls") or 2),
+            enforce=True,
+        ),
+    )
+    context.execution_path = str(cfg.get("execution_path") or "normal")
+    return set_current_turn(context)
+
+
 async def process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
+    owned_token = _ensure_live_turn_budget(incoming)
+    try:
+        return await _process_incoming_message(incoming, customer_context)
+    finally:
+        if owned_token is not None:
+            reset_current_turn(owned_token)
+
+
+async def _process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
     settings = get_settings()
     runtime = get_current_turn()
     if runtime is not None:
@@ -323,17 +369,20 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         ).split(",")
         if domain.strip()
     }
-    result = apply_factual_validation(
-        result,
-        decision=decision,
-        mode=getattr(
+    factual_kwargs = {
+        "decision": decision,
+        "mode": getattr(
             settings,
             "agent_factual_validation_mode",
             "enforce",
         ),
-        trusted_domains=trusted_fact_domains,
-        commerce_state=commerce_state.model_dump(mode="json"),
-    )
+        "trusted_domains": trusted_fact_domains,
+        "commerce_state": commerce_state.model_dump(mode="json"),
+    }
+    # Listed SKUs: wait for scope/council/compliance so the first factual
+    # does not dirty metadata that the second pass then punishes.
+    if not commercial_products_present(result):
+        result = apply_factual_validation(result, **factual_kwargs)
     interpretation = None
     meta_interp = (result.response_metadata or {}).get("interpretation")
     if isinstance(meta_interp, dict):

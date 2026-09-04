@@ -414,18 +414,73 @@ def _has_explicit_model(interpretation: SalesInterpretation) -> bool:
     return bool(" ".join(leftover.split()))
 
 
+QUALIFICATION_SLOT_DIMS = frozenset({CUSTOMER_NAME, SHIPPING_CITY, URGENCY})
+FULFILLMENT_SLOT_DIMS = frozenset(
+    {"brand", "budget", "style", "occasion", "product_type", "case_size", "sku"}
+)
+
+
+def covered_fulfillment_dims(interpretation: SalesInterpretation) -> set[str]:
+    """Catalog constraints only — name/city/urgency never belong here."""
+    covered: set[str] = set()
+    subject = interpretation.subject
+    prefs = interpretation.preferences
+    if subject.brand:
+        covered.add("brand")
+    if subject.product_type:
+        covered.add("product_type")
+    if (
+        _has_explicit_model(interpretation)
+        or subject.reference
+        or subject.ean
+    ):
+        covered.add("sku")
+    if prefs.budget_max is not None or prefs.budget_min is not None:
+        covered.add("budget")
+    if prefs.style or prefs.occasion:
+        covered.add("style")
+    try:
+        from app.catalog.specs.catalog_specs import interpretation_case_size_range
+
+        if interpretation_case_size_range(interpretation):
+            covered.add("case_size")
+    except Exception:
+        pass
+    return covered
+
+
+def fulfillment_slots_ready(
+    interpretation: SalesInterpretation,
+    covered: set[str] | None = None,
+) -> bool:
+    """True only when catalog constraints can open a search."""
+    dims = covered_fulfillment_dims(interpretation)
+    if covered:
+        dims |= set(covered) & FULFILLMENT_SLOT_DIMS
+        if "occasion" in dims:
+            dims.add("style")
+    has_brand = "brand" in dims
+    has_budget = "budget" in dims
+    has_style = "style" in dims
+    has_type = "product_type" in dims
+    has_sku = "sku" in dims
+    return bool(
+        has_sku
+        or (has_brand and has_budget)
+        or (has_brand and has_style)
+        or (has_type and has_budget and has_style)
+    )
+
+
 def qualification_slots_sufficient(
     interpretation: SalesInterpretation,
     covered: set[str],
 ) -> bool:
-    """Enough persona slots collected — stop re-qualifying from question 1."""
+    """Persona slots collected. Does not unlock catalog search."""
     has_name = CUSTOMER_NAME in covered
     has_city = SHIPPING_CITY in covered
-    has_brand = bool(interpretation.subject.brand)
-    has_model = _has_explicit_model(interpretation) or bool(interpretation.subject.reference)
-    has_budget = interpretation.preferences.budget_max is not None or interpretation.preferences.budget_min is not None or "budget" in covered
     has_urgency = URGENCY in covered
-    return bool(has_name and has_city and has_brand and has_model and has_budget and has_urgency)
+    return bool(has_name and has_city and has_urgency)
 
 
 def known_preferences_from_qualification_slots(

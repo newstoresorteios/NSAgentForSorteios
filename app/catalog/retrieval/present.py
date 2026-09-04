@@ -45,6 +45,7 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
                     )
                     or 30
                 ),
+                message_text=session.message_text,
             )
             if index_rows:
                 before = len(session.candidates)
@@ -138,6 +139,7 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
             fallback = await serve_index_when_tray_unavailable(
                 interpretation,
                 reason="revalidation_failed_no_index_seed",
+                message_text=session.message_text,
             )
             if fallback is not None:
                 return fallback

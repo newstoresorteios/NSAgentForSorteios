@@ -262,6 +262,54 @@ def test_derived_pix_from_list_price_is_grounded():
     assert validated.safety_reason != "factual_validation_failed"
 
 
+def test_empty_catalog_customer_budget_is_not_a_sku_price():
+    result = AgentResult(
+        reply_text="Não encontrei relógios até R$ 2.500,00. Quer ajustar a faixa?",
+        intent="commerce",
+        safety_reason="recommendation_budget_miss",
+        commercial_data={"products": []},
+        response_metadata={
+            "domain": "commerce",
+            "used_tray": True,
+            "hard_budget_max": 2500,
+        },
+    )
+    report = validate_factual_response(
+        result,
+        decision=_decision(result),
+        mode="enforce",
+        commerce_state={"active_preferences": {"budget_max": 2500}},
+    )
+    assert report.valid is True
+    assert any(
+        claim.reason == "customer_budget_restated"
+        for claim in report.supported_claims
+    )
+
+
+def test_honest_budget_miss_is_not_overwritten_in_enforce():
+    result = AgentResult(
+        reply_text="Não encontrei relógios até R$ 2.500,00.",
+        intent="commerce",
+        safety_reason="recommendation_budget_miss",
+        commercial_data={"products": []},
+        response_metadata={
+            "domain": "commerce",
+            "used_tray": True,
+            "hard_budget_max": 2500,
+            "factual_fallback_text": "Só mais um pouco, estou tentando encontrar exatamente qual relógio é esse.",
+        },
+    )
+    validated = apply_factual_validation(
+        result,
+        decision=_decision(result),
+        mode="enforce",
+        commerce_state={"active_preferences": {"budget_max": 2500}},
+    )
+    assert "Não encontrei relógios" in validated.reply_text
+    assert validated.safety_reason == "recommendation_budget_miss"
+
+
 def test_promo_without_promotional_price_is_unsupported():
     result = AgentResult(
         reply_text="Temos promoção especial neste modelo.",

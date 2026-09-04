@@ -88,6 +88,57 @@ def test_fetch_uses_constraints_before_lexical(monkeypatch):
     assert calls == ["constraints"]
 
 
+def test_fetch_passes_case_size_range(monkeypatch):
+    seen: dict = {}
+
+    class FakeRepo:
+        def search_exact(self, **_kwargs):
+            return []
+
+        def search_by_constraints(self, **kwargs):
+            seen.update(kwargs)
+            return [
+                {
+                    "product_id": "42",
+                    "title_normalized": "Seiko 42mm",
+                    "brand": "Seiko",
+                    "case_size": "42",
+                    "catalog_item_key": "product:42",
+                    "tenant_id": "newstore",
+                }
+            ]
+
+        def search_lexical(self, **_kwargs):
+            return []
+
+    monkeypatch.setattr(
+        "app.catalog.index.repository.CatalogIndexRepository",
+        FakeRepo,
+    )
+    monkeypatch.setattr(
+        "app.catalog.retrieval.runtime.get_settings",
+        lambda: SimpleNamespace(
+            agent_catalog_index_read_enabled=True,
+            agent_catalog_index_candidate_limit=30,
+            agent_persona_tenant_id="newstore",
+        ),
+    )
+
+    products, strategy = fetch_primary_index_candidates(
+        _interpretation(
+            preferences=ProductPreferences(
+                budget_max=5000,
+                attributes=["case_size:40-55mm"],
+            )
+        ),
+        message_text="caixa acima de 40mm",
+    )
+    assert strategy == "constraints"
+    assert seen.get("min_case_size_mm") == 40
+    assert seen.get("max_case_size_mm") == 55
+    assert products[0]["id"] == "42"
+
+
 def test_fetch_passes_gender_constraint(monkeypatch):
     seen: dict = {}
 
@@ -481,3 +532,43 @@ async def test_recommendation_refreshes_tray_when_index_empty(monkeypatch):
     assert search_calls
     assert result is not None
     assert len(result.commercial_data["products"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_open_circuit_serves_index_instead_of_not_found(monkeypatch):
+    from app.catalog.retrieval.near_match import serve_index_when_tray_unavailable
+
+    index_products = [
+        {
+            "id": "77",
+            "product_id": "77",
+            "name": "Seiko 5 Sports",
+            "brand": "Seiko",
+            "price": 2100,
+            "current_price": 2100,
+            "available": True,
+        }
+    ]
+    captured = {}
+
+    def fake_fetch(interpretation, limit=20, message_text=None):
+        captured["message_text"] = message_text
+        return index_products, "constraints"
+
+    monkeypatch.setattr(
+        "app.catalog.index.primary.fetch_primary_index_candidates",
+        fake_fetch,
+    )
+    monkeypatch.setattr(
+        "app.catalog.retrieval.runtime.get_settings",
+        lambda: SimpleNamespace(agent_catalog_index_read_enabled=True),
+    )
+    result = await serve_index_when_tray_unavailable(
+        _interpretation(),
+        reason="tray_circuit_open",
+        message_text="caixa até 40",
+    )
+    assert result is not None
+    assert result.safety_reason != "product_not_found"
+    assert (result.commercial_data or {}).get("products")
+    assert captured["message_text"] == "caixa até 40"

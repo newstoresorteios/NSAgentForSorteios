@@ -13,6 +13,7 @@ def log_swallowed(scope: str, exc: BaseException) -> None:
 
 from .checkout_flow import respond_to_commerce_service
 from .discovery import build_qualification_snapshot
+from .interpreter import interpretation_to_plan
 from .policies.confirmation import confirmation_text_kind
 from .product_lookup import (
     execute_compiled_product_retrieval,
@@ -26,6 +27,7 @@ __all__ = [
     "confirmation_text_kind",
     "execute_compiled_product_retrieval",
     "execute_contextual_product_lookup",
+    "interpretation_to_plan",
     "log_swallowed",
     "mark_sales_result",
     "rank_candidates",

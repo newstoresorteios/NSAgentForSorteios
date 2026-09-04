@@ -132,6 +132,26 @@ def test_needs_clarification_before_retrieval_for_discover_goal():
     assert route.force_retrieval is False
 
 
+def test_inspect_answer_directly_does_not_force_retrieval():
+    from app.sales.discovery import _discovery_state
+
+    interpretation = _interp(
+        goal="inspect",
+        needs_clarification=False,
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        answer_strategy="answer_directly",
+        subject={"brand": "Bulova", "product_type": "relógio"},
+    )
+    state = _discovery_state(
+        interpretation,
+        [],
+        message_text="usa bateria?",
+        commerce_state=CommerceConversationState(),
+    )
+    assert state["force_retrieval"] is False
+
+
 def test_inspect_answer_directly_skips_catalog_fanout():
     from app.llm.turn_understanding import TurnUnderstanding, attach_turn_understanding
 
@@ -154,6 +174,42 @@ def test_inspect_answer_directly_skips_catalog_fanout():
         interpretation=interpretation,
         plan=_plan(intent="product_search", goal="inspect", query="usa bateria"),
         message_text="usa bateria?",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.skip_catalog_fanout is True
+
+
+def test_inspect_answer_strategy_field_skips_fanout_without_turn_object():
+    interpretation = _interp(
+        goal="inspect",
+        needs_clarification=False,
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        answer_strategy="answer_directly",
+        subject={"brand": "Bulova", "product_type": "relógio"},
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="product_search", goal="inspect", query="usa bateria"),
+        message_text="usa bateria?",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.skip_catalog_fanout is True
+
+
+def test_acknowledge_skips_catalog_fanout():
+    interpretation = _interp(
+        goal="discover",
+        domain="greeting",
+        needs_clarification=False,
+        answer_strategy="acknowledge",
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="clarification", query="oi"),
+        message_text="oi",
         commerce_state=CommerceConversationState(),
         recent_turns=[],
     )

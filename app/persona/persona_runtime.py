@@ -117,8 +117,13 @@ class PersonaRuntimeConfig(BaseModel):
             "chatbo_persona_id": self.chatbo_persona_id,
         }
 
-    def sales_skills_block(self, *, max_items: int = 4) -> str:
-        """Compact ChatBo sales skills for the interpreter (not full prose dump)."""
+    def sales_skills_block(
+        self,
+        *,
+        max_items: int = 4,
+        include_examples: bool = True,
+    ) -> str:
+        """Compact ChatBo sales skills. Interpreter must omit example_prompts."""
         lines = ["<persona_sales_skills>"]
         if self.qualification_prompts:
             lines.append("Qualificação (pergunte antes de listar catálogo amplo):")
@@ -141,7 +146,7 @@ class PersonaRuntimeConfig(BaseModel):
             lines.append("Objetivos:")
             for item in self.sales_goal_prompts[:max_items]:
                 lines.append(f"- {item}")
-        if self.example_prompts:
+        if include_examples and self.example_prompts:
             lines.append("Exemplos de boa resposta:")
             for item in self.example_prompts[: min(2, max_items)]:
                 lines.append(f"- {item}")
@@ -152,7 +157,7 @@ class PersonaRuntimeConfig(BaseModel):
 
     def interpreter_policy_block(self) -> str:
         """Short structured hint for the intent interpreter (not full persona)."""
-        skills = self.sales_skills_block()
+        skills = self.sales_skills_block(include_examples=False)
         skills_section = f"\n{skills}\n" if skills else "\n"
         return (
             "<persona_runtime_policy>\n"

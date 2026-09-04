@@ -42,8 +42,24 @@ def conversation_lock_key(
     sender_key: str | None = None,
     sender_phone: str | None = None,
     visitor_id: str | None = None,
+    person_key: str | None = None,
 ) -> str | None:
-    value = conversation_id or sender_key or sender_phone or visitor_id
+    """Canonical lock is person_key (phone/sender). conversation_id is history only."""
+    explicit = str(person_key or "").strip()
+    if explicit:
+        return explicit
+    try:
+        from app.identity.customer_identity import person_key_from_parts
+
+        derived = person_key_from_parts(
+            phone=sender_phone,
+            sender_key=sender_key,
+        )
+    except Exception:
+        derived = None
+    if derived:
+        return derived
+    value = conversation_id or visitor_id or sender_key or sender_phone
     if not value:
         return None
     return str(value).strip() or None

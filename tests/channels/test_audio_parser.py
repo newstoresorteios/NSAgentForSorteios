@@ -74,3 +74,25 @@ async def test_failed_audio_uses_fixed_copy_without_sync_legacy(monkeypatch):
     assert result.safety_reason == "audio_transcription_failed"
     assert "transcrever" in result.reply_text.casefold()
     assert result.response_metadata.get("fallback_reason") == "audio_transcription_failed"
+
+
+def test_sync_legacy_failed_audio_does_not_open_tools(monkeypatch):
+    from app import openai_agent
+    from app.models import IncomingMessage
+
+    def tools_must_not_run(*_a, **_k):
+        raise AssertionError("failed audio must not open the tool loop")
+
+    monkeypatch.setattr(openai_agent, "generate_openai_reply", tools_must_not_run)
+    monkeypatch.setattr(openai_agent, "deterministic_scope", lambda _t: {"domain": "greeting"})
+
+    result = openai_agent.generate_agent_reply(
+        IncomingMessage(
+            text="",
+            input_modality="audio",
+            transcription_failed=True,
+        ),
+        {},
+    )
+    assert result.intent == "audio_transcription_failed"
+    assert result.safety_reason == "audio_transcription_failed"

@@ -10,18 +10,29 @@ from app.ops.conversation_lock import (
 )
 
 
-def test_conversation_lock_key_uses_context_priority():
+def test_conversation_lock_key_uses_person_key_over_conversation_id():
+    phone = "5548999490859"
+    assert conversation_lock_key(
+        conversation_id="conversation-a",
+        sender_key="sender",
+        sender_phone=phone,
+        visitor_id="visitor",
+    ) == f"phone:{phone}"
+    assert conversation_lock_key(
+        conversation_id="conversation-a",
+        sender_phone=phone,
+    ) == conversation_lock_key(
+        conversation_id="conversation-b",
+        sender_phone=phone,
+    )
+    assert conversation_lock_key(
+        person_key="phone:5511999999999",
+        conversation_id="conversation",
+    ) == "phone:5511999999999"
     assert conversation_lock_key(
         conversation_id="conversation",
-        sender_key="sender",
-        sender_phone="phone",
         visitor_id="visitor",
     ) == "conversation"
-    assert conversation_lock_key(
-        sender_key="sender",
-        sender_phone="phone",
-        visitor_id="visitor",
-    ) == "sender"
     assert conversation_lock_key(visitor_id="visitor") == "visitor"
     assert conversation_lock_key() is None
 

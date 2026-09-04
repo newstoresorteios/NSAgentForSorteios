@@ -449,11 +449,23 @@ def normalize_sales_interpretation(
 ) -> SalesInterpretation:
     """Fix gender misclassified as model/style and keep recommendation mode.
 
-    Qualification slot replay lives in ``sales_agent._hydrate_sales_interpretation``.
-    ``recent_turns`` / ``conversation_id`` remain on the signature so callers
-    that still pass them do not break.
+    Qualification slot replay also lives in ``sales_agent._hydrate_sales_interpretation``.
+    Callers that pass ``recent_turns`` still need name/city/urgency to survive
+    normalize — those slots never unlock catalog search.
     """
-    _ = (recent_turns, conversation_id, include_other_threads)
+    if recent_turns or message_text:
+        try:
+            from app.sales.qualification_slots import rehydrate_qualification_slots_from_turns
+
+            interpretation = rehydrate_qualification_slots_from_turns(
+                interpretation,
+                recent_turns,
+                message_text=message_text,
+                conversation_id=conversation_id,
+                include_other_threads=include_other_threads,
+            )
+        except Exception as exc:
+            log_swallowed("specs.rehydrate_qual_slots", exc)
     preferences = interpretation.preferences
     subject = interpretation.subject
     combined_context = "\n".join(

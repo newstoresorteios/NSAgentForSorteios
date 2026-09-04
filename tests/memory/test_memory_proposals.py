@@ -199,3 +199,12 @@ def _schema_objects_are_closed(node, path="$"):
 def test_agent_turn_envelope_schema_is_openai_strict():
     schema = AgentTurnEnvelope.model_json_schema()
     _schema_objects_are_closed(schema)
+
+
+def test_agent_turn_reply_envelope_schema_is_openai_strict():
+    from app.memory.memory_models import AgentTurnReplyEnvelope
+
+    schema = AgentTurnReplyEnvelope.model_json_schema()
+    _schema_objects_are_closed(schema)
+    assert "reply" in (schema.get("properties") or {})
+    assert "memory_proposals" not in (schema.get("properties") or {})
