@@ -3,6 +3,14 @@
 Public entry points remain on ``app.sales_agent`` for compatibility.
 """
 
+from __future__ import annotations
+
+
+def log_swallowed(scope: str, exc: BaseException) -> None:
+    """Keep optional sales paths from failing the turn, but do not hide the type."""
+    print(f"[sales.{scope}]", {"error_type": type(exc).__name__})
+
+
 from .checkout_flow import respond_to_commerce_service
 from .discovery import build_qualification_snapshot
 from .policies.confirmation import confirmation_text_kind
@@ -18,6 +26,7 @@ __all__ = [
     "confirmation_text_kind",
     "execute_compiled_product_retrieval",
     "execute_contextual_product_lookup",
+    "log_swallowed",
     "mark_sales_result",
     "rank_candidates",
     "respond_to_commerce_service",

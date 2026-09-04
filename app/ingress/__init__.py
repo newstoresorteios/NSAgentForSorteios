@@ -1,5 +1,13 @@
 """Ingress package: durable inbox + outbox for async webhooks."""
 
+from __future__ import annotations
+
+
+def log_swallowed(scope: str, exc: BaseException) -> None:
+    """Keep optional ingress paths from failing the turn, but do not hide the type."""
+    print(f"[ingress.{scope}]", {"error_type": type(exc).__name__})
+
+
 from app.ingress.inbox import (
     build_idempotency_key,
     claim_pending_inbox,
@@ -15,6 +23,7 @@ from app.ingress.outbox import (
 )
 
 __all__ = [
+    "log_swallowed",
     "build_idempotency_key",
     "claim_pending_inbox",
     "claim_pending_outbox",

@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.commerce.commerce_context import normalize_variant_identity
-from app.catalog.product_media import official_product_url
+from app.catalog.media.product_media import official_product_url
 from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 
@@ -701,7 +701,7 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
                 _unwrap_entity(payload, ("product", "data", "result")),
                 _PRODUCT_FIELDS,
             )
-            from app.catalog.product_media import ensure_product_has_live_url
+            from app.catalog.media.product_media import ensure_product_has_live_url
 
             product = await ensure_product_has_live_url(product)
             live_url = official_product_url(product)

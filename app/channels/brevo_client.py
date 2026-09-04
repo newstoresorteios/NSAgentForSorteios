@@ -119,7 +119,10 @@ async def _send_conversations_reply(
         resp = await client.post(BREVO_CONVERSATIONS_SEND_URL, json=payload, headers=headers)
         try:
             body = resp.json()
-        except Exception:
+        except Exception as exc:
+            from app.channels import log_swallowed
+
+            log_swallowed("brevo.conversations_json", exc)
             body = {"text": resp.text[:500]}
 
     ok = 200 <= resp.status_code < 300
@@ -181,7 +184,10 @@ async def _send_whatsapp_transactional_reply(incoming: IncomingMessage, text: st
         resp = await client.post(send_url, json=payload, headers=headers)
         try:
             body = resp.json()
-        except Exception:
+        except Exception as exc:
+            from app.channels import log_swallowed
+
+            log_swallowed("brevo.whatsapp_json", exc)
             body = {"text": resp.text[:500]}
 
     ok = 200 <= resp.status_code < 300

@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ..models import SalesInterpretation
-from app.catalog.preference_normalize import (
+from app.catalog.specs.preference_normalize import (
     _extract_budget_max,
     extract_stated_color,
     extract_stated_gender,
@@ -66,7 +66,7 @@ def _infer_identity_from_presented(
     if not blob:
         return common_brand, None
     from ..models import ProductPreferences, ProductSubject
-    from app.catalog.preference_normalize import repair_specific_model_tokens
+    from app.catalog.specs.preference_normalize import repair_specific_model_tokens
 
     subject = ProductSubject(brand=common_brand)
     prefs = ProductPreferences()
@@ -111,8 +111,10 @@ def next_locked_identity(
 
         if message_resets_dialogue_to_discovery(message_text, interpretation):
             return None
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("turn_contract.browse_reset", exc)
     if interpretation is not None and _specific_product_lock(interpretation):
         payload: dict[str, str] = {}
         if interpretation.subject.brand:

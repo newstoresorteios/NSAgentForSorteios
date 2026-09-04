@@ -139,7 +139,10 @@ async def _mp_request(
             resp = await client.request(method, url, json=body, headers=headers)
         try:
             data = resp.json() if resp.content else {}
-        except Exception:
+        except Exception as exc:
+            from app.commerce import log_swallowed
+
+            log_swallowed("mp.response_json", exc)
             data = {"raw": (resp.text or "")[:500]}
         if not isinstance(data, dict):
             data = {"raw": data}

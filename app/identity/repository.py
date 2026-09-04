@@ -5,6 +5,7 @@ from typing import Any
 
 from app.config import resolved_sorteio_database_url
 from app.db import get_sorteio_conn
+from app.identity import log_swallowed
 
 
 def _sorteio_db_ready() -> bool:
@@ -269,7 +270,8 @@ def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
             row = cur.fetchone()
             if row:
                 return dict(row)
-        except Exception:
+        except Exception as exc:
+            log_swallowed("repository.lookup_user_by_phone", exc)
             continue
     return None
 

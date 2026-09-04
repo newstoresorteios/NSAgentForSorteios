@@ -326,7 +326,10 @@ def _pix_discount_percent() -> int:
                 or DEFAULT_PIX_DISCOUNT_PERCENT
             )
         return int(DEFAULT_PIX_DISCOUNT_PERCENT)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        from app.commerce import log_swallowed
+
+        log_swallowed("router.pix_discount", exc)
         return 15
 
 

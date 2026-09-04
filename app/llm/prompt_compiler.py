@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.channels.channel_profiles import get_channel_profile
 from app.config import get_settings
+from app.llm import log_swallowed
 from app.memory.history_window import resolve_model_history_limit
 from app.models import IncomingMessage
 from app.persona.persona_repository import (
@@ -127,7 +128,8 @@ def compile_agent_prompt(
             runtime = get_persona_runtime()
             if runtime is not None and runtime.active_persona is not None:
                 active_persona = runtime.active_persona
-        except Exception:
+        except Exception as exc:
+            log_swallowed("compiler.persona_runtime", exc)
             active_persona = None
 
     if bool(getattr(settings, "agent_db_persona_enabled", False)):
@@ -311,7 +313,8 @@ def compile_agent_prompt(
         runtime = get_persona_runtime()
         if runtime is not None and runtime.enabled:
             runtime_policy_block = runtime.prompt_policy_block()
-    except Exception:
+    except Exception as exc:
+        log_swallowed("compiler.runtime_policy", exc)
         runtime_policy_block = ""
 
     blocks = [

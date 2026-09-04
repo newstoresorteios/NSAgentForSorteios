@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from app.db import get_conn
+from app.identity import log_swallowed
 
 MAX_MEMORY_NOTES = 15
 MAX_RECENT_TOPICS = 12
@@ -146,7 +147,8 @@ def get_user_preferences(user_id: int) -> dict[str, Any]:
                     "recent_topics": _normalize_json_list(row.get("recent_topics")),
                     "exists": True,
                 }
-    except Exception:
+    except Exception as exc:
+        log_swallowed("preferences.get", exc)
         return _default_preferences(user_id)
 
 

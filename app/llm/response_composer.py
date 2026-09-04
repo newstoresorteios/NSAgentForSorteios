@@ -43,7 +43,7 @@ def compose_outbound_reply(
     # Ensure commercial products in metadata are authority-filtered before present.
     products = (result.commercial_data or {}).get("products")
     if isinstance(products, list) and products:
-        from app.catalog.catalog_index import build_allowed_id_sets, filter_products_to_allowed
+        from app.catalog.index.catalog_index import build_allowed_id_sets, filter_products_to_allowed
         from app.verify.fact_authority import authorize_products_for_responder
 
         tenant_id = str(

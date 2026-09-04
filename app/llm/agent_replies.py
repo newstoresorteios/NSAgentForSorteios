@@ -22,13 +22,6 @@ from app.identity.user_preferences import (
     resolve_display_name,
     save_preferred_name,
 )
-from app.identity.vip_profiles import (
-    build_vip_balance_reply,
-    build_vip_coupon_reply,
-    build_vip_general_reply,
-    get_vip_profile,
-    pick_vip_nickname,
-)
 from app.persona.site_knowledge import (
     REGISTER_PHONE_MESSAGE,
     SITE_URL,
@@ -85,8 +78,6 @@ def _personalized_suffix(
     phone: str | None = None,
     display_name: str | None = None,
 ) -> str:
-    if get_vip_profile(phone):
-        return ""
     if (display_name or "").strip():
         return ""
     if preferences.get("preferred_name"):
@@ -103,17 +94,6 @@ def build_preferred_name_reply(message: IncomingMessage, account: dict[str, Any]
         return None
 
     save_preferred_name(int(account["user_id"]), preferred_name)
-    vip = get_vip_profile(message.sender_phone)
-    if vip:
-        nickname = pick_vip_nickname(vip, preferred_name)
-        return AgentResult(
-            reply_text=(
-                f"Anotei, {nickname}! De hoje em diante você é '{preferred_name}'. "
-                f"O {vip.title} manda — quem somos nós para discutir?"
-            ),
-            intent="preferred_name_update",
-            handoff_required=False,
-        )
     return AgentResult(
         reply_text=f"Perfeito! A partir de agora vou te chamar de {preferred_name}.",
         intent="preferred_name_update",
@@ -180,16 +160,6 @@ def build_balance_reply(message: IncomingMessage) -> AgentResult:
         )
 
     user_id = int(account["user_id"])
-    vip = get_vip_profile(message.sender_phone)
-    if vip:
-        nickname = pick_vip_nickname(vip, message.text)
-        extra = _format_last_participation(user_id) or ""
-        return AgentResult(
-            reply_text=build_vip_balance_reply(vip, nickname, account["balance_brl"], extra),
-            intent="balance_inquiry",
-            handoff_required=False,
-        )
-
     preferences = get_user_preferences(user_id)
     display_name = resolve_display_name(account.get("name"), preferences)
     parts = [f"{_greeting(display_name)} Seu saldo disponível é {account['balance_brl']}."]
@@ -225,15 +195,6 @@ def build_coupon_code_reply(message: IncomingMessage) -> AgentResult:
 
     code = account.get("coupon_code") or "indisponível"
     balance = account.get("balance_brl") or format_cents_to_brl(0)
-    vip = get_vip_profile(message.sender_phone)
-    if vip:
-        nickname = pick_vip_nickname(vip, message.text)
-        return AgentResult(
-            reply_text=build_vip_coupon_reply(vip, nickname, code, balance),
-            intent="coupon_code",
-            handoff_required=False,
-        )
-
     user_id = int(account["user_id"])
     preferences = get_user_preferences(user_id)
     display_name = resolve_display_name(account.get("name"), preferences)
@@ -307,15 +268,6 @@ def build_simulation_reply(message: IncomingMessage) -> AgentResult:
         display_name=display_name,
     )
 
-    vip = get_vip_profile(message.sender_phone)
-    if vip:
-        nickname = pick_vip_nickname(vip, message.text)
-        reply_text = build_vip_general_reply(
-            vip,
-            nickname,
-            reply_text,
-        )
-
     return AgentResult(
         reply_text=reply_text,
         intent="simulation",
@@ -371,11 +323,6 @@ def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentR
         lines.append(f"Números disponíveis ({len(available)}): {preview}.")
     lines.append(f"Participe em {SITE_URL}.")
     reply_text = " ".join(lines)
-    if message:
-        vip = get_vip_profile(message.sender_phone)
-        if vip:
-            nickname = pick_vip_nickname(vip, message.text)
-            reply_text = build_vip_general_reply(vip, nickname, reply_text)
     return AgentResult(
         reply_text=reply_text[: settings.max_reply_chars],
         intent="current_raffle",
@@ -467,11 +414,6 @@ def build_available_numbers_reply(message: IncomingMessage) -> AgentResult:
             f"Escolha e participe em {SITE_URL}. A vaga só confirma após compensação do pagamento."
         )
 
-    vip = get_vip_profile(message.sender_phone)
-    if vip:
-        nickname = pick_vip_nickname(vip, message.text)
-        reply_text = build_vip_general_reply(vip, nickname, reply_text)
-
     return AgentResult(
         reply_text=reply_text[: settings.max_reply_chars],
         intent="available_numbers",
@@ -492,10 +434,6 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
 
     if detect_last_participation_inquiry(message.text) and last_payment.get("found"):
         reply_text = _build_last_participation_reply(last_payment)
-        vip = get_vip_profile(message.sender_phone)
-        if vip:
-            nickname = pick_vip_nickname(vip, message.text)
-            reply_text = build_vip_general_reply(vip, nickname, reply_text)
         return AgentResult(
             reply_text=reply_text,
             intent="raffle_history",
@@ -520,10 +458,6 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
             chunks.append(" | ".join(parts))
 
         reply_text = "Suas participações recentes: " + " // ".join(chunks)
-        vip = get_vip_profile(message.sender_phone)
-        if vip:
-            nickname = pick_vip_nickname(vip, message.text)
-            reply_text = build_vip_general_reply(vip, nickname, reply_text)
 
         return AgentResult(
             reply_text=reply_text,
@@ -550,15 +484,6 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
 
 def build_rules_reply_result(message: IncomingMessage | None = None) -> AgentResult:
     reply_text = build_rules_reply()
-    if message:
-        vip = get_vip_profile(message.sender_phone)
-        if vip:
-            nickname = pick_vip_nickname(vip, message.text)
-            reply_text = build_vip_general_reply(
-                vip,
-                nickname,
-                f"As regras oficiais valem até para o fundador: {reply_text}",
-            )
     return AgentResult(
         reply_text=reply_text,
         intent="rules_faq",

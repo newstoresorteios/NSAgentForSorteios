@@ -22,7 +22,10 @@ async def mercadopago_pix_webhook(request: Request) -> JSONResponse:
         payload = await request.json()
         if not isinstance(payload, dict):
             payload = {"value": payload}
-    except Exception:
+    except Exception as exc:
+        from app.commerce import log_swallowed
+
+        log_swallowed("pix.webhook_json", exc)
         payload = {}
 
     query: dict[str, Any] = dict(request.query_params)

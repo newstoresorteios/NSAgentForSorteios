@@ -235,8 +235,10 @@ def blocks_persona_qualification_for_purchase(
 
         if session_in_checkout_phase(state):
             return False
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("purchase_selection.checkout_phase", exc)
     if state.last_presented_products or state.active_product is not None:
         return True
     if interpretation.goal == "buy":

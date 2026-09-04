@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from app.stories.instagram_story_models import InstagramStoryContext, StoryQuestionType
 from app.models import IncomingMessage
@@ -47,27 +46,6 @@ def detect_story_question_type(text: str | None) -> StoryQuestionType:
     if value.casefold() in {"esse", "este", "isso", "valor?", "quanto?", "tem?", "link"}:
         return StoryQuestionType.GENERIC
     return StoryQuestionType.GENERIC
-
-
-def has_recoverable_story_context(
-    incoming: IncomingMessage,
-    *,
-    commerce_state: Any | None = None,
-) -> bool:
-    story = getattr(incoming, "instagram_story", None)
-    if isinstance(story, InstagramStoryContext):
-        if story.replied_to_story or story.mentioned_in_story or story.story_media_id:
-            return True
-    if commerce_state is not None:
-        if getattr(commerce_state, "last_story_product", None) is not None:
-            return True
-        if getattr(commerce_state, "active_product", None) is not None:
-            return True
-        if getattr(commerce_state, "last_presented_products", None):
-            return True
-    if (incoming.image_url or "").strip():
-        return True
-    return False
 
 
 def should_route_story_question(incoming: IncomingMessage) -> bool:

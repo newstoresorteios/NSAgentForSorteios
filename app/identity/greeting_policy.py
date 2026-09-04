@@ -6,6 +6,7 @@ import re
 import unicodedata
 from typing import Any
 
+from app.identity import log_swallowed
 from app.identity.identity_names import looks_like_whatsapp_nick, resolve_address_name
 
 GREETING_REPLY = "Olá! Como posso ajudar?"
@@ -87,8 +88,8 @@ def resolve_persona_greeting() -> str | None:
         runtime = get_persona_runtime()
         if runtime is not None and (runtime.greeting_text or "").strip():
             return sanitize_greeting_reply(runtime.greeting_text)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_swallowed("greeting.persona_runtime", exc)
     try:
         from app.config import get_settings
         from app.persona.persona_knowledge_repository import (

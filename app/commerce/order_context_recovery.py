@@ -206,7 +206,10 @@ async def recover_order_id_from_customer(
             continue
         try:
             customer_result = await execute("search_customer", payload)
-        except Exception:
+        except Exception as exc:
+            from app.commerce import log_swallowed
+
+            log_swallowed("order_recovery.search_customer", exc)
             customer_result = {"error": "commerce_upstream_error"}
         if "error" in customer_result:
             continue
@@ -222,7 +225,10 @@ async def recover_order_id_from_customer(
                 "list_orders",
                 {"customer_id": str(customers[0]["id"])},
             )
-        except Exception:
+        except Exception as exc:
+            from app.commerce import log_swallowed
+
+            log_swallowed("order_recovery.list_orders", exc)
             order_result = {"error": "commerce_upstream_error"}
         if "error" in order_result:
             continue

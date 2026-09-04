@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 from typing import Any
 
 from app.config import get_settings
@@ -63,41 +62,12 @@ def _lookup_ig_username(sender_id: str) -> str | None:
         if username:
             _IG_USERNAME_CACHE[sender_id] = username
             return username
-    except Exception:
+    except Exception as exc:
+        from app.channels import log_swallowed
+
+        log_swallowed("meta.username_lookup", exc)
         return None
     return None
-
-
-def _agent_debug_log(
-    *,
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict[str, Any],
-) -> None:
-    # #region agent log
-    try:
-        import time
-        from pathlib import Path
-
-        payload = {
-            "sessionId": "38b290",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        Path("debug-38b290.log").open("a", encoding="utf-8").write(
-            json.dumps(payload, ensure_ascii=False) + "\n"
-        )
-        log_event(
-            "debug.meta",
-            {"hypothesisId": hypothesis_id, "message": message, **data},
-        )
-    except Exception:
-        pass
-    # #endregion
 
 
 def payload_skeleton(value: Any, *, depth: int = 0) -> Any:
@@ -227,12 +197,6 @@ async def probe_instagram_graph_subscriptions() -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001
         result = {"ok": False, "error": type(exc).__name__}
-    _agent_debug_log(
-        hypothesis_id="B",
-        location="meta_instagram.py:probe_instagram_graph_subscriptions",
-        message="graph_subscribed_apps",
-        data=result,
-    )
     return result
 
 
@@ -547,14 +511,10 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                 continue
             skip_reason = instagram_event_skip_reason(event)
             if skip_reason != "parsed":
-                _agent_debug_log(
-                    hypothesis_id="A",
-                    location="meta_instagram.py:parse_meta_instagram_messaging",
-                    message="event_skipped",
-                    data={
+                log_event(
+                    "meta.instagram.event_skipped",
+                    {
                         "reason": skip_reason,
-                        "event_keys": sorted(str(key) for key in event.keys())[:16],
-                        "skeleton": payload_skeleton(event),
                         "has_standby_entry": "standby" in entry,
                     },
                 )
@@ -740,7 +700,10 @@ async def send_meta_instagram_reply(
             last_status = resp.status_code
             try:
                 last_body = resp.json()
-            except Exception:
+            except Exception as exc:
+                from app.channels import log_swallowed
+
+                log_swallowed("meta.send_json", exc)
                 last_body = {"raw": (resp.text or "")[:200]}
             if resp.status_code < 300:
                 log_event(

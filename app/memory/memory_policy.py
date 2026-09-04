@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.config import get_settings
+from app.memory import log_swallowed
 from app.memory.memory_models import (
     ContactMemory,
     InstructionExtensionProposal,
@@ -129,7 +130,8 @@ def _has_url(text: str) -> bool:
                 parsed = urlparse(token if "://" in token else f"https://{token}")
                 if parsed.netloc and "." in parsed.netloc:
                     return True
-            except Exception:
+            except Exception as exc:
+                log_swallowed("policy.url_parse", exc)
                 continue
     return False
 

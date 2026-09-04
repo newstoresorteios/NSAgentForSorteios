@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr
 
+from app.persona import log_swallowed
 from app.persona.persona_models import PersonaVersion
 
 
@@ -445,7 +446,8 @@ def _as_prompt_list(value: Any) -> list[str]:
                 import json
 
                 parsed = json.loads(text)
-            except Exception:
+            except Exception as exc:
+                log_swallowed("runtime.prompt_list", exc)
                 return [text]
             return _as_prompt_list(parsed)
         return [text]

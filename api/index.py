@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+from contextlib import asynccontextmanager
 from json import JSONDecodeError
 from typing import Any
 from uuid import uuid4
@@ -37,7 +38,10 @@ from app.db import (
     insert_inbound_message,
     is_latest_inbound_message,
 )
-from app.channels.inbound_coalesce import is_caption_echo_of_recent_image
+from app.channels.inbound_coalesce import (
+    attach_recent_image_for_followup,
+    is_caption_echo_of_recent_image,
+)
 from app.ops.rollout import build_rollout_status
 from app.tray.tray_circuit_breaker import circuit_status_dict
 from app.tray.tray_health_probe import probe_tray_adaptor, tray_ha_checklist
@@ -49,7 +53,7 @@ from app.ops.conversation_lock import (
 )
 from app.ops.handoff_service import apply_integration_failure_handoff, handoff_provider_payload
 from app.learning.remarketing import run_remarketing_batch, sync_remarketing_interaction
-from app.catalog.product_image_index import run_product_image_index_batch
+from app.catalog.vision.product_image_index import run_product_image_index_batch
 from app.ops.runtime_context import (
     get_current_turn,
     reset_current_turn,
@@ -65,7 +69,15 @@ from app.ops.observability import (
     summarize_webhook_payload,
 )
 
-app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0")
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    from app.db import ensure_catalog_pg_trgm
+
+    ensure_catalog_pg_trgm()
+    yield
+
+
+app = FastAPI(title="NewStoreAgent Webhook", version="1.0.0", lifespan=_app_lifespan)
 app.include_router(persona_admin_router)
 app.include_router(pix_payments_router)
 
@@ -770,7 +782,10 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             visitor_id=incoming.visitor_id,
             sender_key=incoming.sender_key,
             event_name=event_name,
-            payload=payload if isinstance(payload, dict) else {},
+            payload={
+                "normalized": incoming.model_dump(mode="json"),
+                "raw": incoming.raw if isinstance(incoming.raw, dict) else {},
+            },
         )
         return JSONResponse(
             {
@@ -898,6 +913,8 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             event_name=event_name,
             reason="caption_echo",
         )
+
+    incoming = attach_recent_image_for_followup(incoming)
 
     try:
         claimed, inbound_id = claim_inbound_message(incoming.model_dump())
@@ -1181,12 +1198,12 @@ async def catalog_url_health_cron(
     url_limit: int = Query(default=50, ge=1, le=500),
     clear_brand_cache: bool = Query(default=False),
 ):
-    from app.catalog.catalog_brand_warm import (
+    from app.catalog.index.warm import (
         _DEFAULT_TOP_BRANDS,
         list_top_index_brands,
         refresh_top_brands_into_index,
     )
-    from app.catalog.catalog_url_health import (
+    from app.catalog.media.url_health import (
         mark_stale_or_zero_price_unavailable,
         repair_catalog_storefront_urls,
     )
@@ -1790,7 +1807,7 @@ async def admin_link_instagram_story_product(request: Request):
 async def admin_confirm_instagram_story(row_id: int, request: Request):
     from app.config import get_settings
     from app.verify.fact_authority import catalog_item_key_for
-    from app.catalog.catalog_index_repository import CatalogIndexRepository
+    from app.catalog.index.repository import CatalogIndexRepository
     from app.identity.request_principal import principal_from_admin_token
     from app.stories.story_product_repository import StoryProductRepository
     from app.ops.observability import log_event

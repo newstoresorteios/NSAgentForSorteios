@@ -703,7 +703,10 @@ def evolve_commerce_state(
         next_phase = resolve_dialogue_phase(state, metadata, result)
         if next_phase is not None:
             state.dialogue_phase = next_phase
-    except Exception:
+    except Exception as exc:
+        from app.commerce import log_swallowed
+
+        log_swallowed("context.dialogue_phase", exc)
         if metadata.get("dialogue_phase") in {
             "discovery",
             "shortlist",

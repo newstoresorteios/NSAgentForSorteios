@@ -4,7 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.models import AgentResult, BrevoSendResult, IncomingMessage, SalesInterpretation
-from openai_test_utils import install_fake_openai_client
+from tests.llm.openai_test_utils import install_fake_openai_client
 
 
 def _settings(**overrides):

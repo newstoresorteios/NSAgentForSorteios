@@ -139,14 +139,16 @@ def message_resets_dialogue_to_discovery(
         return True
     try:
         from .discovery import is_open_catalog_browse_request
-        from app.catalog.catalog_specs import message_requests_other_brands
+        from app.catalog.specs.catalog_specs import message_requests_other_brands
 
         if is_open_catalog_browse_request(message_text, interpretation):
             return True
         if message_requests_other_brands(message_text):
             return True
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("dialogue_phase.browse_detect", exc)
     return False
 
 

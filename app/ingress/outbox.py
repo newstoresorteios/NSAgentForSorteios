@@ -85,8 +85,15 @@ def claim_pending_outbox(
                 WITH next_rows AS (
                   SELECT id
                   FROM public.ai_outbound_outbox
-                  WHERE status IN ('pending', 'failed')
-                    AND attempts < max_attempts
+                  WHERE attempts < max_attempts
+                    AND (
+                      status IN ('pending', 'failed')
+                      OR (
+                        status = 'leased'
+                        AND lease_expires_at IS NOT NULL
+                        AND lease_expires_at < now()
+                      )
+                    )
                   ORDER BY created_at ASC
                   FOR UPDATE SKIP LOCKED
                   LIMIT %(limit)s

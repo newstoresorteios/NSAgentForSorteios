@@ -322,7 +322,10 @@ def _is_own_agent_message(message: dict[str, Any]) -> bool:
         from app.config import get_settings
 
         configured = (get_settings().brevo_received_from or "").strip()
-    except Exception:
+    except Exception as exc:
+        from app.channels import log_swallowed
+
+        log_swallowed("parser.own_agent_settings", exc)
         configured = ""
     return bool(configured and received_from.casefold() == configured.casefold())
 

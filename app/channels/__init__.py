@@ -7,6 +7,11 @@ from typing import Any, Protocol
 from app.models import AgentResult, IncomingMessage
 
 
+def log_swallowed(scope: str, exc: BaseException) -> None:
+    """Keep optional channel paths from failing the turn, but do not hide the type."""
+    print(f"[channels.{scope}]", {"error_type": type(exc).__name__})
+
+
 class ChannelAdapter(Protocol):
     provider: str
 

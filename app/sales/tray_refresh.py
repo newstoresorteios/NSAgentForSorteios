@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from ..models import SalesInterpretation
-from app.catalog.preference_normalize import extract_stated_color, message_states_color
+from app.catalog.specs.preference_normalize import extract_stated_color, message_states_color
 from .discovery import _specific_product_lock, message_states_budget
 
 

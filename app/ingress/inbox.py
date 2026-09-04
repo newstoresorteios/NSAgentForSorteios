@@ -140,12 +140,14 @@ def claim_pending_inbox(
                 WITH next_rows AS (
                   SELECT id
                   FROM public.ai_inbound_inbox
-                  WHERE status IN ('pending', 'failed')
-                    AND attempts < max_attempts
+                  WHERE attempts < max_attempts
                     AND (
-                      lease_expires_at IS NULL
-                      OR lease_expires_at < now()
-                      OR status = 'pending'
+                      status IN ('pending', 'failed')
+                      OR (
+                        status = 'leased'
+                        AND lease_expires_at IS NOT NULL
+                        AND lease_expires_at < now()
+                      )
                     )
                   ORDER BY created_at ASC
                   FOR UPDATE SKIP LOCKED
@@ -247,5 +249,5 @@ def mark_inbox_failed(inbox_id: int, *, error: str, dead: bool = False) -> None:
             )
     log_event(
         "inbox.failed",
-        {"inbox_id": inbox_id, "dead": dead, "error_type": type(error).__name__},
+        {"inbox_id": inbox_id, "dead": dead, "error": (error or "")[:80]},
     )

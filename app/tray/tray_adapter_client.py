@@ -510,7 +510,7 @@ class TrayAdapterClient:
         )
 
     async def get_product(self, product_id: str | int) -> Any:
-        from app.catalog.product_snapshot import (
+        from app.catalog.index.snapshot import (
             cache_ttl_for_kind,
             get_product_snapshot_cache,
             product_cache_enabled,
@@ -541,7 +541,7 @@ class TrayAdapterClient:
         return payload
 
     async def get_product_stock(self, product_id: str | int) -> Any:
-        from app.catalog.product_snapshot import (
+        from app.catalog.index.snapshot import (
             cache_ttl_for_kind,
             get_product_snapshot_cache,
             product_cache_enabled,
@@ -595,7 +595,7 @@ class TrayAdapterClient:
         variant_id: str | int | None = None,
         session_id: str | None = None,
     ) -> Any:
-        from app.catalog.product_snapshot import get_product_snapshot_cache
+        from app.catalog.index.snapshot import get_product_snapshot_cache
 
         # Mutations must not reuse fresh stock/product confirmation blindly.
         get_product_snapshot_cache().invalidate(

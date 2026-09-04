@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.catalog.catalog_specs import (
+from app.catalog.specs.catalog_specs import (
     excluded_brands_from_interpretation,
     product_matches_excluded_brand,
 )
@@ -255,8 +255,10 @@ def apply_scope_send_gate(
         from app.ops.observability import record_scope_mismatch
 
         record_scope_mismatch(reason=report.reason)
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("scope_gate.record_mismatch", exc)
 
     fixed = result.model_copy(deep=True)
     commercial = dict(fixed.commercial_data or {})

@@ -149,7 +149,7 @@ async def _revalidate_product(
         product["_variant_revalidated"] = True
     product["_revalidated"] = True
     product["_factual_source"] = "tray_live"
-    from app.catalog.product_media import ensure_product_has_live_url
+    from app.catalog.media.product_media import ensure_product_has_live_url
 
     product = await ensure_product_has_live_url(product)
     return product, False, None

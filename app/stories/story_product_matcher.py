@@ -7,7 +7,7 @@ import re
 import unicodedata
 from typing import Any
 
-from app.catalog.catalog_index import build_allowed_id_sets, reject_unknown_rerank_ids
+from app.catalog.index.catalog_index import build_allowed_id_sets, reject_unknown_rerank_ids
 from app.config import get_settings
 from app.verify.fact_authority import catalog_item_key_for
 from app.stories.instagram_story_models import (
@@ -947,7 +947,7 @@ async def match_story_to_catalog(
 
     # Level 1 — exact identifiers via catalog index.
     try:
-        from app.catalog.catalog_index_repository import CatalogIndexRepository, row_to_product_dict
+        from app.catalog.index.repository import CatalogIndexRepository, row_to_product_dict
 
         repo = CatalogIndexRepository()
         for ean in analysis.visible_eans:
@@ -1099,7 +1099,7 @@ async def match_story_to_catalog(
 
     async def _load_visual_neighbors() -> list[dict[str, Any]]:
         try:
-            from app.catalog.product_image_index import visual_search_from_caption
+            from app.catalog.vision.product_image_index import visual_search_from_caption
 
             caption_bits = [
                 *analysis.visible_brands[:2],
@@ -1192,11 +1192,13 @@ async def match_story_to_catalog(
             )
             return color_locked
         try:
-            from app.catalog.catalog_index import index_products_best_effort
+            from app.catalog.index.catalog_index import index_products_best_effort
 
             index_products_best_effort(products, factual_source=source)
-        except Exception:
-            pass
+        except Exception as exc:
+            from app.stories import log_swallowed
+
+            log_swallowed("matcher.index_best_effort", exc)
         for idx, product in enumerate(products):
             if not isinstance(product, dict):
                 continue
@@ -1459,7 +1461,7 @@ async def match_story_to_catalog(
         amb_min=amb_min,
     )
     if execute_tool is not None and needs_storefront:
-        from app.catalog.storefront_search import hydrate_storefront_hits, search_storefront
+        from app.catalog.media.storefront_search import hydrate_storefront_hits, search_storefront
 
         queries = build_storefront_fallback_queries(
             analysis,

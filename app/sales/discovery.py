@@ -7,6 +7,10 @@ import unicodedata
 from typing import Any
 
 from ..models import IncomingMessage, SalesInterpretation
+from app.catalog.specs.identity_lock import (
+    mentioned_watch_brands as _mentioned_watch_brands,
+    specific_product_lock as _specific_product_lock,
+)
 from app.commerce.commerce_context import CommerceConversationState
 from app.commerce.order_service import has_active_order_context, is_order_lookup_request
 from app.memory.context_resume import is_short_affirmation
@@ -66,20 +70,24 @@ def _known_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
         from .qualification_slots import known_preferences_from_qualification_slots
 
         known.update(known_preferences_from_qualification_slots(interpretation))
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.qual_slots", exc)
     if interpretation.subject.brand:
         known["brand"] = interpretation.subject.brand
     if preferences.attributes:
         known["attributes"] = preferences.attributes
     try:
-        from app.catalog.catalog_specs import interpretation_case_size_range
+        from app.catalog.specs.catalog_specs import interpretation_case_size_range
 
         case_range = interpretation_case_size_range(interpretation)
         if case_range:
             known["case_size"] = f"{case_range[0]}-{case_range[1]}mm"
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.case_size", exc)
     return known
 
 
@@ -173,7 +181,7 @@ def _scrub_stale_budget_for_open_browse(
         cleaned.pop("occasion", None)
         dropped.append("occasion")
     try:
-        from app.catalog.preference_normalize import message_states_color, message_states_style
+        from app.catalog.specs.preference_normalize import message_states_color, message_states_style
 
         if not message_states_color(message_text) and "color" in cleaned:
             cleaned.pop("color", None)
@@ -181,8 +189,10 @@ def _scrub_stale_budget_for_open_browse(
         if not message_states_style(message_text) and "style" in cleaned:
             cleaned.pop("style", None)
             dropped.append("style")
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.scrub_color_style", exc)
     if dropped:
         print(
             "[sales.discovery.scrub_stale_prefs]",
@@ -193,33 +203,6 @@ def _scrub_stale_budget_for_open_browse(
             },
         )
     return cleaned
-
-
-def _specific_product_lock(interpretation: SalesInterpretation) -> bool:
-    subject = interpretation.subject
-    if subject.reference or subject.ean:
-        return True
-    model = str(subject.model or "").strip()
-    if not model:
-        return False
-    model_fold = model.casefold()
-    brand_fold = str(subject.brand or "").casefold()
-    if brand_fold and model_fold == brand_fold:
-        return False
-    # Brand-only (or brand + "relógio") misparsed as model must not unlock catalog.
-    leftover = model_fold
-    for hit in _mentioned_watch_brands(model):
-        leftover = leftover.replace(hit.casefold(), " ")
-    for token in ("relógio", "relogio", "watch"):
-        leftover = leftover.replace(token, " ")
-    leftover = " ".join(leftover.split())
-    if not leftover:
-        return False
-    from app.memory.context_resume import is_non_model_query
-
-    if is_non_model_query(leftover):
-        return False
-    return True
 
 
 def _subject_identifiable(interpretation: SalesInterpretation) -> bool:
@@ -265,8 +248,10 @@ def _has_urgency_signal(interpretation: SalesInterpretation) -> bool:
 
         if URGENCY in covered_qualification_dims(interpretation):
             return True
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.urgency_dims", exc)
     attrs = list(interpretation.preferences.attributes or [])
     blob = " ".join(str(item) for item in attrs).casefold()
     return any(
@@ -299,8 +284,10 @@ def build_qualification_snapshot(
         from .qualification_slots import covered_qualification_dims
 
         covered |= covered_qualification_dims(interpretation)
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.covered_dims", exc)
     has_brand = bool(interpretation.subject.brand) or "brand" in covered
     has_product_type = bool(interpretation.subject.product_type)
     # Budget/style come from known_preferences (includes rehydrated prefs).
@@ -350,8 +337,10 @@ def build_qualification_snapshot(
             if qualification_slots_sufficient(interpretation, covered):
                 ready = True
                 satisfied_by = "qual_slots_complete"
-        except Exception:
-            pass
+        except Exception as exc:
+            from app.sales import log_swallowed
+
+            log_swallowed("discovery.qual_slots_sufficient", exc)
 
     missing: list[str] = []
     if not has_budget:
@@ -537,47 +526,6 @@ def _comparison_needs_qualification(interpretation: SalesInterpretation) -> bool
     return interpretation.goal == "compare" and not _specific_product_lock(interpretation)
 
 
-def _mentioned_watch_brands(text: str | None) -> list[str]:
-    folded = unicodedata.normalize("NFKD", (text or "").casefold())
-    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
-    known = (
-        "hamilton",
-        "baltic",
-        "tissot",
-        "citizen",
-        "seiko",
-        "bulova",
-        "orient",
-        "casio",
-        "mido",
-        "omega",
-        "longines",
-        "oris",
-        "certina",
-        "tudor",
-        "zenith",
-        "breitling",
-        "panerai",
-        "iwc",
-        "rolex",
-        "tag heuer",
-        "christopher ward",
-    )
-    found: list[str] = []
-    display = {
-        "tag heuer": "TAG Heuer",
-        "christopher ward": "Christopher Ward",
-        "bulova": "Bulova",
-        "orient": "Orient",
-        "casio": "Casio",
-        "mido": "Mido",
-    }
-    for brand in known:
-        if brand in folded and brand not in found:
-            found.append(display.get(brand, brand.title()))
-    return found
-
-
 def _comparison_clarification_question(message: IncomingMessage, interpretation: SalesInterpretation) -> str:
     """Containment for compare-without-SKU: prefer a persona qualification prompt."""
     persona_q = _persona_qualification_question(interpretation, {})
@@ -614,7 +562,7 @@ def _discovery_state(
         enough_information = False
     comparison_without_sku = _comparison_needs_qualification(interpretation)
     try:
-        from app.catalog.catalog_specs import (
+        from app.catalog.specs.catalog_specs import (
             interpretation_case_size_range,
             message_requests_other_brands,
             message_wants_chronograph,
@@ -740,8 +688,10 @@ def _discovery_state(
                     interpretation.goal == "buy" and interpretation.stop_clarification
                 ):
                     state["force_retrieval"] = False
-        except Exception:
-            pass
+        except Exception as exc:
+            from app.sales import log_swallowed
+
+            log_swallowed("discovery.purchase_close_block", exc)
     try:
         from .dialogue_phase import apply_dialogue_phase_discovery_gates
 
@@ -751,8 +701,10 @@ def _discovery_state(
             message_text=message_text,
             interpretation=interpretation,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.dialogue_phase_gates", exc)
     return state
 
 

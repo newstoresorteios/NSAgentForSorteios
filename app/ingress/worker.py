@@ -10,7 +10,10 @@ from app.db import (
     has_successful_agent_response,
     insert_agent_response,
 )
-from app.channels.inbound_coalesce import attach_recent_image_for_followup
+from app.channels.inbound_coalesce import (
+    attach_recent_image_for_followup,
+    is_caption_echo_of_recent_image,
+)
 from app.ingress.inbox import (
     claim_pending_inbox,
     mark_inbox_failed,
@@ -63,6 +66,16 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
     if incoming is None:
         mark_inbox_failed(inbox_id, error="invalid_inbox_payload", dead=True)
         return {"ok": False, "inbox_id": inbox_id, "error": "invalid_inbox_payload"}
+
+    if not (incoming.image_url or "").strip() and is_caption_echo_of_recent_image(
+        incoming
+    ):
+        mark_inbox_processed(inbox_id)
+        log_event(
+            "inbox.skipped_caption_echo",
+            {"inbox_id": inbox_id, "channel": incoming.channel},
+        )
+        return {"ok": True, "inbox_id": inbox_id, "skipped": "caption_echo"}
 
     incoming = attach_recent_image_for_followup(incoming)
 

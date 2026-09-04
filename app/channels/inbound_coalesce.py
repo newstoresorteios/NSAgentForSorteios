@@ -33,7 +33,10 @@ def _metadata_dict(value: Any) -> dict[str, Any]:
     # psycopg Jsonb / mapping-like
     try:
         return dict(value)
-    except Exception:
+    except Exception as exc:
+        from app.channels import log_swallowed
+
+        log_swallowed("coalesce.metadata", exc)
         return {}
 
 

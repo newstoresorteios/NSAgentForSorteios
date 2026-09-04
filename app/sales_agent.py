@@ -22,7 +22,7 @@ from app.commerce.commerce_router import (
     resolve_commerce_action,
     _product_lines,
 )
-from app.catalog.category_resolver import CategoryResolver
+from app.catalog.category.resolver import CategoryResolver
 from app.commerce.checkout_service import checkout_capabilities, select_checkout_channel
 from app.commerce.checkout_data_service import (
     enrich_checkout_data_from_cep,
@@ -81,7 +81,7 @@ from app.commerce.order_service import (
     get_order_facts,
     prepare_order,
 )
-from app.catalog.product_media import resolve_presented_product_images, resolve_product_image
+from app.catalog.media.product_media import resolve_presented_product_images, resolve_product_image
 from app.catalog.product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
     apply_persona_presentation_order,
@@ -108,7 +108,7 @@ from app.catalog.product_retrieval import (
     soft_confirm_candidates,
     specific_product_search_terms,
 )
-from app.catalog.catalog_cache import ensure_brand_pool_in_candidates
+from app.catalog.index.cache import ensure_brand_pool_in_candidates
 from app.tray.tray_tools import execute_tool
 
 
@@ -608,7 +608,7 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
         confidence=0.6,
     )
     interpretation._source = "deterministic_fallback"
-    from app.catalog.preference_normalize import normalize_sales_interpretation
+    from app.catalog.specs.preference_normalize import normalize_sales_interpretation
     from app.llm.turn_understanding import sales_to_turn_understanding
     from app.memory.context_resume import scrub_catalog_question_interpretation
 
@@ -943,8 +943,10 @@ async def interpret_message(
             system_instructions = (
                 f"{system_instructions}\n\n{runtime.interpreter_policy_block()}"
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("interpreter.persona_block", exc)
     messages = [
         {"role": "system", "content": system_instructions},
         state_message,
@@ -964,7 +966,7 @@ async def interpret_message(
     try:
         from app.llm.openai_errors import OpenAIGatewayError, OpenAIRefusalError
         from app.llm.openai_gateway import parse_structured_output
-        from app.catalog.preference_normalize import (
+        from app.catalog.specs.preference_normalize import (
             normalize_sales_interpretation,
             recent_user_context_text,
         )
@@ -1011,6 +1013,23 @@ async def interpret_message(
                 interpretation, message_text=current_text
             )
 
+        from .sales.qualification_slots import (
+            continue_commerce_from_qualification_answer,
+            rehydrate_qualification_slots_from_turns,
+        )
+
+        try:
+            interpretation = rehydrate_qualification_slots_from_turns(
+                interpretation,
+                recent_turns,
+                message_text=current_text,
+                conversation_id=message.conversation_id,
+                include_other_threads=_open_sale_history(commerce_state),
+            )
+        except Exception as exc:
+            from app.sales import log_swallowed
+
+            log_swallowed("interpreter.qual_rehydrate", exc)
         interpretation = normalize_sales_interpretation(
             interpretation,
             message_text=current_text,
@@ -1019,7 +1038,6 @@ async def interpret_message(
             conversation_id=message.conversation_id,
             include_other_threads=_open_sale_history(commerce_state),
         )
-        from .sales.qualification_slots import continue_commerce_from_qualification_answer
 
         interpretation = continue_commerce_from_qualification_answer(
             interpretation,
@@ -1178,18 +1196,122 @@ async def plan_sales_request(message: IncomingMessage) -> dict[str, Any] | None:
 
 
 from .sales.workflows.catalog_ranking import (  # noqa: E402
-    candidate_price as _candidate_price,
-    candidate_text as _candidate_text,
-    fold_text as _fold,
     rank_candidates,
     score_candidate,
 )
 
 
+_CATALOG_PLAN_INTENTS = frozenset(
+    {
+        "product_search",
+        "product_price",
+        "product_inventory",
+        "recommendation",
+        "price",
+        "inventory",
+        "product_comparison",
+    }
+)
+_INTENT_TO_GOAL = {
+    "product_search": "find",
+    "recommendation": "recommend",
+    "product_price": "inspect",
+    "product_inventory": "inspect",
+    "price": "inspect",
+    "inventory": "inspect",
+    "product_comparison": "compare",
+}
+
+
+def _commerce_plan_to_interpretation(
+    plan: dict[str, Any],
+) -> SalesInterpretation | None:
+    """Turn a catalog-search plan dict into SalesInterpretation for compiled retrieval."""
+    if not isinstance(plan, dict) or plan.get("domain") != "commerce":
+        return None
+    intent = str(plan.get("intent") or plan.get("action") or "")
+    goal = plan.get("goal")
+    if intent not in _CATALOG_PLAN_INTENTS and goal not in {
+        "find",
+        "recommend",
+        "inspect",
+        "compare",
+    }:
+        return None
+    subject = plan.get("subject") if isinstance(plan.get("subject"), dict) else {}
+    constraints = plan.get("constraints") if isinstance(plan.get("constraints"), dict) else {}
+    filters = plan.get("filters") if isinstance(plan.get("filters"), dict) else {}
+    brand = subject.get("brand") or filters.get("brand")
+    model = subject.get("model") or filters.get("model")
+    reference = subject.get("reference") or filters.get("reference")
+    ean = subject.get("ean") or filters.get("ean")
+    query = str(subject.get("query") or plan.get("query") or "").strip()
+    if not any((brand, model, reference, ean, query)):
+        return None
+    allowed_goals = {
+        "discover",
+        "find",
+        "recommend",
+        "compare",
+        "inspect",
+        "buy",
+        "after_sales",
+    }
+    resolved_goal = goal if goal in allowed_goals else _INTENT_TO_GOAL.get(intent, "find")
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal=resolved_goal,
+            subject={
+                "product_type": subject.get("product_type"),
+                "brand": brand,
+                "model": model,
+                "reference": reference,
+                "ean": ean,
+            },
+            preferences={
+                "budget_min": constraints.get("budget_min") or filters.get("budget_min"),
+                "budget_max": (
+                    constraints.get("budget_max")
+                    or filters.get("budget_max")
+                    or plan.get("budget_max")
+                ),
+                "color": constraints.get("color") or filters.get("color"),
+                "style": constraints.get("style") or filters.get("style"),
+                "material": constraints.get("material") or filters.get("material"),
+                "attributes": constraints.get("attributes")
+                or filters.get("attributes")
+                or [],
+                "explicit_no_preferences": constraints.get("explicit_no_preferences")
+                or [],
+            },
+            information_needed=plan.get("information_needed") or ["catalog"],
+            references_previous_context=False,
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+            stop_clarification=False,
+            needs_clarification=bool(plan.get("needs_clarification")),
+            clarification_question=plan.get("clarification_question"),
+            confidence=0.8,
+        )
+    except Exception:
+        return None
+    source = plan.get("_source")
+    if isinstance(source, str) and source:
+        interpretation._source = source
+    return interpretation
+
+
 def _ranked_result(result: AgentResult, plan: dict[str, Any]) -> AgentResult | None:
+    """Leftover ranking when a plan dict could not be compiled into an interpretation."""
     data = result.commercial_data or {}
     products = data.get("products") if isinstance(data.get("products"), list) else []
-    selected = rank_candidates(products, plan)
+    interpretation = _commerce_plan_to_interpretation(plan)
+    if interpretation is None or not products:
+        return None
+    from app.catalog.retrieval.scoring import score_catalog_candidates
+
+    selected = score_catalog_candidates(products, interpretation)
     if not selected:
         return None
     from app.commerce.commerce_router import _product_result
@@ -1658,16 +1780,33 @@ def _hydrate_sales_interpretation(
     commerce_state: CommerceConversationState | None = None,
 ) -> SalesInterpretation | None:
     """Normalize + qualification + memory — one place before the sales handler."""
+    if isinstance(semantic_plan, dict):
+        semantic_plan = _commerce_plan_to_interpretation(semantic_plan)
     if not isinstance(semantic_plan, SalesInterpretation):
         return None
-    from app.catalog.preference_normalize import (
+    from app.catalog.specs.preference_normalize import (
         normalize_sales_interpretation,
         recent_user_context_text,
     )
-    from .sales.qualification_slots import continue_commerce_from_qualification_answer
+    from .sales.qualification_slots import (
+        continue_commerce_from_qualification_answer,
+        rehydrate_qualification_slots_from_turns,
+    )
     from app.commerce.commerce_router import is_outbound_catalog_image_request
 
     open_sale = _open_sale_history(commerce_state)
+    try:
+        semantic_plan = rehydrate_qualification_slots_from_turns(
+            semantic_plan,
+            recent_turns,
+            message_text=message.text,
+            conversation_id=message.conversation_id,
+            include_other_threads=open_sale,
+        )
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("hydrate.qual_rehydrate", exc)
     interpretation = normalize_sales_interpretation(
         semantic_plan,
         message_text=message.text,
@@ -2237,7 +2376,7 @@ async def _handle_sales_message_inner(
                 )
         # Inbound photo must re-identify — never answer price from a stale
         # Kingfisher/sibling left in active/presented context.
-        from app.catalog.image_product_id import (
+        from app.catalog.vision.image_product_id import (
             handle_image_product_search,
             image_search_eligible,
         )
@@ -2639,7 +2778,7 @@ async def _handle_sales_message_inner(
             or is_short_affirmation(message.text)
         )
     ):
-        from app.catalog.image_product_id import (
+        from app.catalog.vision.image_product_id import (
             ImageProductIdentification,
             soft_line_interpretation_from_identification,
         )
@@ -3129,7 +3268,7 @@ async def _handle_sales_message_inner(
             )
         if resolved_product is None:
             # Customer sent a product photo — identify it, don't ask for the name first.
-            from app.catalog.image_product_id import (
+            from app.catalog.vision.image_product_id import (
                 handle_image_product_search,
                 image_search_eligible,
             )
@@ -3828,8 +3967,10 @@ async def _handle_sales_message_inner(
                     channel=message.channel,
                     dialogue_phase=(state.dialogue_phase if state else None),
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                from app.sales import log_swallowed
+
+                log_swallowed("handle.record_close_miss", exc)
             return _mark_sales_result(
                 AgentResult(
                     reply_text=_purchase_close_hold_reply(
@@ -3901,7 +4042,11 @@ async def _handle_sales_message_inner(
             interpretation,
             resolved_product,
         )
-    elif interpretation is not None and action == "product_search":
+    elif interpretation is not None and action in {
+        "product_search",
+        "product_price",
+        "product_inventory",
+    }:
         tray_result = await _execute_compiled_product_retrieval(
             interpretation,
             message_text=message.text,
@@ -3977,8 +4122,10 @@ async def _handle_sales_message_inner(
             merged = list(dict.fromkeys([*[str(item) for item in prior if item], *excluded]))
             if merged:
                 prefs_dump = {**prefs_dump, "excluded_product_ids": merged}
-        except Exception:
-            pass
+        except Exception as exc:
+            from app.sales import log_swallowed
+
+            log_swallowed("handle.locked_identity", exc)
         tray_result.response_metadata.update({
             "active_topic": interpretation.active_topic,
             "purchase_stage": interpretation.purchase_stage,

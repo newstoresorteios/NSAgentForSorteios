@@ -269,7 +269,6 @@ async def _advance_whatsapp_checkout(
         shipping_result = select_shipping(current, selection_position=1)
         result = _combine_checkout_and_followup_results(result, shipping_result)
         current = evolve_commerce_state(state, result)
-        current = evolve_commerce_state(state, result)
     if (
         payment_preference
         and not checkout_missing_fields(current.checkout_draft)

@@ -263,8 +263,10 @@ def _is_plausible_name(text: str) -> bool:
 
         if looks_like_whatsapp_nick(cleaned):
             return False
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("qualification.whatsapp_nick", exc)
     return bool(_NAME_RE.match(cleaned))
 
 

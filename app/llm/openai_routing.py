@@ -6,6 +6,7 @@ import hashlib
 from typing import Literal
 
 from app.config import get_settings
+from app.llm import log_swallowed
 from app.ops.runtime_context import get_current_turn
 
 
@@ -24,7 +25,8 @@ def routing_key_from_turn() -> str | None:
         tenant = str(
             getattr(get_settings(), "agent_persona_tenant_id", None) or "newstore"
         ).strip()
-    except Exception:
+    except Exception as exc:
+        log_swallowed("routing.tenant", exc)
         tenant = "newstore"
     conversation = (runtime.conversation_key or "").strip()
     if conversation and conversation != "unresolved":

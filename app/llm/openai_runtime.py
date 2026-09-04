@@ -5,6 +5,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+from app.llm import log_swallowed
 from app.ops.observability import record_openai_observation
 from app.ops.runtime_context import get_current_turn
 
@@ -71,7 +72,8 @@ def _response_preview(response: Any) -> str | None:
             if hasattr(parsed, "model_dump"):
                 return str(parsed.model_dump(mode="json"))
             return str(parsed)
-    except Exception:
+    except Exception as exc:
+        log_swallowed("runtime.response_preview", exc)
         return None
     return None
 

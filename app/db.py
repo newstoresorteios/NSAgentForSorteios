@@ -61,6 +61,57 @@ def get_sorteio_conn() -> Iterator[psycopg.Connection]:
         conn.close()
 
 
+_catalog_pg_trgm_ready = False
+_catalog_pg_trgm_attempted = False
+
+_CATALOG_PG_TRGM_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_title_trgm
+ON public.ai_catalog_index
+USING gin ((lower(title_normalized)) gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_model_trgm
+ON public.ai_catalog_index
+USING gin ((lower(coalesce(model, ''))) gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_reference_trgm
+ON public.ai_catalog_index
+USING gin ((lower(coalesce(reference, ''))) gin_trgm_ops);
+"""
+
+
+def apply_catalog_pg_trgm(cur: Any) -> None:
+    """Idempotent fuzzy-search support for ai_catalog_index (sql/025)."""
+    global _catalog_pg_trgm_ready
+    cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    cur.execute(_CATALOG_PG_TRGM_INDEX_SQL)
+    _catalog_pg_trgm_ready = True
+
+
+def ensure_catalog_pg_trgm() -> bool:
+    """Apply sql/025 even when AUTO_CREATE_TABLES is off (prod default)."""
+    global _catalog_pg_trgm_attempted
+    if _catalog_pg_trgm_ready:
+        return True
+    if _catalog_pg_trgm_attempted:
+        return False
+    settings = get_settings()
+    if not settings.database_url:
+        return False
+    _catalog_pg_trgm_attempted = True
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                apply_catalog_pg_trgm(cur)
+        print("[db.catalog_pg_trgm] ready")
+        return True
+    except Exception as exc:
+        print(
+            "[db.catalog_pg_trgm] unavailable; lexical search uses LIKE",
+            {"error_type": type(exc).__name__},
+        )
+        return False
+
+
 def ensure_tables() -> None:
     settings = get_settings()
     if not settings.database_url or not getattr(settings, "auto_create_tables", False):
@@ -620,7 +671,17 @@ def ensure_tables() -> None:
                 CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_case_size
                 ON public.ai_catalog_index (tenant_id, case_size)
                 WHERE case_size IS NOT NULL;
-
+                """
+            )
+            try:
+                apply_catalog_pg_trgm(cur)
+            except Exception as exc:
+                print(
+                    "[db.ensure_tables] pg_trgm unavailable; lexical search uses LIKE",
+                    {"error_type": type(exc).__name__},
+                )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS public.instagram_story_products (
                   id bigserial PRIMARY KEY,
                   tenant_id text NOT NULL,

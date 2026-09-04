@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
+from app.ingress import log_swallowed
 from app.models import IncomingMessage
 
 
@@ -16,7 +17,8 @@ def incoming_from_inbox_payload(payload: Any) -> IncomingMessage | None:
     if not isinstance(data, dict):
         try:
             data = dict(data)
-        except Exception:
+        except Exception as exc:
+            log_swallowed("reconstruct.payload_dict", exc)
             return None
 
     normalized = data.get("normalized")
@@ -68,7 +70,8 @@ def incoming_from_inbox_payload(payload: Any) -> IncomingMessage | None:
                 normalized = {**normalized, "image_url": media_url}
                 if not normalized.get("attachment_type"):
                     normalized["attachment_type"] = "image"
-        except Exception:
+        except Exception as exc:
+            log_swallowed("reconstruct.story", exc)
             story_obj = None
 
     clean = {
@@ -82,7 +85,8 @@ def incoming_from_inbox_payload(payload: Any) -> IncomingMessage | None:
     clean["raw"] = raw
     try:
         incoming = IncomingMessage.model_validate(clean)
-    except Exception:
+    except Exception as exc:
+        log_swallowed("reconstruct.validate", exc)
         return None
     if story_obj is not None:
         incoming.instagram_story = story_obj

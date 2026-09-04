@@ -14,6 +14,7 @@ from app.commerce.commerce_context import (
     checkout_missing_fields,
     normalize_variant_identity,
 )
+from app.commerce import log_swallowed
 from app.models import AgentResult
 
 
@@ -436,7 +437,8 @@ async def _current_order_facts(
     else:
         try:
             cart = await execute("get_cart_complete", {"session_id": state.cart_session_id})
-        except Exception:
+        except Exception as exc:
+            log_swallowed("order.get_cart", exc)
             cart = {"error": "commerce_upstream_error"}
     if "error" in cart:
         return None, [*missing, "cart_unavailable"]
@@ -723,7 +725,8 @@ async def create_order(
             preflight = await execute(
                 "list_orders", {"session_id": state.cart_session_id}
             )
-        except Exception:
+        except Exception as exc:
+            log_swallowed("order.list_preflight", exc)
             preflight = {"error": "commerce_upstream_error"}
         if "error" in preflight:
             return AgentResult(
@@ -766,7 +769,8 @@ async def create_order(
     if ambiguous and state.cart_session_id:
         try:
             lookup = await execute("list_orders", {"session_id": state.cart_session_id})
-        except Exception:
+        except Exception as exc:
+            log_swallowed("order.list_reconcile", exc)
             lookup = {"error": "commerce_upstream_error"}
         reconciled = None if "error" in lookup else _existing_order(lookup)
         print("[sales.order.reconcile]", {
@@ -1036,7 +1040,8 @@ async def get_order_facts(
         session_id = state.order_session_id or state.cart_session_id
         try:
             lookup = await execute("list_orders", {"session_id": session_id})
-        except Exception:
+        except Exception as exc:
+            log_swallowed("order.list_status", exc)
             lookup = {"error": "commerce_upstream_error"}
         existing = None if "error" in lookup else _existing_order(lookup)
         if existing is not None:
@@ -1077,7 +1082,8 @@ async def get_order_facts(
     for target in targets:
         try:
             result = await execute("get_order_complete", {"order_id": target})
-        except Exception:
+        except Exception as exc:
+            log_swallowed("order.get_complete", exc)
             result = {"error": "commerce_upstream_error"}
         if "error" in result:
             last_error = result
@@ -1170,7 +1176,8 @@ async def find_order_by_customer_document(
             "search_customer",
             {document_kind: document, "limit": 5},
         )
-    except Exception:
+    except Exception as exc:
+        log_swallowed("order.search_customer", exc)
         customer_result = {"error": "commerce_upstream_error"}
     if "error" in customer_result:
         return AgentResult(
@@ -1201,7 +1208,8 @@ async def find_order_by_customer_document(
             "list_orders",
             {"customer_id": str(customers[0]["id"])},
         )
-    except Exception:
+    except Exception as exc:
+        log_swallowed("order.list_by_customer", exc)
         order_result = {"error": "commerce_upstream_error"}
     if "error" in order_result:
         return AgentResult(
@@ -1259,7 +1267,8 @@ async def find_order_by_customer_document(
     )
     try:
         complete = await execute("get_order_complete", {"order_id": canonical_id})
-    except Exception:
+    except Exception as exc:
+        log_swallowed("order.get_complete_canonical", exc)
         complete = {"error": "commerce_upstream_error"}
     if "error" not in complete and _order_payload_exists(complete):
         return _order_facts_result(complete, canonical_id, state)

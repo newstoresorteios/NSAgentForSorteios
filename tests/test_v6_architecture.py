@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.catalog.catalog_index import (
+from app.catalog.index.catalog_index import (
     CandidateTrace,
     build_allowed_id_sets,
     filter_products_to_allowed,

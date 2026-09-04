@@ -18,7 +18,7 @@ from app.llm.agent_replies import (
 from .config import get_settings
 from app.commerce.commerce_context import CommerceConversationState, apply_commerce_domain_context
 from .db import load_recent_conversation_turns
-from app.catalog.image_product_id import handle_image_product_search, image_search_eligible
+from app.catalog.vision.image_product_id import handle_image_product_search, image_search_eligible
 from app.memory.context_builder import (
     build_template_fallback,
     detect_primary_intent,
@@ -63,12 +63,6 @@ from app.commerce.order_service import (
 from app.commerce.payment_service import inspect_order_payment
 from app.identity.repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
 from app.persona.site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
-from app.identity.vip_profiles import (
-    build_vip_openai_context,
-    get_vip_profile,
-    pick_vip_address_name,
-    should_suppress_vip_nicknames,
-)
 from app.identity.user_preferences import detect_preferred_name_update
 from app.tray.tray_tools import TOOL_SCHEMAS, execute_tool
 from .sales_agent import (
@@ -233,23 +227,6 @@ def _local_raffle_reply(message: IncomingMessage, facts: dict) -> AgentResult | 
 def build_agent_input(message: IncomingMessage, customer_context: dict, facts: dict) -> str:
     from app.memory.working_memory import format_working_memory_block
 
-    vip_block = ""
-    vip = get_vip_profile(message.sender_phone)
-    if vip:
-        history = customer_context.get("_conversation_turns") or customer_context.get(
-            "_model_conversation_turns"
-        )
-        suppress = should_suppress_vip_nicknames(
-            history,
-            current_text=message.text,
-        )
-        nickname = pick_vip_address_name(
-            vip,
-            seed=message.text,
-            suppress_nicknames=suppress,
-        )
-        vip_block = f"\n\n{build_vip_openai_context(vip, nickname)}\n"
-
     checkout_name = None
     commerce_state = (
         customer_context.get("_commerce_state")
@@ -298,7 +275,6 @@ Mensagem recebida via {channel_label}:
 {memory_section}
 
 {format_facts_for_prompt(facts)}
-{vip_block}
 Responda de forma natural, objetiva e correta.
 Use WORKING_MEMORY só internamente; não ofereça pedido/link/dados sem o cliente pedir.
 """.strip()

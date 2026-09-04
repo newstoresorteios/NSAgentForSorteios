@@ -6,6 +6,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.db import ensure_tables, get_conn
+from app.ops import log_swallowed
 
 # Families mapped to the integrity plan targets.
 _AMBIGUOUS = frozenset(
@@ -138,7 +139,8 @@ def fetch_queue_depths() -> dict[str, Any]:
                             depths[key][status] = int(row.get("n") or 0)
                         else:
                             depths[key][str(row[0] or "unknown")] = int(row[1] or 0)
-                except Exception:
+                except Exception as exc:
+                    log_swallowed(f"kpis.queue_depth.{key}", exc)
                     depths[key] = {"error": 1}
     return {"configured": True, **depths}
 

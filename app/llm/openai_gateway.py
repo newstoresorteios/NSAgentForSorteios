@@ -39,6 +39,7 @@ from app.llm.openai_errors import (
     OpenAIToolLoopDisabledError,
     OpenAIUnknownToolError,
 )
+from app.llm import log_swallowed
 from app.llm.openai_runtime import execute_openai_call
 
 T = TypeVar("T", bound=BaseModel)
@@ -179,7 +180,8 @@ def model_capabilities(model: str | None = None) -> ModelCapabilities:
                     for k, v in parsed.items()
                     if isinstance(v, dict)
                 }
-        except Exception:
+        except Exception as exc:
+            log_swallowed("gateway.model_capability_overrides", exc)
             overrides = {}
 
     if name in overrides:

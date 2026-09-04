@@ -145,7 +145,7 @@ def _presented_conflicts_color(products: list[dict[str, Any]], color: str) -> bo
 
 
 def _presented_conflicts_gender(products: list[dict[str, Any]], gender: str) -> bool:
-    from app.catalog.preference_normalize import gender_search_aliases
+    from app.catalog.specs.preference_normalize import gender_search_aliases
 
     wanted = gender_search_aliases(gender)
     rival_label = (
@@ -336,7 +336,7 @@ def apply_corrections(
     if "drop_stale_style" in codes:
         prefs.style = None
     if "drop_stale_gender" in codes:
-        from app.catalog.preference_normalize import detect_gender_label
+        from app.catalog.specs.preference_normalize import detect_gender_label
 
         if detect_gender_label(prefs.recipient) and not _looks_like_person_name(
             prefs.recipient
@@ -352,7 +352,7 @@ def apply_corrections(
     if "enforce_style" in codes and contract.style:
         prefs.style = contract.style
     if "enforce_gender" in codes and contract.gender:
-        from app.catalog.preference_normalize import detect_gender_label
+        from app.catalog.specs.preference_normalize import detect_gender_label
 
         prefs.recipient = contract.gender
         attrs = [
@@ -363,7 +363,7 @@ def apply_corrections(
         attrs.append(contract.gender)
         prefs.attributes = attrs
     if "clear_fake_name" in codes:
-        from app.catalog.preference_normalize import detect_gender_label
+        from app.catalog.specs.preference_normalize import detect_gender_label
 
         if not _looks_like_person_name(prefs.recipient) and not detect_gender_label(
             prefs.recipient

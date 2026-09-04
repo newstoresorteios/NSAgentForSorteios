@@ -1,0 +1,979 @@
+from __future__ import annotations
+
+import unicodedata
+from typing import Any
+
+import httpx
+from openai import APIError
+from app.config import get_settings
+from app.models import AgentResult, IncomingMessage, SalesInterpretation
+from app.ops.turn_runtime import LLMCallBudgetExceeded
+from app.catalog.retrieval.aliases import _FEATURE_SEARCH_ALIASES as _FEATURE_MATCH_ALIASES
+from app.catalog.vision.identify import (
+    download_image_file,
+    identify_product_from_image,
+)
+from app.catalog.vision.prompt import (
+    ImageProductIdentification,
+    normalize_feature_label,
+)
+from app.catalog.retrieval.ports import resolve_compiled_retrieval
+
+
+def identification_has_catalog_identity(identified: ImageProductIdentification) -> bool:
+    """Brand+dial-color alone is too weak for keyword Tray (false siblings)."""
+    from app.models import ProductPreferences, ProductSubject
+    from app.catalog.product_retrieval import (
+        effective_product_reference,
+        identity_core_tokens,
+        preference_color_tokens,
+    )
+
+    if effective_product_reference(identified.reference):
+        return True
+    features = [
+        label
+        for label in (normalize_feature_label(item) for item in identified.features)
+        if label
+    ]
+    # Chronograph/diver/etc. give enough signal with brand for a targeted search.
+    if any(
+        label.casefold() in {"cronógrafo", "cronografo", "mergulho", "gmt"}
+        for label in features
+    ):
+        return True
+    model = (identified.model or "").strip()
+    if not model:
+        return False
+    color = (identified.color or "").strip() or None
+    probe = SalesInterpretation.model_construct(
+        domain="commerce",
+        goal="find",
+        subject=ProductSubject(product_type="relógio", model=model),
+        preferences=ProductPreferences(color=color),
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=float(identified.confidence or 0.0),
+    )
+    color_tokens = preference_color_tokens(probe)
+    core = identity_core_tokens(model, color_tokens=color_tokens)
+    if not core:
+        return False
+    # model="Preto" alone is not identity — identity_core may fall back to the hue.
+    from app.catalog.product_retrieval import _DIAL_COLOR_TOKENS, _OPTIONAL_MODEL_TOKENS
+
+    non_color = [
+        token
+        for token in core
+        if token not in color_tokens
+        and token not in _DIAL_COLOR_TOKENS
+        and token not in _OPTIONAL_MODEL_TOKENS
+    ]
+    return bool(non_color)
+
+
+def image_search_eligible(message: IncomingMessage) -> bool:
+    settings = get_settings()
+    if not bool(getattr(settings, "agent_image_search_enabled", True)):
+        return False
+    if not (message.image_url or "").strip():
+        return False
+    attachment = (message.attachment_type or "").lower()
+    modality = (message.input_modality or "").lower()
+    if attachment == "image":
+        return True
+    return modality in {"image", "text_with_image"}
+
+
+def interpretation_from_identification(
+    identified: ImageProductIdentification,
+) -> SalesInterpretation:
+    from app.catalog.product_retrieval import effective_product_reference, normalize_pt_catalog_query
+
+    color = (identified.color or "").strip() or None
+    case_finish = (identified.case_finish or "").strip() or None
+    raw_reference = (identified.reference or "").strip() or None
+    reference = effective_product_reference(raw_reference)
+    # Vision sometimes puts dial color phrases into reference.
+    if raw_reference and reference is None:
+        if not color:
+            color = raw_reference
+        elif color.casefold() not in raw_reference.casefold():
+            color = f"{color} {raw_reference}".strip()
+
+    features = []
+    seen_features: set[str] = set()
+    for item in list(identified.features or []) + [
+        identified.model,
+        identified.notes,
+    ]:
+        label = normalize_feature_label(item)
+        if not label:
+            continue
+        key = label.casefold()
+        if key in seen_features:
+            continue
+        seen_features.add(key)
+        features.append(label)
+
+    model = (identified.model or "").strip() or None
+    if model:
+        model = normalize_pt_catalog_query(model)
+        # Append dial color only when model already has identity (never model="Preto").
+        if color and color.casefold() not in model.casefold():
+            model = f"{model} {color}".strip()
+        model_fold = model.casefold()
+        for feature in features:
+            feature_fold = feature.casefold()
+            if feature_fold in model_fold:
+                continue
+            # Keep chrono/GMT in the model string for probes. Do NOT append
+            # Mergulho onto Prospex Sea Samurai — Tray titles omit "Diver's 200m".
+            if feature_fold in {"cronógrafo", "cronografo", "gmt"}:
+                model = f"{model} {feature}".strip()
+                model_fold = model.casefold()
+            elif feature_fold == "mergulho" and not any(
+                token in model_fold for token in ("samurai", "turtle", "prospex")
+            ):
+                model = f"{model} {feature}".strip()
+                model_fold = model.casefold()
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        subject={
+            "product_type": "relógio",
+            "brand": (identified.brand or "").strip() or None,
+            "model": model,
+            "reference": reference,
+        },
+        preferences={
+            "color": color,
+            "material": case_finish,
+            "attributes": features,
+        },
+        information_needed=["catalog"],
+        references_previous_context=False,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        stop_clarification=True,
+        needs_clarification=False,
+        clarification_question=None,
+        confidence=float(identified.confidence or 0.0),
+        active_topic="product_search",
+        purchase_stage="discovery",
+    )
+    interpretation._source = "image_vision"
+    return interpretation
+
+
+def soft_line_interpretation_from_identification(
+    identified: ImageProductIdentification,
+) -> SalesInterpretation:
+    """Relax exact photo match into a line/brand nearby search (Carrera, Sky Pilot…)."""
+    from app.catalog.product_retrieval import identity_core_tokens, preference_color_tokens
+
+    base = interpretation_from_identification(identified)
+    color_tokens = preference_color_tokens(base)
+    core = identity_core_tokens(base.subject.model, color_tokens=color_tokens)
+    drop = {
+        "cronografo",
+        "chronograph",
+        "automatico",
+        "quartz",
+        "eco",
+        "drive",
+        "ecodrive",
+        "multifuncao",
+        "alarme",
+        *color_tokens,
+        "prateado",
+        "prata",
+        "silver",
+    }
+    line_tokens = [token for token in core if token not in drop][:3]
+    line_label = " ".join(line_tokens).title() if line_tokens else None
+    if not line_label:
+        raw = (identified.model or "").strip()
+        line_label = raw.split()[0] if raw else None
+    # Keep dial hue on the probe model (Sealander Rosa) so Tray tokens/name
+    # search can lock color — soft mode still avoids hard exact failure.
+    color_label = (base.preferences.color or "").strip()
+    if color_label and line_label and color_label.casefold() not in line_label.casefold():
+        # One dial word only (rosa), not "rosa claro (mostrador)".
+        hue = color_label.split()[0]
+        probe_model = f"{line_label} {hue}".strip()
+    else:
+        probe_model = line_label
+    soft = base.model_copy(
+        update={
+            "goal": "recommend",
+            "subject": base.subject.model_copy(
+                update={
+                    "model": probe_model,
+                    "reference": None,
+                }
+            ),
+            "references_previous_context": True,
+            "active_topic": "nearby_line_options",
+        }
+    )
+    soft._source = "image_vision_soft_line"
+    soft._force_recommendation_mode = True
+    return soft
+
+
+def color_locked_line_interpretation(
+    identified: ImageProductIdentification,
+) -> SalesInterpretation:
+    """Stage C/D: force line + dial color tokens (sealander + rosa)."""
+    soft = soft_line_interpretation_from_identification(identified)
+    soft._source = "image_vision_color_lock"
+    return soft
+
+
+def select_products_for_identified_dial(
+    products: list[dict[str, Any]],
+    identified: ImageProductIdentification,
+    *,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """OCR double-check: keep only catalog rows compatible with Vision dial hue."""
+    from app.catalog.product_retrieval import rank_products_for_dial_color
+
+    interpretation = interpretation_from_identification(identified)
+    return rank_products_for_dial_color(
+        products,
+        interpretation,
+        limit=limit,
+    )
+
+def _nearby_line_preferences(identified: ImageProductIdentification) -> dict[str, Any]:
+    soft = soft_line_interpretation_from_identification(identified)
+    return {
+        "nearby_line_brand": soft.subject.brand,
+        "nearby_line_model": soft.subject.model,
+        "nearby_line_color": soft.preferences.color,
+        "image_identify": identified.model_dump(mode="json"),
+    }
+
+
+def _clarification_result(
+    *,
+    reason: str,
+    identified: ImageProductIdentification | None = None,
+) -> AgentResult:
+    if identified and not identified.is_watch:
+        text = (
+            "Recebi a imagem, mas não parece ser a foto de um relógio. "
+            "Pode enviar a foto do relógio ou me dizer a marca e o modelo?"
+        )
+    elif identified and (identified.brand or identified.model):
+        hint = " ".join(
+            part
+            for part in (identified.brand, identified.model)
+            if part
+        ).strip()
+        text = (
+            f"Não consegui confirmar o modelo com segurança pela foto"
+            f"{f' ({hint})' if hint else ''}. "
+            "Me confirma a marca e o modelo, ou envia uma foto mais nítida do mostrador?"
+        )
+    else:
+        text = (
+            "Recebi a imagem, mas não consegui ler marca/modelo com segurança. "
+            "Pode me dizer a marca e o modelo, ou enviar uma foto mais nítida?"
+        )
+    return AgentResult(
+        reply_text=text,
+        intent="commerce",
+        handoff_required=False,
+        safety_reason=reason,
+        response_metadata={
+            "domain": "commerce",
+            "image_search": True,
+            "image_identify": (
+                identified.model_dump(mode="json") if identified is not None else None
+            ),
+        },
+    )
+
+
+def _visual_candidates_result(
+    products: list[dict[str, Any]],
+    *,
+    identified: ImageProductIdentification | None,
+    trigger: str,
+) -> AgentResult:
+    from app.commerce.commerce_router import _product_lines
+
+    numbered_lines = [
+        f"{position}. {line}"
+        for position, line in enumerate(_product_lines(products, compact=True), start=1)
+    ]
+    reply = (
+        "Pela foto, estes parecem os mais próximos no catálogo:\n"
+        + "\n".join(numbered_lines[:2])
+        + "\n\nÉ algum desses?"
+    )
+    return AgentResult(
+        reply_text=reply,
+        intent="commerce",
+        handoff_required=False,
+        safety_reason="visual_nearest_neighbor",
+        commercial_data={
+            "products": products,
+            "match_status": "ambiguous",
+        },
+        response_metadata={
+            "domain": "commerce",
+            "image_search": True,
+            "visual_search": True,
+            "visual_trigger": trigger,
+            "presented_products": True,
+            "product_resolution_state": "plausible_matches",
+            "clear_active_product": True,
+            "image_identify": (
+                identified.model_dump(mode="json") if identified is not None else None
+            ),
+        },
+    )
+
+
+async def _try_visual_fallback(
+    message: IncomingMessage,
+    *,
+    identified: ImageProductIdentification | None,
+    trigger: str,
+) -> AgentResult | None:
+    settings = get_settings()
+    if not bool(getattr(settings, "agent_visual_search_enabled", True)):
+        return None
+    if not str(getattr(settings, "database_url", "") or "").strip():
+        return None
+
+    from app.catalog.vision.product_image_index import (
+        caption_from_identification,
+        visual_search_from_caption,
+        visual_search_from_image_url,
+    )
+
+    products: list[dict[str, Any]] = []
+    try:
+        caption = ""
+        if identified is not None:
+            caption = caption_from_identification(identified)
+        if caption:
+            products = await visual_search_from_caption(caption)
+        if not products and (message.image_url or "").strip():
+            products = await visual_search_from_image_url(str(message.image_url).strip())
+    except (
+        APIError,
+        LLMCallBudgetExceeded,
+        httpx.HTTPError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
+        print("[sales.image.visual.fallback.error]", {
+            "trigger": trigger,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
+        return None
+
+    if not products:
+        return None
+
+    top_k = int(getattr(settings, "agent_visual_top_k", 3) or 3)
+    selected = products[: max(1, top_k)]
+    print("[sales.image.visual.fallback]", {
+        "trigger": trigger,
+        "match_count": len(selected),
+    })
+    return _visual_candidates_result(
+        selected,
+        identified=identified,
+        trigger=trigger,
+    )
+
+
+def products_match_required_features(
+    products: list[dict[str, Any]],
+    features: list[str],
+) -> bool:
+    """True when every distinctive feature has evidence in at least one product."""
+    required: list[tuple[str, ...]] = []
+    for item in features:
+        label = normalize_feature_label(item)
+        if not label:
+            continue
+        folded = "".join(
+            char
+            for char in unicodedata.normalize("NFKD", label).lower()
+            if not unicodedata.combining(char)
+        )
+        aliases = _FEATURE_MATCH_ALIASES.get(folded)
+        if aliases:
+            required.append(aliases)
+    if not required:
+        return True
+    if not products:
+        return False
+    for aliases in required:
+        found = False
+        for product in products:
+            text = " ".join(
+                str(product.get(key) or "")
+                for key in ("name", "model", "reference", "description", "attributes")
+            )
+            folded_text = "".join(
+                char
+                for char in unicodedata.normalize("NFKD", text).lower()
+                if not unicodedata.combining(char)
+            )
+            if any(alias in folded_text for alias in aliases):
+                found = True
+                break
+        if not found:
+            return False
+    return True
+
+
+def _product_id(product: dict[str, Any]) -> str | None:
+    value = product.get("id") or product.get("product_id")
+    return str(value) if value is not None else None
+
+
+def filter_products_to_interpretation_family(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+) -> list[dict[str, Any]]:
+    """Keep candidates that share brand + model identity with the Vision ask."""
+    from app.catalog.product_retrieval import (
+        identity_core_tokens,
+        preference_color_tokens,
+        product_compatible_with_requested_movement,
+        product_matches_feature_tokens,
+        preference_feature_tokens,
+        _fold,
+        _product_text,
+    )
+
+    brand = _fold(interpretation.subject.brand)
+    color_tokens = preference_color_tokens(interpretation)
+    core = identity_core_tokens(
+        interpretation.subject.model,
+        color_tokens=color_tokens,
+    )
+    feature_tokens = preference_feature_tokens(interpretation)
+    kept: list[dict[str, Any]] = []
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        text = _product_text(product)
+        candidate_brand = _fold(product.get("brand"))
+        if brand:
+            if candidate_brand and candidate_brand != brand:
+                continue
+            if not candidate_brand and brand not in text:
+                continue
+        if core and not all(token in text for token in core):
+            continue
+        if not product_compatible_with_requested_movement(
+            product,
+            interpretation.subject.model,
+            interpretation.preferences.attributes,
+        ):
+            continue
+        if feature_tokens and not product_matches_feature_tokens(product, feature_tokens):
+            continue
+        kept.append(product)
+    return kept
+
+
+def merge_tray_with_visual_neighbors(
+    tray_products: list[dict[str, Any]],
+    visual_products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    *,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """Prefer visual nearest neighbors within the same model family."""
+    family_visual = filter_products_to_interpretation_family(
+        visual_products,
+        interpretation,
+    )
+    family_tray = filter_products_to_interpretation_family(
+        tray_products,
+        interpretation,
+    )
+    if not family_visual and not family_tray:
+        return tray_products[:limit]
+
+    by_id: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    def _add(product: dict[str, Any]) -> None:
+        product_id = _product_id(product)
+        if not product_id:
+            return
+        if product_id not in by_id:
+            order.append(product_id)
+            by_id[product_id] = product
+            return
+        # Keep visual_distance when present.
+        existing = by_id[product_id]
+        if product.get("visual_distance") is not None and existing.get(
+            "visual_distance"
+        ) is None:
+            merged = dict(existing)
+            merged["visual_distance"] = product.get("visual_distance")
+            by_id[product_id] = merged
+
+    # Visual family first (true photo similarity), then tray leftovers.
+    for product in family_visual:
+        _add(product)
+    for product in family_tray:
+        _add(product)
+
+    ranked = [by_id[product_id] for product_id in order]
+    # If visual distances exist, stable-sort by distance among known ones.
+    with_distance = [
+        product for product in ranked if product.get("visual_distance") is not None
+    ]
+    without = [
+        product for product in ranked if product.get("visual_distance") is None
+    ]
+    with_distance.sort(key=lambda item: float(item.get("visual_distance") or 99))
+    return (with_distance + without)[: max(1, limit)]
+
+
+async def _disambiguate_with_visual(
+    message: IncomingMessage,
+    *,
+    identified: ImageProductIdentification,
+    interpretation: SalesInterpretation,
+    tray_products: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Re-rank / replace Tray siblings using visual nearest neighbors."""
+    settings = get_settings()
+    if not bool(getattr(settings, "agent_visual_search_enabled", True)):
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+    if not str(getattr(settings, "database_url", "") or "").strip():
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+    image_url = (message.image_url or "").strip()
+    if not image_url:
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+
+    try:
+        from app.catalog.vision.product_image_index import visual_search_from_image_url
+
+        visual_products = await visual_search_from_image_url(image_url)
+    except (
+        APIError,
+        LLMCallBudgetExceeded,
+        httpx.HTTPError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
+        print("[sales.image.visual.disambiguate.error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+
+    if not visual_products:
+        filtered = filter_products_to_interpretation_family(tray_products, interpretation)
+        return (filtered or tray_products), None
+
+    merged = merge_tray_with_visual_neighbors(
+        tray_products,
+        visual_products,
+        interpretation,
+        limit=2,
+    )
+    print("[sales.image.visual.disambiguate]", {
+        "tray_count": len(tray_products),
+        "visual_count": len(visual_products),
+        "merged_ids": [_product_id(item) for item in merged],
+        "best_distance": merged[0].get("visual_distance") if merged else None,
+    })
+    return merged, "image_visual_disambiguate"
+
+
+async def handle_image_product_search(
+    message: IncomingMessage,
+) -> AgentResult | None:
+    """Identify a watch from an inbound image and search the Tray catalog."""
+    if not image_search_eligible(message):
+        return None
+
+    settings = get_settings()
+    min_confidence = float(
+        getattr(settings, "agent_image_search_min_confidence", 0.55)
+    )
+    try:
+        identified = await identify_product_from_image(message)
+    except Exception as exc:
+        from app.llm.openai_errors import OpenAIGatewayError
+
+        if not isinstance(
+            exc,
+            (
+                APIError,
+                OpenAIGatewayError,
+                LLMCallBudgetExceeded,
+                httpx.HTTPError,
+                ValueError,
+                RuntimeError,
+            ),
+        ):
+            raise
+        print("[sales.image.identify.error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:240],
+        })
+        visual = await _try_visual_fallback(
+            message,
+            identified=None,
+            trigger="image_identify_failed",
+        )
+        if visual is not None:
+            return visual
+        return AgentResult(
+            reply_text=(
+                "Recebi a imagem, mas não consegui analisar agora. "
+                "Pode me dizer a marca e o modelo do relógio?"
+            ),
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="image_identify_failed",
+            response_metadata={"domain": "commerce", "image_search": True},
+        )
+
+    if not identified.is_watch:
+        return _clarification_result(
+            reason="image_identify_low_confidence",
+            identified=identified,
+        )
+
+    low_confidence = (
+        float(identified.confidence or 0.0) < min_confidence
+        or not any(
+            (
+                identified.brand,
+                identified.model,
+                identified.reference,
+                identified.features,
+            )
+        )
+    )
+    if low_confidence:
+        visual = await _try_visual_fallback(
+            message,
+            identified=identified,
+            trigger="image_identify_low_confidence",
+        )
+        if visual is not None:
+            return visual
+        return _clarification_result(
+            reason="image_identify_low_confidence",
+            identified=identified,
+        )
+
+    # Brand+color (or color-only model) keyword hits invent wrong siblings.
+    # Prefer visual nearest-neighbor before Tray when identity is thin.
+    if not identification_has_catalog_identity(identified):
+        print("[sales.image.weak_identity]", {
+            "brand": identified.brand,
+            "model": identified.model,
+            "color": identified.color,
+            "features": identified.features[:4],
+        })
+        visual = await _try_visual_fallback(
+            message,
+            identified=identified,
+            trigger="image_identify_weak_identity",
+        )
+        if visual is not None:
+            return visual
+
+    interpretation = interpretation_from_identification(identified)
+    print("[sales.image.retrieval]", {
+        "brand": interpretation.subject.brand,
+        "model": interpretation.subject.model,
+        "reference": interpretation.subject.reference,
+        "attributes": interpretation.preferences.attributes[:4],
+        "case_finish": interpretation.preferences.material,
+        "confidence": identified.confidence,
+        "has_catalog_identity": identification_has_catalog_identity(identified),
+    })
+
+    retrieve = resolve_compiled_retrieval()
+    tray_result = await retrieve(interpretation)
+    if tray_result is None:
+        visual = await _try_visual_fallback(
+            message,
+            identified=identified,
+            trigger="image_retrieval_empty",
+        )
+        if visual is not None:
+            return visual
+        return _clarification_result(
+            reason="image_retrieval_empty",
+            identified=identified,
+        )
+
+    tray_products = (
+        (tray_result.commercial_data or {}).get("products")
+        if isinstance(tray_result.commercial_data, dict)
+        else None
+    )
+    if (
+        isinstance(tray_products, list)
+        and tray_products
+        and not products_match_required_features(
+            tray_products,
+            list(interpretation.preferences.attributes or []),
+        )
+    ):
+        visual = await _try_visual_fallback(
+            message,
+            identified=identified,
+            trigger="image_feature_mismatch",
+        )
+        if visual is not None:
+            return visual
+
+    # Keyword Tray often returns several siblings of the same line. Re-rank with
+    # visual nearest neighbors so we don't send the mechanical/wrong SKU.
+    if isinstance(tray_products, list) and tray_products:
+        disambiguated, visual_trigger = await _disambiguate_with_visual(
+            message,
+            identified=identified,
+            interpretation=interpretation,
+            tray_products=tray_products,
+        )
+        if disambiguated:
+            tray_products = disambiguated
+            if isinstance(tray_result.commercial_data, dict):
+                tray_result.commercial_data["products"] = disambiguated
+                if visual_trigger:
+                    tray_result.commercial_data["visual_disambiguated"] = True
+                    tray_result.response_metadata["visual_trigger"] = visual_trigger
+                    # One clear visual winner → treat as exact for assertive reply.
+                    if len(disambiguated) == 1:
+                        tray_result.commercial_data["match_status"] = "exact"
+                    elif (
+                        disambiguated[0].get("visual_distance") is not None
+                        and (
+                            len(disambiguated) == 1
+                            or float(disambiguated[0].get("visual_distance") or 99)
+                            + 0.08
+                            < float(disambiguated[1].get("visual_distance") or 99)
+                        )
+                    ):
+                        tray_result.commercial_data["products"] = disambiguated[:1]
+                        tray_products = disambiguated[:1]
+                        tray_result.commercial_data["match_status"] = "exact"
+
+    label = " ".join(
+        part
+        for part in (
+            interpretation.subject.brand,
+            interpretation.subject.model or interpretation.subject.reference,
+        )
+        if part
+    ).strip()
+    if tray_result.safety_reason in {
+        "product_not_found",
+        "exact_product_ambiguous_brand",
+    }:
+        visual = await _try_visual_fallback(
+            message,
+            identified=identified,
+            trigger=str(tray_result.safety_reason),
+        )
+        if visual is not None:
+            return visual
+        products = (
+            (tray_result.commercial_data or {}).get("products")
+            if isinstance(tray_result.commercial_data, dict)
+            else None
+        )
+        if isinstance(products, list) and products:
+            from app.commerce.commerce_router import _product_lines
+
+            shown = products[:2]
+            numbered_lines = [
+                f"{position}. {line}"
+                for position, line in enumerate(
+                    _product_lines(shown, compact=True),
+                    start=1,
+                )
+            ]
+            tray_result.reply_text = (
+                f"Pela foto, identifiquei {label or 'esse modelo'}, "
+                "mas não confirmei a combinação exata. Opções próximas:\n"
+                + "\n".join(numbered_lines)
+                + "\n\nQuer ver alguma dessas?"
+            )
+            if isinstance(tray_result.commercial_data, dict):
+                tray_result.commercial_data["match_status"] = "ambiguous"
+        else:
+            # Exact miss — staged nearby recovery:
+            # C) soft line search, D) dial-color lock on shortlist / second probe.
+            soft_interpretation = soft_line_interpretation_from_identification(
+                identified
+            )
+            soft_result = await retrieve(
+                soft_interpretation
+            )
+            soft_products = (
+                (soft_result.commercial_data or {}).get("products")
+                if soft_result and isinstance(soft_result.commercial_data, dict)
+                else None
+            )
+            shown: list[dict[str, Any]] = []
+            if isinstance(soft_products, list) and soft_products:
+                shown = select_products_for_identified_dial(
+                    soft_products,
+                    identified,
+                    limit=2,
+                )
+            if not shown:
+                color_interp = color_locked_line_interpretation(identified)
+                color_result = await retrieve(color_interp)
+                color_products = (
+                    (color_result.commercial_data or {}).get("products")
+                    if color_result and isinstance(color_result.commercial_data, dict)
+                    else None
+                )
+                if isinstance(color_products, list) and color_products:
+                    shown = select_products_for_identified_dial(
+                        color_products,
+                        identified,
+                        limit=2,
+                    )
+                    if shown:
+                        soft_result = color_result
+                        soft_interpretation = color_interp
+            if shown and soft_result is not None:
+                from app.commerce.commerce_router import _product_lines
+
+                numbered_lines = [
+                    f"{position}. {line}"
+                    for position, line in enumerate(
+                        _product_lines(shown, compact=True),
+                        start=1,
+                    )
+                ]
+                tray_result = soft_result
+                tray_result.reply_text = (
+                    f"Pela foto, identifiquei {label or 'esse modelo'}, "
+                    "mas não fechei a combinação exata. Opções próximas dessa linha:\n"
+                    + "\n".join(numbered_lines)
+                    + "\n\nÉ algum desses?"
+                )
+                tray_result.commercial_data = {
+                    **(tray_result.commercial_data or {}),
+                    "products": shown,
+                    "match_status": "ambiguous",
+                    "dial_color_locked": True,
+                }
+                tray_result.safety_reason = None
+                interpretation = soft_interpretation
+                print("[sales.image.color_lock]", {
+                    "shown": len(shown),
+                    "ids": [str(p.get("id")) for p in shown],
+                    "color": identified.color,
+                })
+            else:
+                line_hint = soft_interpretation.subject.model or label
+                tray_result.reply_text = (
+                    f"Pela foto, identifiquei {label or 'esse modelo'}, "
+                    f"mas ainda não localizei {line_hint or 'essa linha'} no catálogo agora. "
+                    "Posso te mostrar opções mais próximas dessa linha se você quiser "
+                    "seguir por cor ou faixa de investimento."
+                )
+                tray_result.response_metadata = {
+                    **(tray_result.response_metadata or {}),
+                    "pending_action": "show_nearby_line",
+                    "active_preferences": _nearby_line_preferences(identified),
+                    "active_topic": "nearby_line_options",
+                }
+    elif tray_result.commercial_data and isinstance(
+        tray_result.commercial_data.get("products"),
+        list,
+    ) and tray_result.commercial_data["products"]:
+        # Exact/ambiguous catalog hit after Vision — confirm with the customer.
+        from app.commerce.commerce_router import _product_lines
+
+        products = tray_result.commercial_data["products"][:2]
+        match_status = tray_result.commercial_data.get("match_status")
+        color_tokens = (
+            (identified.color or "").strip().casefold()
+        )
+        color_matched = True
+        if color_tokens:
+            color_matched = any(
+                color_tokens.split()[0] in str(product.get("name") or "").casefold()
+                for product in products
+            )
+        numbered_lines = [
+            f"{position}. {line}"
+            for position, line in enumerate(
+                _product_lines(products, compact=True),
+                start=1,
+            )
+        ]
+        # Photo matches always need customer confirmation — never auto-price
+        # the first sibling (e.g. Ecce Smalt vs Ecce Lys).
+        multi = (
+            len(products) >= 2
+            or match_status == "ambiguous"
+            or not color_matched
+        )
+        if multi:
+            tray_result.reply_text = (
+                f"Pela foto, parece {label or 'este modelo'}. "
+                "Encontrei estas opções próximas:\n"
+                + "\n".join(numbered_lines)
+                + "\n\nÉ algum desses?"
+            )
+            if isinstance(tray_result.commercial_data, dict):
+                tray_result.commercial_data["match_status"] = "ambiguous"
+        else:
+            tray_result.reply_text = (
+                f"Pela foto, parece {label or 'este modelo'}. "
+                "Encontrei no catálogo:\n"
+                + "\n".join(numbered_lines)
+                + "\n\nÉ esse que você procura?"
+            )
+
+    # Vision turns never activate a SKU — wait for explicit confirmation.
+    meta = dict(tray_result.response_metadata or {})
+    meta.update({
+        "image_search": True,
+        "image_identify": identified.model_dump(mode="json"),
+        "domain": "commerce",
+        "used_tray": True,
+        "presented_products": True,
+        "clear_active_product": True,
+        "product_resolution_state": "plausible_matches",
+    })
+    tray_result.response_metadata = meta
+    # Skip OpenAI responder here: Vision already spent the critical latency budget.
+    # Sales handler re-marks the result; keep catalog.vision free of app.sales.
+    return tray_result.with_response_metadata(
+        domain="commerce",
+        goal=interpretation.goal or "find",
+        response_source="image_vision",
+        used_openai_responder=False,
+        used_tray=True,
+        fallback_reason=tray_result.safety_reason,
+    )
