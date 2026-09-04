@@ -1086,6 +1086,7 @@ def load_recent_conversation_turns(
     limit: int = 8,
     sender_key: str | None = None,
     hard_cap: int = 40,
+    after_inbound_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """Load a chronological transcript containing only delivered replies.
 
@@ -1102,6 +1103,11 @@ def load_recent_conversation_turns(
     before_filter = (
         "AND inbound.id < %(before_inbound_id)s"
         if before_inbound_id is not None
+        else ""
+    )
+    after_filter = (
+        "AND inbound.id >= %(after_inbound_id)s"
+        if after_inbound_id is not None
         else ""
     )
     seen_filters: set[str] = set()
@@ -1125,6 +1131,7 @@ def load_recent_conversation_turns(
             seen_filters.add(filter_token)
             params: dict[str, Any] = {
                 "before_inbound_id": before_inbound_id,
+                "after_inbound_id": after_inbound_id,
                 "limit": safe_limit,
             }
             params.update(identity_params)
@@ -1145,6 +1152,7 @@ def load_recent_conversation_turns(
                         ) AS delivered ON true
                         WHERE {conversation_filter}
                           {before_filter}
+                          {after_filter}
                         ORDER BY inbound.id DESC
                         LIMIT %(limit)s
                         """,

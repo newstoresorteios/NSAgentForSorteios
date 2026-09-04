@@ -193,6 +193,8 @@ def merge_commerce_states(
         merged["last_conversation_id"] = base["last_conversation_id"]
     if base.get("last_browse_at"):
         merged["last_browse_at"] = base["last_browse_at"]
+    if base.get("history_cut_inbound_id"):
+        merged["history_cut_inbound_id"] = base["history_cut_inbound_id"]
     return merged
 
 

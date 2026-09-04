@@ -147,6 +147,7 @@ def is_commerce_continuation(message_text: str | None) -> bool:
         )
         from app.memory.context_resume import (
             is_payment_link_request,
+            is_presented_catalog_question,
             is_short_affirmation,
             is_unpaid_order_resume_request,
         )
@@ -161,11 +162,26 @@ def is_commerce_continuation(message_text: str | None) -> bool:
             return True
         if is_short_affirmation(message_text):
             return True
+        if is_presented_catalog_question(message_text):
+            return True
     except Exception as exc:
         from app.sales import log_swallowed
 
         log_swallowed("dialogue_phase.continuation_detect", exc)
     return False
+
+
+def is_session_opener_greeting(message_text: str | None) -> bool:
+    """Bare hello — WhatsApp often keeps the same conversation_id for a new chat."""
+    try:
+        from app.identity.greeting_policy import is_any_greeting
+
+        return is_any_greeting(message_text)
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("dialogue_phase.session_opener", exc)
+        return False
 
 
 def should_reset_browse_memory(
@@ -175,13 +191,15 @@ def should_reset_browse_memory(
     state: CommerceConversationState | None = None,
     now: datetime | None = None,
 ) -> bool:
-    """New WhatsApp thread, tchau+oi, idle, or explicit start-over — not a phone special-case."""
+    """New session opener — do not volunteer the previous shortlist."""
     if is_fresh_commerce_start(message_text):
         return True
     if not has_browse_memory(state):
         return False
     if is_commerce_continuation(message_text):
         return False
+    if is_session_opener_greeting(message_text):
+        return True
     if getattr(state, "closed_by_farewell", False):
         return True
     if is_new_commerce_thread(conversation_id, state):

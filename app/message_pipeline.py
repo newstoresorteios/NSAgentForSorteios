@@ -223,6 +223,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         state=commerce_state,
     ):
         commerce_state = reset_browse_memory_keep_orders(commerce_state)
+        if inbound_id is not None:
+            commerce_state.history_cut_inbound_id = inbound_id
     # New product photo starts a fresh identification — never price the
     # previous SKU (e.g. CW Rosa) while Vision runs on a Beaubleu.
     if (incoming.image_url or "").strip():

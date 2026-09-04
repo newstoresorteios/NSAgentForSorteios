@@ -658,6 +658,9 @@ async def _generate_agent_reply_async_inner(
 
     history_limit = resolve_model_history_limit(settings)
     history_hard_cap = resolve_history_hard_cap(settings)
+    commerce_state = CommerceConversationState.from_payload(
+        customer_context.get("_commerce_state")
+    )
     history_lookup = {
         "conversation_id": message.conversation_id,
         "sender_phone": message.sender_phone,
@@ -666,11 +669,9 @@ async def _generate_agent_reply_async_inner(
         "limit": history_hard_cap,
         "sender_key": message.sender_key,
         "hard_cap": history_hard_cap,
+        "after_inbound_id": commerce_state.history_cut_inbound_id,
     }
     recovery_turns = load_recent_conversation_turns(**history_lookup)
-    commerce_state = CommerceConversationState.from_payload(
-        customer_context.get("_commerce_state")
-    )
     from .sales.dialogue_phase import is_open_sale_state
 
     thread_turns = turns_for_conversation(
@@ -822,6 +823,7 @@ async def _generate_agent_reply_async_inner(
     )
     commerce_state = hydrate_state_from_handles(commerce_state, context_handles)
     from .sales.dialogue_phase import (
+        is_fresh_commerce_start,
         reset_browse_memory_keep_orders,
         should_reset_browse_memory,
     )
@@ -833,8 +835,15 @@ async def _generate_agent_reply_async_inner(
     )
     if fresh_start:
         commerce_state = reset_browse_memory_keep_orders(commerce_state)
+        if inbound_id is not None:
+            commerce_state.history_cut_inbound_id = inbound_id
+        # Do not feed the previous thread into the first reply of a new session.
+        model_turns = []
+        recent_turns = []
+        customer_context["_model_conversation_turns"] = []
     customer_context["_commerce_state"] = commerce_state.model_dump(mode="json")
-    resume_pending_order_early = (not fresh_start) and should_resume_pending_order(
+    phrase_restart = is_fresh_commerce_start(message.text)
+    resume_pending_order_early = (not phrase_restart) and should_resume_pending_order(
         message.text,
         commerce_state,
         is_greeting=soft_greeting,
@@ -1310,7 +1319,7 @@ async def _generate_agent_reply_async_inner(
         payment_resume = build_pending_payment_resume_result(commerce_state)
         if (
             payment_resume is not None
-            and not fresh_start
+            and not phrase_restart
             and should_resume_pending_order(
                 message.text,
                 commerce_state,

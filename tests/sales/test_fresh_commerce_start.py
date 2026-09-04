@@ -104,9 +104,28 @@ def test_new_conversation_id_resets_on_new_catalog_ask():
         conversation_id="thread-new",
         state=state,
     )
+
+
+def test_greeting_opens_new_session_without_volunteering_shortlist():
+    """Same WhatsApp id, bare hello — do not resend the previous list."""
     state = _shortlist_state()
     assert should_reset_browse_memory(
         "oi",
+        conversation_id="thread-old",
+        state=state,
+    )
+    assert should_reset_browse_memory(
+        "boa noite",
+        conversation_id="thread-old",
+        state=state,
+    )
+    assert should_reset_browse_memory(
+        "me mostra de novo",
+        conversation_id="thread-old",
+        state=state,
+    ) is False
+    assert should_reset_browse_memory(
+        "quais eram os relogios",
         conversation_id="thread-old",
         state=state,
     ) is False
@@ -158,7 +177,7 @@ def test_idle_position_pick_keeps_shortlist():
 def test_filling_in_conversation_id_is_not_a_new_thread():
     state = _shortlist_state(last_conversation_id=None)
     assert should_reset_browse_memory(
-        "oi",
+        "tem em preto?",
         conversation_id="thread-first",
         state=state,
     ) is False

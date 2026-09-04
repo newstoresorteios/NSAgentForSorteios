@@ -149,6 +149,8 @@ class CommerceConversationState(BaseModel):
     last_conversation_id: str | None = None
     last_browse_at: datetime | None = None
     closed_by_farewell: bool = False
+    # Inbound id that opened this browse session — model history before it stays out.
+    history_cut_inbound_id: int | None = None
     last_story_product: dict[str, Any] | None = None
     # found_available | found_unknown | found_unavailable | plausible_matches | None
     product_resolution_state: str | None = None
