@@ -47,6 +47,24 @@ _BARE_PURCHASE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_CHECKOUT_UTTERANCE_RE = re.compile(
+    r"\b("
+    r"quero\s+(fechar|levar(\s+esse|\s+este|\s+essa|\s+esta)?)\b|"
+    r"vou\s+levar|"
+    r"pode\s+(fechar|montar\s+o\s+pedido)|"
+    r"fechar\s+(o\s+)?pedido|"
+    r"fechamos|"
+    r"bora\s+fechar|"
+    r"montar\s+o\s+pedido|"
+    r"gerar\s+(o\s+)?(pedido|carrinho)|"
+    r"link\s+(de|do)\s+pagamento|"
+    r"fechar\s+por\s+aqui|"
+    r"continuar\s+pelo\s+site|"
+    r"quero\s+(esse|este|essa|esta)\b"
+    r")",
+    re.IGNORECASE,
+)
+
 _NEW_BROWSE_RE = re.compile(
     r"\b("
     r"outras?\s+op(?:ç|c)(?:õ|o)es|outra\s+marca|outras?\s+marcas|"
@@ -99,6 +117,19 @@ def is_bare_purchase_closing(text: str | None) -> bool:
     if _NEW_BROWSE_RE.search(_fold(raw)):
         return False
     return bool(_BARE_PURCHASE_RE.match(raw))
+
+
+def is_checkout_utterance(text: str | None) -> bool:
+    """Customer asked to close, cart, or pay — not a generic 'quero um relógio'."""
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    folded = _fold(raw)
+    if _NEW_BROWSE_RE.search(folded) and not _CHECKOUT_UTTERANCE_RE.search(folded):
+        return False
+    if is_bare_purchase_closing(raw):
+        return True
+    return bool(_CHECKOUT_UTTERANCE_RE.search(folded))
 
 
 def _position_from_recent_turns(recent_turns: list[dict[str, Any]] | None) -> int | None:

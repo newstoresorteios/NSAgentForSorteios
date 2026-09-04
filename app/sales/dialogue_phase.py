@@ -4,10 +4,24 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from app.commerce.commerce_context import CommerceConversationState
 from ..models import AgentResult, SalesInterpretation
+
+# Overnight WhatsApp pause: next greeting/new thread drops the old shortlist.
+BROWSE_IDLE_SECONDS = 12 * 60 * 60
+
+_CATALOG_PREF_KEYS = (
+    "locked_identity",
+    "budget",
+    "budget_max",
+    "color",
+    "occasion",
+    "style",
+    "excluded_product_ids",
+)
 
 DialoguePhase = Literal["discovery", "shortlist", "buy", "checkout"]
 
@@ -70,6 +84,113 @@ def is_fresh_commerce_start(message_text: str | None) -> bool:
     return bool(_FRESH_START_RE.search(_fold(message_text)))
 
 
+def _scrub_catalog_preferences(prefs: dict[str, Any] | None) -> dict[str, Any]:
+    cleaned = dict(prefs or {})
+    for key in _CATALOG_PREF_KEYS:
+        cleaned.pop(key, None)
+    return cleaned
+
+
+def has_browse_memory(state: CommerceConversationState | None) -> bool:
+    """True when a prior shortlist/lock would leak into the next answer."""
+    if state is None:
+        return False
+    if state.last_presented_products or state.active_product is not None:
+        return True
+    if state.active_topic:
+        return True
+    prefs = state.active_preferences or {}
+    return bool(isinstance(prefs, dict) and prefs.get("locked_identity"))
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def is_browse_idle(
+    state: CommerceConversationState | None,
+    *,
+    now: datetime | None = None,
+    idle_seconds: int = BROWSE_IDLE_SECONDS,
+) -> bool:
+    if state is None or not has_browse_memory(state):
+        return False
+    stamped = _as_utc(state.last_browse_at)
+    if stamped is None:
+        return False
+    current = _as_utc(now) or datetime.now(timezone.utc)
+    return current - stamped >= timedelta(seconds=idle_seconds)
+
+
+def is_new_commerce_thread(
+    conversation_id: str | None,
+    state: CommerceConversationState | None,
+) -> bool:
+    incoming = str(conversation_id or "").strip()
+    stored = str(getattr(state, "last_conversation_id", None) or "").strip()
+    if not incoming or not stored:
+        return False
+    return incoming != stored
+
+
+def is_commerce_continuation(message_text: str | None) -> bool:
+    """Follow-up on the live sale — do not drop the shortlist for a new thread/idle."""
+    try:
+        from .purchase_selection import (
+            is_bare_purchase_closing,
+            is_checkout_utterance,
+            parse_list_position_selection,
+        )
+        from app.memory.context_resume import (
+            is_payment_link_request,
+            is_short_affirmation,
+            is_unpaid_order_resume_request,
+        )
+
+        if parse_list_position_selection(message_text):
+            return True
+        if is_checkout_utterance(message_text) or is_bare_purchase_closing(message_text):
+            return True
+        if is_payment_link_request(message_text) or is_unpaid_order_resume_request(
+            message_text
+        ):
+            return True
+        if is_short_affirmation(message_text):
+            return True
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("dialogue_phase.continuation_detect", exc)
+    return False
+
+
+def should_reset_browse_memory(
+    message_text: str | None,
+    *,
+    conversation_id: str | None = None,
+    state: CommerceConversationState | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """New WhatsApp thread, tchau+oi, idle, or explicit start-over — not a phone special-case."""
+    if is_fresh_commerce_start(message_text):
+        return True
+    if not has_browse_memory(state):
+        return False
+    if is_commerce_continuation(message_text):
+        return False
+    if getattr(state, "closed_by_farewell", False):
+        return True
+    if is_new_commerce_thread(conversation_id, state):
+        return True
+    if is_browse_idle(state, now=now):
+        return True
+    return False
+
+
 def reset_browse_memory_keep_orders(
     state: CommerceConversationState,
 ) -> CommerceConversationState:
@@ -81,9 +202,9 @@ def reset_browse_memory_keep_orders(
     updated.dialogue_phase = "discovery"
     updated.forget_shortlist = True
     updated.product_resolution_state = None
-    prefs = dict(updated.active_preferences or {})
-    prefs.pop("locked_identity", None)
-    updated.active_preferences = prefs
+    updated.closed_by_farewell = False
+    updated.last_browse_at = None
+    updated.active_preferences = _scrub_catalog_preferences(updated.active_preferences)
     return updated
 
 

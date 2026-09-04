@@ -105,7 +105,7 @@ def next_locked_identity(
     commerce_state: Any | None,
     message_text: str | None,
 ) -> dict[str, str] | None:
-    """Persist the chosen line unless the customer opened a new browse."""
+    """Persist the chosen line only on an explicit pick / checkout utterance."""
     try:
         from .dialogue_phase import message_resets_dialogue_to_discovery
 
@@ -115,22 +115,122 @@ def next_locked_identity(
         from app.sales import log_swallowed
 
         log_swallowed("turn_contract.browse_reset", exc)
-    if interpretation is not None and _specific_product_lock(interpretation):
-        payload: dict[str, str] = {}
-        if interpretation.subject.brand:
-            payload["brand"] = str(interpretation.subject.brand).strip()
-        if interpretation.subject.model:
-            payload["model"] = str(interpretation.subject.model).strip()
-        if interpretation.subject.reference:
-            payload["reference"] = str(interpretation.subject.reference).strip()
-        return payload or None
-    brand, model = locked_identity_from_state(commerce_state)
-    if not model:
+
+    explicit_pick = False
+    position: int | None = None
+    try:
+        from .purchase_selection import (
+            is_bare_purchase_closing,
+            is_checkout_utterance,
+            parse_list_position_selection,
+        )
+
+        position = parse_list_position_selection(message_text)
+        explicit_pick = bool(
+            position
+            or is_checkout_utterance(message_text)
+            or is_bare_purchase_closing(message_text)
+        )
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("turn_contract.explicit_pick", exc)
+    if interpretation is not None and not explicit_pick:
+        if interpretation.purchase_action in {
+            "create_cart",
+            "checkout_question",
+            "show_cart_link",
+        }:
+            explicit_pick = True
+        elif interpretation.reference_type == "list_position" and interpretation.reference_position:
+            explicit_pick = True
+            position = position or interpretation.reference_position
+        elif (
+            interpretation.goal == "buy"
+            and interpretation.confirmation == "confirm"
+            and _specific_product_lock(interpretation)
+        ):
+            explicit_pick = True
+
+    if explicit_pick:
+        if interpretation is not None and _specific_product_lock(interpretation):
+            payload: dict[str, str] = {}
+            if interpretation.subject.brand:
+                payload["brand"] = str(interpretation.subject.brand).strip()
+            if interpretation.subject.model:
+                payload["model"] = str(interpretation.subject.model).strip()
+            if interpretation.subject.reference:
+                payload["reference"] = str(interpretation.subject.reference).strip()
+            if payload:
+                return payload
+        picked = _identity_from_presented_position(commerce_state, position)
+        if picked:
+            return picked
+        brand, model = locked_identity_from_state(commerce_state)
+        if not model:
+            return None
+        payload = {"model": model}
+        if brand:
+            payload["brand"] = brand
+        return payload
+
+    existing = _existing_locked_identity(commerce_state)
+    if existing:
+        return existing
+    return None
+
+
+def _existing_locked_identity(commerce_state: Any | None) -> dict[str, str] | None:
+    if commerce_state is None:
         return None
-    payload = {"model": model}
-    if brand:
-        payload["brand"] = brand
-    return payload
+    raw = getattr(commerce_state, "active_preferences", None)
+    if not isinstance(raw, dict):
+        return None
+    locked = raw.get("locked_identity")
+    if not isinstance(locked, dict):
+        return None
+    payload = {
+        key: str(locked.get(key) or "").strip()
+        for key in ("brand", "model", "reference")
+        if str(locked.get(key) or "").strip()
+    }
+    return payload or None
+
+
+def _identity_from_presented_position(
+    commerce_state: Any | None,
+    position: int | None,
+) -> dict[str, str] | None:
+    if commerce_state is None or not position:
+        return None
+    presented = getattr(commerce_state, "last_presented_products", None) or []
+    for item in presented:
+        item_position = getattr(item, "position", None)
+        if isinstance(item, dict):
+            item_position = item.get("position")
+        try:
+            if int(item_position or 0) != int(position):
+                continue
+        except (TypeError, ValueError):
+            continue
+        brand = getattr(item, "brand", None)
+        name = getattr(item, "name", None)
+        reference = getattr(item, "reference", None)
+        if isinstance(item, dict):
+            brand = brand or item.get("brand")
+            name = name or item.get("name")
+            reference = reference or item.get("reference")
+        payload: dict[str, str] = {}
+        if brand:
+            payload["brand"] = str(brand).strip()
+        if reference:
+            payload["reference"] = str(reference).strip()
+            payload["model"] = str(reference).strip()
+        elif name:
+            payload["model"] = str(name).strip()
+        if payload:
+            return payload
+    return None
 
 
 _GREETING_RE = re.compile(
@@ -442,15 +542,17 @@ def merge_inbound_views(
         sku_lock = True
         codes.append("sku_lock")
     purchase_close = False
-    if memory_view.live_shortlist:
+    if memory_view.live_shortlist or memory_view.live_checkout:
         from .purchase_selection import (
             is_bare_purchase_closing,
+            is_checkout_utterance,
             parse_list_position_selection,
         )
 
         purchase_close = bool(
             parse_list_position_selection(message_text)
             or is_bare_purchase_closing(message_text)
+            or is_checkout_utterance(message_text)
         )
         if purchase_close:
             sku_lock = True

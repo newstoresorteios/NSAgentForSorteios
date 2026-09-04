@@ -822,11 +822,15 @@ async def _generate_agent_reply_async_inner(
     )
     commerce_state = hydrate_state_from_handles(commerce_state, context_handles)
     from .sales.dialogue_phase import (
-        is_fresh_commerce_start,
         reset_browse_memory_keep_orders,
+        should_reset_browse_memory,
     )
 
-    fresh_start = is_fresh_commerce_start(message.text)
+    fresh_start = should_reset_browse_memory(
+        message.text,
+        conversation_id=message.conversation_id,
+        state=commerce_state,
+    )
     if fresh_start:
         commerce_state = reset_browse_memory_keep_orders(commerce_state)
     customer_context["_commerce_state"] = commerce_state.model_dump(mode="json")

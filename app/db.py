@@ -1248,7 +1248,7 @@ def load_customer_commerce_sessions(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT person_key, commerce_state, resumable_score, updated_at
+                    SELECT person_key, commerce_state, resumable_score, updated_at, conversation_id
                     FROM public.ai_customer_commerce_sessions
                     WHERE person_key = ANY(%(keys)s)
                     ORDER BY resumable_score DESC, updated_at DESC
@@ -1264,6 +1264,13 @@ def load_customer_commerce_sessions(
     for row in rows:
         state = row.get("commerce_state") if isinstance(row, dict) else None
         if isinstance(state, dict) and state:
+            if row.get("conversation_id") and not state.get("last_conversation_id"):
+                state["last_conversation_id"] = row["conversation_id"]
+            if row.get("updated_at") and not state.get("last_browse_at"):
+                stamp = row["updated_at"]
+                state["last_browse_at"] = (
+                    stamp.isoformat() if hasattr(stamp, "isoformat") else stamp
+                )
             sessions.append(state)
     return sessions
 

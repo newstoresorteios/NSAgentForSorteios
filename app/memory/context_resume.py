@@ -143,10 +143,21 @@ def _strip_browse_memory(payload: dict[str, Any]) -> dict[str, Any]:
     stripped["active_topic"] = None
     stripped["forget_shortlist"] = True
     stripped["product_resolution_state"] = None
+    stripped["closed_by_farewell"] = False
+    stripped["last_browse_at"] = None
     prefs = stripped.get("active_preferences")
     if isinstance(prefs, dict):
         cleaned = dict(prefs)
-        cleaned.pop("locked_identity", None)
+        for key in (
+            "locked_identity",
+            "budget",
+            "budget_max",
+            "color",
+            "occasion",
+            "style",
+            "excluded_product_ids",
+        ):
+            cleaned.pop(key, None)
         stripped["active_preferences"] = cleaned
     if stripped.get("dialogue_phase") == "shortlist":
         stripped["dialogue_phase"] = "discovery"
@@ -175,7 +186,14 @@ def merge_commerce_states(
             )
         return base
     # Richer cart/order donor wins, but never discard the latest product shortlist.
-    return _prefer_latest_presentation(dict(donor), base)
+    merged = _prefer_latest_presentation(dict(donor), base)
+    if base.get("closed_by_farewell"):
+        merged["closed_by_farewell"] = True
+    if base.get("last_conversation_id"):
+        merged["last_conversation_id"] = base["last_conversation_id"]
+    if base.get("last_browse_at"):
+        merged["last_browse_at"] = base["last_browse_at"]
+    return merged
 
 
 def is_short_affirmation(text: str | None) -> bool:

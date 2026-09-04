@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unicodedata
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -145,6 +146,9 @@ class CommerceConversationState(BaseModel):
     last_presented_products: list[PresentedCommerceProduct] = Field(default_factory=list)
     # Explicit “start over”: persist/load must not revive the last shortlist.
     forget_shortlist: bool = False
+    last_conversation_id: str | None = None
+    last_browse_at: datetime | None = None
+    closed_by_farewell: bool = False
     last_story_product: dict[str, Any] | None = None
     # found_available | found_unknown | found_unavailable | plausible_matches | None
     product_resolution_state: str | None = None
@@ -520,11 +524,16 @@ def apply_commerce_domain_context(
     """
     if interpretation.domain_change_explicit or interpretation.domain == "commerce":
         return interpretation, False
-    from app.sales.dialogue_phase import is_fresh_commerce_start
+    from app.sales.dialogue_phase import (
+        is_fresh_commerce_start,
+        should_reset_browse_memory,
+    )
     from app.verify.guardrails import detect_explicit_raffle_intent
 
-    if is_fresh_commerce_start(message_text) or detect_explicit_raffle_intent(
-        message_text or ""
+    if (
+        is_fresh_commerce_start(message_text)
+        or should_reset_browse_memory(message_text, state=state)
+        or detect_explicit_raffle_intent(message_text or "")
     ):
         return interpretation, False
     if interpretation.domain == "greeting":
@@ -902,9 +911,11 @@ def evolve_commerce_state(
     if metadata.get("presented_products") and compact_products:
         state.last_presented_products = compact_products
         state.forget_shortlist = False
+        state.closed_by_farewell = False
     elif len(compact_products) >= 2:
         state.last_presented_products = compact_products
         state.forget_shortlist = False
+        state.closed_by_farewell = False
     story_ref = metadata.get("last_story_product")
     if isinstance(story_ref, dict) and story_ref.get("story_media_id"):
         state.last_story_product = story_ref

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.config import audio_outbound_ready, get_settings
 from app.llm.agent_contracts import (
     apply_policy_enforcement,
@@ -115,6 +117,10 @@ def _persist_commerce_session(
     commerce_state: CommerceConversationState,
     result: AgentResult,
 ) -> AgentResult:
+    if incoming.conversation_id:
+        commerce_state.last_conversation_id = incoming.conversation_id
+    if commerce_state.last_presented_products:
+        commerce_state.last_browse_at = datetime.now(timezone.utc)
     result.response_metadata = dict(result.response_metadata or {})
     result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
     result.response_metadata["working_memory"] = build_working_memory(commerce_state)
@@ -207,11 +213,15 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             load_commerce_conversation_state(**state_lookup)
         )
     from app.sales.dialogue_phase import (
-        is_fresh_commerce_start,
         reset_browse_memory_keep_orders,
+        should_reset_browse_memory,
     )
 
-    if is_fresh_commerce_start(incoming.text):
+    if should_reset_browse_memory(
+        incoming.text,
+        conversation_id=incoming.conversation_id,
+        state=commerce_state,
+    ):
         commerce_state = reset_browse_memory_keep_orders(commerce_state)
     # New product photo starts a fresh identification — never price the
     # previous SKU (e.g. CW Rosa) while Vision runs on a Beaubleu.
@@ -275,6 +285,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
 
     with runtime_stage("agent_decision"):
         result = await generate_agent_reply_async(incoming, customer_context)
+    if (result.response_metadata or {}).get("response_source") == "farewell":
+        commerce_state.closed_by_farewell = True
     commerce_state_before_evolve = commerce_state
     previous_dialogue_phase = commerce_state.dialogue_phase
     commerce_state = evolve_commerce_state(commerce_state_before_evolve, result)

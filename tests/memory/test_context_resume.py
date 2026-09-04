@@ -63,6 +63,30 @@ def test_merge_forget_shortlist_keeps_order_and_drops_old_list():
     assert merged["dialogue_phase"] == "discovery"
 
 
+def test_merge_keeps_farewell_flag_when_order_donor_is_richer():
+    latest = {
+        "closed_by_farewell": True,
+        "last_conversation_id": "thread-new",
+        "last_presented_products": [
+            {"position": 1, "product_id": "641", "name": "Tissot"},
+        ],
+        "pending_action": None,
+        "order_id": None,
+    }
+    previous = {
+        "order_id": "25422",
+        "order_payment_url": "https://pay.example/1",
+        "pending_action": "awaiting_payment",
+        "cart_session_id": "cart-old",
+        "last_conversation_id": "thread-old",
+        "closed_by_farewell": False,
+    }
+    merged = merge_commerce_states(latest, previous)
+    assert merged["closed_by_farewell"] is True
+    assert merged["last_conversation_id"] == "thread-new"
+    assert merged["order_id"] == "25422"
+
+
 def test_merge_keeps_latest_presented_list_over_richer_cart_donor():
     latest = {
         "last_presented_products": [
