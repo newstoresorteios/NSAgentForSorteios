@@ -237,5 +237,6 @@ def test_checkout_utterance_is_not_generic_buy():
     assert is_checkout_utterance("pode montar o pedido pra mim")
     assert is_checkout_utterance("quero fechar")
     assert is_checkout_utterance("me manda o link de pagamento")
+    assert is_checkout_utterance("como podes fazer pra fechar a compra?")
     assert is_checkout_utterance("quero comprar um relógio") is False
     assert is_checkout_utterance("procuro um seiko") is False

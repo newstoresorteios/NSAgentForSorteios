@@ -120,6 +120,11 @@ def is_outbound_catalog_image_request(text: str | None) -> bool:
             "pode mandar",
             "me manda",
             "me envia",
+            "pedi a imagem",
+            "pedi a foto",
+            "que pedi",
+            "cade a foto",
+            "cade a imagem",
         )
     )
     return ask_to_send

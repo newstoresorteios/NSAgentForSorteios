@@ -192,6 +192,73 @@ def test_nenhuma_clears_shortlist_or_resets_discovery():
     assert updated.dialogue_phase == "discovery"
 
 
+def test_checkout_pending_without_cart_keeps_shortlist_and_active():
+    previous = CommerceConversationState(
+        last_presented_products=_presented(),
+        active_product={"product_id": "aq1", "name": "Baltic Aquascaphe", "brand": "Baltic"},
+        dialogue_phase="shortlist",
+    )
+    result = AgentResult(
+        reply_text="Link oficial do Land Tortoise",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "aq1",
+                    "name": "Baltic Aquascaphe",
+                    "brand": "Baltic",
+                }
+            ]
+        },
+        response_metadata={
+            "domain": "commerce",
+            "pending_action": "awaiting_checkout_data",
+            "purchase_stage": "checkout_data",
+            "active_product": {
+                "product_id": "aq1",
+                "name": "Baltic Aquascaphe",
+                "brand": "Baltic",
+            },
+        },
+    )
+    updated = evolve_commerce_state(previous, result)
+    assert [item.product_id for item in updated.last_presented_products] == ["aq1", "sb01"]
+    assert updated.active_product is not None
+    assert updated.active_product.product_id == "aq1"
+
+
+def test_inspect_image_persists_active_and_one_item_list_when_shortlist_empty():
+    previous = CommerceConversationState(active_domain="commerce")
+    result = AgentResult(
+        reply_text="https://loja.example/srpg15k1",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {
+                    "id": "3917",
+                    "name": "Seiko Prospex Land Tortoise SRPG15K1",
+                    "brand": "Seiko",
+                    "reference": "SRPG15K1",
+                }
+            ]
+        },
+        response_metadata={
+            "domain": "commerce",
+            "active_product": {
+                "product_id": "3917",
+                "name": "Seiko Prospex Land Tortoise SRPG15K1",
+                "brand": "Seiko",
+                "reference": "SRPG15K1",
+            },
+        },
+    )
+    updated = evolve_commerce_state(previous, result)
+    assert updated.active_product is not None
+    assert updated.active_product.product_id == "3917"
+    assert len(updated.last_presented_products) == 1
+    assert updated.last_presented_products[0].product_id == "3917"
+
+
 def test_advance_whatsapp_checkout_does_not_double_evolve():
     from pathlib import Path
 

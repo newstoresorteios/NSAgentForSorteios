@@ -745,6 +745,10 @@ def _needs_clarification_before_retrieval(
 ) -> bool:
     if discovery_state.get("order_context_blocks_clarification"):
         return False
+    from .purchase_selection import skips_discovery_clarification
+
+    if skips_discovery_clarification(interpretation):
+        return False
     if discovery_state.get("persona_qualification_required"):
         return True
     if discovery_state["force_retrieval"]:
