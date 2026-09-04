@@ -1,7 +1,8 @@
-"""When this turn changes color/model/budget, Tray list search is the authority.
+"""When this turn changes color/model/budget, do not treat the previous SKU as the new list.
 
-The durable catalog index may seed candidates. It must not skip the adaptor
-fan-out, and a stale GET /products/{id} must not freeze the previous SKU.
+A sufficient catalog-index pool may skip Tray list fan-out. Revalidate still
+refreshes the presented SKUs via GET /products/{id}. A stale GET of the prior
+SKU must not freeze identity when color/model/budget changed this turn.
 """
 
 from __future__ import annotations

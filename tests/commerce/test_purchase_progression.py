@@ -521,6 +521,16 @@ def test_explicit_zero_day_lead_time_supports_immediate_delivery():
     assert facts["in_ready_to_ship_category"] is False
 
 
+def test_string_lead_time_parses_days():
+    facts = commercial_availability_facts({
+        "stock": 2,
+        "available": True,
+        "order_days_availability": "15 dias úteis",
+    })
+    assert facts["lead_time_days"] == 15
+    assert facts["immediate_delivery_supported"] is False
+
+
 def test_pronta_entrega_category_overrides_stale_lead_time():
     facts = commercial_availability_facts({
         "stock": 38,

@@ -21,6 +21,7 @@ def hard_filter_products(
     interpretation: SalesInterpretation,
     *,
     mode: Literal["exact", "recommendation"],
+    message_text: str | None = None,
 ) -> list[dict[str, Any]]:
     """Apply mandatory filters. Prefer TurnUnderstanding hard constraints when present."""
     subject = interpretation.subject
@@ -160,7 +161,10 @@ def hard_filter_products(
             product_matches_case_size_range,
         )
 
-        case_range = interpretation_case_size_range(interpretation)
+        case_range = interpretation_case_size_range(
+            interpretation,
+            message_text=message_text,
+        )
         if case_range and selected:
             min_mm, max_mm = case_range
             in_range = [

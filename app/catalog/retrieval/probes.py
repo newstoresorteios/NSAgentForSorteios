@@ -60,18 +60,10 @@ async def seed_from_catalog_index(session: RetrievalSession) -> None:
                 "skip_tray_fanout": session.catalog_index_primary,
             },
         )
-        if session.catalog_index_primary and session.requires_tray_refresh(
-            interpretation, session.message_text
-        ):
-            session.catalog_index_primary = False
-            print(
-                "[catalog.index.primary.force_tray]",
-                {
-                    "reason": "constraint_changed_this_turn",
-                    "mode": plan.mode,
-                    "seeded": session.catalog_index_seeded,
-                },
-            )
+        # A sufficient hard-filtered index pool is the retrieval. Tray list
+        # fan-out on every budget/color/size turn emptied the turn (adaptor
+        # 500) and skipped GPT. Live prices still come from GET /products/{id}
+        # during revalidate of the top-N shown.
     elif bool(getattr(_runtime.get_settings(), "agent_catalog_index_read_enabled", True)):
         print(
             "[catalog.index.primary]",

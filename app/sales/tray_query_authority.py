@@ -103,6 +103,38 @@ def _brl(value: float) -> str:
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _miss_subject_label(brand: str | None) -> str:
+    cleaned = str(brand or "").strip()
+    return cleaned if cleaned else "relógios"
+
+
+def _budget_miss_reply(brand: str | None, ceiling: str, floor: float | None) -> str:
+    subject = _miss_subject_label(brand)
+    if floor is not None:
+        if brand:
+            return (
+                f"Não encontrei {subject} até {ceiling}. "
+                f"Na loja, o {subject} mais acessível que vi fica a partir de "
+                f"{_brl(floor)} — fora da faixa. "
+                "Prefere outra marca nessa faixa, ou subir o orçamento?"
+            )
+        return (
+            f"Não encontrei {subject} até {ceiling}. "
+            f"Na loja, o mais acessível que vi fica a partir de "
+            f"{_brl(floor)} — fora da faixa. "
+            "Quer ajustar a faixa ou outro critério?"
+        )
+    if brand:
+        return (
+            f"Não encontrei {subject} até {ceiling}. "
+            "Prefere outra marca nessa faixa, ou subir o orçamento?"
+        )
+    return (
+        f"Não encontrei {subject} até {ceiling}. "
+        "Quer ajustar a faixa ou outro critério?"
+    )
+
+
 def _products_passing_without_budget(
     candidates: list[dict[str, Any]],
     interpretation: SalesInterpretation,
@@ -168,24 +200,12 @@ def budget_miss_from_authorization(
         [item for item in candidates if isinstance(item, dict)],
         budget_max=authorization.budget_max,
     )
-    brand = authorization.brand or "essa marca"
+    brand = authorization.brand
     if authorization.budget_max is not None:
-        ceiling = _brl(authorization.budget_max)
-        if floor is not None:
-            reply = (
-                f"Não encontrei {brand} até {ceiling}. "
-                f"Na loja, o {brand} mais acessível que vi fica a partir de "
-                f"{_brl(floor)} — fora da faixa. "
-                "Prefere outra marca nessa faixa, ou subir o orçamento?"
-            )
-        else:
-            reply = (
-                f"Não encontrei {brand} até {ceiling}. "
-                "Prefere outra marca nessa faixa, ou subir o orçamento?"
-            )
+        reply = _budget_miss_reply(brand, _brl(authorization.budget_max), floor)
     else:
         reply = (
-            f"Não encontrei {brand} dentro do que você pediu. "
+            f"Não encontrei {_miss_subject_label(brand)} dentro do que você pediu. "
             "Prefere ajustar marca ou faixa?"
         )
     return AgentResult(
@@ -238,24 +258,12 @@ def budget_hard_miss_result(
 
     outside = _products_passing_without_budget(candidates, interpretation)
     floor = cheapest_over_budget_floor(outside, budget_max=auth.budget_max)
-    brand = auth.brand or "essa marca"
+    brand = auth.brand
     if auth.budget_max is not None:
-        ceiling = _brl(auth.budget_max)
-        if floor is not None:
-            reply = (
-                f"Não encontrei {brand} até {ceiling}. "
-                f"Na loja, o {brand} mais acessível que vi fica a partir de "
-                f"{_brl(floor)} — fora da faixa. "
-                "Prefere outra marca nessa faixa, ou subir o orçamento?"
-            )
-        else:
-            reply = (
-                f"Não encontrei {brand} até {ceiling}. "
-                "Prefere outra marca nessa faixa, ou subir o orçamento?"
-            )
+        reply = _budget_miss_reply(brand, _brl(auth.budget_max), floor)
     else:
         reply = (
-            f"Não encontrei {brand} dentro da faixa pedida. "
+            f"Não encontrei {_miss_subject_label(brand)} dentro da faixa pedida. "
             "Prefere outra marca, ou ajustar o orçamento?"
         )
     print(

@@ -505,7 +505,15 @@ def merge_inbound_views(
         field="style",
     )
 
-    brand = message_view.brand or memory_view.brand
+    from app.catalog.specs.catalog_specs import message_requests_other_brands
+
+    brand_unlock = message_requests_other_brands(message_text)
+    if brand_unlock or (message_view.commerce_browse and not message_view.brand):
+        if memory_view.brand and not message_view.brand:
+            stale.append("brand")
+        brand = message_view.brand
+    else:
+        brand = message_view.brand or memory_view.brand
     model = message_view.model
     if message_view.commerce_browse:
         model = message_view.model

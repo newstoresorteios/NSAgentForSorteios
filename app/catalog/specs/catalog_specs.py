@@ -236,6 +236,11 @@ _CASE_RANGE_RE = re.compile(
     r"|(\d{2})\s*(?:a|ate|at[eé]|[-–/])\s*(\d{2})\s*mm",
     re.IGNORECASE,
 )
+_CASE_OPEN_MIN_RE = re.compile(
+    r"(?:acima\s+de|maior\s+(?:que|do\s+que)|a\s+partir\s+de|mais\s+de)\s*(\d{2})\s*mm",
+    re.IGNORECASE,
+)
+_CASE_SIZE_ABS_MAX_MM = 55
 _SMALL_WRIST_RE = re.compile(
     r"\b(pulso\s*(?:pequeno|menor|fin[oa])|caixa\s*menor|tamanho\s*menor)\b",
     re.IGNORECASE,
@@ -298,14 +303,19 @@ def extract_case_size_range_from_text(text: str | None) -> tuple[int, int] | Non
         high = int(match.group(2) or match.group(4))
         if low > high:
             low, high = high, low
-        if 28 <= low <= 55 and 28 <= high <= 55:
+        if 28 <= low <= _CASE_SIZE_ABS_MAX_MM and 28 <= high <= _CASE_SIZE_ABS_MAX_MM:
             return low, high
+    open_min = _CASE_OPEN_MIN_RE.search(blob)
+    if open_min:
+        low = int(open_min.group(1))
+        if 28 <= low <= _CASE_SIZE_ABS_MAX_MM:
+            return low, _CASE_SIZE_ABS_MAX_MM
     singles = [int(item) for item in re.findall(r"\b(3[0-9]|4[0-5])\s*mm\b", blob)]
     if len(singles) >= 2:
         low, high = min(singles[:2]), max(singles[:2])
-        if 28 <= low <= 55 and 28 <= high <= 55:
+        if 28 <= low <= _CASE_SIZE_ABS_MAX_MM and 28 <= high <= _CASE_SIZE_ABS_MAX_MM:
             return low, high
-    if len(singles) == 1 and 28 <= singles[0] <= 55:
+    if len(singles) == 1 and 28 <= singles[0] <= _CASE_SIZE_ABS_MAX_MM:
         return singles[0], singles[0]
     return None
 

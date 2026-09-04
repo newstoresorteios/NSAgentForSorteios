@@ -36,6 +36,22 @@ class SalesIntentRoute:
     vague_query: bool = False
     vague_query_clarification: bool = False
     purchase_close_hold: bool = False
+    skip_catalog_fanout: bool = False
+
+
+def should_skip_catalog_fanout(interpretation: SalesInterpretation | None) -> bool:
+    """Talk/inspect turns must not fan-out Tray list search."""
+    if interpretation is None or interpretation.purchase_action:
+        return False
+    from app.llm.turn_understanding import get_turn_understanding
+
+    turn = get_turn_understanding(interpretation)
+    strategy = getattr(turn, "answer_strategy", None) if turn is not None else None
+    if strategy == "acknowledge":
+        return True
+    if strategy == "answer_directly" and interpretation.goal == "inspect":
+        return True
+    return False
 
 
 def route_sales_intent(
@@ -125,4 +141,5 @@ def route_sales_intent(
         vague_query=vague_query,
         vague_query_clarification=vague_query_clarification,
         purchase_close_hold=purchase_close_hold,
+        skip_catalog_fanout=should_skip_catalog_fanout(interpretation),
     )

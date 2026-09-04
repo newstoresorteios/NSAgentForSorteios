@@ -17,6 +17,9 @@ def test_extract_case_size_range_variants():
     assert extract_case_size_range_from_text("tamanhos de 36 a 38 mm") == (36, 38)
     assert extract_case_size_range_from_text("Gostei desse, 43/44mm") == (43, 44)
     assert extract_case_size_range_from_text("pulso pequeno") is None
+    assert extract_case_size_range_from_text("caixa acima de 40mm") == (40, 55)
+    assert extract_case_size_range_from_text("maior que 40 mm") == (40, 55)
+    assert extract_case_size_range_from_text("a partir de 42mm") == (42, 55)
 
 
 def test_message_requests_other_brands():
@@ -141,3 +144,42 @@ def test_product_matches_case_size_range():
     assert product_matches_case_size_range(product, 36, 38) is False
     product["case_size"] = "37"
     assert product_matches_case_size_range(product, 36, 38) is True
+
+
+def test_hard_filter_open_min_case_size_from_message():
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"product_type": "relógio"},
+        preferences={"budget_max": 2500},
+        references_previous_context=True,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    products = [
+        {
+            "id": "small",
+            "name": "Caixa 38mm",
+            "brand": "Seiko",
+            "case_size": "38",
+            "current_price": 1800,
+            "available": True,
+        },
+        {
+            "id": "large",
+            "name": "Caixa 42mm",
+            "brand": "Seiko",
+            "case_size": "42",
+            "current_price": 2100,
+            "available": True,
+        },
+    ]
+    filtered = hard_filter_products(
+        products,
+        interpretation,
+        mode="recommendation",
+        message_text="Quero relógios até 2500, caixa acima de 40mm",
+    )
+    assert [item["id"] for item in filtered] == ["large"]

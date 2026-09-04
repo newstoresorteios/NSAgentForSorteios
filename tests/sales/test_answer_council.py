@@ -439,6 +439,37 @@ def test_first_search_clears_commerce_phrase_used_as_name():
     assert "qual:name:" not in " ".join(bound.preferences.attributes or [])
 
 
+def test_qualquer_marca_does_not_relock_memory_brand():
+    from app.catalog.specs.preference_normalize import normalize_sales_interpretation
+
+    sticky = _interpretation(brand="Tag Heuer", preferences={"budget_max": 2500})
+    unlocked = normalize_sales_interpretation(sticky, message_text="Qualquer marca")
+    assert unlocked.subject.brand is None
+    bound = apply_turn_contract_for_search(
+        unlocked,
+        message_text="Qualquer marca",
+        commerce_state=CommerceConversationState(
+            active_preferences={
+                "budget": {"max": 2500},
+                "locked_identity": {"brand": "Tag Heuer"},
+            }
+        ),
+    )
+    assert bound.subject.brand is None
+    contract = build_turn_contract(
+        message_text="Qualquer marca",
+        interpretation=unlocked,
+        commerce_state=CommerceConversationState(
+            active_preferences={
+                "budget": {"max": 2500},
+                "locked_identity": {"brand": "Tag Heuer"},
+            }
+        ),
+    )
+    assert contract.brand is None
+    assert "brand_lock" not in contract.hard_codes
+
+
 def test_first_search_does_not_unpause_purchase_close():
     from app.commerce.commerce_context import PresentedCommerceProduct
 
@@ -807,3 +838,76 @@ def test_purchase_close_cart_sku_skips_model_mismatch():
     )
     assert "ignored_model" not in check_pedido(draft, contract).issues
     assert "fact_model_mismatch" not in check_fatos(draft, contract).issues
+
+
+def test_check_pedido_ignores_stale_fake_name_not_used_in_reply():
+    contract = build_turn_contract(
+        message_text="usa bateria?",
+        interpretation=_interpretation(
+            brand="Bulova",
+            preferences={"recipient": "quero um relogio", "budget_max": 3500},
+        ),
+        commerce_state=None,
+    )
+    draft = AgentResult(
+        reply_text="Sim — esse Bulova é quartzo, usa bateria.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "7507", "name": "Bulova Classic", "brand": "Bulova", "price": 2890}
+            ]
+        },
+        response_metadata={
+            "interpretation": {
+                "preferences": {"recipient": "quero um relogio"},
+            }
+        },
+    )
+    report = check_pedido(draft, contract)
+    assert "commerce_phrase_used_as_name" not in report.issues
+
+
+@pytest.mark.asyncio
+async def test_inspect_fake_name_does_not_restart_catalog_search(monkeypatch):
+    from app.sales.answer_council import apply_answer_council_with_retry
+
+    called = {"n": 0}
+
+    async def fake_retrieval(*_args, **_kwargs):
+        called["n"] += 1
+        return AgentResult(
+            reply_text="Separei relógios aleatórios.",
+            intent="commerce",
+            commercial_data={"products": [{"id": "x", "name": "Outro"}]},
+        )
+
+    monkeypatch.setattr(
+        "app.sales.product_lookup.execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+    incoming = IncomingMessage(channel="whatsapp", text="usa bateria?")
+    inspect_reply = "Sim — esse Bulova é quartzo, usa bateria."
+    result, decision, _interp = await apply_answer_council_with_retry(
+        AgentResult(
+            reply_text=inspect_reply,
+            intent="commerce",
+            commercial_data={
+                "products": [
+                    {"id": "7507", "name": "Bulova Classic", "brand": "Bulova"}
+                ]
+            },
+            response_metadata={
+                "interpretation": {
+                    "preferences": {"recipient": "quero um relogio"},
+                }
+            },
+        ),
+        incoming=incoming,
+        interpretation=_interpretation(
+            brand="Bulova",
+            preferences={"recipient": "quero um relogio", "budget_max": 3500},
+        ),
+    )
+    assert called["n"] == 0
+    assert inspect_reply in (result.reply_text or "")
+    assert decision.approved is True

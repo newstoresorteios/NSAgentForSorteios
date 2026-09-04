@@ -102,6 +102,7 @@ class RetrievalSession:
                 self.candidates,
                 self.interpretation,
                 mode=self.retrieval_plan.mode,
+                message_text=self.message_text,
             )
 
     async def search_products(self, arguments: dict[str, Any]) -> dict[str, Any]:

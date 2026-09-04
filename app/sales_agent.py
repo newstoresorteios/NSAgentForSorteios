@@ -1331,6 +1331,39 @@ def _ranked_result(result: AgentResult, plan: dict[str, Any]) -> AgentResult | N
     return ranked
 
 
+def _session_product_facts_result(
+    state: CommerceConversationState | None,
+    resolved_product: Any | None = None,
+) -> AgentResult:
+    """Ground a talk-first inspect/ack turn in session products, without Tray list search."""
+    products: list[dict[str, Any]] = []
+    if resolved_product is not None:
+        dump = (
+            resolved_product.model_dump(mode="json")
+            if hasattr(resolved_product, "model_dump")
+            else dict(resolved_product)
+        )
+        products = [dump]
+    elif state is not None and getattr(state, "active_product", None) is not None:
+        products = [state.active_product.model_dump(mode="json")]
+    elif state is not None:
+        products = [
+            item.model_dump(mode="json")
+            for item in (state.last_presented_products or [])[:3]
+        ]
+    return AgentResult(
+        reply_text="",
+        intent="commerce",
+        handoff_required=False,
+        commercial_data={"products": products},
+        response_metadata={
+            "presented_products": bool(products),
+            "used_tray": False,
+            "talk_first_skip_catalog_fanout": True,
+        },
+    )
+
+
 from .sales.result_utils import mark_sales_result as _mark_sales_result
 
 
@@ -4071,6 +4104,18 @@ async def _handle_sales_message_inner(
             interpretation,
             resolved_product,
         )
+    elif intent_route.skip_catalog_fanout:
+        tray_result = _session_product_facts_result(state, resolved_product)
+        print("[sales.agent] talk_first", {
+            "skip_catalog_fanout": True,
+            "answer_strategy": getattr(
+                getattr(interpretation, "_turn_understanding", None),
+                "answer_strategy",
+                None,
+            ),
+            "goal": interpretation.goal if interpretation is not None else None,
+            "session_products": len((tray_result.commercial_data or {}).get("products") or []),
+        })
     elif interpretation is not None and action in {
         "product_search",
         "product_price",

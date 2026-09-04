@@ -130,3 +130,59 @@ def test_needs_clarification_before_retrieval_for_discover_goal():
     )
     assert route.needs_clarification_before_retrieval is True
     assert route.force_retrieval is False
+
+
+def test_inspect_answer_directly_skips_catalog_fanout():
+    from app.llm.turn_understanding import TurnUnderstanding, attach_turn_understanding
+
+    interpretation = _interp(
+        goal="inspect",
+        needs_clarification=False,
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        subject={"brand": "Bulova", "product_type": "relógio"},
+    )
+    attach_turn_understanding(
+        interpretation,
+        TurnUnderstanding(
+            primary_intent="commerce_inspect",
+            answer_strategy="answer_directly",
+            confidence=0.9,
+        ),
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="product_search", goal="inspect", query="usa bateria"),
+        message_text="usa bateria?",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.skip_catalog_fanout is True
+
+
+def test_search_catalog_does_not_skip_fanout():
+    from app.llm.turn_understanding import TurnUnderstanding, attach_turn_understanding
+
+    interpretation = _interp(
+        goal="find",
+        needs_clarification=False,
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        subject={"brand": "Bulova", "product_type": "relógio"},
+    )
+    attach_turn_understanding(
+        interpretation,
+        TurnUnderstanding(
+            primary_intent="commerce_find",
+            answer_strategy="search_catalog",
+            confidence=0.9,
+        ),
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="product_search", goal="find", query="bulova"),
+        message_text="Quero um bulova automático dourado",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.skip_catalog_fanout is False

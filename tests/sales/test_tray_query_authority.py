@@ -100,6 +100,26 @@ def test_budget_miss_does_not_list_over_budget_omegas():
     assert (result.commercial_data or {}).get("products") == []
     assert (result.commercial_data or {}).get("brand_floor_price") == 42754.99
     assert result.response_metadata.get("hard_budget_max") == 5000
+    assert "essa marca" not in (result.reply_text or "")
+
+
+def test_budget_miss_without_brand_does_not_invent_brand():
+    result = budget_hard_miss_result(
+        _interpretation(brand=None, preferences={"budget_max": 2500}),
+        [
+            {
+                "id": "1",
+                "name": "Relógio Seiko 5",
+                "brand": "Seiko",
+                "price": 4200,
+                "available": True,
+            }
+        ],
+    )
+    assert result is not None
+    assert "essa marca" not in (result.reply_text or "")
+    assert "relógios" in (result.reply_text or "").casefold()
+    assert (result.commercial_data or {}).get("brand") is None
 
 
 def test_budget_miss_skipped_when_no_budget():

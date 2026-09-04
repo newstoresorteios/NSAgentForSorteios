@@ -252,6 +252,81 @@ async def test_recommendation_skips_tray_when_index_sufficient(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_index_primary_skips_tray_when_budget_stated_this_turn(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    calls: list[tuple] = []
+
+    async def fake_execute(name, arguments):
+        calls.append((name, arguments))
+        if name == "list_categories":
+            return {"categories": []}
+        if name == "get_product":
+            return {
+                "id": arguments["product_id"],
+                "name": f"Seiko {arguments['product_id']}",
+                "brand": "Seiko",
+                "current_price": 2500 + int(arguments["product_id"]),
+                "available": True,
+                "available_in_store": True,
+            }
+        raise AssertionError(f"unexpected tray call: {name} {arguments}")
+
+    index_products = [
+        {
+            "id": str(i),
+            "product_id": str(i),
+            "name": f"Seiko Modelo {i}",
+            "brand": "Seiko",
+            "price": 2000 + i * 100,
+            "current_price": 2000 + i * 100,
+            "available": True,
+            "available_in_store": True,
+            "_from_catalog_index": True,
+            "_factual_source": "catalog_index",
+        }
+        for i in range(1, 9)
+    ]
+
+    monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
+    monkeypatch.setattr(
+        "app.catalog.index.primary.fetch_primary_index_candidates",
+        lambda *a, **k: (index_products, "constraints"),
+    )
+    monkeypatch.setattr(
+        "app.catalog.index.catalog_index.index_products_best_effort",
+        lambda *a, **k: 0,
+    )
+    monkeypatch.setattr(
+        "app.catalog.retrieval.runtime.get_settings",
+        lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
+    )
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(
+            agent_catalog_index_read_enabled=True,
+            agent_catalog_index_write_enabled=False,
+            agent_catalog_index_fallback_to_tray=True,
+            agent_catalog_index_candidate_limit=30,
+            agent_persona_tenant_id="newstore",
+            openai_api_key="",
+            openai_model="gpt-4.1-mini",
+        ),
+    )
+
+    result = await sales_agent._execute_compiled_product_retrieval(
+        _interpretation(),
+        message_text="Até 3500",
+    )
+
+    search_calls = [c for c in calls if c[0] == "search_products"]
+    assert search_calls == []
+    assert result is not None
+    assert (result.commercial_data or {}).get("products")
+
+
+@pytest.mark.asyncio
 async def test_recommendation_serves_index_when_tray_revalidation_fails(monkeypatch):
     """Index-primary discovery must not hard-fail the turn on Tray 503/429."""
     import app.sales_agent as sales_agent

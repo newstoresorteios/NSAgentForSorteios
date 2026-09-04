@@ -47,7 +47,9 @@ _MUST_RETRIEVE_CODES = frozenset(
         "model_lock",
     }
 )
-_SKIP_RETRIEVAL_CODES = frozenset({"honor_sku_lock", "stop_requalify"})
+_SKIP_RETRIEVAL_CODES = frozenset(
+    {"honor_sku_lock", "stop_requalify", "clear_fake_name"}
+)
 
 
 class CheckerReport(BaseModel):
@@ -211,7 +213,10 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
     from .qualification_slots import _is_plausible_name
 
     if recipient and not _is_plausible_name(recipient):
-        issues.append("commerce_phrase_used_as_name")
+        needle = " ".join(recipient.strip().split()).casefold()
+        hay = (reply or "").casefold()
+        if needle and needle in hay:
+            issues.append("commerce_phrase_used_as_name")
     if contract.purchase_close and products and len(products) >= 2:
         if (result.response_metadata or {}).get("guided_near_match") or _FRESH_LIST_RE.search(
             reply
@@ -534,6 +539,17 @@ def apply_turn_contract_for_search(
     return updated
 
 
+def _sync_council_interpretation(
+    result: AgentResult,
+    interpretation: SalesInterpretation | None,
+) -> AgentResult:
+    if interpretation is None:
+        return result
+    metadata = dict(result.response_metadata or {})
+    metadata["interpretation"] = interpretation.model_dump(mode="json")
+    return result.model_copy(update={"response_metadata": metadata})
+
+
 def _looks_like_person_name(value: str | None) -> bool:
     from .qualification_slots import _is_plausible_name
 
@@ -708,6 +724,12 @@ def _honest_constraint_reply(
             f"Não encontrei {contract.brand} até {ceiling}. "
             "Prefere outra marca nessa faixa, ou subir o orçamento?"
         )
+    elif contract.budget_max is not None:
+        ceiling = f"R$ {contract.budget_max:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        fixed.reply_text = (
+            f"Não encontrei relógios até {ceiling}. "
+            "Quer ajustar a faixa ou outro critério?"
+        )
     elif contract.color:
         label = contract.brand or "relógio"
         fixed.reply_text = (
@@ -854,6 +876,11 @@ async def apply_answer_council_with_retry(
             contract=contract,
             commerce_state=commerce_state,
         ):
+            codes = set(decision.correction_codes)
+            if "clear_fake_name" in codes and not (codes & _MUST_RETRIEVE_CODES):
+                current = _sync_council_interpretation(current, current_interp)
+                attempt += 1
+                continue
             replacement = _continue_commerce_reply(commerce_state, contract)
             if replacement is not None:
                 current = replacement
