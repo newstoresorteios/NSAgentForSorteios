@@ -715,14 +715,15 @@ def evolve_commerce_state(
 
     purchase_stage = str(metadata.get("purchase_stage") or state.purchase_stage or "")
     pending_action = metadata.get("pending_action") or state.pending_action
-    if (
-        metadata.get("dialogue_phase_reset")
-        or pending_action in _CHECKOUT_PENDING_ACTIONS
+    if metadata.get("dialogue_phase_reset"):
+        state.last_presented_products = []
+        state.active_product = None
+    elif state.cart_session_id and (
+        pending_action in _CHECKOUT_PENDING_ACTIONS
         or purchase_stage in _CHECKOUT_PURCHASE_STAGES
     ):
+        # Keep the shortlist until a cart exists so inspect → close can bind.
         state.last_presented_products = []
-        if metadata.get("dialogue_phase_reset"):
-            state.active_product = None
     try:
         next_phase = resolve_dialogue_phase(state, metadata, result)
         if next_phase is not None:
@@ -915,6 +916,15 @@ def evolve_commerce_state(
         state.forget_shortlist = False
         state.closed_by_farewell = False
     elif len(compact_products) >= 2:
+        state.last_presented_products = compact_products
+        state.forget_shortlist = False
+        state.closed_by_farewell = False
+    elif (
+        not state.last_presented_products
+        and compact_products
+        and metadata.get("active_product")
+    ):
+        # Inspect / image of one SKU: keep a 1-item list so the next close binds.
         state.last_presented_products = compact_products
         state.forget_shortlist = False
         state.closed_by_farewell = False

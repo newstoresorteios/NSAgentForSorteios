@@ -130,6 +130,22 @@ async def generate_clarification_reply(
                 or _persona_qualification_question(interpretation, discovery_state)
             )
 
+    if interpretation.stop_clarification and (deterministic_question or "").strip():
+        return _mark_sales_result(
+            AgentResult(
+                reply_text=html.unescape(deterministic_question.strip()),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="commerce_clarification",
+            ),
+            interpretation=interpretation,
+            goal=interpretation.goal,
+            response_source=(
+                "openai" if interpretation._source == "openai" else "deterministic_fallback"
+            ),
+            used_openai_responder=False,
+            used_tray=used_tray,
+        )
     if (
         interpretation._source == "openai"
         and interpretation.clarification_question

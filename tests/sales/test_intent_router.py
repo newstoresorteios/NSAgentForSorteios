@@ -92,6 +92,26 @@ def test_purchase_close_skips_qualification_and_force_retrieval():
     assert route.discovery_state["persona_qualification_required"] is False
     assert route.discovery_state["force_retrieval"] is False
     assert route.purchase_close_hold is True
+    assert route.needs_clarification_before_retrieval is False
+
+
+@pytest.mark.offline_eval
+def test_first_seiko_without_state_still_asks_qualification():
+    interpretation = _interp(
+        goal="discover",
+        subject={"product_type": "relógio", "brand": "Seiko"},
+        needs_clarification=True,
+        stop_clarification=False,
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="recommendation", query="Seiko"),
+        message_text="quero um seiko",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.purchase_close is False
+    assert route.needs_clarification_before_retrieval is True
 
 
 @pytest.mark.offline_eval
@@ -130,6 +150,37 @@ def test_needs_clarification_before_retrieval_for_discover_goal():
     )
     assert route.needs_clarification_before_retrieval is True
     assert route.force_retrieval is False
+
+
+@pytest.mark.offline_eval
+def test_purchase_intent_after_close_repair_skips_clarification():
+    interpretation = _interp(
+        goal="buy",
+        purchase_action="create_cart",
+        stop_clarification=True,
+        needs_clarification=False,
+        ready_for_retrieval=False,
+    )
+    state = CommerceConversationState(
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "3917",
+                "name": "Seiko Land Tortoise",
+                "brand": "Seiko",
+            }
+        ],
+        active_product={"product_id": "3917", "name": "Seiko Land Tortoise", "brand": "Seiko"},
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="purchase_intent", goal="buy", query="Seiko"),
+        message_text="como podes fazer pra fechar a compra?",
+        commerce_state=state,
+        recent_turns=[],
+    )
+    assert route.needs_clarification_before_retrieval is False
+    assert route.purchase_close is True
 
 
 def test_inspect_answer_directly_does_not_force_retrieval():
