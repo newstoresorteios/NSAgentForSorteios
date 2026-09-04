@@ -297,7 +297,56 @@ async def test_council_restart_applies_forbid_near_match(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_council_continue_commerce_skips_catalog_search(monkeypatch):
+async def test_council_continue_commerce_retrieves_instead_of_dumping_shortlist(
+    monkeypatch,
+):
+    from app.commerce.commerce_context import PresentedCommerceProduct
+    from app.identity.greeting_policy import GREETING_REPLY
+    from app.sales.answer_council import apply_answer_council_with_retry
+
+    called = {"n": 0}
+
+    async def fake_retrieval(*_args, **_kwargs):
+        called["n"] += 1
+        return AgentResult(
+            reply_text="Separei um Tissot PRX nessa faixa.",
+            intent="commerce",
+            commercial_data={
+                "products": [
+                    {"product_id": "641", "name": "Tissot PRX", "brand": "Tissot"}
+                ]
+            },
+            response_metadata={"presented_products": True},
+        )
+
+    monkeypatch.setattr(
+        "app.sales.product_lookup.execute_compiled_product_retrieval",
+        fake_retrieval,
+    )
+    incoming = IncomingMessage(channel="whatsapp", text="quero um relogio")
+    result, _decision, _interp = await apply_answer_council_with_retry(
+        AgentResult(reply_text=GREETING_REPLY, intent="commerce"),
+        incoming=incoming,
+        interpretation=_interpretation(brand=None, preferences={}),
+        commerce_state=CommerceConversationState(
+            last_presented_products=[
+                PresentedCommerceProduct(
+                    product_id="55",
+                    name="Seiko Presage",
+                    position=1,
+                )
+            ]
+        ),
+    )
+    assert called["n"] >= 1
+    assert "Olá" not in (result.reply_text or "")
+    assert "Ainda estou com as opções" not in (result.reply_text or "")
+    assert "Seiko Presage" not in (result.reply_text or "")
+    assert "Tissot PRX" in (result.reply_text or "")
+
+
+@pytest.mark.asyncio
+async def test_council_replays_shortlist_only_when_customer_asks(monkeypatch):
     from app.commerce.commerce_context import PresentedCommerceProduct
     from app.identity.greeting_policy import GREETING_REPLY
     from app.sales.answer_council import apply_answer_council_with_retry
@@ -312,7 +361,7 @@ async def test_council_continue_commerce_skips_catalog_search(monkeypatch):
         "app.sales.product_lookup.execute_compiled_product_retrieval",
         fake_retrieval,
     )
-    incoming = IncomingMessage(channel="whatsapp", text="quero um relogio")
+    incoming = IncomingMessage(channel="whatsapp", text="quais eram os relogios")
     result, _decision, _interp = await apply_answer_council_with_retry(
         AgentResult(reply_text=GREETING_REPLY, intent="commerce"),
         incoming=incoming,
@@ -329,6 +378,7 @@ async def test_council_continue_commerce_skips_catalog_search(monkeypatch):
     )
     assert called["n"] == 0
     assert "Olá" not in (result.reply_text or "")
+    assert "Ainda estou com as opções" not in (result.reply_text or "")
     assert "Seiko Presage" in (result.reply_text or "")
     assert result.response_metadata.get("answer_council_continue") is True
 

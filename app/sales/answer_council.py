@@ -47,9 +47,7 @@ _MUST_RETRIEVE_CODES = frozenset(
         "model_lock",
     }
 )
-_SKIP_RETRIEVAL_CODES = frozenset(
-    {"continue_commerce", "honor_sku_lock", "stop_requalify"}
-)
+_SKIP_RETRIEVAL_CODES = frozenset({"honor_sku_lock", "stop_requalify"})
 
 
 class CheckerReport(BaseModel):
@@ -546,11 +544,20 @@ def _should_retrieve_on_restart(
     codes: list[str],
     *,
     contract: TurnContract | None = None,
+    commerce_state: CommerceConversationState | None = None,
 ) -> bool:
     code_set = set(codes)
-    if code_set & _SKIP_RETRIEVAL_CODES:
-        return False
     if contract is not None and contract.purchase_close:
+        return False
+    if "continue_commerce" in code_set and commerce_state is not None:
+        from app.memory.context_resume import should_redisplay_presented_catalog
+
+        asked = contract.asked_text if contract is not None else None
+        if should_redisplay_presented_catalog(asked, commerce_state):
+            return False
+        if not (code_set & _SKIP_RETRIEVAL_CODES):
+            return True
+    if code_set & _SKIP_RETRIEVAL_CODES:
         return False
     if code_set & _MUST_RETRIEVE_CODES:
         return True
@@ -559,28 +566,34 @@ def _should_retrieve_on_restart(
     return True
 
 
+def _continue_prompt_result(*, drop_stale_checkout: bool = False) -> AgentResult:
+    metadata: dict[str, Any] = {
+        "domain": "commerce",
+        "presented_products": False,
+        "answer_council_continue": True,
+    }
+    if drop_stale_checkout:
+        metadata["drop_stale_checkout"] = True
+    return AgentResult(
+        reply_text=(
+            "Pode seguir — me diz a marca, a faixa de investimento "
+            "ou o modelo que você tem em mente."
+        ),
+        intent="commerce",
+        safety_reason="commerce_clarification",
+        response_metadata=metadata,
+    )
+
+
 def _continue_commerce_reply(
     commerce_state: CommerceConversationState | None,
     contract: TurnContract,
-) -> AgentResult:
-    """Resume the live sale instead of greeting or dumping a new shortlist."""
+) -> AgentResult | None:
+    """Replay the live shortlist only when the customer asked, or close a pick."""
     from .purchase_selection import parse_list_position_selection
 
     if "checkout" in contract.stale_fields:
-        return AgentResult(
-            reply_text=(
-                "Pode seguir — me diz a marca, a faixa de investimento "
-                "ou o modelo que você tem em mente."
-            ),
-            intent="commerce",
-            safety_reason="commerce_clarification",
-            response_metadata={
-                "domain": "commerce",
-                "presented_products": False,
-                "answer_council_continue": True,
-                "drop_stale_checkout": True,
-            },
-        )
+        return _continue_prompt_result(drop_stale_checkout=True)
     presented = list(getattr(commerce_state, "last_presented_products", None) or [])
     position = parse_list_position_selection(contract.asked_text)
     if contract.purchase_close and position and presented:
@@ -617,37 +630,27 @@ def _continue_commerce_reply(
                 },
             )
     if presented and commerce_state is not None:
-        from app.memory.context_resume import build_presented_catalog_resume_result
+        from app.memory.context_resume import (
+            build_presented_catalog_resume_result,
+            should_redisplay_presented_catalog,
+        )
 
-        resume = build_presented_catalog_resume_result(commerce_state)
-        if resume is not None:
-            metadata = dict(resume.response_metadata or {})
-            metadata["answer_council_continue"] = True
-            resume.response_metadata = metadata
-            if contract.purchase_close:
-                resume.reply_text = (
-                    "Ainda estou com as opções que te mostrei. "
-                    "Qual você quer fechar — a 1, 2 ou 3?"
-                )
-            elif not str(resume.reply_text or "").startswith("Ainda estou"):
-                resume.reply_text = (
-                    "Ainda estou com as opções que te mostrei:\n\n"
-                    + str(resume.reply_text or "").split(":\n\n", 1)[-1]
-                )
-            return resume
-    return AgentResult(
-        reply_text=(
-            "Pode seguir — me diz a marca, a faixa de investimento "
-            "ou o modelo que você tem em mente."
-        ),
-        intent="commerce",
-        safety_reason="commerce_clarification",
-        response_metadata={
-            "domain": "commerce",
-            "presented_products": False,
-            "answer_council_continue": True,
-        },
-    )
+        asked_for_list = should_redisplay_presented_catalog(
+            contract.asked_text, commerce_state
+        )
+        if asked_for_list or contract.purchase_close:
+            resume = build_presented_catalog_resume_result(commerce_state)
+            if resume is not None:
+                metadata = dict(resume.response_metadata or {})
+                metadata["answer_council_continue"] = True
+                resume.response_metadata = metadata
+                if contract.purchase_close:
+                    listed = str(resume.reply_text or "").split(":\n\n", 1)[-1]
+                    resume.reply_text = (
+                        "Qual você quer fechar — a 1, 2 ou 3?\n\n" + listed
+                    )
+                return resume
+    return None
 
 
 def _fallback_blocked_reply(
@@ -658,8 +661,20 @@ def _fallback_blocked_reply(
     codes: list[str],
 ) -> AgentResult:
     code_set = set(codes)
-    if (code_set & _SKIP_RETRIEVAL_CODES) and not (code_set & _MUST_RETRIEVE_CODES):
-        return _continue_commerce_reply(commerce_state, contract)
+    skip_retrieve = (code_set & _SKIP_RETRIEVAL_CODES) and not (
+        code_set & _MUST_RETRIEVE_CODES
+    )
+    continue_only = "continue_commerce" in code_set and not (
+        code_set & _MUST_RETRIEVE_CODES
+    )
+    if skip_retrieve or continue_only:
+        replacement = _continue_commerce_reply(commerce_state, contract)
+        if replacement is not None:
+            return replacement
+        if continue_only and not is_generic_greeting_reply(result.reply_text):
+            return result
+        if continue_only or skip_retrieve:
+            return _continue_prompt_result()
     return _honest_constraint_reply(result, contract, interpretation)
 
 
@@ -835,9 +850,13 @@ async def apply_answer_council_with_retry(
             )
             current_interp._turn_contract_bound = False
         if not _should_retrieve_on_restart(
-            decision.correction_codes, contract=contract
+            decision.correction_codes,
+            contract=contract,
+            commerce_state=commerce_state,
         ):
-            current = _continue_commerce_reply(commerce_state, contract)
+            replacement = _continue_commerce_reply(commerce_state, contract)
+            if replacement is not None:
+                current = replacement
             attempt += 1
             continue
         if current_interp is None:
@@ -887,5 +906,7 @@ async def apply_answer_council_with_retry(
             "continue_commerce" in decision.correction_codes
             and is_generic_greeting_reply(current.reply_text)
         ):
-            current = _continue_commerce_reply(commerce_state, contract)
+            replacement = _continue_commerce_reply(commerce_state, contract)
+            if replacement is not None:
+                current = replacement
         attempt += 1
