@@ -19,6 +19,8 @@ def test_get_vip_profile_does_not_special_case_any_phone():
     assert get_vip_profile("21969544700") is None
     assert get_vip_profile("+55 21 96954-4700") is None
     assert get_vip_profile("85999498149") is None
+    assert get_vip_profile("5585999498149") is None
+    assert get_vip_profile("5548999490859") is None
 
 
 def test_live_path_has_no_felipe_vip_copy():

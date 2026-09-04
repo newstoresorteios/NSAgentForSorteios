@@ -1,4 +1,4 @@
-"""Deterministic persona qualification slot tracking (João loop / context wipe fix)."""
+"""Deterministic persona qualification slot tracking (name/city loop / context wipe)."""
 
 from __future__ import annotations
 
@@ -231,7 +231,7 @@ _INTRO_CHAMO_RE = re.compile(
 
 
 def extract_introduced_name(text: str | None) -> str | None:
-    """'Sou o João' / 'me chamo João' → João. None when it is not an intro."""
+    """'Sou o Carlos' / 'me chamo Carlos' → Carlos. None when it is not an intro."""
     raw = " ".join(str(text or "").strip().split())
     if not raw:
         return None

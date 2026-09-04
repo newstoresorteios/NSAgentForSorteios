@@ -1,4 +1,4 @@
-"""Unit tests for persona qualification slot tracking (João loop fix)."""
+"""Unit tests for persona qualification slot tracking."""
 
 from __future__ import annotations
 

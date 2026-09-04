@@ -21,17 +21,13 @@ def test_customer_request_triggers_handoff():
     assert handoff_provider_payload(result)["provider_action"] == "mark_for_human"
 
 
-def test_por_favor_accepts_joao_handoff_offer():
+def test_por_favor_accepts_team_handoff_offer():
     from app.ops.handoff_service import is_handoff_acceptance
 
     recent = [
         {
             "role": "assistant",
-            "content": (
-                "No momento não consegui acessar as fotos oficiais desses modelos "
-                "por aqui. Se você quiser, eu posso passar para o João da equipe "
-                "verificar isso com você."
-            ),
+            "content": "Se quiser, te coloco com a equipe.",
         }
     ]
     assert is_handoff_acceptance("por favor", recent) is True

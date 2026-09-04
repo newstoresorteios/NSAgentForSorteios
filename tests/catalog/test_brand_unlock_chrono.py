@@ -1,4 +1,4 @@
-"""Brand unlock, chronograph force-retrieval, exclude-brand hard filter (João)."""
+"""Brand unlock, chronograph force-retrieval, exclude-brand hard filter."""
 
 from app.catalog.specs.catalog_specs import (
     extract_rejected_brands_from_text,

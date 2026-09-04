@@ -1,4 +1,4 @@
-"""Deterministic shortlist purchase selection (João close-the-deal path)."""
+"""Deterministic shortlist purchase selection."""
 
 from __future__ import annotations
 

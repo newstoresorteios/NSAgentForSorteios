@@ -251,9 +251,9 @@ Não invente política: o sistema encaminha para atendente humano.
 
 Exemplo 9:
 Histórico: cliente disse "quero um relógio"; atendente perguntou "como posso te chamar?".
-Atual: Tironi
+Atual: Carlos
 Interpretação: domain=commerce, goal=discover, product_type=relógio,
-recipient=Tironi, references_previous_context=true. Nunca use domain=greeting
+recipient=Carlos, references_previous_context=true. Nunca use domain=greeting
 para um nome respondendo a pergunta de como chamar.
 
 Não copie uma fala anterior como fato comercial. Preserve produto, preferências e
@@ -1560,7 +1560,7 @@ async def _sales_response_with_openai(
         "invalid_customer_document", "order_customer_not_confirmed",
         "order_customer_mismatch", "order_customer_lookup_technical_failure",
         "customer_orders_lookup_technical_failure",
-        # Keep deterministic storefront-link fallbacks (don't invent João handoff).
+        # Keep deterministic storefront-link fallbacks (don't invent a named human).
         "product_media_link_fallback",
         "product_image_link_fallback",
     }:

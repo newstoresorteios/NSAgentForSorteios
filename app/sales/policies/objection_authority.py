@@ -239,7 +239,7 @@ def _short_reply_for_kind(
             "Faz sentido essa preocupação numa compra de valor. "
             "A New Store importa com NF brasileira no seu nome, garantia "
             "(fabricante ou nossa) e impostos já recolhidos. "
-            "Se quiser, te coloco com o João da equipe.",
+            "Se quiser, te coloco com a equipe.",
             False,
         )
     if kind == "comparison":

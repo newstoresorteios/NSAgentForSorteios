@@ -1,7 +1,7 @@
 """Deterministic purchase selection against the last presented shortlist.
 
-João (5548999490859, 31/08): "Quero comprar o 2" re-listed Baltic options instead
-of creating a cart for list position 2. Keep this path off the LLM.
+"Quero comprar o 2" must bind list position 2 to a cart, not re-list options.
+Keep this path off the LLM.
 """
 
 from __future__ import annotations

@@ -125,8 +125,7 @@ def hard_filter_products(
             continue
         selected.append(product)
 
-    # Diver ask: drop dress/100m false divers when the pool already has true divers
-    # (Certina DS-7 vs DS Action — contact 5548999490859, 25/08).
+    # Diver ask: drop dress/100m false divers when the pool already has true divers.
     try:
         from app.catalog.specs.catalog_specs import (
             interpretation_wants_diver,
@@ -200,8 +199,7 @@ def hard_filter_products(
     except Exception as exc:
         log_swallowed("hard_filter.case_size", exc)
 
-    # Chronograph ask: keep chrono-capable rows when the pool already has them
-    # (João contact 5548999490859 — diver Certina served for "crono").
+    # Chronograph ask: keep chrono-capable rows when the pool already has them.
     try:
         from app.catalog.specs.catalog_specs import message_wants_chronograph
 
