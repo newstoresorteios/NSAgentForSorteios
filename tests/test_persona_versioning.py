@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import app.persona_repository as repo
+import app.persona.persona_repository as repo
 from tests.persona_fakes import InMemoryPersonaStore
 
 

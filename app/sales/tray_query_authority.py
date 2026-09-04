@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from ..models import AgentResult, SalesInterpretation
-from ..product_retrieval import effective_price, hard_filter_products
+from app.catalog.product_retrieval import effective_price, hard_filter_products
 from .tray_capability_contract import (
     consult_tray_list_products_contract,
     contract_as_log,

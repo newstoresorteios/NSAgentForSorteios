@@ -8,7 +8,7 @@ import pytest
 from openai.lib._pydantic import to_strict_json_schema
 
 from app.models import IncomingMessage, SalesInterpretation
-from app.turn_understanding import (
+from app.llm.turn_understanding import (
     Ambiguity,
     ConversationReference,
     ExtractedEntities,
@@ -267,7 +267,7 @@ async def test_interpret_message_uses_turn_understanding_schema(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_api_mode="responses",
             openai_responses_fallback_to_chat=True,

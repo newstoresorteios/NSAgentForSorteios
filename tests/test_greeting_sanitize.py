@@ -1,4 +1,4 @@
-from app.greeting_policy import sanitize_greeting_reply
+from app.identity.greeting_policy import sanitize_greeting_reply
 
 
 def test_sanitize_greeting_strips_instruction_label():

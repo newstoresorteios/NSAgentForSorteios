@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.catalog_index_primary import (
+from app.catalog.catalog_index_primary import (
     fetch_primary_index_candidates,
     index_pool_is_sufficient,
     primary_index_min_count,
@@ -69,11 +69,11 @@ def test_fetch_uses_constraints_before_lexical(monkeypatch):
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         FakeRepo,
     )
     monkeypatch.setattr(
-        "app.catalog_index_primary.get_settings",
+        "app.catalog.catalog_index_primary.get_settings",
         lambda: SimpleNamespace(
             agent_catalog_index_read_enabled=True,
             agent_catalog_index_candidate_limit=30,
@@ -112,11 +112,11 @@ def test_fetch_passes_gender_constraint(monkeypatch):
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         FakeRepo,
     )
     monkeypatch.setattr(
-        "app.catalog_index_primary.get_settings",
+        "app.catalog.catalog_index_primary.get_settings",
         lambda: SimpleNamespace(
             agent_catalog_index_read_enabled=True,
             agent_catalog_index_candidate_limit=30,
@@ -158,11 +158,11 @@ def test_fetch_falls_back_to_lexical(monkeypatch):
             ]
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         FakeRepo,
     )
     monkeypatch.setattr(
-        "app.catalog_index_primary.get_settings",
+        "app.catalog.catalog_index_primary.get_settings",
         lambda: SimpleNamespace(
             agent_catalog_index_read_enabled=True,
             agent_catalog_index_candidate_limit=30,
@@ -215,15 +215,15 @@ async def test_recommendation_skips_tray_when_index_sufficient(monkeypatch):
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
-        "app.catalog_index_primary.fetch_primary_index_candidates",
+        "app.catalog.catalog_index_primary.fetch_primary_index_candidates",
         lambda *a, **k: (index_products, "constraints"),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *a, **k: 0,
     )
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
     )
     monkeypatch.setattr(
@@ -284,15 +284,15 @@ async def test_recommendation_serves_index_when_tray_revalidation_fails(monkeypa
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
-        "app.catalog_index_primary.fetch_primary_index_candidates",
+        "app.catalog.catalog_index_primary.fetch_primary_index_candidates",
         lambda *a, **k: (index_products, "constraints"),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *a, **k: 0,
     )
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
     )
     monkeypatch.setattr(
@@ -373,15 +373,15 @@ async def test_recommendation_refreshes_tray_when_index_empty(monkeypatch):
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
-        "app.catalog_index_primary.fetch_primary_index_candidates",
+        "app.catalog.catalog_index_primary.fetch_primary_index_candidates",
         lambda *a, **k: ([], None),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *a, **k: 0,
     )
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
     )
     monkeypatch.setattr(

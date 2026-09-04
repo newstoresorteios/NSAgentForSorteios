@@ -7,24 +7,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.catalog_index import (
+from app.catalog.catalog_index import (
     CandidateTrace,
     build_allowed_id_sets,
     filter_products_to_allowed,
     hybrid_rank_products,
     reject_unknown_rerank_ids,
 )
-from app.conversation_summary_policy import (
+from app.memory.conversation_summary_policy import (
     ConversationSummary,
     compare_summary_delta_to_facts,
 )
-from app.memory_models import ConversationSummaryDelta
+from app.memory.memory_models import ConversationSummaryDelta
 from app.models import ProductPreferences, ProductSubject, SalesInterpretation
-from app.openai_gateway import apply_responses_controls_report, model_capabilities
-from app.openai_routing import sticky_routing_key
-from app.rollout import resolve_openai_api_mode, resolve_rollout_profile
-from app.turn_runtime import LLMCallBudget, TurnRuntimeContext
-from app.turn_understanding import TurnUnderstanding
+from app.llm.openai_gateway import apply_responses_controls_report, model_capabilities
+from app.llm.openai_routing import sticky_routing_key
+from app.ops.rollout import resolve_openai_api_mode, resolve_rollout_profile
+from app.ops.turn_runtime import LLMCallBudget, TurnRuntimeContext
+from app.llm.turn_understanding import TurnUnderstanding
 from tests.evals.fake_openai_gateway import FakeOpenAIGateway, FakeScript
 
 

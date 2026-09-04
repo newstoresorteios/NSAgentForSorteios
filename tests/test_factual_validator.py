@@ -1,5 +1,5 @@
-from app.agent_contracts import build_agent_decision
-from app.factual_validator import (
+from app.llm.agent_contracts import build_agent_decision
+from app.verify.factual_validator import (
     apply_factual_validation,
     validate_factual_response,
 )

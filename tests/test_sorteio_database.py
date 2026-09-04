@@ -31,7 +31,7 @@ def test_resolved_sorteio_url_falls_back_to_agent_db(monkeypatch):
 
 
 def test_repository_uses_sorteio_connection(monkeypatch):
-    import app.repository as repo
+    import app.identity.repository as repo
 
     calls = {"n": 0}
 

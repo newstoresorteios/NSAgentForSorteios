@@ -1,4 +1,4 @@
-from app.brevo_client import _build_brevo_audio_file
+from app.channels.brevo_client import _build_brevo_audio_file
 from app.models import AgentResult, IncomingMessage
 
 

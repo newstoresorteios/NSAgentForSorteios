@@ -1,7 +1,7 @@
-from app.instagram_story_models import StoryProductCandidate, StoryVisualUnderstanding
-from app.storefront_search import parse_storefront_search_html
-from app.story_match_decider import try_resolve_tied_candidates
-from app.story_product_matcher import _candidate_core_listing_key, classify_match
+from app.stories.instagram_story_models import StoryProductCandidate, StoryVisualUnderstanding
+from app.catalog.storefront_search import parse_storefront_search_html
+from app.stories.story_match_decider import try_resolve_tied_candidates
+from app.stories.story_product_matcher import _candidate_core_listing_key, classify_match
 
 
 def test_parse_storefront_search_html_reads_item_ids_and_rocks_name():

@@ -1,8 +1,8 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
-from app.payment_service import inspect_payment_options
-from app.tray_tools import execute_tool
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.commerce.payment_service import inspect_payment_options
+from app.tray.tray_tools import execute_tool
 from app.sales_agent import _order_payment_revalidation, _responder_contract
 
 

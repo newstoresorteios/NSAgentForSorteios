@@ -1,8 +1,8 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState
-from app.order_service import get_order_facts
-from app.payment_service import inspect_order_payment
+from app.commerce.commerce_context import CommerceConversationState
+from app.commerce.order_service import get_order_facts
+from app.commerce.payment_service import inspect_order_payment
 
 
 @pytest.mark.asyncio

@@ -31,8 +31,8 @@ def incoming_from_inbox_payload(payload: Any) -> IncomingMessage | None:
     story_obj = None
     if isinstance(story_raw, dict):
         try:
-            from app.instagram_story_models import InstagramStoryContext
-            from app.instagram_story_parser import safe_media_reference
+            from app.stories.instagram_story_models import InstagramStoryContext
+            from app.stories.instagram_story_parser import safe_media_reference
 
             image_url = str(normalized.get("image_url") or "").strip() or None
             media_private = story_raw.get("story_media_url_private")

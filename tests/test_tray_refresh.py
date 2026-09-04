@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import CommerceConversationState, PresentedCommerceProduct
+from app.commerce.commerce_context import CommerceConversationState, PresentedCommerceProduct
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.sales.dialogue_phase import blocks_greeting_fast_path, is_open_sale_state
 from app.sales.tray_refresh import (
@@ -177,15 +177,15 @@ async def test_mk2_color_refinement_does_not_skip_tray(monkeypatch):
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
-        "app.catalog_index_primary.fetch_primary_index_candidates",
+        "app.catalog.catalog_index_primary.fetch_primary_index_candidates",
         lambda *a, **k: (index_products, "constraints"),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *a, **k: 0,
     )
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
     )
     monkeypatch.setattr(

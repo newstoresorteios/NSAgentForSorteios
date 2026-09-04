@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.conversation_lock import (
+from app.ops.conversation_lock import (
     ConversationLockUnavailable,
     acquire_conversation_lock,
     conversation_lock_key,
@@ -108,7 +108,7 @@ async def test_two_workers_contend_then_serialize():
 
 @pytest.mark.asyncio
 async def test_database_lock_contention_is_busy_not_unavailable(monkeypatch):
-    from app import conversation_lock as lock_mod
+    from app.ops import conversation_lock as lock_mod
 
     def boom(*_args, **_kwargs):
         raise RuntimeError("canceling statement due to lock timeout")
@@ -125,7 +125,7 @@ async def test_database_lock_contention_is_busy_not_unavailable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_database_infra_failure_is_unavailable(monkeypatch):
-    from app import conversation_lock as lock_mod
+    from app.ops import conversation_lock as lock_mod
 
     def boom(*_args, **_kwargs):
         raise RuntimeError("could not connect to server")

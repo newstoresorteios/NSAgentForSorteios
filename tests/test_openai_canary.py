@@ -5,17 +5,17 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from app.openai_errors import OpenAIGatewayError
-from app.openai_gateway import (
+from app.llm.openai_errors import OpenAIGatewayError
+from app.llm.openai_gateway import (
     CanaryOpenAIGateway,
     ChatCompletionsGateway,
     ResponsesGateway,
     build_openai_gateway,
     reset_openai_gateway,
 )
-from app.openai_routing import bucket_for_key, select_api_route
-from app.runtime_context import reset_current_turn, set_current_turn
-from app.turn_runtime import TurnRuntimeContext
+from app.llm.openai_routing import bucket_for_key, select_api_route
+from app.ops.runtime_context import reset_current_turn, set_current_turn
+from app.ops.turn_runtime import TurnRuntimeContext
 
 
 class _Out(BaseModel):
@@ -31,7 +31,7 @@ def _reset_gateway():
 
 def test_build_gateway_canary(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(openai_api_mode="canary"),
     )
     assert isinstance(build_openai_gateway("canary"), CanaryOpenAIGateway)
@@ -47,7 +47,7 @@ def test_sticky_routing_is_deterministic():
 
 def test_select_api_route_percent_bounds(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_routing.get_settings",
+        "app.llm.openai_routing.get_settings",
         lambda: SimpleNamespace(
             openai_responses_traffic_percent=0.0,
             openai_canary_sticky_routing=True,
@@ -56,7 +56,7 @@ def test_select_api_route_percent_bounds(monkeypatch):
     assert select_api_route(routing_key="k1") == "chat_completions"
 
     monkeypatch.setattr(
-        "app.openai_routing.get_settings",
+        "app.llm.openai_routing.get_settings",
         lambda: SimpleNamespace(
             openai_responses_traffic_percent=1.0,
             openai_canary_sticky_routing=True,
@@ -67,7 +67,7 @@ def test_select_api_route_percent_bounds(monkeypatch):
 
 def test_same_conversation_stays_on_same_route(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_routing.get_settings",
+        "app.llm.openai_routing.get_settings",
         lambda: SimpleNamespace(
             openai_responses_traffic_percent=0.5,
             openai_canary_sticky_routing=True,
@@ -84,7 +84,7 @@ async def test_canary_uses_responses_when_selected(monkeypatch):
     writes: list[str] = []
 
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_responses_traffic_percent=1.0,
             openai_responses_fallback_to_chat=True,
@@ -94,7 +94,7 @@ async def test_canary_uses_responses_when_selected(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "app.openai_routing.get_settings",
+        "app.llm.openai_routing.get_settings",
         lambda: SimpleNamespace(
             openai_responses_traffic_percent=1.0,
             openai_canary_sticky_routing=True,
@@ -154,7 +154,7 @@ async def test_canary_falls_back_to_chat_on_responses_error(monkeypatch):
     token = set_current_turn(runtime)
     try:
         monkeypatch.setattr(
-            "app.openai_gateway.get_settings",
+            "app.llm.openai_gateway.get_settings",
             lambda: SimpleNamespace(
                 openai_responses_traffic_percent=1.0,
                 openai_responses_fallback_to_chat=True,
@@ -164,7 +164,7 @@ async def test_canary_falls_back_to_chat_on_responses_error(monkeypatch):
             ),
         )
         monkeypatch.setattr(
-            "app.openai_routing.get_settings",
+            "app.llm.openai_routing.get_settings",
             lambda: SimpleNamespace(
                 openai_responses_traffic_percent=1.0,
                 openai_canary_sticky_routing=True,
@@ -217,7 +217,7 @@ async def test_canary_falls_back_to_chat_on_responses_error(monkeypatch):
 async def test_canary_chat_bucket_never_calls_responses(monkeypatch):
     writes: list[str] = []
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_responses_traffic_percent=0.0,
             openai_responses_fallback_to_chat=True,
@@ -227,7 +227,7 @@ async def test_canary_chat_bucket_never_calls_responses(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "app.openai_routing.get_settings",
+        "app.llm.openai_routing.get_settings",
         lambda: SimpleNamespace(
             openai_responses_traffic_percent=0.0,
             openai_canary_sticky_routing=True,
@@ -276,14 +276,14 @@ async def test_canary_chat_bucket_never_calls_responses(monkeypatch):
 async def test_canary_tool_loop_never_falls_back_to_chat(monkeypatch):
     writes: list[str] = []
     monkeypatch.setattr(
-        "app.openai_routing.get_settings",
+        "app.llm.openai_routing.get_settings",
         lambda: SimpleNamespace(
             openai_responses_traffic_percent=1.0,
             openai_canary_sticky_routing=True,
         ),
     )
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_responses_fallback_to_chat=True,
             openai_responses_tool_loop_enabled=True,

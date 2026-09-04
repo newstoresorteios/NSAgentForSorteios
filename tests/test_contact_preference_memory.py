@@ -5,13 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.contact_preference_memory import (
+from app.memory.contact_preference_memory import (
     build_preference_memory_items,
     persist_contact_preferences_from_interpretation,
     rehydrate_interpretation_from_memories,
     should_persist_interpretation,
 )
-from app.memory_models import ContactMemory
+from app.memory.memory_models import ContactMemory
 from app.models import SalesInterpretation
 from tests.memory_fakes import InMemoryMemoryStore
 
@@ -188,9 +188,9 @@ def test_golden_explicit_no_brand_blocks_certina_rehydrate():
 
 def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.contact_memory_repository as mem_repo
-    import app.contact_preference_memory as module
-    import app.conversation_summary_repository as summary_repo
+    import app.memory.contact_memory_repository as mem_repo
+    import app.memory.contact_preference_memory as module
+    import app.memory.conversation_summary_repository as summary_repo
 
     settings = SimpleNamespace(
         agent_contact_preference_memory_enabled=True,
@@ -218,7 +218,7 @@ def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
 
     monkeypatch.setattr(summary_repo, "apply_summary_delta", fake_apply_summary_delta)
     monkeypatch.setattr(
-        "app.memory_consolidation.consolidate_contact_memories",
+        "app.memory.memory_consolidation.consolidate_contact_memories",
         lambda **kwargs: 0,
     )
 
@@ -254,8 +254,8 @@ def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
 
 def test_greeting_domain_includes_prior_commerce_theme(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.contact_memory_repository as repo
-    from app.contact_memory_repository import select_relevant_memories
+    import app.memory.contact_memory_repository as repo
+    from app.memory.contact_memory_repository import select_relevant_memories
 
     store.memories.extend(
         [

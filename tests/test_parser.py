@@ -1,4 +1,4 @@
-from app.webhook_parser import inbound_skip_reason, parse_brevo_whatsapp_payload, should_skip_auto_reply
+from app.channels.webhook_parser import inbound_skip_reason, parse_brevo_whatsapp_payload, should_skip_auto_reply
 
 
 def test_parse_basic_payload():

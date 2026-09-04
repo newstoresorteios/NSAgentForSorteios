@@ -1,5 +1,5 @@
-from app.audio_service import is_placeholder_audio_text, should_transcribe_incoming
-from app.repository import (
+from app.channels.audio_service import is_placeholder_audio_text, should_transcribe_incoming
+from app.identity.repository import (
     collect_taken_numbers,
     compute_available_numbers,
     default_draw_number_pool,

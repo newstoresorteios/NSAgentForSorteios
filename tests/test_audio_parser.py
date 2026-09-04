@@ -1,5 +1,5 @@
-from app.audio_service import extract_audio_attachment, is_audio_attachment
-from app.webhook_parser import parse_brevo_whatsapp_payload
+from app.channels.audio_service import extract_audio_attachment, is_audio_attachment
+from app.channels.webhook_parser import parse_brevo_whatsapp_payload
 
 
 def test_parse_audio_message_from_brevo_webhook():

@@ -1,4 +1,4 @@
-from app.vip_profiles import (
+from app.identity.vip_profiles import (
     FELIPE_NEWBOLD,
     build_vip_balance_reply,
     get_vip_profile,

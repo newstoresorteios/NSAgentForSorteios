@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
-from app.conversation_summary_policy import format_conversation_summary_block
+from app.memory.conversation_summary_policy import format_conversation_summary_block
 from app.models import IncomingMessage
-import app.prompt_compiler as compiler
+import app.llm.prompt_compiler as compiler
 
 
 def test_summary_injected_when_flag_enabled(monkeypatch):
@@ -33,7 +33,7 @@ def test_summary_injected_when_flag_enabled(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "app.conversation_summary_repository.get_conversation_summary",
+        "app.memory.conversation_summary_repository.get_conversation_summary",
         fake_get,
     )
     out = compiler.resolve_system_instructions(
@@ -68,7 +68,7 @@ def test_summary_not_injected_when_flag_off(monkeypatch):
         raise AssertionError("summary repository must not be called")
 
     monkeypatch.setattr(
-        "app.conversation_summary_repository.get_conversation_summary",
+        "app.memory.conversation_summary_repository.get_conversation_summary",
         boom,
     )
     out = compiler.resolve_system_instructions(

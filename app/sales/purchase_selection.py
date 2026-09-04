@@ -10,7 +10,7 @@ import re
 import unicodedata
 from typing import Any
 
-from ..commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from ..models import SalesInterpretation
 
 _ORDINAL_POSITIONS = {

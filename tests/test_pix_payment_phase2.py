@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.mercadopago_client import PixPaymentCreated
-from app.pix_payment_service import (
+from app.commerce.mercadopago_client import PixPaymentCreated
+from app.commerce.pix_payment_service import (
     amount_to_cents,
     create_and_persist_pix_payment,
     extract_mp_notification_type,
@@ -74,7 +74,7 @@ async def test_handle_webhook_missing_payment_id():
 
 @pytest.mark.asyncio
 async def test_handle_webhook_approved_invokes_settle(monkeypatch):
-    import app.pix_payment_service as service
+    import app.commerce.pix_payment_service as service
 
     async def fake_refresh(payment_id, *, settings=None):
         return {
@@ -111,7 +111,7 @@ async def test_handle_webhook_approved_invokes_settle(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_and_persist_pix_payment(monkeypatch):
-    import app.pix_payment_service as service
+    import app.commerce.pix_payment_service as service
 
     created = PixPaymentCreated(
         payment_id="mp-1",
@@ -159,7 +159,7 @@ async def test_create_and_persist_pix_payment(monkeypatch):
 @pytest.mark.asyncio
 async def test_webhook_http_always_200(monkeypatch):
     import api.index as index
-    import app.pix_webhook_api as webhook_api
+    import app.commerce.pix_webhook_api as webhook_api
 
     async def fake_handle(payload, query, *, settings=None):
         return {"ok": True, "skipped": True, "reason": "missing_payment_id"}
@@ -178,7 +178,7 @@ async def test_webhook_http_always_200(monkeypatch):
 @pytest.mark.asyncio
 async def test_status_endpoint_returns_mp_status(monkeypatch):
     import api.index as index
-    import app.pix_webhook_api as webhook_api
+    import app.commerce.pix_webhook_api as webhook_api
 
     monkeypatch.setattr(
         webhook_api,

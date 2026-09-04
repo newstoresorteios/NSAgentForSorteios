@@ -6,9 +6,9 @@ import re
 import unicodedata
 from typing import Any, Literal
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
-from app.persona_runtime import (
+from app.persona.persona_runtime import (
     DEFAULT_PIX_DISCOUNT_PERCENT,
     get_persona_runtime,
 )
@@ -85,7 +85,7 @@ def detect_objection_kind(text: str | None) -> ObjectionKind | None:
     if not folded.strip():
         return None
 
-    from app.guardrails import detect_trade_in_or_appraisal_request
+    from app.verify.guardrails import detect_trade_in_or_appraisal_request
 
     if detect_trade_in_or_appraisal_request(text):
         return "trade_in"

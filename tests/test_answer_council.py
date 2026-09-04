@@ -1,6 +1,6 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.sales.answer_council import (
     apply_corrections,
@@ -161,7 +161,7 @@ def test_corrections_continue_commerce_leaves_greeting_domain():
 
 
 def test_contract_live_shortlist_blocks_regreet():
-    from app.commerce_context import PresentedCommerceProduct
+    from app.commerce.commerce_context import PresentedCommerceProduct
 
     contract = build_turn_contract(
         message_text="Qual relógio?",
@@ -179,7 +179,7 @@ def test_contract_live_shortlist_blocks_regreet():
 
 
 def test_contract_purchase_close_locks_sku():
-    from app.commerce_context import PresentedCommerceProduct
+    from app.commerce.commerce_context import PresentedCommerceProduct
 
     contract = build_turn_contract(
         message_text="quero comprar o 2",
@@ -197,7 +197,7 @@ def test_contract_purchase_close_locks_sku():
 
 
 def test_checker_rejects_relist_on_purchase_close():
-    from app.commerce_context import PresentedCommerceProduct
+    from app.commerce.commerce_context import PresentedCommerceProduct
 
     contract = build_turn_contract(
         message_text="quero comprar o 2",
@@ -232,7 +232,7 @@ def test_checker_rejects_relist_on_purchase_close():
 
 
 def test_checker_rejects_name_question_after_shortlist():
-    from app.commerce_context import PresentedCommerceProduct
+    from app.commerce.commerce_context import PresentedCommerceProduct
 
     contract = build_turn_contract(
         message_text="o 2",
@@ -298,8 +298,8 @@ async def test_council_restart_applies_forbid_near_match(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_council_continue_commerce_skips_catalog_search(monkeypatch):
-    from app.commerce_context import PresentedCommerceProduct
-    from app.greeting_policy import GREETING_REPLY
+    from app.commerce.commerce_context import PresentedCommerceProduct
+    from app.identity.greeting_policy import GREETING_REPLY
     from app.sales.answer_council import apply_answer_council_with_retry
 
     called = {"n": 0}
@@ -390,7 +390,7 @@ def test_first_search_clears_commerce_phrase_used_as_name():
 
 
 def test_first_search_does_not_unpause_purchase_close():
-    from app.commerce_context import PresentedCommerceProduct
+    from app.commerce.commerce_context import PresentedCommerceProduct
 
     interp = _interpretation(brand="Baltic", preferences={})
     interp = interp.model_copy(
@@ -581,7 +581,7 @@ def test_greeting_keeps_live_checkout():
 
 
 def test_purchase_close_does_not_drop_checkout():
-    from app.commerce_context import PresentedCommerceProduct
+    from app.commerce.commerce_context import PresentedCommerceProduct
 
     contract = build_turn_contract(
         message_text="quero comprar o 2",
@@ -633,8 +633,8 @@ def test_first_search_drops_stale_checkout_purchase_action():
 
 
 def test_evolve_clears_leftover_cart_after_stale_checkout_stamp():
-    from app.commerce_context import evolve_commerce_state
-    from app.cart_service import _clear_cart_session_state
+    from app.commerce.commerce_context import evolve_commerce_state
+    from app.commerce.cart_service import _clear_cart_session_state
 
     previous = _tissot_cart_state()
     result = AgentResult(
@@ -657,7 +657,7 @@ def test_evolve_clears_leftover_cart_after_stale_checkout_stamp():
 
 
 def test_mk2_plus_color_does_not_force_recommendation():
-    from app.preference_normalize import normalize_sales_interpretation
+    from app.catalog.preference_normalize import normalize_sales_interpretation
 
     interp = normalize_sales_interpretation(
         _interpretation(brand="Baltic", model=None, preferences={"color": "cinza"}),
@@ -674,8 +674,8 @@ def test_mk2_plus_color_does_not_force_recommendation():
 
 
 def test_color_refinement_keeps_presented_mk2():
-    from app.commerce_context import PresentedCommerceProduct
-    from app.preference_normalize import normalize_sales_interpretation
+    from app.commerce.commerce_context import PresentedCommerceProduct
+    from app.catalog.preference_normalize import normalize_sales_interpretation
 
     interp = normalize_sales_interpretation(
         _interpretation(brand=None, model=None, preferences={"color": "cinza"}),

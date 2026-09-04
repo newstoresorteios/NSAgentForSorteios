@@ -1,7 +1,7 @@
 import pytest
 
-from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
-from app.tray_circuit_breaker import (
+from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
+from app.tray.tray_circuit_breaker import (
     TrayCircuitBreaker,
     get_tray_circuit_breaker,
     reset_tray_circuit_breaker_for_tests,
@@ -36,7 +36,7 @@ class SequenceClient:
 
 @pytest.mark.asyncio
 async def test_auth_503_is_not_retried(monkeypatch):
-    import app.tray_adapter_client as tray_client
+    import app.tray.tray_adapter_client as tray_client
 
     async def no_wait(_seconds):
         return None
@@ -65,7 +65,7 @@ async def test_auth_503_is_not_retried(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_circuit_open_fails_fast_without_http(monkeypatch):
-    import app.tray_adapter_client as tray_client
+    import app.tray.tray_adapter_client as tray_client
 
     async def no_wait(_seconds):
         return None

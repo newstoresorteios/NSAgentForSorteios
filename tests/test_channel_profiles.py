@@ -1,6 +1,6 @@
-from app.channel_profiles import get_channel_profile
+from app.channels.channel_profiles import get_channel_profile
 from app.models import AgentResult, IncomingMessage
-from app.response_composer import compose_outbound_reply
+from app.llm.response_composer import compose_outbound_reply
 
 
 def test_instagram_disables_audio_and_shortens_replies():

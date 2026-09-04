@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.story_commercial_policy import (
+from app.stories.story_commercial_policy import (
     evidence_from_tray_product,
     validate_commercial_answer,
 )

@@ -1,7 +1,7 @@
 import pytest
 
-from app.commerce_context import CommerceProductReference
-from app.product_media import resolve_presented_product_images, resolve_product_image
+from app.commerce.commerce_context import CommerceProductReference
+from app.catalog.product_media import resolve_presented_product_images, resolve_product_image
 
 
 @pytest.mark.asyncio
@@ -16,7 +16,7 @@ async def test_image_failure_falls_back_to_product_url(monkeypatch):
         return patched
 
     monkeypatch.setattr(
-        "app.product_media.ensure_product_has_live_url",
+        "app.catalog.product_media.ensure_product_has_live_url",
         fake_ensure,
     )
 
@@ -44,7 +44,7 @@ async def test_listed_images_fallback_to_links_when_tray_down(monkeypatch):
         return patched
 
     monkeypatch.setattr(
-        "app.product_media.ensure_product_has_live_url",
+        "app.catalog.product_media.ensure_product_has_live_url",
         fake_ensure,
     )
 
@@ -80,7 +80,7 @@ async def test_dead_storefront_link_is_not_emitted(monkeypatch):
         return patched
 
     monkeypatch.setattr(
-        "app.product_media.ensure_product_has_live_url",
+        "app.catalog.product_media.ensure_product_has_live_url",
         fake_ensure,
     )
 

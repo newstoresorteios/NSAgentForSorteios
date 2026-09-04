@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from app.openai_gateway import (
+from app.llm.openai_gateway import (
     ChatCompletionsGateway,
     ResponsesGateway,
     ShadowOpenAIGateway,
@@ -20,7 +20,7 @@ async def test_shadow_does_not_duplicate_mutation_side_effects(monkeypatch):
     writes: list[str] = []
 
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_shadow_sample_rate=1.0,
             openai_store_responses=False,
@@ -76,7 +76,8 @@ async def test_shadow_does_not_duplicate_mutation_side_effects(monkeypatch):
 
 def test_audio_and_embeddings_modules_still_importable():
     # Phase 1 must not migrate audio/embeddings onto Responses.
-    from app import audio_service, product_image_index
+    from app.channels import audio_service
+    from app.catalog import product_image_index
 
     assert hasattr(audio_service, "transcribe_audio_url")
     assert hasattr(product_image_index, "visual_search_from_caption")

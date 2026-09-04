@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.catalog_index import (
+from app.catalog.catalog_index import (
     evaluate_hard_constraints,
     hybrid_rank_products,
     reject_unknown_rerank_ids,
@@ -14,8 +14,8 @@ from app.catalog_index import (
     trigram_similarity,
 )
 from app.models import SalesInterpretation
-from app.product_retrieval import hard_filter_products
-from app.turn_understanding import (
+from app.catalog.product_retrieval import hard_filter_products
+from app.llm.turn_understanding import (
     ExtractedEntities,
     ProductHardConstraints,
     ProductSoftPreferences,
@@ -131,7 +131,7 @@ def test_reject_unknown_rerank_ids():
 
 @pytest.mark.asyncio
 async def test_rerank_rejects_invented_ids(monkeypatch):
-    from app import product_retrieval as pr
+    from app.catalog import product_retrieval as pr
 
     products = [
         _product(id="10", name="Casio Azul"),
@@ -164,7 +164,7 @@ async def test_rerank_rejects_invented_ids(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "app.openai_gateway.parse_structured_output",
+        "app.llm.openai_gateway.parse_structured_output",
         _fake_parse,
     )
     ranked = await pr.rerank_products(products, interpretation)

@@ -10,7 +10,7 @@ from app.db import (
     has_successful_agent_response,
     insert_agent_response,
 )
-from app.inbound_coalesce import attach_recent_image_for_followup
+from app.channels.inbound_coalesce import attach_recent_image_for_followup
 from app.ingress.inbox import (
     claim_pending_inbox,
     mark_inbox_failed,
@@ -19,12 +19,12 @@ from app.ingress.inbox import (
 from app.ingress.outbox import enqueue_outbound
 from app.ingress.reconstruct import incoming_from_inbox_payload
 from app.models import AgentResult, IncomingMessage
-from app.observability import log_event, log_exception
+from app.ops.observability import log_event, log_exception
 
 
 async def _customer_context_for(incoming: IncomingMessage) -> dict[str, Any]:
     if incoming.sender_phone:
-        from app.repository import find_customer_profile_by_phone
+        from app.identity.repository import find_customer_profile_by_phone
 
         return find_customer_profile_by_phone(incoming.sender_phone)
     return {
@@ -46,7 +46,7 @@ async def _send_reply(incoming: IncomingMessage, result: AgentResult) -> dict[st
 
         return await send_meta_instagram_reply(incoming, result)
 
-    from app.brevo_client import send_brevo_reply
+    from app.channels.brevo_client import send_brevo_reply
 
     send_result = await send_brevo_reply(incoming, result)
     return {
@@ -82,7 +82,7 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
         incoming.raw["inbox_id"] = inbox_id
 
     try:
-        from app.human_takeover import human_takeover_active
+        from app.ops.human_takeover import human_takeover_active
 
         if human_takeover_active(incoming):
             mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import app.persona_repository as repo
-import app.prompt_compiler as compiler
+import app.persona.persona_repository as repo
+import app.llm.prompt_compiler as compiler
 from app.models import IncomingMessage
 from tests.persona_fakes import InMemoryPersonaStore
 
@@ -51,7 +51,7 @@ def test_compile_includes_active_persona_and_safety(monkeypatch):
     )
     repo.activate_persona_version(created.id)
 
-    import app.persona_knowledge_repository as knowledge_repo
+    import app.persona.persona_knowledge_repository as knowledge_repo
 
     monkeypatch.setattr(
         knowledge_repo,

@@ -1,6 +1,6 @@
 """Integrity KPI aggregation unit tests."""
 
-from app.integrity_kpis import _classify, _pct, build_integrity_kpi_report
+from app.ops.integrity_kpis import _classify, _pct, build_integrity_kpi_report
 
 
 def test_classify_families():
@@ -18,7 +18,7 @@ def test_pct_rounding():
 
 
 def test_build_report_without_database(monkeypatch):
-    from app import integrity_kpis as mod
+    from app.ops import integrity_kpis as mod
 
     class _Cfg:
         database_url = ""

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from app.fact_authority import (
+from app.verify.fact_authority import (
     CommerceDataAuthority,
     PersonaAuthority,
     authorize_products_for_responder,
     catalog_item_key_for,
     grounded_evidence_from_product,
 )
-from app.fact_sources import FactSource
-from app.llm_call_policy import build_llm_call_budget, should_promote_to_complex
+from app.verify.fact_sources import FactSource
+from app.llm.llm_call_policy import build_llm_call_budget, should_promote_to_complex
 
 
 def test_catalog_item_key_variant_vs_product():

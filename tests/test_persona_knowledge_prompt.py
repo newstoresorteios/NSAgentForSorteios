@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from app.persona_knowledge_repository import (
+from app.persona.persona_knowledge_repository import (
     format_persona_knowledge_block,
     format_relevant_knowledge_block,
     load_persona_knowledge_for_prompt,
     text_already_embedded,
 )
-from app.persona_models import PersonaVersion
+from app.persona.persona_models import PersonaVersion
 
 
 def test_text_already_embedded_detects_full_overlap():
@@ -49,7 +49,7 @@ def test_load_persona_knowledge_skips_embedded_attachment(monkeypatch):
         metadata={"chatboPersonaId": "3ad8c78a-909b-4631-97be-337222440220"},
     )
 
-    import app.persona_knowledge_repository as repo
+    import app.persona.persona_knowledge_repository as repo
 
     monkeypatch.setattr(repo, "list_persona_attachments", lambda *_a, **_k: [])
     monkeypatch.setattr(repo, "get_chatbo_persona_profile", lambda *_a, **_k: None)
@@ -71,8 +71,8 @@ def test_load_persona_knowledge_includes_new_attachment(monkeypatch):
         status="active",
         metadata={"chatboPersonaId": "3ad8c78a-909b-4631-97be-337222440220"},
     )
-    from app.persona_knowledge_repository import PersonaKnowledgeAttachment
-    import app.persona_knowledge_repository as repo
+    from app.persona.persona_knowledge_repository import PersonaKnowledgeAttachment
+    import app.persona.persona_knowledge_repository as repo
 
     att = PersonaKnowledgeAttachment(
         id="att-1",
@@ -95,7 +95,7 @@ def test_load_persona_knowledge_includes_new_attachment(monkeypatch):
 
 
 def test_format_structured_persona_includes_identity_and_greeting():
-    from app.persona_knowledge_repository import format_structured_persona_profile
+    from app.persona.persona_knowledge_repository import format_structured_persona_profile
 
     text = format_structured_persona_profile(
         {
@@ -120,7 +120,7 @@ def test_format_structured_persona_includes_identity_and_greeting():
 
 
 def test_format_structured_skips_only_embedded_sections():
-    from app.persona_knowledge_repository import format_structured_persona_profile
+    from app.persona.persona_knowledge_repository import format_structured_persona_profile
 
     greeting = "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. Como posso te ajudar hoje?"
     audience = "Público exclusivo ABC999: " + ("detalhe " * 40)

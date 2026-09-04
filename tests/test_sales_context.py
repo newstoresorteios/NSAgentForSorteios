@@ -168,7 +168,7 @@ async def test_greeting_uses_fast_local_interpretation_without_openai(monkeypatc
         raise AssertionError("greeting must not call OpenAI")
 
     monkeypatch.setattr(
-        "app.openai_gateway.parse_structured_output",
+        "app.llm.openai_gateway.parse_structured_output",
         forbid_parse,
     )
 
@@ -254,7 +254,7 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
     monkeypatch.setattr(db, "get_settings", lambda: _settings())
     monkeypatch.setattr(db, "get_conn", fake_get_conn)
     monkeypatch.setattr(
-        "app.customer_identity.resolve_linked_identity_candidates",
+        "app.identity.customer_identity.resolve_linked_identity_candidates",
         lambda **_kwargs: [],
     )
 

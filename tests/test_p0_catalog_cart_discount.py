@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.cart_service import _is_stale_cart_session, stale_cart_session_result
-from app.catalog_specs import (
+from app.commerce.cart_service import _is_stale_cart_session, stale_cart_session_result
+from app.catalog.catalog_specs import (
     extract_material,
     reference_from_store_url,
 )
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import IncomingMessage
 from app.sales.policies.objection_authority import (
     detect_objection_kind,

@@ -1,6 +1,6 @@
 import pytest
 
-from app.persona_policy import (
+from app.persona.persona_policy import (
     assert_persona_instructions_safe,
     find_volatile_persona_claims,
 )

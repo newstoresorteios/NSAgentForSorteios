@@ -7,7 +7,7 @@ import unicodedata
 from typing import Any
 
 from ..models import SalesInterpretation
-from ..history_window import turns_for_conversation
+from app.memory.history_window import turns_for_conversation
 
 QUAL_PREFIX = "qual:"
 
@@ -259,7 +259,7 @@ def _is_plausible_name(text: str) -> bool:
     if any(token in folded for token in ("florian", "rio de", "são paulo", "curitiba")):
         return False
     try:
-        from ..identity_names import looks_like_whatsapp_nick
+        from app.identity.identity_names import looks_like_whatsapp_nick
 
         if looks_like_whatsapp_nick(cleaned):
             return False

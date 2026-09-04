@@ -1,14 +1,14 @@
 from app.config import Settings, get_settings
 from app.models import AgentResult, IncomingMessage
-from app.prompt_layers import PROMPT_LAYER_ORDER, STYLE_VOICE_RULES
-from app.response_composer import compose_outbound_reply
-from app.response_presenter import (
+from app.llm.prompt_layers import PROMPT_LAYER_ORDER, STYLE_VOICE_RULES
+from app.llm.response_composer import compose_outbound_reply
+from app.llm.response_presenter import (
     present_agent_result,
     present_reply_text,
     present_reply_text_full,
     present_reply_text_thin,
 )
-from app.channel_profiles import channel_system_hint
+from app.channels.channel_profiles import channel_system_hint
 
 
 def test_full_strips_generic_opener_and_limits_questions():
@@ -155,7 +155,7 @@ def test_photo_list_keeps_newlines_under_whatsapp_block_cap():
 
 
 def test_url_overflow_blocks_join_with_newlines():
-    from app.response_presenter import split_whatsapp_blocks
+    from app.llm.response_presenter import split_whatsapp_blocks
 
     raw = (
         "Introdução\n\n"
@@ -194,6 +194,8 @@ def test_prompt_layer_order_documents_compiler_stack():
     assert PROMPT_LAYER_ORDER[0] == "fixed_safety_policy"
     assert "channel_overlay" in PROMPT_LAYER_ORDER
     assert "conversation_summary" in PROMPT_LAYER_ORDER
+    assert "approved_instruction_extensions" in PROMPT_LAYER_ORDER
+    assert "learned_cases" in PROMPT_LAYER_ORDER
     assert PROMPT_LAYER_ORDER[-1] == "operational_contract"
 
 

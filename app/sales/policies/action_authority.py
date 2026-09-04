@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import AgentResult, SalesInterpretation
-from app.persona_runtime import (
+from app.persona.persona_runtime import (
     DEFAULT_PIX_DISCOUNT_PERCENT,
     get_persona_runtime,
 )

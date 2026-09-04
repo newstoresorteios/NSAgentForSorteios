@@ -7,13 +7,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.instagram_story_media import (
+from app.stories.instagram_story_media import (
     StoryMediaError,
     download_story_media,
     validate_story_media_url,
     _sniff_mime,
 )
-from app.instagram_story_parser import safe_media_reference, strip_signed_url
+from app.stories.instagram_story_parser import safe_media_reference, strip_signed_url
 
 
 def _gai_for(*ips: str):
@@ -32,7 +32,7 @@ def _gai_for(*ips: str):
 def allow_cdn(monkeypatch):
     """Mock DNS to a public IPv4 for allowed Instagram CDN hosts."""
     monkeypatch.setattr(
-        "app.instagram_story_media.socket.getaddrinfo",
+        "app.stories.instagram_story_media.socket.getaddrinfo",
         _gai_for("157.240.0.1"),
     )
 
@@ -47,7 +47,7 @@ def test_signed_url_preserved_with_mocked_public_dns(allow_cdn):
 
 def test_public_ipv6_allowed(monkeypatch):
     monkeypatch.setattr(
-        "app.instagram_story_media.socket.getaddrinfo",
+        "app.stories.instagram_story_media.socket.getaddrinfo",
         _gai_for("2a03:2880:f000::1"),
     )
     url = "https://scontent.cdninstagram.com/v/t51/x.jpg?oe=1&oh=tok"
@@ -71,7 +71,7 @@ def test_public_ipv6_allowed(monkeypatch):
 )
 def test_blocked_resolved_ips(monkeypatch, ip, code):
     monkeypatch.setattr(
-        "app.instagram_story_media.socket.getaddrinfo",
+        "app.stories.instagram_story_media.socket.getaddrinfo",
         _gai_for(ip),
     )
     with pytest.raises(StoryMediaError) as exc:
@@ -81,7 +81,7 @@ def test_blocked_resolved_ips(monkeypatch, ip, code):
 
 def test_dns_empty_raises(monkeypatch):
     monkeypatch.setattr(
-        "app.instagram_story_media.socket.getaddrinfo",
+        "app.stories.instagram_story_media.socket.getaddrinfo",
         lambda *a, **k: [],
     )
     with pytest.raises(StoryMediaError) as exc:
@@ -93,7 +93,7 @@ def test_dns_exception_raises(monkeypatch):
     def _boom(*a, **k):
         raise socket.gaierror(-2, "Name or service not known")
 
-    monkeypatch.setattr("app.instagram_story_media.socket.getaddrinfo", _boom)
+    monkeypatch.setattr("app.stories.instagram_story_media.socket.getaddrinfo", _boom)
     with pytest.raises(StoryMediaError) as exc:
         validate_story_media_url("https://scontent.cdninstagram.com/v/t.jpg")
     assert exc.value.code == "dns_failed"
@@ -114,7 +114,7 @@ def test_sanitized_log_reference_has_no_signature():
 
 @pytest.mark.asyncio
 async def test_redirect_public_allowed(monkeypatch):
-    from app import instagram_story_media as media_mod
+    from app.stories import instagram_story_media as media_mod
 
     monkeypatch.setattr(media_mod.socket, "getaddrinfo", _gai_for("157.240.0.1"))
     monkeypatch.setenv("INSTAGRAM_STORY_MEDIA_STORAGE_ENABLED", "false")
@@ -173,7 +173,7 @@ async def test_redirect_public_allowed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_redirect_private_blocked(monkeypatch):
-    from app import instagram_story_media as media_mod
+    from app.stories import instagram_story_media as media_mod
 
     def _gai(host, *a, **k):
         if host == "evil.internal":
@@ -240,7 +240,7 @@ async def test_redirect_private_blocked(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_redirect_limit_exceeded(monkeypatch):
-    from app import instagram_story_media as media_mod
+    from app.stories import instagram_story_media as media_mod
 
     monkeypatch.setattr(media_mod.socket, "getaddrinfo", _gai_for("157.240.0.1"))
     monkeypatch.setenv("INSTAGRAM_STORY_MEDIA_STORAGE_ENABLED", "false")
@@ -292,7 +292,7 @@ async def test_redirect_limit_exceeded(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mime_mismatch_and_oversize(monkeypatch):
-    from app import instagram_story_media as media_mod
+    from app.stories import instagram_story_media as media_mod
     from app.config import get_settings
 
     monkeypatch.setattr(media_mod.socket, "getaddrinfo", _gai_for("157.240.0.1"))
@@ -344,7 +344,7 @@ async def test_mime_mismatch_and_oversize(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_content_length_too_large(monkeypatch):
-    from app import instagram_story_media as media_mod
+    from app.stories import instagram_story_media as media_mod
     from app.config import get_settings
 
     monkeypatch.setattr(media_mod.socket, "getaddrinfo", _gai_for("157.240.0.1"))

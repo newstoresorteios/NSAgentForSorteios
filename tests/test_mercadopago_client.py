@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import Settings
-from app.mercadopago_client import (
+from app.commerce.mercadopago_client import (
     MercadoPagoError,
     create_pix_payment,
     get_payment,
@@ -76,7 +76,7 @@ def _settings(**overrides):
 
 @pytest.mark.asyncio
 async def test_create_pix_payment_posts_expected_body(monkeypatch):
-    import app.mercadopago_client as mp
+    import app.commerce.mercadopago_client as mp
 
     captured = {}
 
@@ -162,7 +162,7 @@ async def test_create_pix_payment_missing_token():
 
 @pytest.mark.asyncio
 async def test_get_payment_success(monkeypatch):
-    import app.mercadopago_client as mp
+    import app.commerce.mercadopago_client as mp
 
     class Response:
         status_code = 200
@@ -195,7 +195,7 @@ async def test_get_payment_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mp_http_error_maps_message(monkeypatch):
-    import app.mercadopago_client as mp
+    import app.commerce.mercadopago_client as mp
 
     class Response:
         status_code = 400

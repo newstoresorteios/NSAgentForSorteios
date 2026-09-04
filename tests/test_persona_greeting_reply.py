@@ -43,7 +43,7 @@ async def test_persona_greeting_uses_compiled_crono_prompt(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "app.prompt_compiler.resolve_system_instructions",
+        "app.llm.prompt_compiler.resolve_system_instructions",
         _fake_resolve,
     )
 
@@ -55,7 +55,7 @@ async def test_persona_greeting_uses_compiled_crono_prompt(monkeypatch):
         return _Text()
 
     monkeypatch.setattr(
-        "app.openai_gateway.generate_text_output",
+        "app.llm.openai_gateway.generate_text_output",
         _fake_generate,
     )
 

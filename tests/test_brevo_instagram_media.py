@@ -1,4 +1,4 @@
-from app.brevo_instagram_media import (
+from app.channels.brevo_instagram_media import (
     PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
     UNVIEWABLE_MEDIA_GUIDE_REPLY,
     is_bare_price_request,

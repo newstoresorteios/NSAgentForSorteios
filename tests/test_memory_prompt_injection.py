@@ -2,21 +2,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.memory_models import (
+from app.memory.memory_models import (
     AgentTurnEnvelope,
     MemoryAction,
     MemoryKind,
     MemoryProposal,
     MemoryScope,
 )
-from app.memory_service import process_agent_memory_proposals
+from app.memory.memory_service import process_agent_memory_proposals
 from tests.memory_fakes import InMemoryMemoryStore
 
 
 def test_injection_proposal_rejected_and_not_applied(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_policy as policy
-    import app.memory_service as service
+    import app.memory.memory_policy as policy
+    import app.memory.memory_service as service
 
     settings = SimpleNamespace(
         agent_memory_proposals_enabled=True,

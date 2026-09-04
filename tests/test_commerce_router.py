@@ -1,6 +1,6 @@
 import pytest
 
-from app.commerce_router import clear_commerce_memory, extract_product_query, handle_commerce_message, resolve_commerce_action
+from app.commerce.commerce_router import clear_commerce_memory, extract_product_query, handle_commerce_message, resolve_commerce_action
 from app.models import IncomingMessage
 
 
@@ -21,7 +21,7 @@ def test_resolve_commerce_actions():
 
 
 def test_outbound_catalog_image_request_is_not_inbound_photo_price():
-    from app.commerce_router import (
+    from app.commerce.commerce_router import (
         is_deictic_product_price_request,
         is_outbound_catalog_image_request,
         wants_all_listed_product_images,
@@ -34,7 +34,7 @@ def test_outbound_catalog_image_request_is_not_inbound_photo_price():
 
 
 def test_listed_catalog_follow_up_detects_pronta_entrega():
-    from app.commerce_router import is_listed_catalog_follow_up
+    from app.commerce.commerce_router import is_listed_catalog_follow_up
 
     assert is_listed_catalog_follow_up("todos a pronta entrega?") is True
     assert is_listed_catalog_follow_up("manda a foto dos três") is False
@@ -48,7 +48,7 @@ async def test_product_search_is_deterministic_and_does_not_need_openai(monkeypa
         calls.append((name, arguments))
         return {"products": [{"id": "641", "name": "Tissot Seastar", "reference": "T120.417.11.051.00", "current_price": 6399.99}]}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", fake_execute)
     result = await handle_commerce_message(IncomingMessage(text="Tem Tissot Seastar?"), {"primary_intent": "commerce"}, {})
     assert calls == [("search_products", {"query": "Tissot Seastar", "limit": 3})]
     assert result.handoff_required is False
@@ -88,7 +88,7 @@ async def test_inventory_searches_then_checks_single_product(monkeypatch):
             return {"products": [{"id": "641", "name": "Tissot Seastar"}]}
         return {"product_id": "641", "stock": 4, "available_for_purchase": True}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", fake_execute)
     result = await handle_commerce_message(IncomingMessage(text="Tem estoque do T120.417.11.051.00?"), {"primary_intent": "commerce"}, {})
     assert calls == [
         ("search_products", {"query": "T120.417.11.051.00", "limit": 3}),
@@ -108,7 +108,7 @@ async def test_follow_up_inventory_refreshes_tray_using_identity_only(monkeypatc
             return {"products": [{"id": "641", "name": "Tissot Seastar", "reference": "T120"}]}
         return {"product_id": "641", "stock": 38, "availability": "Disponível"}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", fake_execute)
     context = {"conversation_id": "conversation-1"}
     await handle_commerce_message(IncomingMessage(conversation_id="conversation-1", text="Tem Tissot Seastar?"), {"primary_intent": "commerce"}, context)
     result = await handle_commerce_message(IncomingMessage(conversation_id="conversation-1", text="E tem estoque?"), {"primary_intent": "commerce"}, context)
@@ -130,7 +130,7 @@ async def test_follow_up_price_refreshes_product_and_does_not_use_old_price(monk
             return {"products": [{"id": "641", "name": "Tissot Seastar", "current_price": 100}]}
         return {"id": "641", "name": "Tissot Seastar", "current_price": 200, "payment_option_details": "Pix"}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", fake_execute)
     await handle_commerce_message(IncomingMessage(sender_phone="5511999999999", text="Tem Tissot Seastar?"), {"primary_intent": "commerce"}, {})
     result = await handle_commerce_message(IncomingMessage(sender_phone="5511999999999", text="E quanto custa?"), {"primary_intent": "commerce"}, {})
     assert calls == [
@@ -152,7 +152,7 @@ async def test_follow_up_tray_error_does_not_reuse_previous_dynamic_data(monkeyp
             return {"products": [{"id": "641", "name": "Tissot Seastar", "current_price": 100, "stock": 38}]}
         return {"error": "unavailable"}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", fake_execute)
     await handle_commerce_message(IncomingMessage(sender_phone="5511888888888", text="Tem Tissot Seastar?"), {"primary_intent": "commerce"}, {})
     result = await handle_commerce_message(IncomingMessage(sender_phone="5511888888888", text="E quanto custa?"), {"primary_intent": "commerce"}, {})
     assert result.handoff_required is False
@@ -165,7 +165,7 @@ async def test_follow_up_without_product_identity_does_not_fall_through_to_opena
     async def unexpected_tool(name, arguments):
         raise AssertionError("No Tray lookup is possible without a product identity")
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", unexpected_tool)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", unexpected_tool)
     result = await handle_commerce_message(IncomingMessage(text="E tem estoque?"), {"primary_intent": "commerce"}, {})
     assert result.handoff_required is False
     assert result.safety_reason == "product_context_missing"
@@ -177,7 +177,7 @@ async def test_not_found_is_not_technical_error_and_tray_error_is_neutral(monkey
     async def no_products(name, arguments):
         return {"products": []}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", no_products)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", no_products)
     not_found = await handle_commerce_message(IncomingMessage(text="Tem produto inexistente?"), {"primary_intent": "commerce"}, {})
     assert not_found.handoff_required is False
     assert not_found.safety_reason == "product_not_found"
@@ -185,7 +185,7 @@ async def test_not_found_is_not_technical_error_and_tray_error_is_neutral(monkey
     async def tray_error(name, arguments):
         return {"error": "technical"}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", tray_error)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", tray_error)
     failed = await handle_commerce_message(IncomingMessage(text="Tem Tissot?"), {"primary_intent": "commerce"}, {})
     assert failed.handoff_required is False
     assert failed.safety_reason == "tray_adapter_unavailable"

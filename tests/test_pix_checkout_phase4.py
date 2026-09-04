@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
-from app.mercadopago_client import PixPaymentCreated
-from app.pix_checkout_service import (
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.commerce.mercadopago_client import PixPaymentCreated
+from app.commerce.pix_checkout_service import (
     generate_direct_pix_checkout,
     should_use_direct_pix,
 )
@@ -92,7 +92,7 @@ def _confirmed_state(**overrides) -> CommerceConversationState:
 
 
 def test_should_use_direct_pix_requires_flag_whatsapp_and_pix(monkeypatch):
-    import app.pix_checkout_service as service
+    import app.commerce.pix_checkout_service as service
 
     monkeypatch.setattr(service, "get_settings", lambda: _settings())
     state = _confirmed_state()
@@ -112,7 +112,7 @@ def test_should_use_direct_pix_requires_flag_whatsapp_and_pix(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_direct_pix_builds_snapshot_and_reply(monkeypatch):
-    import app.pix_checkout_service as service
+    import app.commerce.pix_checkout_service as service
 
     monkeypatch.setattr(service, "get_settings", lambda: _settings())
 
@@ -189,7 +189,7 @@ async def test_generate_direct_pix_builds_snapshot_and_reply(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_direct_pix_rejects_amount_mismatch(monkeypatch):
-    import app.pix_checkout_service as service
+    import app.commerce.pix_checkout_service as service
 
     monkeypatch.setattr(service, "get_settings", lambda: _settings())
 
@@ -281,7 +281,7 @@ async def test_fulfill_uses_tray_order_when_pix_off(monkeypatch):
 
 
 def test_checkout_capabilities_native_on_when_flag(monkeypatch):
-    import app.checkout_service as checkout
+    import app.commerce.checkout_service as checkout
 
     monkeypatch.setattr(checkout, "get_settings", lambda: _settings())
     facts = checkout.checkout_capabilities(_confirmed_state())

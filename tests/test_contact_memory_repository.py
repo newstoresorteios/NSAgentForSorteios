@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from app.contact_memory_repository import (
+from app.memory.contact_memory_repository import (
     format_customer_memory_block,
     select_relevant_memories,
 )
-from app.memory_models import ContactMemory
+from app.memory.memory_models import ContactMemory
 from tests.memory_fakes import InMemoryMemoryStore
 
 
@@ -30,7 +30,7 @@ def test_format_customer_memory_block_is_factual():
 
 def test_select_relevant_memories_prefers_commerce_kinds(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.contact_memory_repository as repo
+    import app.memory.contact_memory_repository as repo
 
     store.memories.extend(
         [

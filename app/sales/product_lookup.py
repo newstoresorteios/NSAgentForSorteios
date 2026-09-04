@@ -6,12 +6,12 @@ import asyncio
 import re
 from typing import Any
 
-from ..catalog_cache import ensure_brand_pool_in_candidates
-from ..category_resolver import CategoryResolver
-from ..commerce_context import CommerceProductReference
+from app.catalog.catalog_cache import ensure_brand_pool_in_candidates
+from app.catalog.category_resolver import CategoryResolver
+from app.commerce.commerce_context import CommerceProductReference
 from ..config import get_settings
 from ..models import AgentResult, SalesInterpretation
-from ..product_retrieval import (
+from app.catalog.product_retrieval import (
     apply_persona_presentation_order,
     commercial_availability_facts,
     ProductMatchError,
@@ -58,8 +58,8 @@ async def _serve_index_when_tray_unavailable(
     """
     if not bool(getattr(get_settings(), "agent_catalog_index_read_enabled", True)):
         return None
-    from ..catalog_index_primary import fetch_primary_index_candidates
-    from ..commerce_router import _product_result, guided_near_match_result
+    from app.catalog.catalog_index_primary import fetch_primary_index_candidates
+    from app.commerce.commerce_router import _product_result, guided_near_match_result
 
     index_rows, strategy = fetch_primary_index_candidates(
         interpretation,
@@ -189,7 +189,7 @@ async def execute_contextual_product_lookup(
                 "product_resolution_state": "found_unavailable",
             },
         )
-    from ..commerce_router import _product_result
+    from app.commerce.commerce_router import _product_result
 
     result = _product_result("product_search", enriched)
     if inventory is not None:
@@ -246,7 +246,7 @@ async def _last_chance_from_message_text(
     pool = refreshed or filtered
     if not pool:
         return None
-    from ..commerce_router import _product_result, guided_near_match_result
+    from app.commerce.commerce_router import _product_result, guided_near_match_result
 
     print(
         "[sales.retrieval.message_identity_hit]",
@@ -430,7 +430,7 @@ async def _execute_compiled_product_retrieval_unlocked(
     # IQ-06: durable catalog index first for recommendations and exact identity.
     # Exact/SKU turns (Baltic MK2 25/08) must not die solely on Tray auth 503.
     if retrieval_plan.mode in {"recommendation", "exact"}:
-        from ..catalog_index_primary import (
+        from app.catalog.catalog_index_primary import (
             fetch_primary_index_candidates,
             index_pool_is_sufficient,
         )
@@ -887,8 +887,8 @@ async def _execute_compiled_product_retrieval_unlocked(
         print("[sales.retrieval.empty]", {"reason": reason, "had_catalog_ok": catalog_probe_ok})
         if retrieval_plan.mode == "exact":
             # Last chance: durable index may still have color/brand near-matches.
-            from ..catalog_index_primary import fetch_primary_index_candidates
-            from ..commerce_router import guided_near_match_result
+            from app.catalog.catalog_index_primary import fetch_primary_index_candidates
+            from app.commerce.commerce_router import guided_near_match_result
 
             index_rows, _strategy = fetch_primary_index_candidates(
                 interpretation,
@@ -969,7 +969,7 @@ async def _execute_compiled_product_retrieval_unlocked(
                     handoff_required=False,
                     safety_reason="tray_adapter_unavailable",
                 )
-            from ..commerce_router import guided_near_match_result
+            from app.commerce.commerce_router import guided_near_match_result
 
             brand = (interpretation.subject.brand or "").strip()
             # Densify pool only on exact miss — avoid changing discovery fan-out.
@@ -1039,7 +1039,7 @@ async def _execute_compiled_product_retrieval_unlocked(
                 safety_reason="product_not_found",
             )
         # Recommendation: offer near-matches before hard no-match.
-        from ..catalog_specs import (
+        from app.catalog.catalog_specs import (
             interpretation_case_size_range,
             product_case_size_mm,
         )
@@ -1058,7 +1058,7 @@ async def _execute_compiled_product_retrieval_unlocked(
             ]
             nearby.sort(key=lambda item: product_case_size_mm(item) or 99)
             if nearby:
-                from ..commerce_router import guided_near_match_result
+                from app.commerce.commerce_router import guided_near_match_result
 
                 refreshed, revalidation_failed = await revalidate_products(
                     nearby,
@@ -1088,7 +1088,7 @@ async def _execute_compiled_product_retrieval_unlocked(
             limit=customer_result_limit(),
         )
         if soft:
-            from ..commerce_router import guided_near_match_result
+            from app.commerce.commerce_router import guided_near_match_result
 
             refreshed, revalidation_failed = await revalidate_products(
                 soft,
@@ -1110,14 +1110,14 @@ async def _execute_compiled_product_retrieval_unlocked(
         )
 
     if retrieval_plan.mode == "recommendation":
-        from ..catalog_index import hybrid_rank_products, index_products_best_effort
+        from app.catalog.catalog_index import hybrid_rank_products, index_products_best_effort
 
         # Late index merge only when we did not already seed from the durable index.
         if (
             not catalog_index_seeded
             and bool(getattr(get_settings(), "agent_catalog_index_read_enabled", True))
         ):
-            from ..catalog_index_primary import fetch_primary_index_candidates
+            from app.catalog.catalog_index_primary import fetch_primary_index_candidates
 
             index_rows, late_strategy = fetch_primary_index_candidates(
                 interpretation,
@@ -1225,11 +1225,11 @@ async def _execute_compiled_product_retrieval_unlocked(
                 handoff_required=False,
                 safety_reason="tray_adapter_unavailable",
             )
-    from ..commerce_router import _product_result
+    from app.commerce.commerce_router import _product_result
 
     final_products = refreshed or selected
     try:
-        from ..catalog_specs import (
+        from app.catalog.catalog_specs import (
             excluded_brands_from_interpretation,
             product_matches_excluded_brand,
         )
@@ -1324,7 +1324,7 @@ async def _execute_compiled_product_retrieval_unlocked(
     result = _product_result("product_search", final_products)
     result.response_metadata["presented_products"] = True
     try:
-        from ..catalog_index import build_allowed_id_sets
+        from app.catalog.catalog_index import build_allowed_id_sets
 
         allowed = build_allowed_id_sets(final_products)
         result.response_metadata["allowed_id_sets"] = {

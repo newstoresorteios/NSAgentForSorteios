@@ -1,14 +1,14 @@
 """Catalog spec extraction + diver hard-filter assertiveness."""
 
-from app.catalog_index import to_canonical_item
-from app.catalog_specs import (
+from app.catalog.catalog_index import to_canonical_item
+from app.catalog.catalog_specs import (
     extract_case_size_mm,
     extract_water_resistance_m,
     is_false_diver_product,
     is_true_diver_product,
 )
 from app.models import SalesInterpretation
-from app.product_retrieval import _deterministic_semantic_order, hard_filter_products
+from app.catalog.product_retrieval import _deterministic_semantic_order, hard_filter_products
 
 
 def test_extract_case_size_and_wr_from_title():

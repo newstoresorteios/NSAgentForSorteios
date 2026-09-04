@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import SalesInterpretation
 from app.sales.intent_router import route_sales_intent
 

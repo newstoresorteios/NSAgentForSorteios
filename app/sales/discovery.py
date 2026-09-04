@@ -7,9 +7,9 @@ import unicodedata
 from typing import Any
 
 from ..models import IncomingMessage, SalesInterpretation
-from ..commerce_context import CommerceConversationState
-from ..order_service import has_active_order_context, is_order_lookup_request
-from ..context_resume import is_short_affirmation
+from app.commerce.commerce_context import CommerceConversationState
+from app.commerce.order_service import has_active_order_context, is_order_lookup_request
+from app.memory.context_resume import is_short_affirmation
 
 
 _OPEN_BROWSE_RE = re.compile(
@@ -73,7 +73,7 @@ def _known_preferences(interpretation: SalesInterpretation) -> dict[str, Any]:
     if preferences.attributes:
         known["attributes"] = preferences.attributes
     try:
-        from ..catalog_specs import interpretation_case_size_range
+        from app.catalog.catalog_specs import interpretation_case_size_range
 
         case_range = interpretation_case_size_range(interpretation)
         if case_range:
@@ -173,7 +173,7 @@ def _scrub_stale_budget_for_open_browse(
         cleaned.pop("occasion", None)
         dropped.append("occasion")
     try:
-        from ..preference_normalize import message_states_color, message_states_style
+        from app.catalog.preference_normalize import message_states_color, message_states_style
 
         if not message_states_color(message_text) and "color" in cleaned:
             cleaned.pop("color", None)
@@ -215,7 +215,7 @@ def _specific_product_lock(interpretation: SalesInterpretation) -> bool:
     leftover = " ".join(leftover.split())
     if not leftover:
         return False
-    from ..context_resume import is_non_model_query
+    from app.memory.context_resume import is_non_model_query
 
     if is_non_model_query(leftover):
         return False
@@ -230,7 +230,7 @@ def _subject_identifiable(interpretation: SalesInterpretation) -> bool:
 def _persona_requires_qualification() -> bool:
     """Keep ChatBo gate when persona DB load fails; honor flag when runtime is healthy."""
     try:
-        from ..persona_runtime import get_persona_runtime
+        from app.persona.persona_runtime import get_persona_runtime
 
         runtime = get_persona_runtime()
     except Exception:
@@ -432,7 +432,7 @@ def _persona_qualification_question(
         if discovery_state.get("persona_qualification_required") is False:
             return None
     try:
-        from ..persona_runtime import get_persona_runtime
+        from app.persona.persona_runtime import get_persona_runtime
 
         runtime = get_persona_runtime()
     except Exception:
@@ -614,7 +614,7 @@ def _discovery_state(
         enough_information = False
     comparison_without_sku = _comparison_needs_qualification(interpretation)
     try:
-        from ..catalog_specs import (
+        from app.catalog.catalog_specs import (
             interpretation_case_size_range,
             message_requests_other_brands,
             message_wants_chronograph,

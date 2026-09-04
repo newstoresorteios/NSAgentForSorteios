@@ -60,7 +60,7 @@ class InMemoryMemoryStore:
                     return
 
         def get_active_contact_memories(*, tenant_id, sender_key, limit=20):
-            from app.memory_models import ContactMemory
+            from app.memory.memory_models import ContactMemory
 
             rows = [
                 row
@@ -74,7 +74,7 @@ class InMemoryMemoryStore:
             return [ContactMemory.model_validate(row) for row in rows[:limit]]
 
         def upsert_contact_memory(**kwargs):
-            from app.memory_models import ContactMemory
+            from app.memory.memory_models import ContactMemory
 
             now = datetime.now(timezone.utc)
             for row in store.memories:
@@ -156,29 +156,29 @@ class InMemoryMemoryStore:
             return row
 
         modules = []
-        import app.memory_service as memory_service
+        import app.memory.memory_service as memory_service
 
         modules.append(memory_service)
         try:
-            import app.memory_proposal_repository as prop_repo
+            import app.memory.memory_proposal_repository as prop_repo
 
             modules.append(prop_repo)
         except Exception:
             pass
         try:
-            import app.contact_memory_repository as mem_repo
+            import app.memory.contact_memory_repository as mem_repo
 
             modules.append(mem_repo)
         except Exception:
             pass
         try:
-            import app.instruction_extension_repository as ext_repo
+            import app.persona.instruction_extension_repository as ext_repo
 
             modules.append(ext_repo)
         except Exception:
             pass
         try:
-            import app.conversation_summary_repository as sum_repo
+            import app.memory.conversation_summary_repository as sum_repo
 
             modules.append(sum_repo)
         except Exception:

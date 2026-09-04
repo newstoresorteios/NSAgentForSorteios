@@ -1,10 +1,10 @@
-from app.conversation_summary_policy import (
+from app.memory.conversation_summary_policy import (
     evaluate_summary_delta,
     format_conversation_summary_block,
     sanitize_summary_delta,
     should_apply_summary_delta,
 )
-from app.memory_models import ConversationSummaryDelta
+from app.memory.memory_models import ConversationSummaryDelta
 
 
 def test_empty_or_noise_summary_is_skipped():

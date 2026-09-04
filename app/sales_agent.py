@@ -16,21 +16,21 @@ _sales_recent_turns: ContextVar[list[dict[str, Any]] | None] = ContextVar(
 from openai import APIError, BadRequestError
 from pydantic import ValidationError
 
-from .commerce_router import (
+from app.commerce.commerce_router import (
     extract_product_query,
     handle_commerce_message,
     resolve_commerce_action,
     _product_lines,
 )
-from .category_resolver import CategoryResolver
-from .checkout_service import checkout_capabilities, select_checkout_channel
-from .checkout_data_service import (
+from app.catalog.category_resolver import CategoryResolver
+from app.commerce.checkout_service import checkout_capabilities, select_checkout_channel
+from app.commerce.checkout_data_service import (
     enrich_checkout_data_from_cep,
     repair_checkout_data_with_openai,
     should_repair_checkout_data,
     update_checkout_data,
 )
-from .cart_service import (
+from app.commerce.cart_service import (
     CartItemRequest,
     create_cart_checkout,
     create_cart_items_checkout,
@@ -40,7 +40,7 @@ from .cart_service import (
     resolve_cart_item_reference,
     set_cart_item_quantity,
 )
-from .commerce_context import (
+from app.commerce.commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
     checkout_missing_fields,
@@ -49,10 +49,10 @@ from .commerce_context import (
     resolve_commerce_reference,
     resolve_purchase_item_reference,
 )
-from .channel_profiles import channel_system_hint
+from app.channels.channel_profiles import channel_system_hint
 from .config import get_settings
-from .working_memory import WORKING_MEMORY_USAGE_POLICY, build_working_memory
-from .guardrails import (
+from app.memory.working_memory import WORKING_MEMORY_USAGE_POLICY, build_working_memory
+from app.verify.guardrails import (
     detect_commerce_inquiry,
     detect_current_raffle_inquiry,
     detect_raffle_history_inquiry,
@@ -61,28 +61,28 @@ from .guardrails import (
     detect_coupon_code_inquiry,
 )
 from .models import AgentResult, IncomingMessage, SalesInterpretation
-from .context_resume import is_short_affirmation
-from .greeting_policy import GREETING_REPLY, is_any_greeting, is_greeting_message
-from .turn_runtime import LLMCallBudgetExceeded
-from .payment_service import (
+from app.memory.context_resume import is_short_affirmation
+from app.identity.greeting_policy import GREETING_REPLY, is_any_greeting, is_greeting_message
+from app.ops.turn_runtime import LLMCallBudgetExceeded
+from app.commerce.payment_service import (
     inspect_current_cart,
     inspect_order_payment,
     inspect_payment_options,
 )
-from .pix_checkout_service import (
+from app.commerce.pix_checkout_service import (
     generate_direct_pix_checkout,
     refresh_direct_pix_checkout,
     should_use_direct_pix,
 )
-from .shipping_service import list_shipping_methods, quote_shipping, select_shipping
-from .order_service import (
+from app.commerce.shipping_service import list_shipping_methods, quote_shipping, select_shipping
+from app.commerce.order_service import (
     confirm_prepared_order,
     create_order,
     get_order_facts,
     prepare_order,
 )
-from .product_media import resolve_presented_product_images, resolve_product_image
-from .product_retrieval import (
+from app.catalog.product_media import resolve_presented_product_images, resolve_product_image
+from app.catalog.product_retrieval import (
     CUSTOMER_RESULT_LIMIT,
     apply_persona_presentation_order,
     commercial_availability_facts,
@@ -108,8 +108,8 @@ from .product_retrieval import (
     soft_confirm_candidates,
     specific_product_search_terms,
 )
-from .catalog_cache import ensure_brand_pool_in_candidates
-from .tray_tools import execute_tool
+from app.catalog.catalog_cache import ensure_brand_pool_in_candidates
+from app.tray.tray_tools import execute_tool
 
 
 SALES_PLANNER_INSTRUCTIONS = """
@@ -464,8 +464,8 @@ def _purchase_close_hold_reply(
     state: CommerceConversationState | None,
     interpretation: SalesInterpretation | None,
 ) -> str:
-    from .checkout_service import checkout_channel_choice_prompt
-    from .greeting_policy import choose_greeting_reply
+    from app.commerce.checkout_service import checkout_channel_choice_prompt
+    from app.identity.greeting_policy import choose_greeting_reply
     from .sales.dialogue_phase import session_in_checkout_phase
 
     if state is not None and session_in_checkout_phase(state):
@@ -608,9 +608,9 @@ def _fallback_interpretation(text: str | None) -> SalesInterpretation:
         confidence=0.6,
     )
     interpretation._source = "deterministic_fallback"
-    from .preference_normalize import normalize_sales_interpretation
-    from .turn_understanding import sales_to_turn_understanding
-    from .context_resume import scrub_catalog_question_interpretation
+    from app.catalog.preference_normalize import normalize_sales_interpretation
+    from app.llm.turn_understanding import sales_to_turn_understanding
+    from app.memory.context_resume import scrub_catalog_question_interpretation
 
     normalized = normalize_sales_interpretation(interpretation, message_text=text)
     normalized = scrub_catalog_question_interpretation(normalized, text)
@@ -626,7 +626,7 @@ def _rehydrate_contact_preferences(
 ) -> SalesInterpretation:
     """Seed empty preference fields from durable contact memory."""
     try:
-        from .contact_preference_memory import (
+        from app.memory.contact_preference_memory import (
             rehydrate_interpretation_from_contact_memory,
         )
 
@@ -651,7 +651,7 @@ def _finalize_fallback_interpretation(
     fallback: SalesInterpretation,
     message: IncomingMessage,
 ) -> SalesInterpretation:
-    from .context_resume import scrub_catalog_question_interpretation
+    from app.memory.context_resume import scrub_catalog_question_interpretation
 
     fallback = _rehydrate_contact_preferences(fallback, message)
     return scrub_catalog_question_interpretation(fallback, message.text)
@@ -890,8 +890,8 @@ async def interpret_message(
         _log_interpretation(fallback, settings.openai_model, fallback_reason="empty_message")
         return fallback
 
-    from .capability_catalog import format_capability_catalog_for_prompt
-    from .turn_understanding import (
+    from app.llm.capability_catalog import format_capability_catalog_for_prompt
+    from app.llm.turn_understanding import (
         TURN_UNDERSTANDING_INSTRUCTIONS,
         TurnUnderstanding,
         apply_clarification_policy,
@@ -900,7 +900,7 @@ async def interpret_message(
         turn_understanding_to_sales,
     )
 
-    from .rollout import is_turn_understanding_enabled
+    from app.ops.rollout import is_turn_understanding_enabled
 
     use_turn_understanding = is_turn_understanding_enabled(settings)
     if use_turn_understanding:
@@ -936,7 +936,7 @@ async def interpret_message(
         else SALES_INTERPRETER_INSTRUCTIONS
     )
     try:
-        from .persona_runtime import get_persona_runtime
+        from app.persona.persona_runtime import get_persona_runtime
 
         runtime = get_persona_runtime()
         if runtime is not None and runtime.enabled:
@@ -962,9 +962,9 @@ async def interpret_message(
         "has_tools": False,
     })
     try:
-        from .openai_errors import OpenAIGatewayError, OpenAIRefusalError
-        from .openai_gateway import parse_structured_output
-        from .preference_normalize import (
+        from app.llm.openai_errors import OpenAIGatewayError, OpenAIRefusalError
+        from app.llm.openai_gateway import parse_structured_output
+        from app.catalog.preference_normalize import (
             normalize_sales_interpretation,
             recent_user_context_text,
         )
@@ -1102,7 +1102,7 @@ def deterministic_sales_plan(text: str | None) -> dict[str, Any] | None:
             fallback_model = query
         else:
             fallback_product_type = query.split()[0] if action == "purchase_intent" else query
-    from .context_resume import is_non_model_query, is_presented_catalog_question
+    from app.memory.context_resume import is_non_model_query, is_presented_catalog_question
 
     if is_presented_catalog_question(text) or is_non_model_query(fallback_model or query):
         if re.search(r"rel[oó]gio|watch", str(query or ""), flags=re.IGNORECASE):
@@ -1192,7 +1192,7 @@ def _ranked_result(result: AgentResult, plan: dict[str, Any]) -> AgentResult | N
     selected = rank_candidates(products, plan)
     if not selected:
         return None
-    from .commerce_router import _product_result
+    from app.commerce.commerce_router import _product_result
 
     action = "product_price" if plan.get("intent") == "price" else "product_search"
     ranked = _product_result(action, selected)
@@ -1310,7 +1310,7 @@ async def generate_clarification_reply(
     normalized_history = _normalize_interpreter_history(recent_turns)
     persona_runtime = None
     try:
-        from .persona_runtime import get_persona_runtime
+        from app.persona.persona_runtime import get_persona_runtime
 
         persona_runtime = get_persona_runtime()
     except Exception:
@@ -1336,8 +1336,8 @@ async def generate_clarification_reply(
         ),
     }
     try:
-        from .openai_errors import OpenAIGatewayError
-        from .openai_gateway import generate_text_output
+        from app.llm.openai_errors import OpenAIGatewayError
+        from app.llm.openai_gateway import generate_text_output
 
         clarification_messages = [
             {"role": "system", "content": "\n\n".join(persona_blocks)},
@@ -1396,7 +1396,7 @@ async def _sales_response_with_openai(
     state: CommerceConversationState | None = None,
     recent_turns: list[dict[str, Any]] | None = None,
 ) -> AgentResult | None:
-    from .capability_catalog import (
+    from app.llm.capability_catalog import (
         build_capability_catalog,
         format_capability_catalog_for_prompt,
     )
@@ -1417,10 +1417,10 @@ async def _sales_response_with_openai(
     if (tray_result.commercial_data or {}).get("input_template"):
         return None
     try:
-        from .openai_errors import OpenAIGatewayError
-        from .openai_gateway import generate_text_output
+        from app.llm.openai_errors import OpenAIGatewayError
+        from app.llm.openai_gateway import generate_text_output
 
-        from .prompt_compiler import (
+        from app.llm.prompt_compiler import (
             legacy_contract_extra_blocks,
             resolve_system_instructions,
         )
@@ -1452,13 +1452,13 @@ async def _sales_response_with_openai(
             or getattr(settings, "agent_conversation_summary_enabled", False)
         )
         if memory_sidechannel:
-            from .memory_policy import MEMORY_POLICY_PROMPT
+            from app.memory.memory_policy import MEMORY_POLICY_PROMPT
 
             responder_instructions = (
                 f"{responder_instructions}\n\n{MEMORY_POLICY_PROMPT}"
             )
 
-        from .history_window import resolve_model_history_limit
+        from app.memory.history_window import resolve_model_history_limit
 
         model_history_limit = resolve_model_history_limit(settings)
         responder_messages = [
@@ -1492,8 +1492,8 @@ async def _sales_response_with_openai(
 
         envelope = None
         if memory_sidechannel:
-            from .memory_models import AgentTurnEnvelope
-            from .openai_gateway import parse_structured_output
+            from app.memory.memory_models import AgentTurnEnvelope
+            from app.llm.openai_gateway import parse_structured_output
 
             try:
                 parse_result = await parse_structured_output(
@@ -1660,12 +1660,12 @@ def _hydrate_sales_interpretation(
     """Normalize + qualification + memory — one place before the sales handler."""
     if not isinstance(semantic_plan, SalesInterpretation):
         return None
-    from .preference_normalize import (
+    from app.catalog.preference_normalize import (
         normalize_sales_interpretation,
         recent_user_context_text,
     )
     from .sales.qualification_slots import continue_commerce_from_qualification_answer
-    from .commerce_router import is_outbound_catalog_image_request
+    from app.commerce.commerce_router import is_outbound_catalog_image_request
 
     open_sale = _open_sale_history(commerce_state)
     interpretation = normalize_sales_interpretation(
@@ -1712,13 +1712,13 @@ async def _handle_sales_message_inner(
     interpretation = _hydrate_sales_interpretation(
         semantic_plan, message, recent_turns, commerce_state=commerce_state
     )
-    from .commerce_router import (
+    from app.commerce.commerce_router import (
         is_listed_catalog_follow_up,
         is_outbound_catalog_image_request,
         wants_all_listed_product_images,
     )
     state = commerce_state or CommerceConversationState()
-    from .context_resume import (
+    from app.memory.context_resume import (
         build_pending_payment_resume_result,
         build_presented_catalog_resume_result,
         should_redisplay_presented_catalog,
@@ -2167,7 +2167,7 @@ async def _handle_sales_message_inner(
             )
         if resolved_product is not None:
             from .sales.discovery import _specific_product_lock
-            from .product_retrieval import required_model_tokens
+            from app.catalog.product_retrieval import required_model_tokens
             from .sales.purchase_selection import (
                 is_bare_purchase_closing,
                 parse_list_position_selection,
@@ -2237,12 +2237,12 @@ async def _handle_sales_message_inner(
                 )
         # Inbound photo must re-identify — never answer price from a stale
         # Kingfisher/sibling left in active/presented context.
-        from .image_product_id import (
+        from app.catalog.image_product_id import (
             handle_image_product_search,
             image_search_eligible,
         )
-        from .commerce_router import is_deictic_product_price_request
-        from .brevo_instagram_media import (
+        from app.commerce.commerce_router import is_deictic_product_price_request
+        from app.channels.brevo_instagram_media import (
             PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
             UNVIEWABLE_MEDIA_GUIDE_REPLY,
             is_bare_price_request,
@@ -2418,7 +2418,7 @@ async def _handle_sales_message_inner(
             and interpretation.reference_type in vague_refs
             and state.last_presented_products
         ):
-            from .commerce_router import _product_lines
+            from app.commerce.commerce_router import _product_lines
 
             numbered = [
                 f"{position}. {line}"
@@ -2639,7 +2639,7 @@ async def _handle_sales_message_inner(
             or is_short_affirmation(message.text)
         )
     ):
-        from .image_product_id import (
+        from app.catalog.image_product_id import (
             ImageProductIdentification,
             soft_line_interpretation_from_identification,
         )
@@ -3129,7 +3129,7 @@ async def _handle_sales_message_inner(
             )
         if resolved_product is None:
             # Customer sent a product photo — identify it, don't ask for the name first.
-            from .image_product_id import (
+            from app.catalog.image_product_id import (
                 handle_image_product_search,
                 image_search_eligible,
             )
@@ -3440,7 +3440,7 @@ async def _handle_sales_message_inner(
         if informational_payment and not (
             state.cart_session_id and state.cart_url
         ):
-            from .persona_runtime import get_persona_runtime
+            from app.persona.persona_runtime import get_persona_runtime
 
             runtime = get_persona_runtime()
             force_cart = bool(
@@ -3532,7 +3532,7 @@ async def _handle_sales_message_inner(
             payment_state.cart_session_id
             and payment_state.cart_url
         ):
-            from .persona_runtime import get_persona_runtime
+            from app.persona.persona_runtime import get_persona_runtime
 
             runtime = get_persona_runtime()
             if runtime is not None and not runtime.require_product_before_checkout:
@@ -3821,7 +3821,7 @@ async def _handle_sales_message_inner(
     if plan.get("intent") == "clarification" or vague_query:
         if intent_route.purchase_close_hold:
             try:
-                from .observability import record_close_miss
+                from app.ops.observability import record_close_miss
 
                 record_close_miss(
                     reason="purchase_close_hold",

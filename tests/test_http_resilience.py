@@ -1,6 +1,6 @@
 import pytest
 
-from app.http_resilience import is_transient_status, with_retries
+from app.ops.http_resilience import is_transient_status, with_retries
 
 
 @pytest.mark.asyncio

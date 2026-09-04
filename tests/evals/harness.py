@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.models import IncomingMessage
-from app.turn_runtime import LLMCallBudget, TurnRuntimeContext
-from app.runtime_context import set_current_turn, reset_current_turn
+from app.ops.turn_runtime import LLMCallBudget, TurnRuntimeContext
+from app.ops.runtime_context import set_current_turn, reset_current_turn
 
 
 def observations_from_result(
@@ -79,13 +79,13 @@ async def run_replay_case(
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     try:
-        import app.tray_tools as tray_tools
+        import app.tray.tray_tools as tray_tools
 
         monkeypatch.setattr(tray_tools, "execute_tool", fake_execute)
     except Exception:
         pass
     try:
-        import app.product_retrieval as product_retrieval
+        import app.catalog.product_retrieval as product_retrieval
 
         if hasattr(product_retrieval, "execute_tool"):
             monkeypatch.setattr(product_retrieval, "execute_tool", fake_execute)

@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ..models import SalesInterpretation
-from ..preference_normalize import (
+from app.catalog.preference_normalize import (
     _extract_budget_max,
     extract_stated_color,
     extract_stated_gender,
@@ -66,7 +66,7 @@ def _infer_identity_from_presented(
     if not blob:
         return common_brand, None
     from ..models import ProductPreferences, ProductSubject
-    from ..preference_normalize import repair_specific_model_tokens
+    from app.catalog.preference_normalize import repair_specific_model_tokens
 
     subject = ProductSubject(brand=common_brand)
     prefs = ProductPreferences()

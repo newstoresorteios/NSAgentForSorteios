@@ -2,23 +2,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.cart_service import (
+from app.commerce.cart_service import (
     CartItemRequest,
     create_cart_items_checkout,
     current_cart_reply,
     set_cart_item_quantity,
 )
-from app.checkout_service import select_checkout_channel
-from app.commerce_context import (
+from app.commerce.checkout_service import select_checkout_channel
+from app.commerce.commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
     evolve_commerce_state,
 )
 from app.models import IncomingMessage, SalesInterpretation
-from app.payment_service import inspect_payment_options
+from app.commerce.payment_service import inspect_payment_options
 from app.sales_agent import SALES_INTERPRETER_INSTRUCTIONS
-from app.tray_adapter_client import TrayAdapterClient
-from app.tray_tools import execute_tool
+from app.tray.tray_adapter_client import TrayAdapterClient
+from app.tray.tray_tools import execute_tool
 
 
 def _reference():

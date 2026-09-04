@@ -2,18 +2,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.cart_service import (
+from app.commerce.cart_service import (
     CartItemRequest,
     create_cart_items_checkout,
     variant_choices,
 )
-from app.commerce_context import (
+from app.commerce.commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
     evolve_commerce_state,
 )
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
-from app.product_retrieval import commercial_availability_facts
+from app.catalog.product_retrieval import commercial_availability_facts
 
 
 def _interpretation(**overrides) -> SalesInterpretation:

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import IncomingMessage, SalesInterpretation
-from app.product_retrieval import (
+from app.catalog.product_retrieval import (
     ProductRerankSelection,
     ProductRetrievalCompiler,
     hard_filter_products,
@@ -100,7 +100,7 @@ def test_specific_query_keeps_brand_and_model_separate_without_combined_name():
 
 
 def test_long_model_title_matches_short_tray_model_field():
-    from app.product_retrieval import (
+    from app.catalog.product_retrieval import (
         exact_specific_product_matches,
         required_model_tokens,
         significant_model_tokens,
@@ -156,7 +156,7 @@ def test_long_model_title_matches_short_tray_model_field():
 
 
 def test_vision_color_phrase_is_not_treated_as_product_reference():
-    from app.product_retrieval import (
+    from app.catalog.product_retrieval import (
         ProductRetrievalCompiler,
         exact_specific_product_matches,
         effective_product_reference,
@@ -210,7 +210,7 @@ def test_vision_color_phrase_is_not_treated_as_product_reference():
 
 @pytest.mark.asyncio
 async def test_color_preference_narrows_ambiguous_sealander_matches():
-    from app.product_retrieval import match_specific_products
+    from app.catalog.product_retrieval import match_specific_products
 
     interpretation = _interpretation(
         goal="find",
@@ -241,7 +241,7 @@ async def test_color_preference_narrows_ambiguous_sealander_matches():
 
 
 def test_catalog_match_tokens_drops_strap_accessories_for_beaubleu():
-    from app.product_retrieval import catalog_match_tokens, preference_color_tokens
+    from app.catalog.product_retrieval import catalog_match_tokens, preference_color_tokens
 
     interpretation = _interpretation(
         goal="find",
@@ -260,7 +260,7 @@ def test_catalog_match_tokens_drops_strap_accessories_for_beaubleu():
 
 
 def test_catalog_match_tokens_keeps_model_line_without_strap():
-    from app.product_retrieval import catalog_match_tokens, preference_color_tokens
+    from app.catalog.product_retrieval import catalog_match_tokens, preference_color_tokens
 
     interpretation = _interpretation(
         goal="find",
@@ -278,7 +278,7 @@ def test_catalog_match_tokens_keeps_model_line_without_strap():
 
 @pytest.mark.asyncio
 async def test_color_mismatch_does_not_substitute_other_automatic_colors(monkeypatch):
-    from app.product_retrieval import (
+    from app.catalog.product_retrieval import (
         ProductRetrievalCompiler,
         catalog_match_tokens,
         exact_specific_product_matches,
@@ -289,7 +289,7 @@ async def test_color_mismatch_does_not_substitute_other_automatic_colors(monkeyp
 
     assert "Automático" in normalize_pt_catalog_query("Sealander Automatic")
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
     )
 
@@ -372,7 +372,7 @@ async def test_color_mismatch_does_not_substitute_other_automatic_colors(monkeyp
 @pytest.mark.asyncio
 async def test_local_color_aliases_match_pink_dial_for_rosa(monkeypatch):
     """'rosa' matches catalog 'Pink Dial' without needing GPT."""
-    from app.product_retrieval import match_specific_products
+    from app.catalog.product_retrieval import match_specific_products
 
     interpretation = _interpretation(
         goal="find",
@@ -394,7 +394,7 @@ async def test_local_color_aliases_match_pink_dial_for_rosa(monkeypatch):
     ]
 
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="sk-test", openai_model="gpt-4.1-mini"),
     )
 
@@ -405,7 +405,7 @@ async def test_local_color_aliases_match_pink_dial_for_rosa(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_color_mismatch_soft_confirm_does_not_list_wrong_colors():
-    from app.product_retrieval import soft_confirm_candidates
+    from app.catalog.product_retrieval import soft_confirm_candidates
 
     interpretation = _interpretation(
         goal="find",
@@ -441,7 +441,7 @@ async def test_color_mismatch_soft_confirm_does_not_list_wrong_colors():
 
 
 def test_infer_family_codes_prefers_c63_not_reference_fragments():
-    from app.product_retrieval import infer_family_codes_from_candidates
+    from app.catalog.product_retrieval import infer_family_codes_from_candidates
 
     interpretation = _interpretation(
         goal="find",
@@ -468,7 +468,7 @@ def test_infer_family_codes_prefers_c63_not_reference_fragments():
 
 
 def test_compact_product_lines_include_cash_and_installments():
-    from app.commerce_router import _product_lines, _product_result
+    from app.commerce.commerce_router import _product_lines, _product_result
 
     products = [
         {
@@ -501,7 +501,7 @@ def test_compact_product_lines_include_cash_and_installments():
 
 
 def test_compact_product_lines_derive_pix_when_payment_details_missing():
-    from app.commerce_router import _product_lines
+    from app.commerce.commerce_router import _product_lines
 
     products = [
         {
@@ -519,7 +519,7 @@ def test_compact_product_lines_derive_pix_when_payment_details_missing():
 
 
 def test_compact_product_lines_omit_long_payment_dump():
-    from app.commerce_router import _product_lines
+    from app.commerce.commerce_router import _product_lines
 
     products = [
         {
@@ -548,7 +548,7 @@ def test_compact_product_lines_omit_long_payment_dump():
 
 
 def test_compact_product_lines_keep_url_omit_stock():
-    from app.commerce_router import _product_lines
+    from app.commerce.commerce_router import _product_lines
 
     products = [
         {
@@ -570,7 +570,7 @@ def test_compact_product_lines_keep_url_omit_stock():
 
 @pytest.mark.asyncio
 async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
-    from app.product_retrieval import (
+    from app.catalog.product_retrieval import (
         score_catalog_candidates,
         match_specific_products,
         ProductRetrievalCompiler,
@@ -630,7 +630,7 @@ async def test_keyword_match_finds_pink_sealander_beyond_first_twenty():
 
 
 def test_prx_brushed_silver_outranks_black_without_dial_request():
-    from app.product_retrieval import score_catalog_candidates
+    from app.catalog.product_retrieval import score_catalog_candidates
 
     interpretation = _interpretation(
         goal="find",
@@ -663,7 +663,7 @@ def test_prx_brushed_silver_outranks_black_without_dial_request():
 
 @pytest.mark.asyncio
 async def test_score_rejects_single_token_accessory_match():
-    from app.product_retrieval import score_catalog_candidates
+    from app.catalog.product_retrieval import score_catalog_candidates
 
     interpretation = _interpretation(
         goal="find",
@@ -689,7 +689,7 @@ async def test_score_rejects_single_token_accessory_match():
 
 
 def test_exact_progress_matches_requires_requested_color():
-    from app.product_retrieval import exact_progress_matches
+    from app.catalog.product_retrieval import exact_progress_matches
 
     interpretation = _interpretation(
         goal="find",
@@ -716,7 +716,7 @@ def test_exact_progress_matches_requires_requested_color():
 
 
 def test_certina_title_without_relogio_prefix_still_matches():
-    from app.product_retrieval import (
+    from app.catalog.product_retrieval import (
         exact_specific_product_matches,
         extract_model_codes,
         required_model_tokens,
@@ -795,7 +795,7 @@ async def test_candidate_pool_is_twenty_and_customer_result_is_three(monkeypatch
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
     )
     result = await sales_agent._execute_compiled_product_retrieval(_interpretation())
@@ -807,7 +807,7 @@ async def test_candidate_pool_is_twenty_and_customer_result_is_three(monkeypatch
 
 @pytest.mark.asyncio
 async def test_reranker_discards_ids_outside_candidate_set(monkeypatch):
-    import app.product_retrieval as retrieval
+    import app.catalog.product_retrieval as retrieval
 
     class FakeCompletions:
         async def parse(self, **kwargs):
@@ -865,7 +865,7 @@ async def test_ready_broad_request_retrieves_without_new_clarification(
 
     settings = SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini")
     monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
-    monkeypatch.setattr("app.product_retrieval.get_settings", lambda: settings)
+    monkeypatch.setattr("app.catalog.product_retrieval.get_settings", lambda: settings)
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="continuação comercial"),
@@ -967,7 +967,7 @@ def test_product_with_zero_stock_and_available_flag_is_still_available():
 
 @pytest.mark.asyncio
 async def test_rerank_products_filters_out_upon_request_items(monkeypatch):
-    import app.product_retrieval as retrieval
+    import app.catalog.product_retrieval as retrieval
 
     class FakeCompletions:
         async def parse(self, **kwargs):

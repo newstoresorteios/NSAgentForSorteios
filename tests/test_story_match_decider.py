@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from app.instagram_story_models import StoryProductCandidate, StoryVisualUnderstanding
-from app.story_match_decider import (
+from app.stories.instagram_story_models import StoryProductCandidate, StoryVisualUnderstanding
+from app.stories.story_match_decider import (
     build_evidence_profile,
     rerank_candidates_with_consensus,
     try_resolve_tied_candidates,
 )
-from app.story_product_matcher import classify_match, tray_search_jobs
+from app.stories.story_product_matcher import classify_match, tray_search_jobs
 
 
 def _fold(value: str) -> str:
@@ -82,7 +82,7 @@ def test_tray_search_jobs_use_model_line_not_brand_only():
 
 
 def test_decider_rejects_twelve_when_story_says_c63():
-    from app.story_match_decider import rerank_candidates_with_consensus
+    from app.stories.story_match_decider import rerank_candidates_with_consensus
 
     analysis = StoryVisualUnderstanding(
         visible_brands=["Christopher Ward"],

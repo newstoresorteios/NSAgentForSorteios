@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import (
+from app.commerce.commerce_context import (
     CommerceConversationState,
     apply_commerce_domain_context,
     evolve_commerce_state,
@@ -506,7 +506,7 @@ async def test_repeated_cart_creation_reconciles_without_post(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_persistent_cart_state_is_loaded_by_evolution():
-    from app.cart_service import create_cart_checkout
+    from app.commerce.cart_service import create_cart_checkout
 
     async def execute(tool, arguments):
         if tool == "get_product":
@@ -568,8 +568,8 @@ async def test_cart_adapter_failure_is_technical_not_product_not_found(monkeypat
 
 @pytest.mark.asyncio
 async def test_product_803_cart_http_400_keeps_diagnostics_and_selected_product(capsys):
-    from app.cart_service import create_cart_checkout
-    from app.commerce_context import CommerceProductReference
+    from app.commerce.cart_service import create_cart_checkout
+    from app.commerce.commerce_context import CommerceProductReference
 
     async def execute(tool, arguments):
         if tool == "get_product":
@@ -630,8 +630,8 @@ async def test_product_803_cart_http_400_keeps_diagnostics_and_selected_product(
 
 @pytest.mark.asyncio
 async def test_product_803_cart_success_advances_purchase_stage():
-    from app.cart_service import create_cart_checkout
-    from app.commerce_context import CommerceProductReference
+    from app.commerce.cart_service import create_cart_checkout
+    from app.commerce.commerce_context import CommerceProductReference
 
     async def execute(tool, arguments):
         if tool == "get_product":
@@ -885,7 +885,7 @@ async def test_cart_failure_gives_openai_only_safe_semantic_facts(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cart_removal_of_one_of_two_items():
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
     new_session_id = None
@@ -932,7 +932,7 @@ async def test_cart_removal_of_one_of_two_items():
 
 @pytest.mark.asyncio
 async def test_cart_removal_of_only_item():
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -961,7 +961,7 @@ async def test_cart_removal_of_only_item():
 
 @pytest.mark.asyncio
 async def test_cart_removal_item_not_found():
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -983,7 +983,7 @@ async def test_cart_removal_item_not_found():
 
 @pytest.mark.asyncio
 async def test_cart_removal_get_cart_fails():
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -1006,7 +1006,7 @@ async def test_cart_removal_get_cart_fails():
 @pytest.mark.asyncio
 async def test_cart_removal_partial_rebuild_failure():
     """Quando create_cart falha, aborta imediatamente (no fails-fast)"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -1052,7 +1052,7 @@ async def test_cart_removal_partial_rebuild_failure():
 
 @pytest.mark.asyncio
 async def test_cart_removal_invalidates_shipping_and_payment():
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     async def execute(tool, arguments):
         if tool == "get_cart_complete":
@@ -1092,7 +1092,7 @@ async def test_cart_removal_invalidates_shipping_and_payment():
 
 @pytest.mark.asyncio
 async def test_cart_removal_by_name():
-    from app.cart_service import resolve_cart_item_reference
+    from app.commerce.cart_service import resolve_cart_item_reference
 
     state = _state(
         cart_session_id="session",
@@ -1113,7 +1113,7 @@ async def test_cart_removal_by_name():
 
 @pytest.mark.asyncio
 async def test_cart_removal_ambiguous_name():
-    from app.cart_service import resolve_cart_item_reference
+    from app.commerce.cart_service import resolve_cart_item_reference
 
     state = _state(
         cart_session_id="session",
@@ -1133,7 +1133,7 @@ async def test_cart_removal_ambiguous_name():
 
 @pytest.mark.asyncio
 async def test_cart_removal_name_not_found():
-    from app.cart_service import resolve_cart_item_reference
+    from app.commerce.cart_service import resolve_cart_item_reference
 
     state = _state(
         cart_session_id="session",
@@ -1152,7 +1152,7 @@ async def test_cart_removal_name_not_found():
 
 
 def test_cart_removal_single_item():
-    from app.cart_service import resolve_cart_item_reference
+    from app.commerce.cart_service import resolve_cart_item_reference
 
     state = _state(
         cart_session_id="session",
@@ -1168,7 +1168,7 @@ def test_cart_removal_single_item():
 
 
 def test_cart_removal_position_out_of_range():
-    from app.cart_service import resolve_cart_item_reference
+    from app.commerce.cart_service import resolve_cart_item_reference
 
     state = _state(
         cart_session_id="session",
@@ -1189,7 +1189,7 @@ def test_cart_removal_position_out_of_range():
 @pytest.mark.asyncio
 async def test_cart_removal_order_create_before_delete():
     """A. create_cart é chamado ANTES de delete_cart"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -1233,7 +1233,7 @@ async def test_cart_removal_order_create_before_delete():
 @pytest.mark.asyncio
 async def test_cart_removal_create_fails_no_delete():
     """B. create_cart falha -> delete_cart da sessão antiga NUNCA chamado, estado inalterado"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -1275,7 +1275,7 @@ async def test_cart_removal_create_fails_no_delete():
 @pytest.mark.asyncio
 async def test_cart_removal_includes_price_in_create():
     """C. create_cart recebe 'price' com o valor factual vindo do snapshot"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -1319,7 +1319,7 @@ async def test_cart_removal_includes_price_in_create():
 @pytest.mark.asyncio
 async def test_cart_removal_verification_failure_no_delete():
     """D. Verificação do novo carrinho retorna erro -> antigo não apagado"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -1363,7 +1363,7 @@ async def test_cart_removal_verification_failure_no_delete():
 @pytest.mark.asyncio
 async def test_cart_removal_content_mismatch_no_delete():
     """E. Verificação retorna conteúdo divergente ([X, Z] em vez de [Y]) -> antigo não apagado"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
     cart_state = {"old_session": "old", "new_session": "new"}
@@ -1408,7 +1408,7 @@ async def test_cart_removal_content_mismatch_no_delete():
 @pytest.mark.asyncio
 async def test_cart_removal_price_missing():
     """F. Item do snapshot sem preço -> aborta com 'price_missing', nada apagado"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -1450,7 +1450,7 @@ async def test_cart_removal_price_missing():
 @pytest.mark.asyncio
 async def test_cart_removal_success_full():
     """G. Remoção bem-sucedida -> cart_session_id muda, cart_items atualizado, frete e pagamento invalidados"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 
@@ -1496,7 +1496,7 @@ async def test_cart_removal_success_full():
 @pytest.mark.asyncio
 async def test_cart_removal_delete_old_fails_success():
     """H. delete_cart do antigo falha DEPOIS da verificação OK -> operação ainda é sucesso"""
-    from app.cart_service import rebuild_cart_without
+    from app.commerce.cart_service import rebuild_cart_without
 
     calls = []
 

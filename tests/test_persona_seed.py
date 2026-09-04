@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-import app.persona_repository as repo
+import app.persona.persona_repository as repo
 import scripts.seed_newstore_persona as seed
 from tests.persona_fakes import InMemoryPersonaStore
 

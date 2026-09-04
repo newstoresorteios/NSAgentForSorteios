@@ -446,27 +446,80 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
     )
-    # Hourly self-learning over recent attendances.
+    # Incremental self-learning since last cursor. Lookback is bootstrap only.
     agent_learning_lookback_hours: int = Field(
-        default=2,
+        default=24,
         alias="AGENT_LEARNING_LOOKBACK_HOURS",
         ge=1,
-        le=48,
+        le=168,
+    )
+    agent_learning_bootstrap_hours: int = Field(
+        default=24,
+        alias="AGENT_LEARNING_BOOTSTRAP_HOURS",
+        ge=1,
+        le=168,
     )
     agent_learning_batch_limit: int = Field(
-        default=120,
+        default=500,
         alias="AGENT_LEARNING_BATCH_LIMIT",
         ge=10,
-        le=500,
+        le=2000,
     )
-    # Etapa 9: learning writes pending proposals only; never auto-activate.
+    # Continuous learning: auto-promote + auto-activate with constitution/canary.
+    # Kill-switch: set both false.
     agent_learning_auto_promote: bool = Field(
-        default=False,
+        default=True,
         alias="AGENT_LEARNING_AUTO_PROMOTE",
     )
     agent_learning_auto_activate: bool = Field(
-        default=False,
+        default=True,
         alias="AGENT_LEARNING_AUTO_ACTIVATE",
+    )
+    agent_learning_reflect_enabled: bool = Field(
+        default=True,
+        alias="AGENT_LEARNING_REFLECT_ENABLED",
+    )
+    agent_learning_canary_hours: int = Field(
+        default=6,
+        alias="AGENT_LEARNING_CANARY_HOURS",
+        ge=1,
+        le=72,
+    )
+    agent_learning_rollback_min_reviews: int = Field(
+        default=20,
+        alias="AGENT_LEARNING_ROLLBACK_MIN_REVIEWS",
+        ge=1,
+        le=500,
+    )
+    agent_learning_rollback_fail_lift: float = Field(
+        default=1.2,
+        alias="AGENT_LEARNING_ROLLBACK_FAIL_LIFT",
+        ge=1.0,
+        le=5.0,
+    )
+    agent_learning_max_clusters: int = Field(
+        default=5,
+        alias="AGENT_LEARNING_MAX_CLUSTERS",
+        ge=1,
+        le=20,
+    )
+    agent_learning_max_instruction_chars: int = Field(
+        default=800,
+        alias="AGENT_LEARNING_MAX_INSTRUCTION_CHARS",
+        ge=80,
+        le=4000,
+    )
+    agent_max_learned_cases: int = Field(
+        default=5,
+        alias="AGENT_MAX_LEARNED_CASES",
+        ge=0,
+        le=20,
+    )
+    agent_max_learned_case_chars: int = Field(
+        default=2000,
+        alias="AGENT_MAX_LEARNED_CASE_CHARS",
+        ge=200,
+        le=8000,
     )
     # Model prompt window (interpreter/responder/critique). Operational recovery
     # still loads up to AGENT_HISTORY_HARD_CAP from the database.

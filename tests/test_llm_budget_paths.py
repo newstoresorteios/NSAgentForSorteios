@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
-from app.openai_runtime import execute_openai_call_sync
-from app.runtime_context import reset_current_turn, set_current_turn
-from app.turn_runtime import (
+from app.llm.openai_runtime import execute_openai_call_sync
+from app.ops.runtime_context import reset_current_turn, set_current_turn
+from app.ops.turn_runtime import (
     LLMCallBudget,
     LLMCallBudgetExceeded,
     TurnRuntimeContext,
@@ -243,7 +243,7 @@ async def test_handoff_path_is_zero_llm(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_budget_exceeded_on_clarification_uses_deterministic_fallback(monkeypatch):
-    import app.openai_gateway as openai_gateway
+    import app.llm.openai_gateway as openai_gateway
     import app.sales_agent as sales_agent
 
     context = _turn(max_calls=0)

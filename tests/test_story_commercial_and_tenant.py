@@ -7,19 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from app.instagram_story_normalized import (
+from app.stories.instagram_story_normalized import (
     StoryEventType,
     normalize_brevo_story_event,
 )
-from app.request_principal import (
+from app.identity.request_principal import (
     principal_from_admin_token,
     principal_from_internal,
 )
-from app.story_commercial_policy import (
+from app.stories.story_commercial_policy import (
     evidence_from_tray_product,
     validate_commercial_answer,
 )
-from app.story_tenant import resolve_story_tenant
+from app.stories.story_tenant import resolve_story_tenant
 
 FIXTURES = Path(__file__).parent / "fixtures" / "instagram_story"
 
@@ -157,8 +157,8 @@ def test_normalize_malformed_payload():
 
 def test_canary_blocked_without_real_payload(monkeypatch):
     from app.config import get_settings
-    from app.instagram_story_models import InstagramStoryContext
-    from app.instagram_story_service import story_rollout_allows
+    from app.stories.instagram_story_models import InstagramStoryContext
+    from app.stories.instagram_story_service import story_rollout_allows
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "canary")

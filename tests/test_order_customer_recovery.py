@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
 from app.models import AgentResult, IncomingMessage
-from app.order_service import (
+from app.commerce.order_service import (
     extract_order_reference,
     extract_valid_tax_document,
     find_order_by_customer_document,

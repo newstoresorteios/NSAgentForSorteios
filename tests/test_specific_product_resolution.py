@@ -2,13 +2,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import (
+from app.commerce.commerce_context import (
     CommerceConversationState,
     evolve_commerce_state,
     resolve_commerce_reference,
 )
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
-from app.product_retrieval import (
+from app.catalog.product_retrieval import (
     ProductMatchError,
     ProductMatchSelection,
     match_specific_products,
@@ -57,7 +57,7 @@ def _mock_matcher(
     match_status: str | None = None,
     best_candidate_id: str | None = None,
 ):
-    import app.product_retrieval as retrieval
+    import app.catalog.product_retrieval as retrieval
 
     resolved_status = match_status or (
         "none" if not selected_ids
@@ -150,7 +150,7 @@ async def test_brand_candidates_resolve_partial_specific_model(monkeypatch):
 @pytest.mark.asyncio
 async def test_exact_structured_model_does_not_need_brand_fallback(monkeypatch):
     import app.sales_agent as sales_agent
-    import app.product_retrieval as retrieval
+    import app.catalog.product_retrieval as retrieval
 
     calls = []
     product = {
@@ -173,7 +173,7 @@ async def test_exact_structured_model_does_not_need_brand_fallback(monkeypatch):
         raise AssertionError("exact model match must not need OpenAI matcher")
 
     monkeypatch.setattr(
-        "app.openai_gateway.parse_structured_output",
+        "app.llm.openai_gateway.parse_structured_output",
         forbid_parse,
     )
     monkeypatch.setattr(retrieval, "get_settings", lambda: _settings())
@@ -203,7 +203,7 @@ async def test_exact_structured_model_does_not_need_brand_fallback(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_exact_model_filters_unrelated_same_brand_candidates(monkeypatch):
-    import app.product_retrieval as retrieval
+    import app.catalog.product_retrieval as retrieval
 
     products = [
         {"id": "1", "name": "Tissot Seastar", "brand": "Tissot", "model": "Seastar"},
@@ -470,7 +470,7 @@ async def test_color_harvest_finds_rosa_outside_brand_first_pages(monkeypatch):
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: _settings(api_key=""),
     )
 
@@ -948,7 +948,7 @@ async def test_persistent_catalog_failure_is_technical_not_product_not_found(mon
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
     monkeypatch.setattr(
-        "app.catalog_index_primary.fetch_primary_index_candidates",
+        "app.catalog.catalog_index_primary.fetch_primary_index_candidates",
         lambda *a, **k: ([], None),
     )
 
@@ -986,11 +986,11 @@ async def test_exact_tray_down_serves_catalog_index_fallback(monkeypatch):
 
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
     monkeypatch.setattr(
-        "app.catalog_index_primary.fetch_primary_index_candidates",
+        "app.catalog.catalog_index_primary.fetch_primary_index_candidates",
         lambda *a, **k: ([index_hit], "exact"),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *a, **k: 0,
     )
     monkeypatch.setattr(

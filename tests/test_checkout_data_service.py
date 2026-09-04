@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from app.checkout_data_service import (
+from app.commerce.checkout_data_service import (
     _normalize_phone,
     checkout_data_template,
     enrich_checkout_data_from_cep,
@@ -11,7 +11,7 @@ from app.checkout_data_service import (
     should_repair_checkout_data,
     update_checkout_data,
 )
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
 from openai_test_utils import install_fake_openai_client
 
 
@@ -121,7 +121,7 @@ def test_dense_checkout_message_uses_repair_for_possible_missed_fields():
 
 @pytest.mark.asyncio
 async def test_openai_repair_changes_only_unresolved_fields(monkeypatch):
-    import app.checkout_data_service as service
+    import app.commerce.checkout_data_service as service
     from app.models import CheckoutDataInput
 
     class Completions:
@@ -197,7 +197,7 @@ async def test_incomplete_checkout_is_validated_before_any_tray_call(monkeypatch
 
 @pytest.mark.asyncio
 async def test_cep_lookup_returns_only_validated_checkout_fields(monkeypatch):
-    import app.checkout_data_service as service
+    import app.commerce.checkout_data_service as service
 
     class Response:
         def raise_for_status(self):
@@ -252,7 +252,7 @@ async def test_cep_lookup_returns_only_validated_checkout_fields(monkeypatch):
 async def test_cep_enrichment_fills_address_without_inventing_customer_fields(
     monkeypatch,
 ):
-    import app.checkout_data_service as service
+    import app.commerce.checkout_data_service as service
 
     async def lookup(_zipcode):
         return {

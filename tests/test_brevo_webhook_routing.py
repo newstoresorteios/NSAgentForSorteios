@@ -2,7 +2,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.models import AgentResult, BrevoSendResult
-from app.webhook_parser import webhook_event_skip_reason
+from app.channels.webhook_parser import webhook_event_skip_reason
 
 
 def _fragment_payload() -> dict:
@@ -208,7 +208,7 @@ async def test_image_only_fragment_is_not_skipped_as_no_text(monkeypatch):
 @pytest.mark.asyncio
 async def test_conversation_busy_database_lock_returns_200_skip(monkeypatch):
     import api.index as index
-    from app.conversation_lock import ConversationLockUnavailable
+    from app.ops.conversation_lock import ConversationLockUnavailable
 
     async def busy_lock(*_args, **_kwargs):
         raise ConversationLockUnavailable("database_lock_busy")
@@ -243,7 +243,7 @@ async def test_conversation_busy_database_lock_returns_200_skip(monkeypatch):
 @pytest.mark.asyncio
 async def test_conversation_local_lock_timeout_returns_503_retry(monkeypatch):
     import api.index as index
-    from app.conversation_lock import ConversationLockUnavailable
+    from app.ops.conversation_lock import ConversationLockUnavailable
 
     async def lock_timeout(*_args, **_kwargs):
         raise ConversationLockUnavailable("local_lock_timeout")
@@ -272,7 +272,7 @@ async def test_conversation_local_lock_timeout_returns_503_retry(monkeypatch):
 @pytest.mark.asyncio
 async def test_database_lock_unavailable_falls_back_to_local_lock(monkeypatch):
     import api.index as index
-    from app.conversation_lock import ConversationLockUnavailable
+    from app.ops.conversation_lock import ConversationLockUnavailable
     from types import SimpleNamespace
 
     calls: list[dict] = []
@@ -461,7 +461,7 @@ async def test_instagram_unviewable_media_guides_resend(monkeypatch):
     monkeypatch.setattr(index, "insert_agent_response", lambda _data: None)
     monkeypatch.setattr(index, "send_brevo_reply", send)
     monkeypatch.setattr(
-        "app.human_takeover.touch_human_activity",
+        "app.ops.human_takeover.touch_human_activity",
         lambda incoming: takeover_touched.append(incoming),
     )
 

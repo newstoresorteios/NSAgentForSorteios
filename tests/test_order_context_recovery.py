@@ -1,13 +1,13 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState
-from app.context_resume import is_payment_link_request, is_unpaid_order_resume_request
+from app.commerce.commerce_context import CommerceConversationState
+from app.memory.context_resume import is_payment_link_request, is_unpaid_order_resume_request
 from app.models import AgentResult, IncomingMessage
-from app.order_context_recovery import (
+from app.commerce.order_context_recovery import (
     extract_handles_from_conversation,
     hydrate_state_from_handles,
 )
-from app.order_service import (
+from app.commerce.order_service import (
     _order_facts_result,
     extract_order_reference,
     is_order_lookup_request,
@@ -114,7 +114,7 @@ def test_splits_glued_store_code_and_internal_order_id():
 
 @pytest.mark.asyncio
 async def test_get_order_facts_retries_split_candidates_after_422():
-    from app.order_service import get_order_facts
+    from app.commerce.order_service import get_order_facts
 
     calls: list[str] = []
 
@@ -144,8 +144,8 @@ async def test_get_order_facts_retries_split_candidates_after_422():
 
 @pytest.mark.asyncio
 async def test_get_order_facts_resolves_store_code_via_cpf_after_422():
-    from app.commerce_context import CheckoutCustomer, CheckoutDraft
-    from app.order_service import get_order_facts
+    from app.commerce.commerce_context import CheckoutCustomer, CheckoutDraft
+    from app.commerce.order_service import get_order_facts
 
     calls: list[tuple[str, dict]] = []
 

@@ -24,7 +24,7 @@ def _settings(**overrides):
 
 @pytest.mark.asyncio
 async def test_facebook_reply_uses_conversations_visitor_id_payload(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
 
     captured = {}
 
@@ -68,7 +68,7 @@ async def test_facebook_reply_uses_conversations_visitor_id_payload(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_social_channel_never_falls_into_whatsapp_transactional(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
 
     calls = []
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings(brevo_reply_mode="whatsapp"))
@@ -98,7 +98,7 @@ async def test_social_channel_never_falls_into_whatsapp_transactional(monkeypatc
 
 @pytest.mark.asyncio
 async def test_auto_whatsapp_keeps_transactional_number_route(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
 
     calls = []
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
@@ -120,7 +120,7 @@ async def test_auto_whatsapp_keeps_transactional_number_route(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_whatsapp_uses_transactional_even_when_mode_is_conversations(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
 
     calls = []
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings(brevo_reply_mode="conversations"))
@@ -151,7 +151,7 @@ async def test_whatsapp_uses_transactional_even_when_mode_is_conversations(monke
 
 @pytest.mark.asyncio
 async def test_whatsapp_falls_back_to_conversations_when_transactional_fails(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
 
     calls = []
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings(brevo_reply_mode="conversations"))
@@ -193,7 +193,7 @@ async def test_whatsapp_falls_back_to_conversations_when_transactional_fails(mon
 
 
 def test_truncated_brevo_send_url_rewrites_to_whatsapp_path():
-    from app.brevo_client import (
+    from app.channels.brevo_client import (
         BREVO_WHATSAPP_SEND_URL,
         resolved_brevo_whatsapp_send_url,
     )
@@ -257,7 +257,7 @@ def test_audio_outbound_ready_requires_storage():
 
 @pytest.mark.asyncio
 async def test_whatsapp_transactional_posts_to_sendmessage_when_env_is_v3_root(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
 
     captured = {}
 
@@ -314,7 +314,7 @@ async def test_audio_outbound_skipped_without_supabase_storage(monkeypatch):
             supabase_service_key="",
         ),
     )
-    monkeypatch.setattr("app.audio_service.synthesize_reply_audio", boom)
+    monkeypatch.setattr("app.channels.audio_service.synthesize_reply_audio", boom)
 
     result = await pipeline.enrich_agent_result(
         IncomingMessage(input_modality="audio", text="oi"),
@@ -325,7 +325,7 @@ async def test_audio_outbound_skipped_without_supabase_storage(monkeypatch):
 
 
 def test_customer_visible_reply_text_strips_audio_placeholder():
-    from app.brevo_client import customer_visible_reply_text
+    from app.channels.brevo_client import customer_visible_reply_text
 
     assert customer_visible_reply_text("Resposta em áudio") != "Resposta em áudio"
     assert "áudio" not in customer_visible_reply_text("").casefold() or "faixa" in customer_visible_reply_text("").casefold()
@@ -335,7 +335,7 @@ def test_customer_visible_reply_text_strips_audio_placeholder():
 
 @pytest.mark.asyncio
 async def test_empty_reply_never_sends_audio_placeholder(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
 
     captured = {}
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
@@ -369,7 +369,7 @@ async def test_empty_reply_never_sends_audio_placeholder(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_conversations_empty_text_never_uses_audio_caption(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
 
     captured = {}
 

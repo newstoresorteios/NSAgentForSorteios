@@ -6,10 +6,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import app.persona_admin_api as admin
-import app.persona_repository as repo
-import app.prompt_compiler as compiler
-from app.persona_admin_api import router
+import app.persona.persona_admin_api as admin
+import app.persona.persona_repository as repo
+import app.llm.prompt_compiler as compiler
+from app.persona.persona_admin_api import router
 from app.security import verify_admin_token
 from tests.persona_fakes import InMemoryPersonaStore
 

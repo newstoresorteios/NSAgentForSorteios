@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.memory_models import (
+from app.memory.memory_models import (
     AgentTurnEnvelope,
     MemoryAction,
     MemoryKind,
     MemoryProposal,
     MemoryScope,
 )
-from app.memory_policy import evaluate_memory_proposal, is_sender_auto_apply_allowed
-from app.memory_service import process_agent_memory_proposals
-from app.prompt_compiler import resolve_system_instructions
+from app.memory.memory_policy import evaluate_memory_proposal, is_sender_auto_apply_allowed
+from app.memory.memory_service import process_agent_memory_proposals
+from app.llm.prompt_compiler import resolve_system_instructions
 from tests.memory_fakes import InMemoryMemoryStore
 
 
@@ -51,7 +51,7 @@ def _brand(value: str, *, reason="explicit_user_preference") -> MemoryProposal:
 
 
 def test_allowlist_empty_blocks_auto_apply(monkeypatch):
-    import app.memory_policy as policy
+    import app.memory.memory_policy as policy
 
     monkeypatch.setattr(
         policy,
@@ -70,7 +70,7 @@ def test_allowlist_empty_blocks_auto_apply(monkeypatch):
 
 
 def test_allowlist_star_allows_all(monkeypatch):
-    import app.memory_policy as policy
+    import app.memory.memory_policy as policy
 
     monkeypatch.setattr(
         policy,
@@ -82,9 +82,9 @@ def test_allowlist_star_allows_all(monkeypatch):
 
 def test_explicit_brand_auto_applies_for_allowlisted_sender(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_consolidation as consolidation
-    import app.memory_policy as policy
-    import app.memory_service as service
+    import app.memory.memory_consolidation as consolidation
+    import app.memory.memory_policy as policy
+    import app.memory.memory_service as service
 
     monkeypatch.setattr(service, "get_settings", lambda: _settings())
     monkeypatch.setattr(policy, "get_settings", lambda: _settings())
@@ -108,8 +108,8 @@ def test_explicit_brand_auto_applies_for_allowlisted_sender(monkeypatch):
 
 def test_sender_outside_allowlist_stays_pending(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_policy as policy
-    import app.memory_service as service
+    import app.memory.memory_policy as policy
+    import app.memory.memory_service as service
 
     monkeypatch.setattr(service, "get_settings", lambda: _settings())
     monkeypatch.setattr(policy, "get_settings", lambda: _settings())
@@ -128,9 +128,9 @@ def test_sender_outside_allowlist_stays_pending(monkeypatch):
 
 def test_correction_supersedes_previous_brand(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_consolidation as consolidation
-    import app.memory_policy as policy
-    import app.memory_service as service
+    import app.memory.memory_consolidation as consolidation
+    import app.memory.memory_policy as policy
+    import app.memory.memory_service as service
 
     settings = _settings(agent_memory_auto_apply_sender_allowlist="*")
     monkeypatch.setattr(service, "get_settings", lambda: settings)
@@ -169,7 +169,7 @@ def test_correction_supersedes_previous_brand(monkeypatch):
 
 
 def test_explicit_no_preference_structured(monkeypatch):
-    import app.memory_policy as policy
+    import app.memory.memory_policy as policy
 
     monkeypatch.setattr(
         policy,
@@ -199,9 +199,9 @@ def test_explicit_no_preference_structured(monkeypatch):
 
 def test_forget_removes_active_memory(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_consolidation as consolidation
-    import app.memory_policy as policy
-    import app.memory_service as service
+    import app.memory.memory_consolidation as consolidation
+    import app.memory.memory_policy as policy
+    import app.memory.memory_service as service
 
     settings = _settings(agent_memory_auto_apply_sender_allowlist="*")
     monkeypatch.setattr(service, "get_settings", lambda: settings)
@@ -245,9 +245,9 @@ def test_forget_removes_active_memory(monkeypatch):
 
 def test_channel_memories_are_isolated(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_consolidation as consolidation
-    import app.memory_policy as policy
-    import app.memory_service as service
+    import app.memory.memory_consolidation as consolidation
+    import app.memory.memory_policy as policy
+    import app.memory.memory_service as service
 
     settings = _settings(agent_memory_auto_apply_sender_allowlist="*")
     monkeypatch.setattr(service, "get_settings", lambda: settings)
@@ -280,9 +280,9 @@ def test_channel_memories_are_isolated(monkeypatch):
 
 def test_prompt_injects_active_memory_when_auto_apply_enabled(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.contact_memory_repository as repo
-    import app.prompt_compiler as compiler
-    from app.memory_models import ContactMemory
+    import app.memory.contact_memory_repository as repo
+    import app.llm.prompt_compiler as compiler
+    from app.memory.memory_models import ContactMemory
     from app.models import IncomingMessage
 
     store.memories.append(
@@ -327,7 +327,7 @@ def test_prompt_injects_active_memory_when_auto_apply_enabled(monkeypatch):
 
 
 def test_below_threshold_does_not_auto_apply(monkeypatch):
-    import app.memory_policy as policy
+    import app.memory.memory_policy as policy
 
     monkeypatch.setattr(
         policy,

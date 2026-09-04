@@ -1,7 +1,7 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState
-from app.context_resume import (
+from app.commerce.commerce_context import CommerceConversationState
+from app.memory.context_resume import (
     build_contextual_greeting,
     commerce_state_resumable_score,
     has_resumable_commerce,
@@ -357,7 +357,7 @@ async def test_tironi_name_answer_does_not_re_greet(monkeypatch):
 
 
 def test_product_match_failed_keeps_awaiting_payment():
-    from app.commerce_context import evolve_commerce_state
+    from app.commerce.commerce_context import evolve_commerce_state
 
     state = CommerceConversationState(
         order_id="25422",
@@ -380,8 +380,8 @@ def test_product_match_failed_keeps_awaiting_payment():
 
 
 def test_presented_catalog_resume_survives_checkout_evolve():
-    from app.commerce_context import evolve_commerce_state
-    from app.context_resume import build_presented_catalog_resume_result
+    from app.commerce.commerce_context import evolve_commerce_state
+    from app.memory.context_resume import build_presented_catalog_resume_result
 
     state = CommerceConversationState(
         order_id="25422",
@@ -474,7 +474,7 @@ def test_resumable_score_prefers_order_over_empty_greeting_state():
 
 
 def test_identity_person_key_prefers_cpf():
-    from app.customer_identity import person_key_from_parts
+    from app.identity.customer_identity import person_key_from_parts
 
     assert person_key_from_parts(cpf="12345678901", phone="5543999999999") == "cpf:12345678901"
     assert person_key_from_parts(phone="5543999999999") == "phone:5543999999999"
@@ -482,7 +482,7 @@ def test_identity_person_key_prefers_cpf():
 
 
 def test_working_memory_is_compact_and_policy_aware():
-    from app.working_memory import WORKING_MEMORY_USAGE_POLICY, build_working_memory
+    from app.memory.working_memory import WORKING_MEMORY_USAGE_POLICY, build_working_memory
 
     memory = build_working_memory(
         CommerceConversationState(

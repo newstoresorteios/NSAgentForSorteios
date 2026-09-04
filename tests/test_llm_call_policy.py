@@ -1,11 +1,11 @@
 from app.config import get_settings
-from app.llm_call_policy import (
+from app.llm.llm_call_policy import (
     resolve_turn_critique_mode,
     should_run_llm_critique,
     should_run_quality_judge,
 )
 from app.models import AgentResult, IncomingMessage
-from app.quality_judge import is_low_risk_judge_skip
+from app.verify.quality_judge import is_low_risk_judge_skip
 
 
 def test_should_run_llm_critique_skips_low_risk(monkeypatch):

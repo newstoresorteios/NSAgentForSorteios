@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.openai_errors import OpenAIUnknownToolError
-from app.openai_gateway import (
+from app.llm.openai_errors import OpenAIUnknownToolError
+from app.llm.openai_gateway import (
     ChatCompletionsGateway,
     ResponsesGateway,
     to_chat_tools,
@@ -146,7 +146,7 @@ async def test_chat_tool_loop_blocks_unknown_tool():
 @pytest.mark.asyncio
 async def test_responses_tool_loop_preserves_call_id(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_tool_loop_enabled=True,

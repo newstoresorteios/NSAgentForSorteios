@@ -1,5 +1,5 @@
-from app.commerce_context import CommerceConversationState
-from app.observability import (
+from app.commerce.commerce_context import CommerceConversationState
+from app.ops.observability import (
     full_obs_enabled,
     log_event,
     redact_text,

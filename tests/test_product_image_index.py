@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.models import IncomingMessage
-from app.product_image_index import (
+from app.catalog.product_image_index import (
     VisualProductFingerprint,
     build_caption_from_fingerprint,
     index_product_image,
@@ -34,7 +34,7 @@ def test_build_caption_prefers_explicit_caption():
 
 
 def test_search_visual_neighbors_filters_by_max_distance(monkeypatch):
-    from app import product_image_index as module
+    from app.catalog import product_image_index as module
 
     rows = [
         {
@@ -81,7 +81,7 @@ def test_search_visual_neighbors_filters_by_max_distance(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_index_product_image_skips_unchanged_source_hash(monkeypatch):
-    from app import product_image_index as module
+    from app.catalog import product_image_index as module
 
     product = {
         "id": "9001",
@@ -111,7 +111,7 @@ async def test_index_product_image_skips_unchanged_source_hash(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_index_product_image_upserts_when_hash_changes(monkeypatch):
-    from app import product_image_index as module
+    from app.catalog import product_image_index as module
 
     product = {
         "id": "9001",
@@ -157,7 +157,7 @@ async def test_index_product_image_upserts_when_hash_changes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_product_image_index_batch_respects_batch_size(monkeypatch):
-    from app import product_image_index as module
+    from app.catalog import product_image_index as module
 
     pages_requested: list[dict] = []
 
@@ -202,8 +202,8 @@ async def test_run_product_image_index_batch_respects_batch_size(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_image_visual_fallback_on_low_confidence(monkeypatch):
-    from app import image_product_id as module
-    from app.image_product_id import ImageProductIdentification, handle_image_product_search
+    from app.catalog import image_product_id as module
+    from app.catalog.image_product_id import ImageProductIdentification, handle_image_product_search
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -258,8 +258,8 @@ async def test_handle_image_visual_fallback_on_low_confidence(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_image_visual_fallback_when_text_not_found(monkeypatch):
-    from app import image_product_id as module
-    from app.image_product_id import ImageProductIdentification, handle_image_product_search
+    from app.catalog import image_product_id as module
+    from app.catalog.image_product_id import ImageProductIdentification, handle_image_product_search
     from app.models import AgentResult
 
     message = IncomingMessage(

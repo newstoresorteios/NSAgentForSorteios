@@ -1,6 +1,6 @@
 """Guided near-match shortlists for ambiguous / soft exact misses."""
 
-from app.commerce_router import guided_near_match_result
+from app.commerce.commerce_router import guided_near_match_result
 from app.sales.tray_query_authority import (
     QueryAuthorization,
     bind_catalog_authorization,

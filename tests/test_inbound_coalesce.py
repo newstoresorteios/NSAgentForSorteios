@@ -1,5 +1,5 @@
 from app.db import _prepare_inbound_message
-from app.inbound_coalesce import (
+from app.channels.inbound_coalesce import (
     is_caption_echo,
     is_caption_echo_of_recent_image,
     normalize_caption_text,
@@ -81,7 +81,7 @@ def test_prepare_inbound_persists_image_url_in_metadata():
 
 
 def test_is_caption_echo_of_recent_image_short_circuits_without_db(monkeypatch):
-    from app import inbound_coalesce as module
+    from app.channels import inbound_coalesce as module
 
     monkeypatch.setattr(
         module,

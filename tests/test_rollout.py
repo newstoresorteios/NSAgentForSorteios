@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.openai_gateway import CanaryOpenAIGateway, build_openai_gateway, reset_openai_gateway
-from app.openai_routing import select_api_route
-from app.response_presenter import resolve_presenter_mode
-from app.rollout import (
+from app.llm.openai_gateway import CanaryOpenAIGateway, build_openai_gateway, reset_openai_gateway
+from app.llm.openai_routing import select_api_route
+from app.llm.response_presenter import resolve_presenter_mode
+from app.ops.rollout import (
     build_rollout_status,
     is_turn_understanding_enabled,
     observe_turn_for_rollout_alerts,
@@ -88,11 +88,11 @@ def test_emergency_flag_overrides_profile():
 
 def test_emergency_presenter_full(monkeypatch):
     monkeypatch.setattr(
-        "app.response_presenter.get_settings",
+        "app.llm.response_presenter.get_settings",
         lambda: _cfg(agent_emergency_rollback=True, agent_presenter_mode="thin"),
     )
     monkeypatch.setattr(
-        "app.rollout.get_settings",
+        "app.ops.rollout.get_settings",
         lambda: _cfg(agent_emergency_rollback=True, agent_presenter_mode="thin"),
     )
     assert resolve_presenter_mode() == "full"
@@ -108,11 +108,11 @@ def test_emergency_prefers_chat_when_allowed():
 
 def test_select_api_route_uses_rollout_traffic(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_routing.get_settings",
+        "app.llm.openai_routing.get_settings",
         lambda: _cfg(agent_rollout_profile="canary_5", openai_canary_sticky_routing=True),
     )
     monkeypatch.setattr(
-        "app.rollout.get_settings",
+        "app.ops.rollout.get_settings",
         lambda: _cfg(agent_rollout_profile="canary_5", openai_canary_sticky_routing=True),
     )
     # Explicit override still wins.
@@ -122,7 +122,7 @@ def test_select_api_route_uses_rollout_traffic(monkeypatch):
 
 def test_build_gateway_respects_canary_profile(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: _cfg(
             agent_rollout_profile="canary_25",
             openai_api_mode="responses",
@@ -130,7 +130,7 @@ def test_build_gateway_respects_canary_profile(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "app.rollout.get_settings",
+        "app.ops.rollout.get_settings",
         lambda: _cfg(agent_rollout_profile="canary_25"),
     )
     assert isinstance(build_openai_gateway(), CanaryOpenAIGateway)

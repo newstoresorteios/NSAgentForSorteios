@@ -1,5 +1,5 @@
 from app.models import SalesInterpretation
-from app.product_retrieval import _deterministic_semantic_order
+from app.catalog.product_retrieval import _deterministic_semantic_order
 
 
 def test_diver_and_small_case_outranks_dress_100m():

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.image_product_id import (
+from app.catalog.image_product_id import (
     ImageProductIdentification,
     handle_image_product_search,
     identification_has_catalog_identity,
@@ -12,7 +12,7 @@ from app.image_product_id import (
     products_match_required_features,
 )
 from app.models import AgentResult, IncomingMessage
-from app.webhook_parser import parse_brevo_conversations_payload
+from app.channels.webhook_parser import parse_brevo_conversations_payload
 
 
 def _image_payload(*, with_caption: bool = False) -> dict:
@@ -60,7 +60,7 @@ def test_parser_keeps_caption_with_image():
 
 
 def test_image_search_eligible_requires_flag_and_url(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     monkeypatch.setattr(
         module,
@@ -85,7 +85,7 @@ def test_image_search_eligible_requires_flag_and_url(monkeypatch):
 
 
 def test_interpretation_ignores_vision_color_as_reference():
-    from app.image_product_id import (
+    from app.catalog.image_product_id import (
         ImageProductIdentification,
         interpretation_from_identification,
     )
@@ -192,7 +192,7 @@ def test_products_match_required_features_rejects_khaki_for_chrono():
 
 def test_score_prefers_samurai_steel_over_black_case_sibling():
     from app.models import SalesInterpretation
-    from app.product_retrieval import score_catalog_candidates
+    from app.catalog.product_retrieval import score_catalog_candidates
 
     interpretation = SalesInterpretation(
         domain="commerce",
@@ -228,7 +228,7 @@ def test_score_prefers_samurai_steel_over_black_case_sibling():
 
 def test_score_requires_chrono_feature_for_hamilton():
     from app.models import SalesInterpretation
-    from app.product_retrieval import score_catalog_candidates
+    from app.catalog.product_retrieval import score_catalog_candidates
 
     interpretation = SalesInterpretation(
         domain="commerce",
@@ -266,7 +266,7 @@ def test_score_requires_chrono_feature_for_hamilton():
 
 @pytest.mark.asyncio
 async def test_weak_hamilton_identity_prefers_visual_fallback(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -337,7 +337,7 @@ async def test_weak_hamilton_identity_prefers_visual_fallback(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chrono_feature_mismatch_falls_back_to_visual(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -419,7 +419,7 @@ async def test_chrono_feature_mismatch_falls_back_to_visual(monkeypatch):
 
 def test_automatic_rejects_mechanical_intra_matic_sibling():
     from app.models import SalesInterpretation
-    from app.product_retrieval import score_catalog_candidates
+    from app.catalog.product_retrieval import score_catalog_candidates
 
     interpretation = SalesInterpretation(
         domain="commerce",
@@ -457,7 +457,7 @@ def test_automatic_rejects_mechanical_intra_matic_sibling():
 
 def test_merge_tray_with_visual_prefers_nearest_family_sibling():
     from app.models import SalesInterpretation
-    from app.image_product_id import merge_tray_with_visual_neighbors
+    from app.catalog.image_product_id import merge_tray_with_visual_neighbors
 
     interpretation = SalesInterpretation(
         domain="commerce",
@@ -508,7 +508,7 @@ def test_merge_tray_with_visual_prefers_nearest_family_sibling():
 
 @pytest.mark.asyncio
 async def test_handle_image_disambiguates_siblings_visually(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -597,7 +597,7 @@ async def test_handle_image_disambiguates_siblings_visually(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -637,7 +637,7 @@ async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
         agent_image_download_max_bytes=8_000_000,
     ))
     monkeypatch.setattr(module, "download_image_file", fake_download)
-    monkeypatch.setattr("app.openai_gateway.parse_structured_output", fake_parse)
+    monkeypatch.setattr("app.llm.openai_gateway.parse_structured_output", fake_parse)
 
     result = await identify_product_from_image(message)
     assert result.brand == "Christopher Ward"
@@ -646,7 +646,7 @@ async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_image_product_search_retrieves_catalog(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -712,7 +712,7 @@ async def test_handle_image_product_search_retrieves_catalog(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_image_ambiguous_siblings_does_not_activate(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -758,7 +758,7 @@ async def test_handle_image_ambiguous_siblings_does_not_activate(monkeypatch):
         return identified
 
     async def fake_retrieval(interpretation):
-        from app.product_retrieval import catalog_match_tokens, preference_color_tokens
+        from app.catalog.product_retrieval import catalog_match_tokens, preference_color_tokens
 
         assert "pulseira" not in catalog_match_tokens(interpretation)
         assert "bege" not in catalog_match_tokens(interpretation)
@@ -790,7 +790,7 @@ async def test_handle_image_ambiguous_siblings_does_not_activate(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_image_product_search_does_not_ask_for_sku(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -848,7 +848,7 @@ async def test_handle_image_product_search_does_not_ask_for_sku(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_image_product_search_asks_when_confidence_low(monkeypatch):
-    from app import image_product_id as module
+    from app.catalog import image_product_id as module
 
     message = IncomingMessage(
         channel="whatsapp",
@@ -912,7 +912,7 @@ def test_parser_detects_image_from_url_extension_without_type():
 def test_prospex_diver_dial_maps_to_sea_samurai_catalog_name():
     """Vision often reads dial text; Tray titles use Sea Samurai (SRPL13K1)."""
     from app.models import SalesInterpretation
-    from app.product_retrieval import (
+    from app.catalog.product_retrieval import (
         ProductRetrievalCompiler,
         identity_core_tokens,
         normalize_pt_catalog_query,
@@ -979,7 +979,7 @@ def test_prospex_diver_dial_maps_to_sea_samurai_catalog_name():
 
 def test_citizen_navihawk_mislabel_maps_to_sky_pilot():
     """Vision often says Navihawk for Promaster Sky Pilot Eco-Drive ana-digi."""
-    from app.product_retrieval import (
+    from app.catalog.product_retrieval import (
         ProductRetrievalCompiler,
         catalog_match_tokens,
         commercial_model_aliases,
@@ -1023,8 +1023,8 @@ def test_citizen_navihawk_mislabel_maps_to_sky_pilot():
 
 
 def test_soft_line_interpretation_strips_color_and_forces_recommend():
-    from app.image_product_id import soft_line_interpretation_from_identification
-    from app.product_retrieval import ProductRetrievalCompiler
+    from app.catalog.image_product_id import soft_line_interpretation_from_identification
+    from app.catalog.product_retrieval import ProductRetrievalCompiler
 
     identified = ImageProductIdentification(
         is_watch=True,
@@ -1046,8 +1046,8 @@ def test_soft_line_interpretation_strips_color_and_forces_recommend():
 
 def test_dial_color_lock_rejects_amora_for_sealander_rosa():
     """Vision rosa must not surface Amora Vermelha / Verde as nearby options."""
-    from app.image_product_id import select_products_for_identified_dial
-    from app.product_retrieval import (
+    from app.catalog.image_product_id import select_products_for_identified_dial
+    from app.catalog.product_retrieval import (
         product_conflicts_dial_color,
         rank_products_for_dial_color,
     )

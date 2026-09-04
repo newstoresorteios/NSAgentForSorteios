@@ -1,6 +1,6 @@
 import pytest
 
-from app.pix_settlement import (
+from app.commerce.pix_settlement import (
     brl_to_cents,
     settle_approved_pix_payment,
     validate_pix_settlement_amounts,
@@ -68,7 +68,7 @@ def _row(**overrides):
 
 @pytest.mark.asyncio
 async def test_settle_rejects_amount_mismatch(monkeypatch):
-    import app.pix_settlement as settlement
+    import app.commerce.pix_settlement as settlement
 
     monkeypatch.setattr(settlement.repo, "get_pix_payment_by_mp_id", lambda _pid: _row())
     monkeypatch.setattr(
@@ -88,7 +88,7 @@ async def test_settle_rejects_amount_mismatch(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_settle_skips_when_not_approved(monkeypatch):
-    import app.pix_settlement as settlement
+    import app.commerce.pix_settlement as settlement
 
     monkeypatch.setattr(settlement.repo, "get_pix_payment_by_mp_id", lambda _pid: _row())
     result = await settle_approved_pix_payment(
@@ -102,7 +102,7 @@ async def test_settle_skips_when_not_approved(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_settle_creates_tray_order_when_amounts_match(monkeypatch):
-    import app.pix_settlement as settlement
+    import app.commerce.pix_settlement as settlement
 
     monkeypatch.setattr(settlement.repo, "get_pix_payment_by_mp_id", lambda _pid: _row())
     monkeypatch.setattr(settlement.repo, "claim_pix_settlement", lambda _pid: _row(settlement_status="processing"))
@@ -135,7 +135,7 @@ async def test_settle_creates_tray_order_when_amounts_match(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_settle_idempotent_when_already_completed(monkeypatch):
-    import app.pix_settlement as settlement
+    import app.commerce.pix_settlement as settlement
 
     monkeypatch.setattr(
         settlement.repo,
@@ -152,7 +152,7 @@ async def test_settle_idempotent_when_already_completed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_webhook_approved_runs_settle_with_match(monkeypatch):
-    import app.pix_payment_service as service
+    import app.commerce.pix_payment_service as service
 
     async def fake_refresh(payment_id, *, settings=None):
         return {

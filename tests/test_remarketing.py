@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import BrevoSendResult, IncomingMessage
-from app.remarketing import (
+from app.learning.remarketing import (
     _build_remarketing_message,
     _remarketing_stage,
     is_remarketing_opt_out,
@@ -53,7 +53,7 @@ def test_message_is_stage_specific_and_always_contains_opt_out():
 
 @pytest.mark.asyncio
 async def test_batch_replies_only_through_the_origin_channel(monkeypatch):
-    import app.remarketing as remarketing
+    import app.learning.remarketing as remarketing
 
     sent = []
     finished = []
@@ -106,7 +106,7 @@ async def test_batch_replies_only_through_the_origin_channel(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_paid_order_is_closed_before_any_remarketing_send(monkeypatch):
-    import app.remarketing as remarketing
+    import app.learning.remarketing as remarketing
 
     completed = []
     monkeypatch.setattr(

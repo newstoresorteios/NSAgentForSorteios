@@ -1,6 +1,6 @@
 """Tray adaptor health probe + HA checklist."""
 
-from app.tray_health_probe import tray_ha_checklist
+from app.tray.tray_health_probe import tray_ha_checklist
 
 
 def test_tray_ha_checklist_includes_dashboard_steps():

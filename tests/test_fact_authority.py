@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-from app.fact_authority import (
+from app.verify.fact_authority import (
     CommerceDataAuthority,
     PersonaAuthority,
     PolicyAuthority,
     claim_from_product_field,
     filter_commerce_safe_evidence,
 )
-from app.fact_sources import (
+from app.verify.fact_sources import (
     FACT_SOURCE_RANK,
     FactSource,
     StructuredFact,
     infer_source_for_payload_key,
     preferred_fact,
 )
-from app.factual_validator import build_fact_pack, validate_factual_response
-from app.agent_contracts import build_agent_decision
+from app.verify.factual_validator import build_fact_pack, validate_factual_response
+from app.llm.agent_contracts import build_agent_decision
 from app.models import AgentResult, IncomingMessage
 
 
@@ -164,8 +164,8 @@ def test_stock_violation_is_high_risk_for_enforce():
 
 def test_index_degraded_prices_remain_authorized_for_persona_reply():
     """Tray revalidation failure must not strip index prices and kill Crono wording."""
-    from app.fact_authority import authorize_products_for_responder
-    from app.factual_validator import apply_factual_validation
+    from app.verify.fact_authority import authorize_products_for_responder
+    from app.verify.factual_validator import apply_factual_validation
 
     products = [
         {
@@ -228,7 +228,7 @@ def test_index_degraded_prices_remain_authorized_for_persona_reply():
 
 
 def test_stale_index_prices_still_stripped_without_degraded_flag():
-    from app.fact_authority import authorize_products_for_responder
+    from app.verify.fact_authority import authorize_products_for_responder
 
     authorized, grounded = authorize_products_for_responder(
         [

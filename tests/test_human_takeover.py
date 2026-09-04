@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from app.human_takeover import (
+from app.ops.human_takeover import (
     _candidate_keys,
     _conversas_has_takeover_signal,
     _human_activity_from_row,
@@ -106,7 +106,7 @@ def test_bot_deactivated_expires_after_idle(monkeypatch):
     old = datetime.now(timezone.utc) - timedelta(minutes=20)
     with (
         patch(
-            "app.human_takeover._fetch_conversas_rows",
+            "app.ops.human_takeover._fetch_conversas_rows",
             return_value=[
                 {
                     "assigned_to": None,
@@ -117,10 +117,10 @@ def test_bot_deactivated_expires_after_idle(monkeypatch):
             ],
         ),
         patch(
-            "app.human_takeover._load_pause_state",
+            "app.ops.human_takeover._load_pause_state",
             return_value={"last_human_activity_at": old},
         ),
-        patch("app.human_takeover._upsert_pause_state"),
+        patch("app.ops.human_takeover._upsert_pause_state"),
     ):
         assert human_takeover_active(incoming) is False
 
@@ -142,7 +142,7 @@ def test_bot_deactivated_mutes_within_idle(monkeypatch):
     recent = datetime.now(timezone.utc) - timedelta(minutes=5)
     with (
         patch(
-            "app.human_takeover._fetch_conversas_rows",
+            "app.ops.human_takeover._fetch_conversas_rows",
             return_value=[
                 {
                     "assigned_to": None,
@@ -153,10 +153,10 @@ def test_bot_deactivated_mutes_within_idle(monkeypatch):
             ],
         ),
         patch(
-            "app.human_takeover._load_pause_state",
+            "app.ops.human_takeover._load_pause_state",
             return_value={"last_human_activity_at": recent},
         ),
-        patch("app.human_takeover._upsert_pause_state"),
+        patch("app.ops.human_takeover._upsert_pause_state"),
     ):
         assert human_takeover_active(incoming) is True
 
@@ -178,7 +178,7 @@ def test_stuck_assigned_without_activity_allows_bot_when_persist_fails(monkeypat
     )
     with (
         patch(
-            "app.human_takeover._fetch_conversas_rows",
+            "app.ops.human_takeover._fetch_conversas_rows",
             return_value=[
                 {
                     "assigned_to": "agent-1",
@@ -187,9 +187,9 @@ def test_stuck_assigned_without_activity_allows_bot_when_persist_fails(monkeypat
                 }
             ],
         ),
-        patch("app.human_takeover._load_pause_state", return_value=None),
+        patch("app.ops.human_takeover._load_pause_state", return_value=None),
         patch(
-            "app.human_takeover._upsert_pause_state",
+            "app.ops.human_takeover._upsert_pause_state",
             side_effect=RuntimeError("no table"),
         ),
     ):
@@ -212,7 +212,7 @@ def test_first_observation_mutes_only_when_persisted(monkeypatch):
     )
     with (
         patch(
-            "app.human_takeover._fetch_conversas_rows",
+            "app.ops.human_takeover._fetch_conversas_rows",
             return_value=[
                 {
                     "assigned_to": "agent-1",
@@ -221,8 +221,8 @@ def test_first_observation_mutes_only_when_persisted(monkeypatch):
                 }
             ],
         ),
-        patch("app.human_takeover._load_pause_state", return_value=None),
-        patch("app.human_takeover._upsert_pause_state") as upsert,
+        patch("app.ops.human_takeover._load_pause_state", return_value=None),
+        patch("app.ops.human_takeover._upsert_pause_state") as upsert,
     ):
         assert human_takeover_active(incoming) is True
         assert upsert.called
@@ -245,7 +245,7 @@ def test_human_takeover_expires_after_idle(monkeypatch):
     old = datetime.now(timezone.utc) - timedelta(minutes=20)
     with (
         patch(
-            "app.human_takeover._fetch_conversas_rows",
+            "app.ops.human_takeover._fetch_conversas_rows",
             return_value=[
                 {
                     "assigned_to": "agent-1",
@@ -255,10 +255,10 @@ def test_human_takeover_expires_after_idle(monkeypatch):
             ],
         ),
         patch(
-            "app.human_takeover._load_pause_state",
+            "app.ops.human_takeover._load_pause_state",
             return_value={"last_human_activity_at": old},
         ),
-        patch("app.human_takeover._upsert_pause_state"),
+        patch("app.ops.human_takeover._upsert_pause_state"),
     ):
         assert human_takeover_active(incoming) is False
 
@@ -280,7 +280,7 @@ def test_human_takeover_active_within_idle(monkeypatch):
     recent = datetime.now(timezone.utc) - timedelta(minutes=5)
     with (
         patch(
-            "app.human_takeover._fetch_conversas_rows",
+            "app.ops.human_takeover._fetch_conversas_rows",
             return_value=[
                 {
                     "assigned_to": "agent-1",
@@ -290,10 +290,10 @@ def test_human_takeover_active_within_idle(monkeypatch):
             ],
         ),
         patch(
-            "app.human_takeover._load_pause_state",
+            "app.ops.human_takeover._load_pause_state",
             return_value={"last_human_activity_at": recent},
         ),
-        patch("app.human_takeover._upsert_pause_state"),
+        patch("app.ops.human_takeover._upsert_pause_state"),
     ):
         assert human_takeover_active(incoming) is True
 
@@ -371,7 +371,7 @@ def test_phone_with_only_stale_row_allows_bot(monkeypatch):
     stale_at = datetime.now(timezone.utc) - timedelta(days=30)
     with (
         patch(
-            "app.human_takeover._fetch_conversas_rows",
+            "app.ops.human_takeover._fetch_conversas_rows",
             return_value=[
                 {
                     "external_thread_id": "old-thread-aug5",
@@ -383,8 +383,8 @@ def test_phone_with_only_stale_row_allows_bot(monkeypatch):
                 }
             ],
         ),
-        patch("app.human_takeover._load_pause_state", return_value=None),
-        patch("app.human_takeover._upsert_pause_state"),
+        patch("app.ops.human_takeover._load_pause_state", return_value=None),
+        patch("app.ops.human_takeover._upsert_pause_state"),
     ):
         assert human_takeover_active(incoming) is False
 
@@ -406,7 +406,7 @@ def test_current_thread_takeover_still_blocks(monkeypatch):
     recent = datetime.now(timezone.utc) - timedelta(minutes=3)
     with (
         patch(
-            "app.human_takeover._fetch_conversas_rows",
+            "app.ops.human_takeover._fetch_conversas_rows",
             return_value=[
                 {
                     "external_thread_id": "current-thread",
@@ -418,10 +418,10 @@ def test_current_thread_takeover_still_blocks(monkeypatch):
             ],
         ),
         patch(
-            "app.human_takeover._load_pause_state",
+            "app.ops.human_takeover._load_pause_state",
             return_value={"last_human_activity_at": recent},
         ),
-        patch("app.human_takeover._upsert_pause_state"),
+        patch("app.ops.human_takeover._upsert_pause_state"),
     ):
         assert human_takeover_active(incoming) is True
 

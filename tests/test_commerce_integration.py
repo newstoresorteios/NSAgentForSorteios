@@ -4,7 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
-from app.context_builder import detect_customer_intents, gather_customer_facts, _primary_intent
+from app.memory.context_builder import detect_customer_intents, gather_customer_facts, _primary_intent
 from openai_test_utils import install_fake_openai_client
 
 
@@ -90,7 +90,7 @@ def test_commerce_facts_do_not_lookup_personal_balance(monkeypatch):
     def fail_account_lookup(*args, **kwargs):
         raise AssertionError("commerce must not query local account")
 
-    monkeypatch.setattr("app.context_builder.find_coupon_balance_by_phone", fail_account_lookup)
+    monkeypatch.setattr("app.memory.context_builder.find_coupon_balance_by_phone", fail_account_lookup)
     facts = gather_customer_facts(
         IncomingMessage(sender_phone="5511999999999", text="Vocês têm Tissot Seastar?"),
         {"found": True, "name": "Cliente"},
@@ -124,7 +124,7 @@ async def test_ean_is_commerce_not_third_party(monkeypatch):
         calls.append((name, arguments))
         return {"products": []}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", fake_execute)
     monkeypatch.setattr("app.sales_agent.execute_tool", fake_execute)
     result = await openai_agent.generate_agent_reply_async(
         IncomingMessage(text="Tem o EAN 7611608287637?"),
@@ -140,7 +140,7 @@ async def test_general_does_not_send_tray_tools_or_commercial_fallback(monkeypat
     from app import openai_agent
 
     monkeypatch.setattr(openai_agent, "get_settings", lambda: _settings(openai_api_key=""))
-    monkeypatch.setattr("app.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("general must not call Tray")))
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("general must not call Tray")))
     result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="oi"), {})
     assert result.intent == "general"
     assert "informa\u00e7\u00f5es da loja" not in result.reply_text
@@ -155,7 +155,7 @@ async def test_out_of_scope_is_refused_without_openai_answer_or_tray(monkeypatch
     settings = _settings(openai_api_key="")
     monkeypatch.setattr(openai_agent, "get_settings", lambda: settings)
     monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
-    monkeypatch.setattr("app.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("out of scope must not call Tray")))
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("out of scope must not call Tray")))
     result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="quem ganhou o jogo ontem?"), {})
     assert result.intent == "out_of_scope"
     assert "NewStore" in result.reply_text
@@ -181,7 +181,7 @@ async def test_purchase_intent_uses_product_entity_not_full_sentence(monkeypatch
         calls.append((name, arguments))
         return {"products": [{"id": "1", "name": "Relógio esportivo", "current_price": 1000}]}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", fake_execute)
     install_fake_openai_client(monkeypatch, FakeClient)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="quero comprar um relógio"),
@@ -318,7 +318,7 @@ async def test_ranking_removes_incompatible_brand_model_candidate(monkeypatch):
             {"id": "2", "name": "Tissot Tradition", "brand": "Tissot", "model": "Tradition", "current_price": 4000},
         ]}
 
-    monkeypatch.setattr("app.commerce_router.execute_tool", fake_execute)
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", fake_execute)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="Tem Tissot Seastar?"),
         {"primary_intent": "commerce"},
@@ -337,7 +337,7 @@ async def test_rules_use_local_flow_without_tray(monkeypatch):
     settings = _settings(openai_api_key="")
     monkeypatch.setattr(openai_agent, "get_settings", lambda: settings)
     monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
-    monkeypatch.setattr("app.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("rules must not call Tray")))
+    monkeypatch.setattr("app.commerce.commerce_router.execute_tool", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("rules must not call Tray")))
     result = await openai_agent.generate_agent_reply_async(IncomingMessage(text="como funciona o sorteio?"), {})
     assert result.intent == "rules_faq"
     assert "Lotomania" in result.reply_text

@@ -1,13 +1,13 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState
-from app.handoff_service import is_handoff_acceptance, last_assistant_offered_handoff
-from app.order_service import (
+from app.commerce.commerce_context import CommerceConversationState
+from app.ops.handoff_service import is_handoff_acceptance, last_assistant_offered_handoff
+from app.commerce.order_service import (
     _order_facts_result,
     is_order_notes_request,
     order_notes_unavailable_result,
 )
-from app.order_tracking_audit import audit_order_tracking, run_order_tracking_audit_batch
+from app.commerce.order_tracking_audit import audit_order_tracking, run_order_tracking_audit_batch
 
 
 def test_is_order_notes_request_without_rastreio():

@@ -1,7 +1,7 @@
 import pytest
 
-from app.cart_service import CartItemRequest, create_cart_items_checkout
-from app.commerce_context import (
+from app.commerce.cart_service import CartItemRequest, create_cart_items_checkout
+from app.commerce.commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
     evolve_commerce_state,

@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.category_resolver import CategoryResolver, CategorySelection, normalize_category_name
+from app.catalog.category_resolver import CategoryResolver, CategorySelection, normalize_category_name
 from app.models import IncomingMessage, SalesInterpretation
-from app.product_retrieval import (
+from app.catalog.product_retrieval import (
     ProductRetrievalCompiler,
     compact_candidates,
     enrich_product_variants,
@@ -54,7 +54,7 @@ async def test_category_resolver_matches_real_plural_category(monkeypatch):
             return {"categories": [{"id": 10, "name": "Relógios"}]}
         return {"tree": {"id": 10, "name": "Relógios", "children": []}}
 
-    monkeypatch.setattr("app.category_resolver.get_settings", lambda: _settings())
+    monkeypatch.setattr("app.catalog.category_resolver.get_settings", lambda: _settings())
     resolution = await CategoryResolver(execute).resolve("relógio")
 
     assert normalize_category_name("Relógios") == normalize_category_name("relógio")
@@ -92,7 +92,7 @@ async def test_category_resolver_paginates_until_a_match(monkeypatch):
             }
         return {"tree": {"id": 200, "name": "Relógios"}}
 
-    monkeypatch.setattr("app.category_resolver.get_settings", lambda: _settings())
+    monkeypatch.setattr("app.catalog.category_resolver.get_settings", lambda: _settings())
     resolution = await CategoryResolver(execute).resolve("relógio")
 
     assert resolution.selected_category_ids == ("200",)
@@ -116,7 +116,7 @@ async def test_category_paging_total_stops_after_single_partial_page(monkeypatch
             }
         raise AssertionError(name)
 
-    monkeypatch.setattr("app.category_resolver.get_settings", lambda: _settings())
+    monkeypatch.setattr("app.catalog.category_resolver.get_settings", lambda: _settings())
     resolution = await CategoryResolver(execute).resolve("produto ausente")
 
     assert resolution.failure_reason == "category_not_found"
@@ -136,7 +136,7 @@ async def test_unambiguous_first_page_match_stops_before_second_page(monkeypatch
             }
         return {"tree": {"id": 123, "name": "Relógios"}}
 
-    monkeypatch.setattr("app.category_resolver.get_settings", lambda: _settings())
+    monkeypatch.setattr("app.catalog.category_resolver.get_settings", lambda: _settings())
     resolution = await CategoryResolver(execute).resolve("relógio")
 
     assert resolution.selected_category_ids == ("123",)
@@ -157,7 +157,7 @@ async def test_category_descendants_are_limited_to_five_product_queries(monkeypa
             ],
         }}
 
-    monkeypatch.setattr("app.category_resolver.get_settings", lambda: _settings())
+    monkeypatch.setattr("app.catalog.category_resolver.get_settings", lambda: _settings())
     resolution = await CategoryResolver(execute).resolve("relógio")
 
     assert len(resolution.product_category_ids) == 5
@@ -278,7 +278,7 @@ async def test_catalog_request_retrieves_immediately_by_category(monkeypatch):
 
     settings = _settings()
     monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
-    monkeypatch.setattr("app.product_retrieval.get_settings", lambda: settings)
+    monkeypatch.setattr("app.catalog.product_retrieval.get_settings", lambda: settings)
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
     result = await sales_agent.handle_sales_message(
         IncomingMessage(text="quais modelos vocês têm?"),
@@ -348,7 +348,7 @@ async def test_variant_color_is_loaded_as_real_evidence():
 
 @pytest.mark.asyncio
 async def test_category_selector_discards_invented_id(monkeypatch):
-    import app.category_resolver as resolver_module
+    import app.catalog.category_resolver as resolver_module
 
     class FakeCompletions:
         async def parse(self, **kwargs):

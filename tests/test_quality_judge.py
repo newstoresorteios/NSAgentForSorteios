@@ -1,7 +1,7 @@
 import pytest
 
 from app.models import AgentResult, IncomingMessage
-from app.quality_judge import (
+from app.verify.quality_judge import (
     JudgeVerdict,
     attach_judge_report,
     collect_judge_risk_signals,
@@ -9,8 +9,8 @@ from app.quality_judge import (
     run_quality_judge,
     should_trigger_judge,
 )
-from app.runtime_context import reset_current_turn, set_current_turn
-from app.turn_runtime import TurnRuntimeContext
+from app.ops.runtime_context import reset_current_turn, set_current_turn
+from app.ops.turn_runtime import TurnRuntimeContext
 from openai_test_utils import install_fake_openai_client
 
 
@@ -130,7 +130,7 @@ async def test_shadow_judge_does_not_rewrite_reply(monkeypatch):
 
     install_fake_openai_client(monkeypatch, FakeClient)
     monkeypatch.setattr(
-        "app.quality_judge.get_settings",
+        "app.verify.quality_judge.get_settings",
         lambda: type(
             "S",
             (),
@@ -173,9 +173,9 @@ async def test_greeting_does_not_call_judge_llm(monkeypatch):
     async def boom(*_a, **_k):
         raise AssertionError("judge LLM must not run for greetings")
 
-    monkeypatch.setattr("app.openai_gateway.parse_structured_output", boom)
+    monkeypatch.setattr("app.llm.openai_gateway.parse_structured_output", boom)
     monkeypatch.setattr(
-        "app.quality_judge.get_settings",
+        "app.verify.quality_judge.get_settings",
         lambda: type(
             "S",
             (),
@@ -219,9 +219,9 @@ async def test_judge_schema_failure_fail_closed_on_locked_catalog(monkeypatch):
     async def boom(*_a, **_k):
         raise ValueError("structured_output_missing")
 
-    monkeypatch.setattr("app.openai_gateway.parse_structured_output", boom)
+    monkeypatch.setattr("app.llm.openai_gateway.parse_structured_output", boom)
     monkeypatch.setattr(
-        "app.quality_judge.get_settings",
+        "app.verify.quality_judge.get_settings",
         lambda: type(
             "S",
             (),

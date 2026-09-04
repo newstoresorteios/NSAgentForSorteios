@@ -70,8 +70,8 @@ AGENT_CONTACT_MEMORY_IN_PROMPT_ENABLED=true   # injeta memórias ativas no promp
 AGENT_MEMORY_AUTO_APPLY_ENABLED=false         # manter off até allowlist
 AGENT_CONVERSATION_SUMMARY_ENABLED=false      # critérios/async; não a cada turno
 AGENT_INSTRUCTION_EXTENSION_PROPOSALS_ENABLED=false
-AGENT_LEARNING_AUTO_PROMOTE=false             # Etapa 9: insights pending only
-AGENT_LEARNING_AUTO_ACTIVATE=false            # nunca ativar extension sem admin
+AGENT_LEARNING_AUTO_PROMOTE=true              # continuous ACE loop
+AGENT_LEARNING_AUTO_ACTIVATE=true             # canary + KPI rollback; kill-switch=false
 ```
 
 Com propostas ligadas, o responder comercial usa `AgentTurnEnvelope` (reply + proposals)
@@ -81,8 +81,10 @@ Summary só aplica delta com progresso real (compromisso, correção, falha, met
 Auto-apply exige **ambos**:
 `AGENT_MEMORY_AUTO_APPLY_ENABLED=true` **e** `AGENT_MEMORY_AUTO_APPLY_SENDER_ALLOWLIST`
 (lista de `sender_key` ou `*`). Thresholds: confidence ≥ 0.85, importance ≥ 0.70,
-kinds allowlisted, evidência explícita. Extensões tenant e attendance learning
-nunca auto-ativam (approve só via admin).
+kinds allowlisted, evidência explícita. Extensões propostas no turno comercial
+ficam `pending_review` até o admin. O loop de learning contínuo auto-ativa
+deltas de prompt com constituição + canary; kill-switch:
+`AGENT_LEARNING_AUTO_PROMOTE=false` e `AGENT_LEARNING_AUTO_ACTIVATE=false`.
 
 ## Arquivos principais
 

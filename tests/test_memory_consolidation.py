@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from app.memory_consolidation import consolidate_contact_memories
+from app.memory.memory_consolidation import consolidate_contact_memories
 
 
 def test_consolidate_returns_counts_without_db(monkeypatch):
-    import app.memory_consolidation as consolidation
+    import app.memory.memory_consolidation as consolidation
 
     monkeypatch.setattr(consolidation, "expire_contact_memories", lambda **_k: 2)
     monkeypatch.setattr(consolidation, "prune_excess_active_memories", lambda **_k: 1)

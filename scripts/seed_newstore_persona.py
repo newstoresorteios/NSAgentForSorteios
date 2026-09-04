@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.persona_repository import (  # noqa: E402
+from app.persona.persona_repository import (  # noqa: E402
     DEFAULT_PERSONA_KEY,
     DEFAULT_TENANT_ID,
     activate_persona_version,

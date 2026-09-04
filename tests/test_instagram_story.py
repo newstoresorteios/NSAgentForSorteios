@@ -12,29 +12,29 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import SecretStr
 
-from app.instagram_story_intent import (
+from app.stories.instagram_story_intent import (
     detect_story_question_type,
     should_route_story_question,
 )
-from app.instagram_story_media import (
+from app.stories.instagram_story_media import (
     StoryMediaError,
     validate_story_media_url,
     _sniff_mime,
 )
-from app.instagram_story_models import (
+from app.stories.instagram_story_models import (
     InstagramStoryContext,
     StoryProductCandidate,
     StoryVisualUnderstanding,
     VisualProductRegion,
 )
-from app.instagram_story_parser import (
+from app.stories.instagram_story_parser import (
     extract_instagram_story_context,
     safe_media_reference,
     sanitize_instagram_story_reference,
     strip_signed_url,
 )
 from app.models import IncomingMessage
-from app.story_product_matcher import (
+from app.stories.story_product_matcher import (
     classify_match,
     match_story_to_catalog,
     reject_invented_rerank_ids,
@@ -42,8 +42,8 @@ from app.story_product_matcher import (
     tray_search_jobs,
     tray_search_plan,
 )
-from app.story_publication_link_service import validate_link_payload
-from app.webhook_parser import parse_brevo_conversations_payload
+from app.stories.story_publication_link_service import validate_link_payload
+from app.channels.webhook_parser import parse_brevo_conversations_payload
 
 FIXTURES = Path(__file__).parent / "fixtures" / "instagram_story"
 
@@ -216,7 +216,7 @@ def test_validate_media_url_preserves_signed_operational_url(monkeypatch):
             (socket_mod.AF_INET, socket_mod.SOCK_STREAM, 0, "", ("157.240.0.1", 443))
         ]
 
-    monkeypatch.setattr("app.instagram_story_media.socket.getaddrinfo", _gai)
+    monkeypatch.setattr("app.stories.instagram_story_media.socket.getaddrinfo", _gai)
     url = "https://scontent.cdninstagram.com/v/t51/x.jpg?oe=ABC&oh=SECRET"
     cleaned, _ips = validate_story_media_url(url)
     assert cleaned == url
@@ -230,7 +230,7 @@ def test_sniff_rejects_html_disguised():
 
 @pytest.mark.asyncio
 async def test_download_receives_full_signed_url(monkeypatch):
-    from app import instagram_story_media as media_mod
+    from app.stories import instagram_story_media as media_mod
 
     captured: dict = {}
 
@@ -351,7 +351,7 @@ def test_validate_link_payload_rejects_missing_and_ignores_price():
 
 
 def test_story_rollout_off_skips(monkeypatch):
-    from app.instagram_story_service import story_rollout_allows
+    from app.stories.instagram_story_service import story_rollout_allows
     from app.config import get_settings
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
@@ -372,8 +372,8 @@ def test_story_rollout_off_skips(monkeypatch):
 @pytest.mark.asyncio
 async def test_resolve_story_already_matched_revalidates(monkeypatch):
     from app.config import get_settings
-    from app import instagram_story_service as service
-    from app.instagram_story_models import StoryProductAssociation
+    from app.stories import instagram_story_service as service
+    from app.stories.instagram_story_models import StoryProductAssociation
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "full")
@@ -446,8 +446,8 @@ async def test_resolve_story_already_matched_revalidates(monkeypatch):
 async def test_finalize_story_match_revalidates_without_nameerror(monkeypatch):
     """Regression: matched Tray SKU crashed on `_maybe_revalidate` NameError."""
     from app.config import get_settings
-    from app import instagram_story_service as service
-    from app.instagram_story_models import StoryQuestionType
+    from app.stories import instagram_story_service as service
+    from app.stories.instagram_story_models import StoryQuestionType
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "full")
@@ -521,8 +521,8 @@ async def test_finalize_story_match_revalidates_without_nameerror(monkeypatch):
 @pytest.mark.asyncio
 async def test_shadow_mode_does_not_change_reply(monkeypatch):
     from app.config import get_settings
-    from app import instagram_story_service as service
-    from app.instagram_story_models import StoryProductAssociation
+    from app.stories import instagram_story_service as service
+    from app.stories.instagram_story_models import StoryProductAssociation
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "shadow")
@@ -569,8 +569,8 @@ async def test_shadow_mode_does_not_change_reply(monkeypatch):
 @pytest.mark.asyncio
 async def test_begin_processing_none_does_not_call_vision(monkeypatch):
     from app.config import get_settings
-    from app import instagram_story_service as service
-    from app.instagram_story_models import StoryProductAssociation
+    from app.stories import instagram_story_service as service
+    from app.stories.instagram_story_models import StoryProductAssociation
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "full")
@@ -626,8 +626,8 @@ async def test_begin_processing_none_does_not_call_vision(monkeypatch):
 @pytest.mark.asyncio
 async def test_tenant_unresolved_without_fallback(monkeypatch):
     from app.config import get_settings
-    from app import instagram_story_service as service
-    from app.story_tenant import TenantResolution
+    from app.stories import instagram_story_service as service
+    from app.stories.story_tenant import TenantResolution
 
     monkeypatch.setenv("INSTAGRAM_STORY_RECOGNITION_ENABLED", "true")
     monkeypatch.setenv("INSTAGRAM_STORY_ROLLOUT_MODE", "full")
@@ -652,7 +652,7 @@ async def test_tenant_unresolved_without_fallback(monkeypatch):
 
 
 def test_clarification_uses_real_regions_not_hardcoded():
-    from app.instagram_story_service import _clarification_from_regions
+    from app.stories.instagram_story_service import _clarification_from_regions
 
     analysis = StoryVisualUnderstanding(
         multiple_products=True,
@@ -670,7 +670,7 @@ def test_clarification_uses_real_regions_not_hardcoded():
 
 
 def test_clarification_asks_reference_when_brand_already_known():
-    from app.instagram_story_service import _clarification_from_regions
+    from app.stories.instagram_story_service import _clarification_from_regions
 
     analysis = StoryVisualUnderstanding(
         visible_brands=["Bulova"],
@@ -845,15 +845,15 @@ async def test_story_matcher_picks_baltic_summer_orange_not_tourer(monkeypatch):
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         lambda: EmptyRepo(),
     )
     monkeypatch.setattr(
-        "app.product_image_index.visual_search_from_caption",
+        "app.catalog.product_image_index.visual_search_from_caption",
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *_a, **_k: 0,
     )
 
@@ -917,15 +917,15 @@ async def test_story_matcher_does_not_lock_on_laco_pilot_aachen(monkeypatch):
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         lambda: EmptyRepo(),
     )
     monkeypatch.setattr(
-        "app.product_image_index.visual_search_from_caption",
+        "app.catalog.product_image_index.visual_search_from_caption",
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *_a, **_k: 0,
     )
 
@@ -991,15 +991,15 @@ async def test_story_matcher_picks_purple_tsuyosa_from_tray(monkeypatch):
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         lambda: EmptyRepo(),
     )
     monkeypatch.setattr(
-        "app.product_image_index.visual_search_from_caption",
+        "app.catalog.product_image_index.visual_search_from_caption",
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *_a, **_k: 0,
     )
 
@@ -1080,15 +1080,15 @@ async def test_story_matcher_color_query_finds_purple_outside_first_page(monkeyp
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         lambda: EmptyRepo(),
     )
     monkeypatch.setattr(
-        "app.product_image_index.visual_search_from_caption",
+        "app.catalog.product_image_index.visual_search_from_caption",
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *_a, **_k: 0,
     )
 
@@ -1167,15 +1167,15 @@ async def test_story_matcher_falls_back_to_tray_when_index_empty(monkeypatch):
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         lambda: EmptyRepo(),
     )
     monkeypatch.setattr(
-        "app.product_image_index.visual_search_from_caption",
+        "app.catalog.product_image_index.visual_search_from_caption",
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *_a, **_k: 0,
     )
 
@@ -1230,15 +1230,15 @@ async def test_story_matcher_does_not_exact_match_random_black_bulova(monkeypatc
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         lambda: EmptyRepo(),
     )
     monkeypatch.setattr(
-        "app.product_image_index.visual_search_from_caption",
+        "app.catalog.product_image_index.visual_search_from_caption",
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *_a, **_k: 0,
     )
 
@@ -1299,15 +1299,15 @@ async def test_story_matcher_runs_tray_jobs_concurrently(monkeypatch):
             return []
 
     monkeypatch.setattr(
-        "app.catalog_index_repository.CatalogIndexRepository",
+        "app.catalog.catalog_index_repository.CatalogIndexRepository",
         lambda: EmptyRepo(),
     )
     monkeypatch.setattr(
-        "app.product_image_index.visual_search_from_caption",
+        "app.catalog.product_image_index.visual_search_from_caption",
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *_a, **_k: 0,
     )
 

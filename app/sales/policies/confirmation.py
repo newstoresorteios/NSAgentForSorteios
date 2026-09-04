@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 
 
 def confirmation_text_kind(

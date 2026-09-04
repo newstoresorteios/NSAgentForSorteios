@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.product_media import (
+from app.catalog.product_media import (
     resolve_live_product_url,
     storefront_url_candidates,
 )

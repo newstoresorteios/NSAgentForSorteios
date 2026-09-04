@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 
 
@@ -258,7 +258,7 @@ async def test_unexpected_pre_cart_exception_records_stage_and_type(
 
 @pytest.mark.asyncio
 async def test_real_cart_client_logs_safe_request_and_response_shape(capsys):
-    from app.tray_adapter_client import TrayAdapterClient
+    from app.tray.tray_adapter_client import TrayAdapterClient
 
     class Response:
         status_code = 200

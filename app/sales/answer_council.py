@@ -13,11 +13,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from ..config import get_settings
-from ..greeting_policy import is_generic_greeting_reply
+from app.identity.greeting_policy import is_generic_greeting_reply
 from ..models import AgentResult, IncomingMessage, SalesInterpretation
-from ..product_retrieval import effective_price
+from app.catalog.product_retrieval import effective_price
 from .turn_contract import (
     TurnContract,
     inbound_from_memory,
@@ -116,13 +116,13 @@ _STYLE_RIVAL_RE = {
 
 
 def _product_catalog_text(product: dict[str, Any]) -> str:
-    from ..product_retrieval import _product_text
+    from app.catalog.product_retrieval import _product_text
 
     return _product_text(product)
 
 
 def _presented_conflicts_model(products: list[dict[str, Any]], model: str) -> bool:
-    from ..product_retrieval import required_model_tokens
+    from app.catalog.product_retrieval import required_model_tokens
 
     tokens = required_model_tokens(model)
     if not tokens or not products:
@@ -136,7 +136,7 @@ def _presented_conflicts_model(products: list[dict[str, Any]], model: str) -> bo
 
 
 def _presented_conflicts_color(products: list[dict[str, Any]], color: str) -> bool:
-    from ..product_retrieval import product_conflicts_dial_color
+    from app.catalog.product_retrieval import product_conflicts_dial_color
 
     token = str(color or "").strip().casefold()
     if not token or not products:
@@ -145,7 +145,7 @@ def _presented_conflicts_color(products: list[dict[str, Any]], color: str) -> bo
 
 
 def _presented_conflicts_gender(products: list[dict[str, Any]], gender: str) -> bool:
-    from ..preference_normalize import gender_search_aliases
+    from app.catalog.preference_normalize import gender_search_aliases
 
     wanted = gender_search_aliases(gender)
     rival_label = (
@@ -336,7 +336,7 @@ def apply_corrections(
     if "drop_stale_style" in codes:
         prefs.style = None
     if "drop_stale_gender" in codes:
-        from ..preference_normalize import detect_gender_label
+        from app.catalog.preference_normalize import detect_gender_label
 
         if detect_gender_label(prefs.recipient) and not _looks_like_person_name(
             prefs.recipient
@@ -352,7 +352,7 @@ def apply_corrections(
     if "enforce_style" in codes and contract.style:
         prefs.style = contract.style
     if "enforce_gender" in codes and contract.gender:
-        from ..preference_normalize import detect_gender_label
+        from app.catalog.preference_normalize import detect_gender_label
 
         prefs.recipient = contract.gender
         attrs = [
@@ -363,7 +363,7 @@ def apply_corrections(
         attrs.append(contract.gender)
         prefs.attributes = attrs
     if "clear_fake_name" in codes:
-        from ..preference_normalize import detect_gender_label
+        from app.catalog.preference_normalize import detect_gender_label
 
         if not _looks_like_person_name(prefs.recipient) and not detect_gender_label(
             prefs.recipient
@@ -617,7 +617,7 @@ def _continue_commerce_reply(
                 },
             )
     if presented and commerce_state is not None:
-        from ..context_resume import build_presented_catalog_resume_result
+        from app.memory.context_resume import build_presented_catalog_resume_result
 
         resume = build_presented_catalog_resume_result(commerce_state)
         if resume is not None:
@@ -740,8 +740,8 @@ def _stamp_stale_checkout_clear(
     """Wipe leftover cart identity when this turn started a new browse."""
     if "checkout" not in contract.stale_fields:
         return result
-    from ..cart_service import _clear_cart_session_state
-    from ..context_resume import session_has_unpaid_order
+    from app.commerce.cart_service import _clear_cart_session_state
+    from app.memory.context_resume import session_has_unpaid_order
 
     metadata = dict(result.response_metadata or {})
     metadata["domain"] = metadata.get("domain") or "commerce"

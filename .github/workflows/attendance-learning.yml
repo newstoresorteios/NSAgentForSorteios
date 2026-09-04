@@ -1,12 +1,12 @@
-# Hourly self-learning over recent agent attendances.
+# Incremental self-learning since last cursor (every 15 minutes).
 # Calls the production cron endpoint (same auth as Vercel crons).
 
 name: Attendance Learning
 
 on:
   schedule:
-    # Every hour at minute 10 (offset from Vercel :00 to diversify load)
-    - cron: "10 * * * *"
+    # Every 15 minutes — incremental cursor, bounded batch.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 jobs:

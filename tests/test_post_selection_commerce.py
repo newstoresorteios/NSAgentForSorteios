@@ -2,15 +2,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.cart_service import CartItemRequest, create_cart_items_checkout
-from app.commerce_context import (
+from app.commerce.cart_service import CartItemRequest, create_cart_items_checkout
+from app.commerce.commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
     evolve_commerce_state,
 )
 from app.models import IncomingMessage, SalesInterpretation
-from app.payment_service import inspect_payment_options
-from app.product_media import resolve_product_image
+from app.commerce.payment_service import inspect_payment_options
+from app.catalog.product_media import resolve_product_image
 
 
 def _reference(product_id: str, name: str | None = None):
@@ -35,7 +35,7 @@ def _interpretation(**overrides):
 
 @pytest.mark.asyncio
 async def test_real_wrapped_detail_price_reaches_cart_post():
-    from app.tray_tools import execute_tool
+    from app.tray.tray_tools import execute_tool
 
     class Adapter:
         def __init__(self):
@@ -91,7 +91,7 @@ async def test_real_wrapped_detail_price_reaches_cart_post():
 
 
 def test_cart_price_resolution_uses_positive_structured_commercial_value():
-    from app.product_retrieval import resolve_commercial_price
+    from app.catalog.product_retrieval import resolve_commercial_price
 
     result = resolve_commercial_price(
         {
@@ -379,11 +379,11 @@ async def test_inbound_photo_with_image_request_identifies_product(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "app.image_product_id.handle_image_product_search",
+        "app.catalog.image_product_id.handle_image_product_search",
         fake_image_search,
     )
     monkeypatch.setattr(
-        "app.image_product_id.image_search_eligible",
+        "app.catalog.image_product_id.image_search_eligible",
         lambda message: True,
     )
     monkeypatch.setattr(
@@ -679,11 +679,11 @@ async def test_inbound_image_ignores_stale_kingfisher_context(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "app.image_product_id.handle_image_product_search",
+        "app.catalog.image_product_id.handle_image_product_search",
         fake_image_search,
     )
     monkeypatch.setattr(
-        "app.image_product_id.image_search_eligible",
+        "app.catalog.image_product_id.image_search_eligible",
         lambda message: True,
     )
     monkeypatch.setattr(
@@ -770,7 +770,7 @@ async def test_missing_image_is_honest():
 
 @pytest.mark.asyncio
 async def test_brevo_conversations_image_fallback_remains_text(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
     from app.models import AgentResult
 
     monkeypatch.setattr(
@@ -802,7 +802,7 @@ async def test_brevo_conversations_image_fallback_remains_text(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_image_fallback_delivery_failure_is_not_reported_as_native_media(monkeypatch):
-    import app.brevo_client as brevo
+    import app.channels.brevo_client as brevo
     from app.models import AgentResult
 
     monkeypatch.setattr(

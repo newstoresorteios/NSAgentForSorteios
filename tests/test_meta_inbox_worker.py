@@ -1,5 +1,5 @@
 from app.ingress.reconstruct import incoming_from_inbox_payload
-from app.inbound_coalesce import attach_recent_image_for_followup
+from app.channels.inbound_coalesce import attach_recent_image_for_followup
 from app.models import IncomingMessage
 
 
@@ -40,7 +40,7 @@ def test_reconstruct_meta_story_message():
 
 
 def test_attach_recent_image_for_valor(monkeypatch):
-    from app import inbound_coalesce as module
+    from app.channels import inbound_coalesce as module
 
     monkeypatch.setattr(
         module,
@@ -87,7 +87,7 @@ def test_meta_provider_respects_human_takeover(monkeypatch):
     )
     monkeypatch.setattr(worker_mod, "attach_recent_image_for_followup", lambda incoming: incoming)
     monkeypatch.setattr(
-        "app.human_takeover.human_takeover_active",
+        "app.ops.human_takeover.human_takeover_active",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(worker_mod, "claim_inbound_message", lambda *_args, **_kwargs: (True, 9))

@@ -1,6 +1,6 @@
 import pytest
 
-from app.webhook_parser import (
+from app.channels.webhook_parser import (
     build_sender_key,
     inbound_skip_reason,
     normalize_channel,

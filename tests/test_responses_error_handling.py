@@ -3,14 +3,14 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from app.openai_errors import (
+from app.llm.openai_errors import (
     OpenAIEmptyOutputError,
     OpenAIIncompleteError,
     OpenAIRefusalError,
     OpenAISchemaError,
     OpenAITimeoutGatewayError,
 )
-from app.openai_gateway import ResponsesGateway
+from app.llm.openai_gateway import ResponsesGateway
 
 
 class _Out(BaseModel):
@@ -20,7 +20,7 @@ class _Out(BaseModel):
 @pytest.mark.asyncio
 async def test_incomplete_status_raises(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,
@@ -50,7 +50,7 @@ async def test_incomplete_status_raises(monkeypatch):
 @pytest.mark.asyncio
 async def test_timeout_mapped(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,
@@ -74,7 +74,7 @@ async def test_timeout_mapped(monkeypatch):
 @pytest.mark.asyncio
 async def test_empty_text_raises(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(openai_store_responses=False),
     )
 
@@ -99,7 +99,7 @@ async def test_empty_text_raises(monkeypatch):
 @pytest.mark.asyncio
 async def test_refusal_and_schema(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,

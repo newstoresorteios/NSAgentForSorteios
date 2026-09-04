@@ -1,5 +1,5 @@
-from app.checkout_service import checkout_capabilities, select_checkout_channel
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.commerce.checkout_service import checkout_capabilities, select_checkout_channel
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
 
 
 def _cart_state() -> CommerceConversationState:

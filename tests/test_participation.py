@@ -1,5 +1,5 @@
-from app.guardrails import detect_last_participation_inquiry, detect_raffle_history_inquiry
-from app.repository import format_payment_numbers
+from app.verify.guardrails import detect_last_participation_inquiry, detect_raffle_history_inquiry
+from app.identity.repository import format_payment_numbers
 
 
 def test_detect_raffle_history_inquiry_last_sorteio():

@@ -8,7 +8,7 @@ from openai import BadRequestError
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import IncomingMessage, SalesInterpretation
 from openai_test_utils import install_fake_openai_client
 
@@ -120,7 +120,7 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
     assert "tools" not in captured
     assert "tool_choice" not in captured
     assert "parallel_tool_calls" not in captured
-    from app.capability_catalog import format_capability_catalog_for_prompt
+    from app.llm.capability_catalog import format_capability_catalog_for_prompt
 
     empty_state = CommerceConversationState()
     assert captured["messages"] == [

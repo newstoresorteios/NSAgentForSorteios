@@ -4,26 +4,26 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..cart_service import (
+from app.commerce.cart_service import (
     CartItemRequest,
     create_cart_checkout,
     create_cart_items_checkout,
 )
-from ..commerce_context import (
+from app.commerce.commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
     checkout_missing_fields,
     evolve_commerce_state,
 )
 from ..models import AgentResult, IncomingMessage, SalesInterpretation
-from ..order_service import confirm_prepared_order, create_order, prepare_order
-from ..payment_service import inspect_order_payment, inspect_payment_options
-from ..pix_checkout_service import (
+from app.commerce.order_service import confirm_prepared_order, create_order, prepare_order
+from app.commerce.payment_service import inspect_order_payment, inspect_payment_options
+from app.commerce.pix_checkout_service import (
     generate_direct_pix_checkout,
     should_use_direct_pix,
 )
-from ..product_retrieval import commercial_availability_facts
-from ..shipping_service import quote_shipping, select_shipping
+from app.catalog.product_retrieval import commercial_availability_facts
+from app.commerce.shipping_service import quote_shipping, select_shipping
 from .result_utils import mark_sales_result
 
 

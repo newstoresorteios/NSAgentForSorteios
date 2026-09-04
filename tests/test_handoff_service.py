@@ -1,4 +1,4 @@
-from app.handoff_service import (
+from app.ops.handoff_service import (
     apply_integration_failure_handoff,
     build_human_handoff_result,
     enrich_handoff_metadata,
@@ -22,7 +22,7 @@ def test_customer_request_triggers_handoff():
 
 
 def test_por_favor_accepts_joao_handoff_offer():
-    from app.handoff_service import is_handoff_acceptance
+    from app.ops.handoff_service import is_handoff_acceptance
 
     recent = [
         {

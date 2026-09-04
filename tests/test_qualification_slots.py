@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from app.models import SalesInterpretation
-from app.persona_runtime import (
+from app.persona.persona_runtime import (
     build_persona_runtime,
     reset_persona_runtime,
     set_persona_runtime,
 )
-from app.preference_normalize import normalize_sales_interpretation
+from app.catalog.preference_normalize import normalize_sales_interpretation
 from app.sales.discovery import _persona_qualification_question
 from app.sales.qualification_slots import (
     CUSTOMER_NAME,

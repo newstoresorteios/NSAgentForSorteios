@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
-from app.outbound_compliance import apply_outbound_compliance, check_outbound_compliance
-from app.preference_normalize import (
+from app.verify.outbound_compliance import apply_outbound_compliance, check_outbound_compliance
+from app.catalog.preference_normalize import (
     normalize_sales_interpretation,
     repair_dial_and_case_preferences,
 )
-from app.product_media import storefront_url_candidates
-from app.product_retrieval import prefer_dial_and_case_matches, score_catalog_candidates
+from app.catalog.product_media import storefront_url_candidates
+from app.catalog.product_retrieval import prefer_dial_and_case_matches, score_catalog_candidates
 from app.models import ProductPreferences
 
 

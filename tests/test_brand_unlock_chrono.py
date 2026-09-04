@@ -1,14 +1,14 @@
 """Brand unlock, chronograph force-retrieval, exclude-brand hard filter (João)."""
 
-from app.catalog_specs import (
+from app.catalog.catalog_specs import (
     extract_rejected_brands_from_text,
     message_requests_other_brands,
     message_wants_chronograph,
     product_matches_excluded_brand,
 )
 from app.models import SalesInterpretation
-from app.preference_normalize import normalize_sales_interpretation
-from app.product_retrieval import hard_filter_products
+from app.catalog.preference_normalize import normalize_sales_interpretation
+from app.catalog.product_retrieval import hard_filter_products
 from app.sales.discovery import _discovery_state
 
 

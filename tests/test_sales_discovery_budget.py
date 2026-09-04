@@ -154,7 +154,7 @@ def test_explicit_no_preference_is_not_an_unknown_question_candidate():
 
 
 def test_persona_qualification_blocks_brand_only_force_retrieval(monkeypatch):
-    import app.persona_runtime as persona_runtime
+    import app.persona.persona_runtime as persona_runtime
     import app.sales_agent as sales_agent
 
     runtime = persona_runtime.PersonaRuntimeConfig(
@@ -197,7 +197,7 @@ def test_persona_qualification_blocks_brand_only_force_retrieval(monkeypatch):
 
 
 def test_persona_qualification_unlocks_on_brand_plus_budget():
-    import app.persona_runtime as persona_runtime
+    import app.persona.persona_runtime as persona_runtime
     import app.sales_agent as sales_agent
 
     runtime = persona_runtime.PersonaRuntimeConfig(
@@ -238,7 +238,7 @@ def test_persona_qualification_unlocks_on_brand_plus_budget():
 
 def test_rehydrated_style_and_budget_unlock_without_reasking():
     """P2: prefs already on the interpretation (e.g. contact memory) satisfy the gate."""
-    import app.persona_runtime as persona_runtime
+    import app.persona.persona_runtime as persona_runtime
     import app.sales_agent as sales_agent
 
     runtime = persona_runtime.PersonaRuntimeConfig(
@@ -282,7 +282,7 @@ def test_rehydrated_style_and_budget_unlock_without_reasking():
 
 def test_brand_plus_color_or_material_still_requires_qualification():
     """'quero um bulova dourado automatico' must ask faixa/estilo — not search yet."""
-    import app.persona_runtime as persona_runtime
+    import app.persona.persona_runtime as persona_runtime
     import app.sales_agent as sales_agent
 
     runtime = persona_runtime.PersonaRuntimeConfig(
@@ -331,7 +331,7 @@ def test_brand_plus_color_or_material_still_requires_qualification():
 
 
 def test_open_browse_scrubs_stale_budget_and_asks_investment():
-    import app.persona_runtime as persona_runtime
+    import app.persona.persona_runtime as persona_runtime
     import app.sales_agent as sales_agent
 
     runtime = persona_runtime.PersonaRuntimeConfig(
@@ -374,9 +374,9 @@ def test_open_browse_scrubs_stale_budget_and_asks_investment():
 
 @pytest.mark.asyncio
 async def test_open_browse_ignores_previous_recommendation_and_asks_budget(monkeypatch):
-    import app.persona_runtime as persona_runtime
+    import app.persona.persona_runtime as persona_runtime
     import app.sales_agent as sales_agent
-    from app.commerce_context import (
+    from app.commerce.commerce_context import (
         CommerceConversationState,
         CommerceProductReference,
         PresentedCommerceProduct,
@@ -496,11 +496,11 @@ async def test_structured_clarification_question_avoids_second_openai_call(monke
         raise AssertionError("structured question must be reused")
 
     monkeypatch.setattr(
-        "app.openai_gateway.parse_structured_output",
+        "app.llm.openai_gateway.parse_structured_output",
         forbid_openai,
     )
     monkeypatch.setattr(
-        "app.openai_gateway.generate_text_output",
+        "app.llm.openai_gateway.generate_text_output",
         forbid_openai,
     )
 
@@ -562,7 +562,7 @@ async def test_catalog_request_interpretation_reaches_retrieval_without_clarific
 
 @pytest.mark.asyncio
 async def test_brand_comparison_without_model_asks_instead_of_searching(monkeypatch):
-    import app.persona_runtime as persona_runtime
+    import app.persona.persona_runtime as persona_runtime
 
     runtime = persona_runtime.PersonaRuntimeConfig(
         loaded=True,

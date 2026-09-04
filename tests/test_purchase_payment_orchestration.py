@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 
 
@@ -361,9 +361,9 @@ async def test_checkout_payment_without_product_still_requires_selection(monkeyp
 
 def test_informational_payment_uses_persona_runtime_discount(monkeypatch):
     import app.sales.policies.action_authority as authority
-    from app.commerce_context import CommerceConversationState
-    from app.persona_models import PersonaVersion
-    from app.persona_runtime import (
+    from app.commerce.commerce_context import CommerceConversationState
+    from app.persona.persona_models import PersonaVersion
+    from app.persona.persona_runtime import (
         build_persona_runtime,
         reset_persona_runtime,
         set_persona_runtime,
@@ -400,8 +400,8 @@ def test_informational_payment_uses_persona_runtime_discount(monkeypatch):
 @pytest.mark.asyncio
 async def test_informational_payment_respects_require_cart_flag(monkeypatch):
     import app.sales_agent as sales_agent
-    from app.persona_models import PersonaVersion
-    from app.persona_runtime import (
+    from app.persona.persona_models import PersonaVersion
+    from app.persona.persona_runtime import (
         build_persona_runtime,
         reset_persona_runtime,
         set_persona_runtime,

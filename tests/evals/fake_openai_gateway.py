@@ -10,14 +10,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.openai_errors import (
+from app.llm.openai_errors import (
     OpenAIEmptyOutputError,
     OpenAIIncompleteError,
     OpenAIRateLimitGatewayError,
     OpenAIRefusalError,
     OpenAITimeoutGatewayError,
 )
-from app.openai_gateway import (
+from app.llm.openai_gateway import (
     StructuredParseResult,
     TextGenerationResult,
     ToolLoopResult,

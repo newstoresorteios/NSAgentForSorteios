@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from app.config import get_settings
 from app.db import ensure_tables, get_conn, to_jsonb
-from app.observability import log_event
+from app.ops.observability import log_event
 
 
 def enqueue_outbound(

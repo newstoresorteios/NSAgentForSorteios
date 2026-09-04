@@ -1,4 +1,4 @@
-from app.agent_contracts import build_agent_decision, evaluate_policy
+from app.llm.agent_contracts import build_agent_decision, evaluate_policy
 from app.models import AgentResult, IncomingMessage
 
 

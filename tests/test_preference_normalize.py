@@ -1,7 +1,7 @@
 """Tests for gender/budget preference normalization and retrieval mode."""
 
 from app.models import SalesInterpretation
-from app.preference_normalize import (
+from app.catalog.preference_normalize import (
     detect_gender_label,
     extract_stated_color,
     extract_stated_gender,
@@ -11,7 +11,7 @@ from app.preference_normalize import (
     preference_gender_label,
     recent_user_context_text,
 )
-from app.product_retrieval import ProductRetrievalCompiler, preference_gender_tokens
+from app.catalog.product_retrieval import ProductRetrievalCompiler, preference_gender_tokens
 
 
 def _base(**kwargs) -> SalesInterpretation:

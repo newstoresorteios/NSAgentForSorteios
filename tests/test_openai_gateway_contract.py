@@ -11,7 +11,7 @@ import pytest
 from openai import APITimeoutError, RateLimitError
 from pydantic import BaseModel
 
-from app.openai_errors import (
+from app.llm.openai_errors import (
     OpenAIEmptyOutputError,
     OpenAIGatewayError,
     OpenAIIncompleteError,
@@ -22,7 +22,7 @@ from app.openai_errors import (
     OpenAITimeoutGatewayError,
     OpenAIUnknownToolError,
 )
-from app.openai_gateway import (
+from app.llm.openai_gateway import (
     ChatCompletionsGateway,
     FallbackOpenAIGateway,
     ResponsesGateway,
@@ -32,7 +32,7 @@ from app.openai_gateway import (
     model_capabilities,
     reset_openai_gateway,
 )
-from app.openai_models import resolve_openai_model
+from app.llm.openai_models import resolve_openai_model
 
 
 class _Label(BaseModel):
@@ -72,11 +72,11 @@ def _reset_gateway():
 @pytest.fixture
 def responses_settings(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: _settings(),
     )
     monkeypatch.setattr(
-        "app.openai_models.get_settings",
+        "app.llm.openai_models.get_settings",
         lambda: _settings(),
     )
 
@@ -167,7 +167,7 @@ def test_sdk_pin_is_2_7_2():
 
 def test_build_gateway_defaults_to_responses(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: _settings(openai_api_mode="responses"),
     )
     gateway = build_openai_gateway()
@@ -248,7 +248,7 @@ async def test_responses_structured_valid_and_metrics(responses_settings):
 @pytest.mark.asyncio
 async def test_responses_attaches_reasoning_for_o_models(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: _settings(openai_reasoning_effort="high"),
     )
     client = SimpleNamespace(responses=_FakeResponses())
@@ -266,7 +266,7 @@ async def test_responses_attaches_reasoning_for_o_models(monkeypatch):
 @pytest.mark.asyncio
 async def test_responses_max_output_tokens(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: _settings(openai_max_output_tokens=512),
     )
     client = SimpleNamespace(responses=_FakeResponses())
@@ -364,7 +364,7 @@ async def test_timeout_normalized(responses_settings, monkeypatch):
         raise APITimeoutError(request=None)
 
     monkeypatch.setattr(
-        "app.openai_gateway.execute_openai_call",
+        "app.llm.openai_gateway.execute_openai_call",
         lambda **kwargs: (_ for _ in ()).throw(APITimeoutError(request=None)),
     )
     # Bypass execute wrapper — call mapping path via real gateway with exploding client
@@ -376,7 +376,7 @@ async def test_timeout_normalized(responses_settings, monkeypatch):
     async def _exec(**kwargs):
         raise APITimeoutError(request=None)
 
-    monkeypatch.setattr("app.openai_gateway.execute_openai_call", _exec)
+    monkeypatch.setattr("app.llm.openai_gateway.execute_openai_call", _exec)
     gateway = ResponsesGateway(client=SimpleNamespace(responses=_Boom()))
     with pytest.raises(OpenAITimeoutGatewayError):
         await gateway.generate_text(model="gpt-4.1-mini", input_items="x")
@@ -391,7 +391,7 @@ async def test_rate_limit_normalized(monkeypatch, responses_settings):
         response = Response(429, request=request)
         raise RateLimitError(message="rate", response=response, body=None)
 
-    monkeypatch.setattr("app.openai_gateway.execute_openai_call", _exec)
+    monkeypatch.setattr("app.llm.openai_gateway.execute_openai_call", _exec)
     gateway = ResponsesGateway(client=SimpleNamespace(responses=SimpleNamespace()))
     with pytest.raises(OpenAIRateLimitGatewayError):
         await gateway.generate_text(model="gpt-4.1-mini", input_items="x")
@@ -582,7 +582,7 @@ async def test_fallback_on_responses_failure(responses_settings):
 @pytest.mark.asyncio
 async def test_never_sends_previous_response_id_even_if_flag_true(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: _settings(openai_use_previous_response_id=True),
     )
     client = SimpleNamespace(responses=_FakeResponses())
@@ -610,10 +610,10 @@ async def test_default_timeout_from_settings(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: _settings(openai_timeout_seconds=17.0),
     )
-    monkeypatch.setattr("app.openai_gateway.execute_openai_call", _exec)
+    monkeypatch.setattr("app.llm.openai_gateway.execute_openai_call", _exec)
     gateway = ResponsesGateway(client=SimpleNamespace(responses=_FakeResponses()))
     await gateway.generate_text(model="gpt-4.1-mini", input_items="x")
     assert captured["timeout"] == 17.0

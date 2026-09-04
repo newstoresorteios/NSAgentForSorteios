@@ -1,4 +1,4 @@
-from app.context_builder import detect_customer_intents, gather_customer_facts, _primary_intent
+from app.memory.context_builder import detect_customer_intents, gather_customer_facts, _primary_intent
 from app.models import IncomingMessage
 
 
@@ -21,13 +21,13 @@ def test_gather_customer_facts_includes_simulation_block(monkeypatch):
             "coupon_value_cents": 11000,
         }
 
-    monkeypatch.setattr("app.context_builder.find_coupon_balance_by_phone", fake_account)
+    monkeypatch.setattr("app.memory.context_builder.find_coupon_balance_by_phone", fake_account)
     monkeypatch.setattr(
-        "app.context_builder.find_last_payment_participation",
+        "app.memory.context_builder.find_last_payment_participation",
         lambda user_id: {"found": False},
     )
     monkeypatch.setattr(
-        "app.context_builder.get_user_preferences",
+        "app.memory.context_builder.get_user_preferences",
         lambda user_id: {"preferred_name": "Tironi"},
     )
 

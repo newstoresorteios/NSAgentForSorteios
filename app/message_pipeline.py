@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from app.config import audio_outbound_ready, get_settings
-from app.agent_contracts import (
+from app.llm.agent_contracts import (
     apply_policy_enforcement,
     build_agent_decision,
     evaluate_policy,
 )
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
-from app.customer_identity import (
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.identity.customer_identity import (
     resolve_person_key_candidates,
     upsert_customer_identity_links,
 )
@@ -16,24 +16,24 @@ from app.db import (
     load_recent_conversation_turns,
     persist_customer_commerce_session,
 )
-from app.observability import (
+from app.ops.observability import (
     log_event,
     log_exception,
     redact_text,
     summarize_commerce_state,
     summarize_customer_context,
 )
-from app.working_memory import build_working_memory
-from app.factual_validator import apply_factual_validation
-from app.handoff_service import enrich_handoff_metadata
+from app.memory.working_memory import build_working_memory
+from app.verify.factual_validator import apply_factual_validation
+from app.ops.handoff_service import enrich_handoff_metadata
 from app.models import AgentResult, IncomingMessage
 from app.openai_agent import generate_agent_reply_async
-from app.quality_judge import attach_judge_report, run_quality_judge
-from app.response_composer import compose_outbound_reply
-from app.response_critique import apply_response_critique_loop
-from app.runtime_context import get_current_turn, runtime_stage
-from app.user_preferences import enrich_customer_context, learn_from_incoming_message, record_interaction_memory
-from app.audio_service import should_transcribe_incoming
+from app.verify.quality_judge import attach_judge_report, run_quality_judge
+from app.llm.response_composer import compose_outbound_reply
+from app.verify.response_critique import apply_response_critique_loop
+from app.ops.runtime_context import get_current_turn, runtime_stage
+from app.identity.user_preferences import enrich_customer_context, learn_from_incoming_message, record_interaction_memory
+from app.channels.audio_service import should_transcribe_incoming
 
 
 async def prepare_incoming_message(incoming: IncomingMessage) -> IncomingMessage:
@@ -43,7 +43,7 @@ async def prepare_incoming_message(incoming: IncomingMessage) -> IncomingMessage
     if not should_transcribe_incoming(incoming.text, incoming.audio_url, incoming.audio_filename):
         return incoming
 
-    from app.audio_service import transcribe_audio_url
+    from app.channels.audio_service import transcribe_audio_url
 
     try:
         transcribed = await transcribe_audio_url(
@@ -85,8 +85,8 @@ async def enrich_agent_result(incoming: IncomingMessage, result: AgentResult) ->
             )
         return result
 
-    from app.audio_service import synthesize_reply_audio
-    from app.supabase_storage import upload_public_audio
+    from app.channels.audio_service import synthesize_reply_audio
+    from app.channels.supabase_storage import upload_public_audio
 
     try:
         audio_bytes, mime_type, filename = synthesize_reply_audio(result.reply_text)
@@ -220,7 +220,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     previous_dialogue_phase = commerce_state.dialogue_phase
     commerce_state = evolve_commerce_state(commerce_state, result)
     if commerce_state.dialogue_phase != previous_dialogue_phase:
-        from .observability import record_dialogue_phase_transition
+        from app.ops.observability import record_dialogue_phase_transition
 
         record_dialogue_phase_transition(
             from_phase=previous_dialogue_phase,
@@ -311,7 +311,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         "recommendation_budget_miss",
     }:
         try:
-            from .attendance_learning import record_pipeline_block_review
+            from app.learning.attendance_learning import record_pipeline_block_review
 
             record_pipeline_block_review(
                 conversation_key=(
@@ -331,7 +331,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         except Exception as exc:
             log_exception("attendance.pipeline_review.error", exc)
     # Deterministic preference/link/persona checker (no extra LLM).
-    from .outbound_compliance import apply_outbound_compliance
+    from app.verify.outbound_compliance import apply_outbound_compliance
     result, _compliance = apply_outbound_compliance(
         incoming=incoming,
         result=result,
@@ -339,7 +339,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     )
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
-    from .rollout import (
+    from app.ops.rollout import (
         resolve_effective_critique_mode,
         resolve_effective_judge_mode,
     )
@@ -350,13 +350,13 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     judge_mode = resolve_effective_judge_mode(settings)
     if judge_mode not in {"off", "shadow", "enforce"}:
         judge_mode = "off"
-    from .history_window import (
+    from app.memory.history_window import (
         resolve_history_hard_cap,
         resolve_model_history_limit,
         select_model_history_turns,
         turns_for_conversation,
     )
-    from .llm_call_policy import should_run_quality_judge
+    from app.llm.llm_call_policy import should_run_quality_judge
 
     model_turns = customer_context.get("_model_conversation_turns")
     if not model_turns:
@@ -531,7 +531,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         outbound_snapshot["openai_api_fallback"] = bool(runtime.openai_api_fallback)
     log_event("turn.end", outbound_snapshot)
     if runtime is not None:
-        from app.turn_metrics import build_turn_quality_event
+        from app.ops.turn_metrics import build_turn_quality_event
 
         quality_event = build_turn_quality_event(
             runtime,
@@ -542,7 +542,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             intent=result.intent,
             model=getattr(settings, "openai_model", None),
         )
-        from .rollout import build_rollout_status, observe_turn_for_rollout_alerts
+        from app.ops.rollout import build_rollout_status, observe_turn_for_rollout_alerts
 
         quality_event["rollout_profile"] = build_rollout_status(settings).get("profile")
         quality_event["openai_api_fallback"] = bool(runtime.openai_api_fallback)
@@ -566,7 +566,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         incoming.sender_key or incoming.sender_phone or incoming.conversation_id
     ):
         try:
-            from app.contact_preference_memory import (
+            from app.memory.contact_preference_memory import (
                 persist_contact_preferences_from_interpretation,
             )
 
@@ -597,8 +597,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         envelope_payload = (result.response_metadata or {}).get("agent_turn_envelope")
         if isinstance(envelope_payload, dict):
             try:
-                from app.memory_models import AgentTurnEnvelope
-                from app.memory_service import process_agent_memory_proposals
+                from app.memory.memory_models import AgentTurnEnvelope
+                from app.memory.memory_service import process_agent_memory_proposals
 
                 envelope = AgentTurnEnvelope.model_validate(envelope_payload)
                 memory_result = process_agent_memory_proposals(

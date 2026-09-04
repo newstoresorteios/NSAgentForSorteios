@@ -3,16 +3,16 @@ from __future__ import annotations
 import pytest
 from types import SimpleNamespace
 
-from app.checkout_data_service import update_checkout_data
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
-from app.payment_service import checkout_payment_blockers, inspect_payment_options
-from app.order_service import (
+from app.commerce.checkout_data_service import update_checkout_data
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.commerce.payment_service import checkout_payment_blockers, inspect_payment_options
+from app.commerce.order_service import (
     confirm_prepared_order,
     create_order,
     get_order_facts,
     prepare_order,
 )
-from app.shipping_service import quote_shipping, select_shipping
+from app.commerce.shipping_service import quote_shipping, select_shipping
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 
 
@@ -1521,7 +1521,7 @@ async def test_order_failure_preserves_adapter_error_causes():
 @pytest.mark.asyncio
 async def test_removal_invalidates_state_after_removal(monkeypatch):
     import app.sales_agent as sales_agent
-    from app.cart_service import resolve_cart_item_reference
+    from app.commerce.cart_service import resolve_cart_item_reference
     from app.models import SalesInterpretation
 
     monkeypatch.setattr(

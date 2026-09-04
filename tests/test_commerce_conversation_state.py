@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import (
+from app.commerce.commerce_context import (
     CommerceConversationState,
     PresentedCommerceProduct,
     apply_commerce_domain_context,
@@ -282,7 +282,7 @@ def test_load_state_uses_existing_jsonb_and_only_delivered_responses(monkeypatch
     )
     monkeypatch.setattr(db, "get_conn", fake_get_conn)
     monkeypatch.setattr(
-        "app.customer_identity.resolve_linked_identity_candidates",
+        "app.identity.customer_identity.resolve_linked_identity_candidates",
         lambda **_kwargs: [],
     )
 

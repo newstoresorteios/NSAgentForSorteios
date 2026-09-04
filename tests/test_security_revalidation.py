@@ -4,8 +4,8 @@ import re
 from pathlib import Path
 
 from app.config import Settings
-from app.guardrails import detect_blocked_request
-from app.prompt_compiler import FIXED_SAFETY_POLICY
+from app.verify.guardrails import detect_blocked_request
+from app.llm.prompt_compiler import FIXED_SAFETY_POLICY
 
 
 ROOT = Path(__file__).resolve().parents[1]

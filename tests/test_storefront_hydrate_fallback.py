@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.storefront_search import _product_from_storefront_hit, hydrate_storefront_hits
+from app.catalog.storefront_search import _product_from_storefront_hit, hydrate_storefront_hits
 
 
 @pytest.mark.asyncio

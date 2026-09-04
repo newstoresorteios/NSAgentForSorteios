@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 
 
@@ -135,7 +135,7 @@ async def test_explicit_product_request_allows_catalog_search(monkeypatch):
 
 
 def test_active_product_requires_explicit_structured_reference():
-    from app.commerce_context import resolve_commerce_reference
+    from app.commerce.commerce_context import resolve_commerce_reference
 
     state = CommerceConversationState(
         active_domain="commerce",

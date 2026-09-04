@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent_contracts import build_agent_decision, evaluate_policy
-from app.factual_validator import apply_factual_validation
-from app.handoff_service import build_human_handoff_result
+from app.llm.agent_contracts import build_agent_decision, evaluate_policy
+from app.verify.factual_validator import apply_factual_validation
+from app.ops.handoff_service import build_human_handoff_result
 from app.models import AgentResult, IncomingMessage
 from app.openai_agent import generate_agent_reply
-from app.response_composer import compose_outbound_reply
+from app.llm.response_composer import compose_outbound_reply
 
 
 EVAL_CASES = [

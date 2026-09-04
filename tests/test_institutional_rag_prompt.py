@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.prompt_compiler as compiler
+import app.llm.prompt_compiler as compiler
 from app.models import IncomingMessage
-from app.store_knowledge import fetch_institutional_knowledge
+from app.persona.store_knowledge import fetch_institutional_knowledge
 
 
 def test_fetch_institutional_knowledge_matches_trade_in_cues():

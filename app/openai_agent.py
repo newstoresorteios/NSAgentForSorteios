@@ -4,7 +4,7 @@ import re
 import json
 
 from openai import APIError
-from .agent_replies import (
+from app.llm.agent_replies import (
     build_available_numbers_reply,
     build_balance_reply,
     build_coupon_code_reply,
@@ -16,24 +16,24 @@ from .agent_replies import (
     _third_party_reply,
 )
 from .config import get_settings
-from .commerce_context import CommerceConversationState, apply_commerce_domain_context
+from app.commerce.commerce_context import CommerceConversationState, apply_commerce_domain_context
 from .db import load_recent_conversation_turns
-from .image_product_id import handle_image_product_search, image_search_eligible
-from .context_builder import (
+from app.catalog.image_product_id import handle_image_product_search, image_search_eligible
+from app.memory.context_builder import (
     build_template_fallback,
     detect_primary_intent,
     format_facts_for_prompt,
     gather_customer_facts,
 )
-from .guardrails import (
+from app.verify.guardrails import (
     detect_available_numbers_inquiry,
     detect_blocked_request,
     default_safe_handoff,
 )
-from .handoff_service import build_human_handoff_result, should_request_human_handoff
+from app.ops.handoff_service import build_human_handoff_result, should_request_human_handoff
 from .models import IncomingMessage, AgentResult
-from .turn_runtime import LLMCallBudgetExceeded
-from .context_resume import (
+from app.ops.turn_runtime import LLMCallBudgetExceeded
+from app.memory.context_resume import (
     build_contextual_greeting,
     build_pending_payment_resume_result,
     build_presented_catalog_resume_result,
@@ -44,12 +44,12 @@ from .context_resume import (
     should_redisplay_presented_catalog,
     should_resume_pending_order,
 )
-from .order_context_recovery import (
+from app.commerce.order_context_recovery import (
     extract_handles_from_conversation,
     hydrate_state_from_handles,
     recover_order_id_from_customer,
 )
-from .order_service import (
+from app.commerce.order_service import (
     contains_tax_document_candidate,
     extract_order_reference,
     extract_valid_tax_document,
@@ -60,24 +60,24 @@ from .order_service import (
     is_order_notes_request,
     order_notes_unavailable_result,
 )
-from .payment_service import inspect_order_payment
-from .repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
-from .site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
-from .vip_profiles import (
+from app.commerce.payment_service import inspect_order_payment
+from app.identity.repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
+from app.persona.site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
+from app.identity.vip_profiles import (
     build_vip_openai_context,
     get_vip_profile,
     pick_vip_address_name,
     should_suppress_vip_nicknames,
 )
-from .user_preferences import detect_preferred_name_update
-from .tray_tools import TOOL_SCHEMAS, execute_tool
+from app.identity.user_preferences import detect_preferred_name_update
+from app.tray.tray_tools import TOOL_SCHEMAS, execute_tool
 from .sales_agent import (
     OUT_OF_SCOPE_REPLY,
     deterministic_scope,
     handle_sales_message,
     interpret_message,
 )
-from .greeting_policy import (
+from app.identity.greeting_policy import (
     GREETING_REPLY,
     choose_farewell_reply,
     choose_greeting_reply,
@@ -137,7 +137,7 @@ STORE_KNOWLEDGE_UNAVAILABLE = "Ainda não tenho essa informação oficial da loj
 
 def _annotate_agent_result(result: AgentResult, **metadata: object) -> AgentResult:
     try:
-        from .persona_runtime import get_persona_runtime
+        from app.persona.persona_runtime import get_persona_runtime
 
         runtime = get_persona_runtime()
         if runtime is not None and "persona_runtime" not in result.response_metadata:
@@ -149,7 +149,7 @@ def _annotate_agent_result(result: AgentResult, **metadata: object) -> AgentResu
             result.response_metadata[key] = value
     # Phase 8: count skipped LLM slots when deterministic / partial paths win.
     if "used_openai_interpreter" in metadata or "used_openai_responder" in metadata:
-        from .runtime_context import register_avoided_llm_call
+        from app.ops.runtime_context import register_avoided_llm_call
 
         used_interpreter = bool(
             result.response_metadata.get("used_openai_interpreter")
@@ -231,7 +231,7 @@ def _local_raffle_reply(message: IncomingMessage, facts: dict) -> AgentResult | 
 
 
 def build_agent_input(message: IncomingMessage, customer_context: dict, facts: dict) -> str:
-    from .working_memory import format_working_memory_block
+    from app.memory.working_memory import format_working_memory_block
 
     vip_block = ""
     vip = get_vip_profile(message.sender_phone)
@@ -324,14 +324,14 @@ async def generate_persona_greeting_reply(
             safety_reason="persona_greeting_unavailable",
         )
 
-    from .prompt_compiler import resolve_system_instructions
+    from app.llm.prompt_compiler import resolve_system_instructions
 
     facts = gather_customer_facts(message, customer_context)
     facts["scope_domain"] = "greeting"
     facts["primary_intent"] = "greeting"
     facts["intents"] = [*facts.get("intents", []), "greeting"]
     try:
-        from .persona_runtime import get_persona_runtime
+        from app.persona.persona_runtime import get_persona_runtime
 
         runtime = get_persona_runtime()
         if runtime is not None:
@@ -354,8 +354,8 @@ async def generate_persona_greeting_reply(
         {"role": "user", "content": build_agent_input(message, customer_context, facts)},
     ]
     try:
-        from .openai_errors import OpenAIGatewayError
-        from .openai_gateway import generate_text_output
+        from app.llm.openai_errors import OpenAIGatewayError
+        from app.llm.openai_gateway import generate_text_output
 
         text_result = await generate_text_output(
             model=settings.openai_model,
@@ -406,7 +406,7 @@ def generate_openai_reply(
             safety_reason="openai_api_key_missing",
         )
 
-    from .prompt_compiler import legacy_contract_extra_blocks, resolve_system_instructions
+    from app.llm.prompt_compiler import legacy_contract_extra_blocks, resolve_system_instructions
 
     user_input = build_agent_input(message, customer_context, facts)
     system_instructions = resolve_system_instructions(
@@ -422,8 +422,8 @@ def generate_openai_reply(
         {"role": "user", "content": user_input},
     ]
     try:
-        from .openai_errors import OpenAIGatewayError
-        from .openai_gateway import generate_text_sync
+        from app.llm.openai_errors import OpenAIGatewayError
+        from app.llm.openai_gateway import generate_text_sync
 
         text_result = generate_text_sync(
             model=settings.openai_model,
@@ -530,7 +530,7 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
     if not settings.openai_api_key:
         return generate_openai_reply(message, customer_context, facts)
 
-    from .prompt_compiler import legacy_contract_extra_blocks, resolve_system_instructions
+    from app.llm.prompt_compiler import legacy_contract_extra_blocks, resolve_system_instructions
 
     system_instructions = resolve_system_instructions(
         fallback_instructions=SYSTEM_INSTRUCTIONS,
@@ -552,8 +552,8 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
         else None
     )
     try:
-        from .openai_errors import OpenAIGatewayError
-        from .openai_gateway import generate_text_output, run_tool_loop_output
+        from app.llm.openai_errors import OpenAIGatewayError
+        from app.llm.openai_gateway import generate_text_output, run_tool_loop_output
 
         if not tools:
             text_result = await generate_text_output(
@@ -620,7 +620,7 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
 
 
 async def generate_agent_reply_async(message: IncomingMessage, customer_context: dict) -> AgentResult:
-    from .persona_runtime import (
+    from app.persona.persona_runtime import (
         load_persona_runtime,
         reset_persona_runtime,
         set_persona_runtime,
@@ -666,7 +666,7 @@ async def _generate_agent_reply_async_inner(
     except (TypeError, ValueError):
         inbound_id = None
     settings = get_settings()
-    from .history_window import (
+    from app.memory.history_window import (
         count_user_assistant_turns,
         resolve_history_hard_cap,
         resolve_model_history_limit,
@@ -703,7 +703,7 @@ async def _generate_agent_reply_async_inner(
         if message.conversation_id
         else ("sender_key" if message.sender_key else ("sender_phone" if message.sender_phone else "none"))
     )
-    from .observability import (
+    from app.ops.observability import (
         log_event,
         redact_text,
         summarize_commerce_state,
@@ -1123,8 +1123,8 @@ async def _generate_agent_reply_async_inner(
     # Instagram Story reply → associated product (feature-flagged / rollout).
     skip_generic_image = False
     try:
-        from .instagram_story_intent import should_route_story_question
-        from .instagram_story_service import (
+        from app.stories.instagram_story_intent import should_route_story_question
+        from app.stories.instagram_story_service import (
             resolve_story_product_question,
             story_result_to_agent_result,
         )
@@ -1157,7 +1157,7 @@ async def _generate_agent_reply_async_inner(
             {"error_type": type(exc).__name__, "error": str(exc)[:240]},
         )
         skip_generic_image = True
-        from .instagram_story_intent import should_route_story_question as _story_q
+        from app.stories.instagram_story_intent import should_route_story_question as _story_q
 
         if _story_q(message):
             return _annotate_agent_result(
@@ -1210,7 +1210,7 @@ async def _generate_agent_reply_async_inner(
 
     # Brevo cannot deliver Instagram Story / some IG media URLs — guide resend.
     try:
-        from .brevo_instagram_media import (
+        from app.channels.brevo_instagram_media import (
             PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
             UNVIEWABLE_MEDIA_GUIDE_REPLY,
             is_brevo_unviewable_media_text,
@@ -1349,7 +1349,7 @@ async def _generate_agent_reply_async_inner(
                 fallback_reason=interpretation._fallback_reason,
             )
         settings = get_settings()
-        from .persona_runtime import get_persona_runtime
+        from app.persona.persona_runtime import get_persona_runtime
 
         runtime = get_persona_runtime()
         greeting_mode = (

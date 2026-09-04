@@ -1,7 +1,7 @@
 import pytest
 
-from app.tray_tools import TOOL_SCHEMAS, _reduce, execute_tool, search_products
-from app.tray_adapter_client import TrayAdapterError
+from app.tray.tray_tools import TOOL_SCHEMAS, _reduce, execute_tool, search_products
+from app.tray.tray_adapter_client import TrayAdapterError
 
 
 class FakeTray:

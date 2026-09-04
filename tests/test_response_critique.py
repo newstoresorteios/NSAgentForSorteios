@@ -1,9 +1,9 @@
 import pytest
 
-from app.commerce_context import CommerceConversationState, CommerceProductReference
+from app.commerce.commerce_context import CommerceConversationState, CommerceProductReference
 from app.config import get_settings
 from app.models import AgentResult, IncomingMessage
-from app.response_critique import (
+from app.verify.response_critique import (
     CRITIQUE_JUDGE_SYSTEM_PROMPT,
     CritiqueVerdict,
     RecommendedApiCall,
@@ -12,7 +12,7 @@ from app.response_critique import (
     _fill_api_arguments,
     _seed_args_from_context,
 )
-from app.capability_catalog import build_capability_catalog, RETRYABLE_API_NAMES
+from app.llm.capability_catalog import build_capability_catalog, RETRYABLE_API_NAMES
 
 
 def _allow_critique_llm_without_risk(monkeypatch):
@@ -135,11 +135,11 @@ async def test_critique_enforce_retries_api_and_regenerates(monkeypatch):
         return regenerated
 
     monkeypatch.setattr(
-        "app.response_critique.run_critique_judge",
+        "app.verify.response_critique.run_critique_judge",
         fake_judge,
     )
     monkeypatch.setattr(
-        "app.response_critique._regenerate_reply",
+        "app.verify.response_critique._regenerate_reply",
         fake_regen,
     )
 
@@ -177,7 +177,7 @@ async def test_critique_shadow_does_not_change_reply(monkeypatch):
             ],
         )
 
-    monkeypatch.setattr("app.response_critique.run_critique_judge", fake_judge)
+    monkeypatch.setattr("app.verify.response_critique.run_critique_judge", fake_judge)
 
     final, report = await apply_response_critique_loop(
         incoming=incoming,
@@ -347,8 +347,8 @@ async def test_critique_catalog_mismatch_retries_search_and_swaps_products(monke
         swapped.response_metadata["critique_regenerated"] = True
         return swapped
 
-    monkeypatch.setattr("app.response_critique.run_critique_judge", fake_judge)
-    monkeypatch.setattr("app.response_critique._regenerate_reply", fake_regen)
+    monkeypatch.setattr("app.verify.response_critique.run_critique_judge", fake_judge)
+    monkeypatch.setattr("app.verify.response_critique._regenerate_reply", fake_regen)
 
     final, report = await apply_response_critique_loop(
         incoming=incoming,
@@ -376,7 +376,7 @@ async def test_critique_skips_greeting(monkeypatch):
     async def boom(**_kwargs):
         raise AssertionError("critique judge must not run for greetings")
 
-    monkeypatch.setattr("app.response_critique.run_critique_judge", boom)
+    monkeypatch.setattr("app.verify.response_critique.run_critique_judge", boom)
 
     final, report = await apply_response_critique_loop(
         incoming=incoming,
@@ -411,7 +411,7 @@ async def test_critique_generic_catalog_approves_once(monkeypatch):
         calls["judge"] += 1
         return CritiqueVerdict(score=90, pass_check=True, issues=[], summary="ok")
 
-    monkeypatch.setattr("app.response_critique.run_critique_judge", fake_judge)
+    monkeypatch.setattr("app.verify.response_critique.run_critique_judge", fake_judge)
 
     final, report = await apply_response_critique_loop(
         incoming=incoming,
@@ -446,7 +446,7 @@ async def test_critique_risk_gate_skips_llm_on_low_risk(monkeypatch):
     async def boom(**_kwargs):
         raise AssertionError("LLM critique must not run when risk gate skips")
 
-    monkeypatch.setattr("app.response_critique.run_critique_judge", boom)
+    monkeypatch.setattr("app.verify.response_critique.run_critique_judge", boom)
 
     final, report = await apply_response_critique_loop(
         incoming=incoming,
@@ -489,7 +489,7 @@ async def test_critique_shadow_promotes_to_enforce_on_price_turn(monkeypatch):
             summary="ok",
         )
 
-    monkeypatch.setattr("app.response_critique.run_critique_judge", fake_judge)
+    monkeypatch.setattr("app.verify.response_critique.run_critique_judge", fake_judge)
 
     final, report = await apply_response_critique_loop(
         incoming=incoming,
@@ -513,7 +513,7 @@ async def test_critique_skips_greeting_intent(monkeypatch):
     async def boom(**_kwargs):
         raise AssertionError("greeting must skip critique LLM")
 
-    monkeypatch.setattr("app.response_critique.run_critique_judge", boom)
+    monkeypatch.setattr("app.verify.response_critique.run_critique_judge", boom)
 
     final, report = await apply_response_critique_loop(
         incoming=IncomingMessage(channel="whatsapp", text="quero Seiko"),

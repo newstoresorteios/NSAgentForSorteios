@@ -1,14 +1,14 @@
 """Case-size discovery, hard filter, and anti-loop (Ricardo 5511937118008)."""
 
-from app.catalog_specs import (
+from app.catalog.catalog_specs import (
     extract_case_size_range_from_text,
     interpretation_case_size_range,
     message_requests_other_brands,
     product_matches_case_size_range,
 )
 from app.models import SalesInterpretation
-from app.preference_normalize import normalize_sales_interpretation
-from app.product_retrieval import hard_filter_products
+from app.catalog.preference_normalize import normalize_sales_interpretation
+from app.catalog.product_retrieval import hard_filter_products
 from app.sales.discovery import _discovery_state
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.instruction_extension_repository import format_approved_extensions_block
+from app.persona.instruction_extension_repository import format_approved_extensions_block
 from tests.memory_fakes import InMemoryMemoryStore
 
 
@@ -19,7 +19,7 @@ def test_format_approved_extensions_block():
 
 def test_create_extension_stays_pending(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.instruction_extension_repository as repo
+    import app.persona.instruction_extension_repository as repo
 
     created = repo.create_extension_proposal(
         tenant_id="newstore",

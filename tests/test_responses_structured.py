@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from app.openai_gateway import ResponsesGateway
+from app.llm.openai_gateway import ResponsesGateway
 
 
 class ProductHint(BaseModel):
@@ -14,7 +14,7 @@ class ProductHint(BaseModel):
 @pytest.mark.asyncio
 async def test_responses_parse_returns_pydantic(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,

@@ -1,4 +1,4 @@
-from app.user_preferences import (
+from app.identity.user_preferences import (
     build_memory_context,
     detect_memory_note,
     detect_preferred_name_update,

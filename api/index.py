@@ -10,16 +10,16 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.security import verify_brevo_webhook, verify_admin_token, verify_remarketing_cron
-from app.persona_admin_api import router as persona_admin_router
-from app.pix_webhook_api import router as pix_payments_router
-from app.webhook_parser import (
+from app.persona.persona_admin_api import router as persona_admin_router
+from app.commerce.pix_webhook_api import router as pix_payments_router
+from app.channels.webhook_parser import (
     inbound_skip_reason,
     parse_brevo_conversations_payload,
     select_effective_inbound_message,
     selected_message_info,
     webhook_event_skip_reason,
 )
-from app.repository import find_customer_profile_by_phone
+from app.identity.repository import find_customer_profile_by_phone
 from app.message_pipeline import process_incoming_message
 from app.config import (
     audio_outbound_ready,
@@ -27,7 +27,7 @@ from app.config import (
     get_settings,
     supabase_storage_configured,
 )
-from app.brevo_client import resolved_brevo_whatsapp_send_url, send_brevo_reply
+from app.channels.brevo_client import resolved_brevo_whatsapp_send_url, send_brevo_reply
 from app.models import AgentResult
 from app.db import (
     claim_inbound_message,
@@ -37,28 +37,28 @@ from app.db import (
     insert_inbound_message,
     is_latest_inbound_message,
 )
-from app.inbound_coalesce import is_caption_echo_of_recent_image
-from app.rollout import build_rollout_status
-from app.tray_circuit_breaker import circuit_status_dict
-from app.tray_health_probe import probe_tray_adaptor, tray_ha_checklist
-from app.conversation_lock import (
+from app.channels.inbound_coalesce import is_caption_echo_of_recent_image
+from app.ops.rollout import build_rollout_status
+from app.tray.tray_circuit_breaker import circuit_status_dict
+from app.tray.tray_health_probe import probe_tray_adaptor, tray_ha_checklist
+from app.ops.conversation_lock import (
     ConversationLockUnavailable,
     acquire_conversation_lock,
     conversation_lock_key,
     release_conversation_lock,
 )
-from app.handoff_service import apply_integration_failure_handoff, handoff_provider_payload
-from app.remarketing import run_remarketing_batch, sync_remarketing_interaction
-from app.product_image_index import run_product_image_index_batch
-from app.runtime_context import (
+from app.ops.handoff_service import apply_integration_failure_handoff, handoff_provider_payload
+from app.learning.remarketing import run_remarketing_batch, sync_remarketing_interaction
+from app.catalog.product_image_index import run_product_image_index_batch
+from app.ops.runtime_context import (
     get_current_turn,
     reset_current_turn,
     runtime_stage,
     set_current_turn,
 )
-from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
-from app.turn_runtime import LLMCallBudget, TurnRuntimeContext
-from app.observability import (
+from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
+from app.ops.turn_runtime import LLMCallBudget, TurnRuntimeContext
+from app.ops.observability import (
     log_event,
     log_exception,
     redact_text,
@@ -95,7 +95,7 @@ async def turn_runtime_middleware(request: Request, call_next):
     if not attach_turn:
         return await call_next(request)
 
-    from app.llm_call_policy import build_llm_call_budget
+    from app.llm.llm_call_policy import build_llm_call_budget
 
     budget_cfg = build_llm_call_budget(execution_path="normal")
     context = TurnRuntimeContext(
@@ -290,7 +290,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v77"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v78"
 
 
 @app.get("/api/health")
@@ -618,7 +618,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         # Brevo labels Instagram Story / unsupported IG media as an "agent"
         # placeholder without attachment URL. Do not treat that as human takeover,
         # and guide the visitor to resend a normal photo.
-        from app.brevo_instagram_media import (
+        from app.channels.brevo_instagram_media import (
             UNVIEWABLE_MEDIA_GUIDE_REPLY,
             is_brevo_unviewable_media_text,
         )
@@ -717,7 +717,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
 
         if skip_reason in {"agent_message", "outbound_message"}:
             try:
-                from app.human_takeover import touch_human_activity
+                from app.ops.human_takeover import touch_human_activity
 
                 touch_human_activity(incoming)
             except Exception as exc:  # noqa: BLE001
@@ -926,7 +926,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
 
     # Central ChatBô: se um humano assumiu, grava inbound mas não responde.
     try:
-        from app.human_takeover import human_takeover_active
+        from app.ops.human_takeover import human_takeover_active
 
         if human_takeover_active(incoming):
             return _skip_webhook_event(
@@ -1143,7 +1143,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
 
     if agent_result.handoff_required and provider_send_ok:
         try:
-            from app.handoff_queue import mark_conversa_for_human_handoff
+            from app.ops.handoff_queue import mark_conversa_for_human_handoff
 
             mark_conversa_for_human_handoff(
                 incoming,
@@ -1181,16 +1181,16 @@ async def catalog_url_health_cron(
     url_limit: int = Query(default=50, ge=1, le=500),
     clear_brand_cache: bool = Query(default=False),
 ):
-    from app.catalog_brand_warm import (
+    from app.catalog.catalog_brand_warm import (
         _DEFAULT_TOP_BRANDS,
         list_top_index_brands,
         refresh_top_brands_into_index,
     )
-    from app.catalog_url_health import (
+    from app.catalog.catalog_url_health import (
         mark_stale_or_zero_price_unavailable,
         repair_catalog_storefront_urls,
     )
-    from app.tray_tools import execute_tool
+    from app.tray.tray_tools import execute_tool
 
     if clear_brand_cache:
         try:
@@ -1374,7 +1374,7 @@ async def product_image_index_cron_manual():
     dependencies=[Depends(verify_remarketing_cron)],
 )
 async def attendance_learning_cron():
-    from app.attendance_learning import run_attendance_learning_batch
+    from app.learning.attendance_learning import run_attendance_learning_batch
 
     result = await run_attendance_learning_batch()
     log_event(
@@ -1599,7 +1599,7 @@ async def admin_rollout_status():
 @app.get("/api/admin/integrity-kpis", dependencies=[Depends(verify_admin_token)])
 async def admin_integrity_kpis(days: int = 7):
     """Assertiveness KPIs vs 30d targets (not_found / ambiguous / tray / factual)."""
-    from app.integrity_kpis import build_integrity_kpi_report
+    from app.ops.integrity_kpis import build_integrity_kpi_report
 
     return {"ok": True, **build_integrity_kpi_report(days=days)}
 
@@ -1607,7 +1607,7 @@ async def admin_integrity_kpis(days: int = 7):
 @app.post("/api/admin/human-takeover/cleanup", dependencies=[Depends(verify_admin_token)])
 async def admin_cleanup_human_takeover(stale_days: int = 7, limit: int = 500):
     """Purge stale rows from ai_human_takeover_state (does not mutate ChatBô conversas)."""
-    from app.human_takeover import cleanup_stale_takeover_state
+    from app.ops.human_takeover import cleanup_stale_takeover_state
 
     return cleanup_stale_takeover_state(stale_days=stale_days, limit=limit)
 
@@ -1617,8 +1617,8 @@ async def admin_cleanup_human_takeover(stale_days: int = 7, limit: int = 500):
     dependencies=[Depends(verify_admin_token)],
 )
 async def admin_order_tracking_audit(order_id: str):
-    from app.order_tracking_audit import audit_order_tracking
-    from app.tray_tools import execute_tool
+    from app.commerce.order_tracking_audit import audit_order_tracking
+    from app.tray.tray_tools import execute_tool
 
     return {
         "ok": True,
@@ -1631,8 +1631,8 @@ async def admin_order_tracking_audit(order_id: str):
     dependencies=[Depends(verify_remarketing_cron)],
 )
 async def order_tracking_audit_cron():
-    from app.order_tracking_audit import run_order_tracking_audit_batch
-    from app.tray_tools import execute_tool
+    from app.commerce.order_tracking_audit import run_order_tracking_audit_batch
+    from app.tray.tray_tools import execute_tool
 
     result = await run_order_tracking_audit_batch(execute=execute_tool)
     log_event("order.tracking_audit.cron.completed", result)
@@ -1684,8 +1684,8 @@ async def admin_list_instagram_stories(
     limit: int = 50,
 ):
     from app.config import get_settings
-    from app.request_principal import principal_from_admin_token
-    from app.story_product_repository import StoryProductRepository
+    from app.identity.request_principal import principal_from_admin_token
+    from app.stories.story_product_repository import StoryProductRepository
 
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
@@ -1728,7 +1728,7 @@ async def admin_list_instagram_stories(
 @app.get("/api/admin/instagram/stories/{row_id}", dependencies=[Depends(verify_admin_token)])
 async def admin_get_instagram_story(row_id: int, request: Request, tenant_id: str | None = None):
     from app.config import get_settings
-    from app.story_product_repository import StoryProductRepository
+    from app.stories.story_product_repository import StoryProductRepository
 
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
@@ -1753,7 +1753,7 @@ async def admin_get_instagram_story(row_id: int, request: Request, tenant_id: st
 )
 async def admin_link_instagram_story_product(request: Request):
     from app.config import get_settings
-    from app.story_publication_link_service import (
+    from app.stories.story_publication_link_service import (
         register_published_story,
         validate_link_payload,
     )
@@ -1789,11 +1789,11 @@ async def admin_link_instagram_story_product(request: Request):
 )
 async def admin_confirm_instagram_story(row_id: int, request: Request):
     from app.config import get_settings
-    from app.fact_authority import catalog_item_key_for
-    from app.catalog_index_repository import CatalogIndexRepository
-    from app.request_principal import principal_from_admin_token
-    from app.story_product_repository import StoryProductRepository
-    from app.observability import log_event
+    from app.verify.fact_authority import catalog_item_key_for
+    from app.catalog.catalog_index_repository import CatalogIndexRepository
+    from app.identity.request_principal import principal_from_admin_token
+    from app.stories.story_product_repository import StoryProductRepository
+    from app.ops.observability import log_event
     from app.db import ensure_tables, get_conn
 
     settings = get_settings()
@@ -1921,7 +1921,7 @@ async def admin_confirm_instagram_story(row_id: int, request: Request):
 )
 async def admin_unlink_instagram_story(row_id: int, request: Request):
     from app.config import get_settings
-    from app.story_product_repository import StoryProductRepository
+    from app.stories.story_product_repository import StoryProductRepository
 
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
@@ -1956,7 +1956,7 @@ async def admin_unlink_instagram_story(row_id: int, request: Request):
 )
 async def admin_reprocess_instagram_story(row_id: int, request: Request):
     from app.config import get_settings
-    from app.story_product_repository import StoryProductRepository
+    from app.stories.story_product_repository import StoryProductRepository
 
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_admin_api_enabled", True)):
@@ -1996,7 +1996,7 @@ async def admin_reprocess_instagram_story(row_id: int, request: Request):
     dependencies=[Depends(verify_remarketing_cron)],
 )
 async def cron_instagram_story_media_retention():
-    from app.story_media_retention import cleanup_expired_story_media
+    from app.stories.story_media_retention import cleanup_expired_story_media
 
     result = await cleanup_expired_story_media(limit=200)
     return {

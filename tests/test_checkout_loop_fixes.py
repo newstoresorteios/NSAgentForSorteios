@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.sales.dialogue_phase import message_resets_dialogue_to_discovery
 from app.sales.intent_router import route_sales_intent
@@ -127,7 +127,7 @@ async def test_openai_429_greeting_not_shortlist_prompt(monkeypatch):
 @pytest.mark.asyncio
 async def test_clarification_openai_fail_never_empty_reply(monkeypatch):
     import app.sales_agent as sales_agent
-    from app.openai_errors import OpenAIRateLimitGatewayError
+    from app.llm.openai_errors import OpenAIRateLimitGatewayError
 
     monkeypatch.setattr(
         sales_agent,
@@ -138,7 +138,7 @@ async def test_clarification_openai_fail_never_empty_reply(monkeypatch):
     async def boom(**_kwargs):
         raise OpenAIRateLimitGatewayError("no credits")
 
-    monkeypatch.setattr("app.openai_gateway.generate_text_output", boom)
+    monkeypatch.setattr("app.llm.openai_gateway.generate_text_output", boom)
 
     interp = _interp()
     interp._source = "deterministic_fallback"

@@ -6,7 +6,7 @@ import re
 import unicodedata
 from typing import Any, Literal
 
-from ..commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from ..models import AgentResult, SalesInterpretation
 
 DialoguePhase = Literal["discovery", "shortlist", "buy", "checkout"]
@@ -139,7 +139,7 @@ def message_resets_dialogue_to_discovery(
         return True
     try:
         from .discovery import is_open_catalog_browse_request
-        from ..catalog_specs import message_requests_other_brands
+        from app.catalog.catalog_specs import message_requests_other_brands
 
         if is_open_catalog_browse_request(message_text, interpretation):
             return True

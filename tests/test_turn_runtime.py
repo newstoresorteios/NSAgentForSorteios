@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.openai_runtime import execute_openai_call, execute_openai_call_sync
-from app.runtime_context import (
+from app.llm.openai_runtime import execute_openai_call, execute_openai_call_sync
+from app.ops.runtime_context import (
     get_current_turn,
     register_database_call,
     register_tray_call,
@@ -12,7 +12,7 @@ from app.runtime_context import (
     runtime_stage,
     set_current_turn,
 )
-from app.turn_runtime import (
+from app.ops.turn_runtime import (
     LLMCallBudget,
     LLMCallBudgetExceeded,
     TurnRuntimeContext,

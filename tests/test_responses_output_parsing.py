@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.openai_gateway import extract_function_calls, extract_output_text
+from app.llm.openai_gateway import extract_function_calls, extract_output_text
 
 
 def test_output_text_prefers_direct_property():

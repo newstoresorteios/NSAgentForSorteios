@@ -2,14 +2,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.factual_validator import validate_factual_response
+from app.verify.factual_validator import validate_factual_response
 from app.models import AgentResult, SalesInterpretation
 from app.sales.tray_capability_contract import consult_tray_list_products_contract
 from app.sales.tray_query_authority import (
     authorize_catalog_search,
     budget_hard_miss_result,
 )
-from app.agent_contracts import build_agent_decision
+from app.llm.agent_contracts import build_agent_decision
 from app.models import IncomingMessage
 
 
@@ -191,15 +191,15 @@ async def test_compiled_retrieval_does_not_near_match_omega_over_5k(monkeypatch)
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
-        "app.catalog_index_primary.fetch_primary_index_candidates",
+        "app.catalog.catalog_index_primary.fetch_primary_index_candidates",
         lambda *a, **k: (list(OMEGA_OVER_BUDGET), "lexical"),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *a, **k: 0,
     )
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
     )
     monkeypatch.setattr(
@@ -228,7 +228,7 @@ async def test_compiled_retrieval_does_not_near_match_omega_over_5k(monkeypatch)
 @pytest.mark.asyncio
 async def test_first_search_uses_contract_budget_when_interp_forgot_it(monkeypatch):
     import app.sales_agent as sales_agent
-    from app.commerce_context import CommerceConversationState
+    from app.commerce.commerce_context import CommerceConversationState
 
     async def fake_execute(name, arguments):
         if name == "search_products":
@@ -247,15 +247,15 @@ async def test_first_search_uses_contract_budget_when_interp_forgot_it(monkeypat
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
-        "app.catalog_index_primary.fetch_primary_index_candidates",
+        "app.catalog.catalog_index_primary.fetch_primary_index_candidates",
         lambda *a, **k: (list(OMEGA_OVER_BUDGET), "lexical"),
     )
     monkeypatch.setattr(
-        "app.catalog_index.index_products_best_effort",
+        "app.catalog.catalog_index.index_products_best_effort",
         lambda *a, **k: 0,
     )
     monkeypatch.setattr(
-        "app.product_retrieval.get_settings",
+        "app.catalog.product_retrieval.get_settings",
         lambda: SimpleNamespace(openai_api_key="", openai_model="gpt-4.1-mini"),
     )
     monkeypatch.setattr(

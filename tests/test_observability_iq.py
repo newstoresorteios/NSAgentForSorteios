@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from app.observability import (
+from app.ops.observability import (
     get_iq_counters,
     record_close_miss,
     record_dialogue_phase_transition,
     record_scope_mismatch,
     reset_iq_counters,
 )
-from app.turn_metrics import build_turn_quality_event
-from app.turn_runtime import TurnRuntimeContext
+from app.ops.turn_metrics import build_turn_quality_event
+from app.ops.turn_runtime import TurnRuntimeContext
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def test_iq_counters_increment_and_expose_in_turn_quality():
         conversation_key="whatsapp:5511888888888",
         channel="whatsapp",
     )
-    from app.runtime_context import reset_current_turn, set_current_turn
+    from app.ops.runtime_context import reset_current_turn, set_current_turn
 
     token = set_current_turn(runtime)
     try:

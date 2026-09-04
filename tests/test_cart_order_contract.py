@@ -2,20 +2,20 @@ from decimal import Decimal
 
 import pytest
 
-from app.cart_service import CartItemRequest, create_cart_items_checkout
-from app.commerce_context import (
+from app.commerce.cart_service import CartItemRequest, create_cart_items_checkout
+from app.commerce.commerce_context import (
     CommerceConversationState,
     CommerceProductReference,
     normalize_variant_identity,
     evolve_commerce_state,
 )
-from app.order_service import (
+from app.commerce.order_service import (
     cart_order_products,
     confirm_prepared_order,
     create_order,
     prepare_order,
 )
-from app.shipping_service import cart_shipping_products, quote_shipping
+from app.commerce.shipping_service import cart_shipping_products, quote_shipping
 
 
 @pytest.mark.parametrize("value", [None, "", 0, "0"])

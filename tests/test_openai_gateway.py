@@ -3,12 +3,12 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from app.openai_errors import (
+from app.llm.openai_errors import (
     OpenAIEmptyOutputError,
     OpenAIRefusalError,
     OpenAISchemaError,
 )
-from app.openai_gateway import (
+from app.llm.openai_gateway import (
     CanaryOpenAIGateway,
     ChatCompletionsGateway,
     FallbackOpenAIGateway,
@@ -105,7 +105,7 @@ def _reset_gateway():
 
 def test_build_gateway_chat_completions_when_explicitly_allowed(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_api_mode="chat_completions",
             openai_chat_completions_primary_allowed=True,
@@ -117,7 +117,7 @@ def test_build_gateway_chat_completions_when_explicitly_allowed(monkeypatch):
 
 def test_build_gateway_responses_and_shadow(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_api_mode="responses",
             openai_responses_fallback_to_chat=True,
@@ -131,7 +131,7 @@ def test_build_gateway_responses_and_shadow(monkeypatch):
 
 def test_build_responses_without_fallback(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_api_mode="responses",
             openai_responses_fallback_to_chat=False,
@@ -196,7 +196,7 @@ async def test_chat_gateway_parse_structured():
 @pytest.mark.asyncio
 async def test_responses_gateway_parse_sends_store_false(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,
@@ -230,7 +230,7 @@ async def test_responses_gateway_parse_sends_store_false(monkeypatch):
 @pytest.mark.asyncio
 async def test_responses_gateway_generate_text_uses_output_text(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_reasoning_effort="",
@@ -254,7 +254,7 @@ async def test_responses_gateway_generate_text_uses_output_text(monkeypatch):
 @pytest.mark.asyncio
 async def test_responses_refusal_raises(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,
@@ -289,7 +289,7 @@ async def test_responses_refusal_raises(monkeypatch):
 @pytest.mark.asyncio
 async def test_responses_missing_parsed_raises(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_store_responses=False,
             openai_responses_structured_enabled=True,
@@ -339,7 +339,7 @@ async def test_chat_empty_text_raises():
 @pytest.mark.asyncio
 async def test_shadow_returns_primary_and_does_not_require_shadow_success(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_shadow_sample_rate=1.0,
             openai_store_responses=False,
@@ -368,7 +368,7 @@ async def test_shadow_returns_primary_and_does_not_require_shadow_success(monkey
 
 @pytest.mark.asyncio
 async def test_tool_loop_empty_allowlist_raises():
-    from app.openai_errors import OpenAIGatewayError
+    from app.llm.openai_errors import OpenAIGatewayError
 
     gateway = ChatCompletionsGateway(client=_FakeClient())
     with pytest.raises(OpenAIGatewayError):

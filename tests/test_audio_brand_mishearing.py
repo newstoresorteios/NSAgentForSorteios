@@ -1,4 +1,4 @@
-from app.audio_service import fix_common_watch_brand_mishearings
+from app.channels.audio_service import fix_common_watch_brand_mishearings
 
 
 def test_hamilton_misheard_as_remetente_is_corrected():

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from app.catalog_index import to_canonical_item
-from app.catalog_index_repository import CatalogIndexRepository, make_catalog_item_key
-from app.fact_authority import catalog_item_key_for
+from app.catalog.catalog_index import to_canonical_item
+from app.catalog.catalog_index_repository import CatalogIndexRepository, make_catalog_item_key
+from app.verify.fact_authority import catalog_item_key_for
 
 
 def test_make_catalog_item_key_stable():

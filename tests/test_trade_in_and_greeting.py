@@ -1,17 +1,17 @@
 """Trade-in / appraisal handoff and greeting dedupe."""
 
-from app.greeting_policy import (
+from app.identity.greeting_policy import (
     already_said,
     choose_farewell_reply,
     choose_greeting_reply,
     is_farewell_message,
     is_generic_greeting_reply,
 )
-from app.guardrails import detect_trade_in_or_appraisal_request
-from app.handoff_service import build_human_handoff_result, should_request_human_handoff
+from app.verify.guardrails import detect_trade_in_or_appraisal_request
+from app.ops.handoff_service import build_human_handoff_result, should_request_human_handoff
 from app.models import AgentResult, IncomingMessage
-from app.response_critique import apply_fast_deterministic_critique
-from app.site_knowledge import TRADE_IN_HANDOFF_MESSAGE
+from app.verify.response_critique import apply_fast_deterministic_critique
+from app.persona.site_knowledge import TRADE_IN_HANDOFF_MESSAGE
 
 
 def test_detect_trade_in_seminovo_certina():
@@ -57,7 +57,7 @@ def test_fast_critique_rewrites_trade_in_denial():
 
 
 def test_greeting_avoids_repeating_same_phrase_to_same_person(monkeypatch):
-    import app.greeting_policy as gp
+    import app.identity.greeting_policy as gp
 
     monkeypatch.setattr(gp, "resolve_persona_greeting", lambda: None)
     assert is_generic_greeting_reply("Olá! Como posso ajudar?")
@@ -71,7 +71,7 @@ def test_greeting_avoids_repeating_same_phrase_to_same_person(monkeypatch):
 
 
 def test_greeting_prefers_persona_crono(monkeypatch):
-    import app.greeting_policy as gp
+    import app.identity.greeting_policy as gp
 
     crono = (
         "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. "
@@ -117,7 +117,7 @@ def test_farewell_detector_and_reply():
 
 
 def test_resolve_address_name_prefers_checkout_over_whatsapp_nick():
-    from app.greeting_policy import looks_like_whatsapp_nick, resolve_address_name
+    from app.identity.greeting_policy import looks_like_whatsapp_nick, resolve_address_name
 
     assert looks_like_whatsapp_nick("Razor Blue") is True
     assert looks_like_whatsapp_nick("Dark Orange") is True
@@ -134,7 +134,7 @@ def test_resolve_address_name_prefers_checkout_over_whatsapp_nick():
 
 
 def test_greeting_detectors_live_in_one_module():
-    from app.greeting_policy import (
+    from app.identity.greeting_policy import (
         is_any_greeting,
         is_greeting_message,
         is_soft_greeting,

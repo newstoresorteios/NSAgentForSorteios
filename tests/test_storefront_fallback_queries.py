@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from app.instagram_story_models import StoryProductCandidate, StoryVisualUnderstanding
-from app.storefront_search import parse_storefront_search_html
-from app.story_match_decider import try_resolve_tied_candidates
-from app.story_product_matcher import (
+from app.stories.instagram_story_models import StoryProductCandidate, StoryVisualUnderstanding
+from app.catalog.storefront_search import parse_storefront_search_html
+from app.stories.story_match_decider import try_resolve_tied_candidates
+from app.stories.story_product_matcher import (
     build_storefront_fallback_queries,
     classify_match,
     needs_storefront_fallback,
     tray_search_jobs,
 )
-from app.instagram_story_models import StoryProductCandidate
+from app.stories.instagram_story_models import StoryProductCandidate
 
 
 def test_build_storefront_fallback_queries_for_baltic_mk2_verde():

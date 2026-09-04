@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from app.instagram_story_models import StoryVisualUnderstanding
-from app.story_product_matcher import (
+from app.stories.instagram_story_models import StoryVisualUnderstanding
+from app.stories.story_product_matcher import (
     edition_count_search_tokens,
     extract_store_product_url,
     tokens_from_store_url,

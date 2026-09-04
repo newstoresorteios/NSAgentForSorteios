@@ -1,8 +1,8 @@
 import httpx
 import pytest
 
-from app.tray_adapter_client import TrayAdapterClient, TrayAdapterError
-from app.tray_circuit_breaker import reset_tray_circuit_breaker_for_tests
+from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
+from app.tray.tray_circuit_breaker import reset_tray_circuit_breaker_for_tests
 
 
 @pytest.fixture(autouse=True)
@@ -236,7 +236,7 @@ async def test_connection_failure_is_safe():
 
 @pytest.mark.asyncio
 async def test_transient_503_is_retried_once_and_can_recover(monkeypatch):
-    import app.tray_adapter_client as tray_client
+    import app.tray.tray_adapter_client as tray_client
 
     class SequenceClient:
         def __init__(self):
@@ -268,7 +268,7 @@ async def test_transient_503_is_retried_once_and_can_recover(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_persistent_503_fails_after_single_retry(monkeypatch):
-    import app.tray_adapter_client as tray_client
+    import app.tray.tray_adapter_client as tray_client
 
     class AlwaysUnavailableClient:
         def __init__(self):

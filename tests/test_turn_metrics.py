@@ -1,5 +1,5 @@
-from app.turn_metrics import build_turn_quality_event, hash_conversation_key
-from app.turn_runtime import TurnRuntimeContext
+from app.ops.turn_metrics import build_turn_quality_event, hash_conversation_key
+from app.ops.turn_runtime import TurnRuntimeContext
 
 
 def test_turn_quality_event_redacts_conversation_key():

@@ -8,17 +8,17 @@ from __future__ import annotations
 
 import pytest
 
-from app.commerce_context import CommerceConversationState, resolve_commerce_reference
-from app.context_resume import merge_commerce_states
+from app.commerce.commerce_context import CommerceConversationState, resolve_commerce_reference
+from app.memory.context_resume import merge_commerce_states
 from app.models import SalesInterpretation
-from app.persona_models import PersonaVersion
-from app.persona_runtime import (
+from app.persona.persona_models import PersonaVersion
+from app.persona.persona_runtime import (
     build_persona_runtime,
     parse_recommendation_policy,
     reset_persona_runtime,
     set_persona_runtime,
 )
-from app.product_retrieval import (
+from app.catalog.product_retrieval import (
     apply_persona_presentation_order,
     customer_result_limit,
 )
@@ -138,8 +138,8 @@ def test_prefer_ready_stock_reorders_shortlist():
 @pytest.mark.offline_eval
 def test_golden_dourado_visor_preto_prefers_conjunction():
     from app.models import SalesInterpretation
-    from app.preference_normalize import normalize_sales_interpretation
-    from app.product_retrieval import prefer_dial_and_case_matches
+    from app.catalog.preference_normalize import normalize_sales_interpretation
+    from app.catalog.product_retrieval import prefer_dial_and_case_matches
 
     sales = normalize_sales_interpretation(
         SalesInterpretation(
@@ -438,8 +438,8 @@ def _catalog_pool_certina_and_others() -> list[dict]:
 @pytest.mark.offline_eval
 def test_golden_joao_escape_certina_sticky_on_chrono_other_brands():
     """Contact 5548999490859 — must leave Certina when customer rejects it."""
-    from app.preference_normalize import normalize_sales_interpretation
-    from app.product_retrieval import hard_filter_products
+    from app.catalog.preference_normalize import normalize_sales_interpretation
+    from app.catalog.product_retrieval import hard_filter_products
     import app.sales_agent as sales_agent
 
     runtime = build_persona_runtime(
@@ -541,8 +541,8 @@ def test_golden_joao_escape_certina_sticky_on_chrono_other_brands():
 @pytest.mark.offline_eval
 def test_golden_ricardo_escape_large_case_when_customer_sets_36_38():
     """Contact 5511937118008 — size ask must force retrieval and hard-filter mm."""
-    from app.preference_normalize import normalize_sales_interpretation
-    from app.product_retrieval import hard_filter_products
+    from app.catalog.preference_normalize import normalize_sales_interpretation
+    from app.catalog.product_retrieval import hard_filter_products
     import app.sales_agent as sales_agent
 
     runtime = build_persona_runtime(
@@ -628,8 +628,8 @@ def test_golden_ricardo_escape_large_case_when_customer_sets_36_38():
 @pytest.mark.offline_eval
 def test_golden_style_switch_diver_to_chrono_does_not_keep_false_diver_only():
     """Customer changing feature (diver → chrono) must re-rank to chronographs."""
-    from app.preference_normalize import normalize_sales_interpretation
-    from app.product_retrieval import hard_filter_products
+    from app.catalog.preference_normalize import normalize_sales_interpretation
+    from app.catalog.product_retrieval import hard_filter_products
 
     interpretation = normalize_sales_interpretation(
         SalesInterpretation(
@@ -669,7 +669,7 @@ async def test_golden_joao_close_buy_list_position_two_creates_cart(monkeypatch)
     from types import SimpleNamespace
 
     import app.sales_agent as sales_agent
-    from app.commerce_context import CommerceConversationState
+    from app.commerce.commerce_context import CommerceConversationState
     from app.models import IncomingMessage
     from app.sales.purchase_selection import repair_presented_purchase_selection
 
@@ -778,9 +778,9 @@ async def test_golden_joao_bare_quero_comprar_does_not_ask_name(monkeypatch):
     from types import SimpleNamespace
 
     import app.sales_agent as sales_agent
-    from app.commerce_context import CommerceConversationState
+    from app.commerce.commerce_context import CommerceConversationState
     from app.models import IncomingMessage
-    from app.persona_runtime import (
+    from app.persona.persona_runtime import (
         build_persona_runtime,
         reset_persona_runtime,
         set_persona_runtime,
@@ -857,8 +857,8 @@ async def test_golden_joao_bare_quero_comprar_does_not_ask_name(monkeypatch):
 @pytest.mark.offline_eval
 def test_golden_ricardo_other_brands_unlocks_seiko_sticky():
     """Contact 5511937118008 — 'outras marcas, não precisa ser seiko' clears brand lock."""
-    from app.preference_normalize import normalize_sales_interpretation
-    from app.product_retrieval import hard_filter_products
+    from app.catalog.preference_normalize import normalize_sales_interpretation
+    from app.catalog.product_retrieval import hard_filter_products
     import app.sales_agent as sales_agent
 
     runtime = build_persona_runtime(
@@ -954,7 +954,7 @@ async def test_golden_dark_orange_list_position_one_creates_cart(monkeypatch):
     from types import SimpleNamespace
 
     import app.sales_agent as sales_agent
-    from app.commerce_context import CommerceConversationState
+    from app.commerce.commerce_context import CommerceConversationState
     from app.models import IncomingMessage
     from app.sales.purchase_selection import repair_presented_purchase_selection
 
@@ -1100,8 +1100,8 @@ def test_golden_arthur_named_sku_skips_budget_qualification():
 @pytest.mark.offline_eval
 def test_golden_ig_le_locle_size_ask_forces_case_filter():
     """IG 172796… — 'Gostei desse, 43/44mm' must extract size range and hard-filter."""
-    from app.preference_normalize import normalize_sales_interpretation
-    from app.product_retrieval import hard_filter_products
+    from app.catalog.preference_normalize import normalize_sales_interpretation
+    from app.catalog.product_retrieval import hard_filter_products
     import app.sales_agent as sales_agent
 
     runtime = build_persona_runtime(
@@ -1184,7 +1184,7 @@ def _clarification_turn(content: str) -> dict:
 @pytest.mark.offline_eval
 def test_golden_joao_qual_loop_does_not_reask_city_or_name():
     """Contact 5548999490859 (31/08) — answered slots must not restart from city/name."""
-    from app.preference_normalize import normalize_sales_interpretation
+    from app.catalog.preference_normalize import normalize_sales_interpretation
     from app.sales.qualification_slots import covered_qualification_dims
     import app.sales_agent as sales_agent
 
@@ -1259,7 +1259,7 @@ def test_golden_joao_qual_loop_does_not_reask_city_or_name():
 @pytest.mark.offline_eval
 def test_golden_joao_mk2_37mm_skips_budget_question():
     """Explicit Baltic mk2 37mm must sku-lock and skip budget qualification."""
-    from app.preference_normalize import normalize_sales_interpretation
+    from app.catalog.preference_normalize import normalize_sales_interpretation
     import app.sales_agent as sales_agent
 
     runtime = build_persona_runtime(
@@ -1303,9 +1303,9 @@ async def test_golden_joao_full_thread_replay(monkeypatch):
     from types import SimpleNamespace
 
     import app.sales_agent as sales_agent
-    from app.commerce_context import CommerceConversationState, evolve_commerce_state
+    from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
     from app.models import AgentResult, IncomingMessage
-    from app.preference_normalize import normalize_sales_interpretation
+    from app.catalog.preference_normalize import normalize_sales_interpretation
     from app.sales.purchase_selection import repair_presented_purchase_selection
     from app.sales.qualification_slots import covered_qualification_dims
 

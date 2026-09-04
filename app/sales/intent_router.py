@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from ..models import SalesInterpretation
 from .discovery import _discovery_state, _needs_clarification_before_retrieval
 

@@ -1,4 +1,4 @@
-from app.agent_replies import _personalized_suffix
+from app.llm.agent_replies import _personalized_suffix
 
 
 def test_personalized_suffix_skips_when_display_name_exists():

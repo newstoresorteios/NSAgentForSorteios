@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.memory_models import (
+from app.memory.memory_models import (
     AgentTurnEnvelope,
     InstructionExtensionProposal,
     MemoryAction,
@@ -10,7 +10,7 @@ from app.memory_models import (
     MemoryProposal,
     MemoryScope,
 )
-from app.memory_service import process_agent_memory_proposals
+from app.memory.memory_service import process_agent_memory_proposals
 from tests.memory_fakes import InMemoryMemoryStore
 
 
@@ -33,7 +33,7 @@ def _settings(**overrides):
 
 def test_proposals_persist_without_auto_apply(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_service as service
+    import app.memory.memory_service as service
 
     monkeypatch.setattr(service, "get_settings", lambda: _settings())
 
@@ -70,7 +70,7 @@ def test_proposals_persist_without_auto_apply(monkeypatch):
 
 def test_disabled_flag_is_noop(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_service as service
+    import app.memory.memory_service as service
 
     monkeypatch.setattr(
         service,
@@ -104,8 +104,8 @@ def test_disabled_flag_is_noop(monkeypatch):
 
 def test_extension_proposal_stays_pending_review(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_policy as policy
-    import app.memory_service as service
+    import app.memory.memory_policy as policy
+    import app.memory.memory_service as service
 
     monkeypatch.setattr(service, "get_settings", lambda: _settings())
     monkeypatch.setattr(policy, "get_settings", lambda: _settings())
@@ -137,9 +137,9 @@ def test_extension_proposal_stays_pending_review(monkeypatch):
 
 def test_auto_apply_when_enabled(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
-    import app.memory_consolidation as consolidation
-    import app.memory_policy as policy
-    import app.memory_service as service
+    import app.memory.memory_consolidation as consolidation
+    import app.memory.memory_policy as policy
+    import app.memory.memory_service as service
 
     settings = _settings(
         agent_memory_auto_apply_enabled=True,

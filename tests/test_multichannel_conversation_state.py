@@ -22,7 +22,7 @@ def test_context_filter_priority_is_conversation_then_sender_key_then_phone():
 
 
 def test_social_memory_is_isolated_by_user_and_channel():
-    import app.commerce_router as router
+    import app.commerce.commerce_router as router
 
     router.clear_commerce_memory()
     instagram_a = IncomingMessage(channel="instagram", sender_key="instagram:123")

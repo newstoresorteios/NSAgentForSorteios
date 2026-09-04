@@ -1,4 +1,4 @@
-from app.fact_sources import (
+from app.verify.fact_sources import (
     FactSource,
     StructuredFact,
     infer_source_for_payload_key,

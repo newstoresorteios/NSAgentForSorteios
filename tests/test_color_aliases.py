@@ -1,7 +1,7 @@
 """Color synonym matching (azul ↔ blue) and soft recommendation filters."""
 
 from app.models import SalesInterpretation
-from app.product_retrieval import (
+from app.catalog.product_retrieval import (
     ProductRetrievalCompiler,
     expand_color_aliases,
     hard_filter_products,

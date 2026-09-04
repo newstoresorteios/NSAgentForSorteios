@@ -5,7 +5,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from .config import get_settings, resolved_sorteio_database_url
-from .runtime_context import register_database_call
+from app.ops.runtime_context import register_database_call
 
 
 def to_jsonb(value: Any, default: Any = None) -> Jsonb:
@@ -487,6 +487,50 @@ def ensure_tables() -> None:
                 ON public.ai_learning_insights (tenant_id, insight_key)
                 WHERE status = 'pending_review';
 
+                DELETE FROM public.ai_attendance_reviews AS newer
+                USING public.ai_attendance_reviews AS older
+                WHERE newer.response_id IS NOT NULL
+                  AND newer.tenant_id = older.tenant_id
+                  AND newer.response_id = older.response_id
+                  AND newer.id > older.id;
+
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_attendance_reviews_response
+                ON public.ai_attendance_reviews (tenant_id, response_id)
+                WHERE response_id IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS public.ai_learning_cursors (
+                    tenant_id text PRIMARY KEY,
+                    last_response_id bigint,
+                    last_response_at timestamptz,
+                    last_run_at timestamptz NOT NULL DEFAULT now(),
+                    metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+                );
+
+                CREATE TABLE IF NOT EXISTS public.ai_learning_cases (
+                    id bigserial PRIMARY KEY,
+                    tenant_id text NOT NULL,
+                    case_key text NOT NULL,
+                    conversation_key text,
+                    failure_codes jsonb NOT NULL DEFAULT '[]'::jsonb,
+                    customer_excerpt text NOT NULL DEFAULT '',
+                    bad_reply text NOT NULL DEFAULT '',
+                    correction text NOT NULL DEFAULT '',
+                    status text NOT NULL DEFAULT 'active',
+                    insight_id bigint,
+                    importance numeric(5,4) NOT NULL DEFAULT 0.5,
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    updated_at timestamptz NOT NULL DEFAULT now(),
+                    metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_learning_cases_key
+                ON public.ai_learning_cases (tenant_id, case_key);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_learning_cases_active
+                ON public.ai_learning_cases (
+                    tenant_id, status, importance DESC, updated_at DESC
+                );
+
                 CREATE TABLE IF NOT EXISTS public.ai_human_takeover_state (
                     state_key text PRIMARY KEY,
                     conversation_key text,
@@ -959,7 +1003,7 @@ def _history_identity_candidates(
     if sender_phone:
         candidates.append((None, None, sender_phone))
     try:
-        from .customer_identity import resolve_linked_identity_candidates
+        from app.identity.customer_identity import resolve_linked_identity_candidates
 
         for linked_key, linked_phone in resolve_linked_identity_candidates(
             sender_key=sender_key,
@@ -1173,7 +1217,7 @@ def persist_customer_commerce_session(
     sender_phone: str | None = None,
 ) -> None:
     """Persist durable working memory under all known person_key aliases."""
-    from .context_resume import (
+    from app.memory.context_resume import (
         commerce_state_resumable_score,
         merge_commerce_states,
     )
@@ -1270,11 +1314,11 @@ def load_commerce_conversation_state(
     sender_key: str | None = None,
 ) -> dict[str, Any]:
     """Load delivered commerce state, recovering order context across identities."""
-    from .context_resume import (
+    from app.memory.context_resume import (
         commerce_state_resumable_score,
         merge_commerce_states,
     )
-    from .customer_identity import resolve_person_key_candidates
+    from app.identity.customer_identity import resolve_person_key_candidates
 
     settings = get_settings()
     if not settings.database_url:
@@ -1291,7 +1335,7 @@ def load_commerce_conversation_state(
     if sender_phone:
         identity_candidates.append((None, None, sender_phone))
     try:
-        from .customer_identity import resolve_linked_identity_candidates
+        from app.identity.customer_identity import resolve_linked_identity_candidates
 
         for linked_key, linked_phone in resolve_linked_identity_candidates(
             sender_key=sender_key,

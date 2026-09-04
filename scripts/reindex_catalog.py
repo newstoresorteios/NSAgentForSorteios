@@ -45,12 +45,12 @@ for _key, _value in list(os.environ.items()):
     if _value == "" or _value.strip().upper() in {"[SENSITIVE]", "SENSITIVE"}:
         os.environ.pop(_key, None)
 
-from app.catalog_brand_warm import _DEFAULT_TOP_BRANDS  # noqa: E402
-from app.catalog_index import index_products_best_effort  # noqa: E402
-from app.catalog_url_health import repair_catalog_storefront_urls  # noqa: E402
+from app.catalog.catalog_brand_warm import _DEFAULT_TOP_BRANDS  # noqa: E402
+from app.catalog.catalog_index import index_products_best_effort  # noqa: E402
+from app.catalog.catalog_url_health import repair_catalog_storefront_urls  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.db import get_conn  # noqa: E402
-from app.tray_tools import execute_tool  # noqa: E402
+from app.tray.tray_tools import execute_tool  # noqa: E402
 
 
 def _tenant() -> str:
@@ -149,7 +149,7 @@ def mark_missing_unavailable(brand: str, live_ids: set[str]) -> int:
 
 
 async def probe_and_clear_dead_urls(*, limit: int = 120) -> dict[str, int]:
-    from app.product_media import ensure_product_has_live_url, official_product_url
+    from app.catalog.product_media import ensure_product_has_live_url, official_product_url
 
     tenant = _tenant()
     with get_conn() as conn:

@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from app.product_snapshot import (
+from app.catalog.product_snapshot import (
     ProductSnapshot,
     get_product_snapshot_cache,
     product_dict_to_snapshot,

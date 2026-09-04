@@ -1,5 +1,5 @@
-from app.guardrails import default_safe_handoff, detect_human_support_request
-from app.site_knowledge import HUMAN_SUPPORT_MESSAGE, NS_SALES_WHATSAPP
+from app.verify.guardrails import default_safe_handoff, detect_human_support_request
+from app.persona.site_knowledge import HUMAN_SUPPORT_MESSAGE, NS_SALES_WHATSAPP
 
 
 def test_human_support_message_contains_whatsapp():

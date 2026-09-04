@@ -4,11 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.commerce_context import CommerceConversationState, evolve_commerce_state
+from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
 from app.models import CheckoutDataInput, IncomingMessage, SalesInterpretation
-from app.order_service import get_order_facts
-from app.payment_service import inspect_order_payment
-from app.tray_tools import TOOL_SCHEMAS
+from app.commerce.order_service import get_order_facts
+from app.commerce.payment_service import inspect_order_payment
+from app.tray.tray_tools import TOOL_SCHEMAS
 
 
 def _state(**overrides):

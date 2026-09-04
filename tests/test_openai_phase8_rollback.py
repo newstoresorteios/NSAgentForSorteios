@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import BaseModel
 
-from app.openai_errors import OpenAIGatewayError
-from app.openai_gateway import (
+from app.llm.openai_errors import OpenAIGatewayError
+from app.llm.openai_gateway import (
     ChatCompletionsGateway,
     FallbackOpenAIGateway,
     ResponsesGateway,
@@ -36,7 +36,7 @@ def _reset_gateway():
 
 def test_chat_primary_disabled_redirects_to_responses_fallback(monkeypatch):
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_api_mode="chat_completions",
             openai_chat_completions_primary_allowed=False,
@@ -68,7 +68,7 @@ def test_business_modules_do_not_import_chat_completions_gateway():
 async def test_fallback_gateway_uses_chat_on_responses_failure(monkeypatch):
     writes: list[str] = []
     monkeypatch.setattr(
-        "app.openai_gateway.get_settings",
+        "app.llm.openai_gateway.get_settings",
         lambda: SimpleNamespace(
             openai_responses_fallback_to_chat=True,
             openai_store_responses=False,
@@ -126,7 +126,7 @@ def test_generate_text_sync_uses_async_gateway(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "app.openai_gateway.generate_text_output",
+        "app.llm.openai_gateway.generate_text_output",
         _fake_generate,
     )
     result = generate_text_sync(

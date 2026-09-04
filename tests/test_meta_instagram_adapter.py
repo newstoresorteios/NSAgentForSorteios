@@ -256,8 +256,8 @@ def test_parse_meta_video_story_and_link_sticker():
 
 def test_story_rollout_allows_meta_live_media(monkeypatch):
     from app.config import get_settings
-    from app.instagram_story_models import InstagramStoryContext
-    from app.instagram_story_service import story_rollout_allows
+    from app.stories.instagram_story_models import InstagramStoryContext
+    from app.stories.instagram_story_service import story_rollout_allows
     from app.models import IncomingMessage
     from pydantic import SecretStr
 

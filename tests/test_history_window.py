@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.history_window import (
+from app.memory.history_window import (
     count_user_assistant_turns,
     resolve_history_hard_cap,
     resolve_model_history_limit,

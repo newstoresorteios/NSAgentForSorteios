@@ -24,7 +24,7 @@ class InMemoryPersonaStore:
         store = self
 
         def get_active_persona(tenant_id="newstore", persona_key="newstore_commercial"):
-            from app.persona_models import PersonaVersion
+            from app.persona.persona_models import PersonaVersion
 
             for row in store.personas:
                 if (
@@ -36,7 +36,7 @@ class InMemoryPersonaStore:
             return None
 
         def list_persona_versions(tenant_id="newstore", persona_key="newstore_commercial"):
-            from app.persona_models import PersonaVersion
+            from app.persona.persona_models import PersonaVersion
 
             rows = [
                 row
@@ -47,7 +47,7 @@ class InMemoryPersonaStore:
             return [PersonaVersion.model_validate(row) for row in rows]
 
         def get_persona_version(persona_id, *, tenant_id="newstore"):
-            from app.persona_models import PersonaVersion
+            from app.persona.persona_models import PersonaVersion
 
             for row in store.personas:
                 if row["id"] == persona_id and row["tenant_id"] == tenant_id:
@@ -65,8 +65,8 @@ class InMemoryPersonaStore:
             status="draft",
             metadata=None,
         ):
-            from app.persona_models import PersonaVersion
-            from app.persona_repository import hash_instructions
+            from app.persona.persona_models import PersonaVersion
+            from app.persona.persona_repository import hash_instructions
 
             versions = [
                 row["version"]
@@ -99,7 +99,7 @@ class InMemoryPersonaStore:
         def activate_persona_version(
             persona_id, *, tenant_id="newstore", activated_by=None
         ):
-            from app.persona_models import PersonaVersion
+            from app.persona.persona_models import PersonaVersion
 
             target = None
             for row in store.personas:
@@ -125,7 +125,7 @@ class InMemoryPersonaStore:
             return PersonaVersion.model_validate(target)
 
         def archive_persona_version(persona_id, *, tenant_id="newstore"):
-            from app.persona_models import PersonaVersion
+            from app.persona.persona_models import PersonaVersion
 
             for row in store.personas:
                 if row["id"] == persona_id and row["tenant_id"] == tenant_id:
@@ -144,7 +144,7 @@ class InMemoryPersonaStore:
         def find_persona_by_hash(
             *, tenant_id, persona_key, instructions_hash, version=None
         ):
-            from app.persona_models import PersonaVersion
+            from app.persona.persona_models import PersonaVersion
 
             matches = [
                 row
@@ -165,9 +165,9 @@ class InMemoryPersonaStore:
             store.compilations.append({"id": cid, **kwargs})
             return cid
 
-        import app.persona_admin_api as admin
-        import app.persona_repository as repo
-        import app.prompt_compiler as compiler
+        import app.persona.persona_admin_api as admin
+        import app.persona.persona_repository as repo
+        import app.llm.prompt_compiler as compiler
 
         bindings = {
             "get_active_persona": get_active_persona,

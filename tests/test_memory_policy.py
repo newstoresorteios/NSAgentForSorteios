@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.memory_models import (
+from app.memory.memory_models import (
     ContactMemory,
     InstructionExtensionProposal,
     MemoryAction,
@@ -8,7 +8,7 @@ from app.memory_models import (
     MemoryProposal,
     MemoryScope,
 )
-from app.memory_policy import (
+from app.memory.memory_policy import (
     evaluate_instruction_extension_proposal,
     evaluate_memory_proposal,
 )
@@ -136,7 +136,7 @@ def test_prompt_injection_rejected():
 def test_tenant_extension_never_auto_applies(monkeypatch):
     from types import SimpleNamespace
 
-    import app.memory_policy as policy
+    import app.memory.memory_policy as policy
 
     monkeypatch.setattr(
         policy,

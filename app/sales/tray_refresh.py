@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from ..models import SalesInterpretation
-from ..preference_normalize import extract_stated_color, message_states_color
+from app.catalog.preference_normalize import extract_stated_color, message_states_color
 from .discovery import _specific_product_lock, message_states_budget
 
 
@@ -128,7 +128,7 @@ def excluded_product_ids_for_turn(
         ids.extend(_presented_ids(commerce_state))
         return list(dict.fromkeys(ids))
 
-    from ..product_retrieval import required_model_tokens
+    from app.catalog.product_retrieval import required_model_tokens
 
     model = ""
     if interpretation is not None:
@@ -149,7 +149,7 @@ def excluded_product_ids_for_turn(
 
     color = extract_stated_color(text)
     if color:
-        from ..product_retrieval import product_matches_color_tokens
+        from app.catalog.product_retrieval import product_matches_color_tokens
 
         color_tokens = (color,)
         for item in presented:

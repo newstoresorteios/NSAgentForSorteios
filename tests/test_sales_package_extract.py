@@ -1,4 +1,4 @@
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.sales.checkout_flow import respond_to_commerce_service
 from app.sales.discovery import build_qualification_snapshot
 from app.sales.policies.action_authority import purchase_product_required_result

@@ -230,11 +230,11 @@ async def test_valid_commerce_interpretation_reaches_openai_sales_responder(monk
     install_fake_openai_client(monkeypatch, FakeOpenAI)
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     monkeypatch.setattr(
-        "app.commerce_router.resolve_commerce_action",
+        "app.commerce.commerce_router.resolve_commerce_action",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("structured action must not be reclassified")),
     )
     monkeypatch.setattr(
-        "app.commerce_router.extract_product_query",
+        "app.commerce.commerce_router.extract_product_query",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("structured query must not be extracted again")),
     )
 

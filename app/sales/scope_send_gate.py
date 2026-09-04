@@ -7,11 +7,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..catalog_specs import (
+from app.catalog.catalog_specs import (
     excluded_brands_from_interpretation,
     product_matches_excluded_brand,
 )
-from ..commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from ..models import AgentResult, SalesInterpretation
 
 SCOPE_SEND_FALLBACK = (
@@ -252,7 +252,7 @@ def apply_scope_send_gate(
         return result, report
 
     try:
-        from ..observability import record_scope_mismatch
+        from app.ops.observability import record_scope_mismatch
 
         record_scope_mismatch(reason=report.reason)
     except Exception:

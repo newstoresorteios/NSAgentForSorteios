@@ -1,5 +1,5 @@
-from app.guardrails import detect_balance_inquiry, detect_coupon_code_inquiry
-from app.repository import detect_third_party_account_inquiry, format_cents_to_brl, phones_match
+from app.verify.guardrails import detect_balance_inquiry, detect_coupon_code_inquiry
+from app.identity.repository import detect_third_party_account_inquiry, format_cents_to_brl, phones_match
 
 
 def test_detect_balance_inquiry():

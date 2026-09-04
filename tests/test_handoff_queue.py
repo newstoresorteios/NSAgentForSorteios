@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from app.handoff_queue import mark_conversa_for_human_handoff
+from app.ops.handoff_queue import mark_conversa_for_human_handoff
 from app.models import IncomingMessage
 
 
@@ -29,7 +29,7 @@ def test_mark_conversa_for_human_handoff_updates_waiting():
     conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
     conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
-    with patch("app.handoff_queue.get_conn") as get_conn:
+    with patch("app.ops.handoff_queue.get_conn") as get_conn:
         get_conn.return_value.__enter__ = MagicMock(return_value=conn)
         get_conn.return_value.__exit__ = MagicMock(return_value=False)
         updated = mark_conversa_for_human_handoff(

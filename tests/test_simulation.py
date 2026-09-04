@@ -1,6 +1,6 @@
-from app.guardrails import detect_simulation_inquiry
-from app.site_knowledge import max_applicable_credit_for_product_cents
-from app.simulation import (
+from app.verify.guardrails import detect_simulation_inquiry
+from app.persona.site_knowledge import max_applicable_credit_for_product_cents
+from app.ops.simulation import (
     build_purchase_simulation_reply,
     detect_purchase_simulation_inquiry,
     parse_product_price_cents,

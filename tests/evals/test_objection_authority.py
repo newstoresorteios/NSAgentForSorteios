@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.commerce_context import CommerceConversationState
+from app.commerce.commerce_context import CommerceConversationState
 from app.models import IncomingMessage, SalesInterpretation
-from app.persona_models import PersonaVersion
-from app.persona_runtime import (
+from app.persona.persona_models import PersonaVersion
+from app.persona.persona_runtime import (
     _as_prompt_list,
     build_persona_runtime,
     reset_persona_runtime,

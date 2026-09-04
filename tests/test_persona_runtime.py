@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from app.persona_models import PersonaVersion
-from app.persona_runtime import (
+from app.persona.persona_models import PersonaVersion
+from app.persona.persona_runtime import (
     apply_policy_overrides,
     build_persona_runtime,
     extract_pix_discount_percent,

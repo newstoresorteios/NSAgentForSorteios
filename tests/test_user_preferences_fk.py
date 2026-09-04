@@ -1,8 +1,8 @@
-from app.user_preferences import save_preferred_name
+from app.identity.user_preferences import save_preferred_name
 
 
 def test_save_preferred_name_soft_fails_on_fk_violation(monkeypatch):
-    import app.user_preferences as prefs
+    import app.identity.user_preferences as prefs
 
     class BoomCursor:
         def __enter__(self):

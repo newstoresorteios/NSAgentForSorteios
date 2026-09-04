@@ -1,5 +1,5 @@
-from app.catalog_index_repository import row_to_product_dict
-from app.product_media import normalize_storefront_brand_path
+from app.catalog.catalog_index_repository import row_to_product_dict
+from app.catalog.product_media import normalize_storefront_brand_path
 
 
 def test_normalize_storefront_brand_path_rewrites_bulova_slug():
@@ -31,7 +31,7 @@ def test_row_to_product_dict_rewrites_stale_url():
 
 def test_mark_stale_or_zero_price_unavailable_sql_shape(monkeypatch):
     """Ensure hygiene update runs with bound params (no string-built intervals)."""
-    import app.catalog_url_health as module
+    import app.catalog.catalog_url_health as module
     import app.db as db_mod
 
     captured: dict = {}

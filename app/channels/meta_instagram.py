@@ -13,7 +13,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.models import AgentResult, IncomingMessage
-from app.observability import log_event
+from app.ops.observability import log_event
 
 _IG_USERNAME_CACHE: dict[str, str] = {}
 
@@ -600,8 +600,8 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
             if isinstance(reply_to, dict) and isinstance(reply_to.get("story"), dict):
                 from pydantic import SecretStr
 
-                from app.instagram_story_models import InstagramStoryContext
-                from app.instagram_story_parser import safe_media_reference
+                from app.stories.instagram_story_models import InstagramStoryContext
+                from app.stories.instagram_story_parser import safe_media_reference
 
                 story = reply_to["story"]
                 story_url = str(story.get("url") or "").strip() or None

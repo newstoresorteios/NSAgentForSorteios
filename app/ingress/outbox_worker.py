@@ -10,7 +10,7 @@ from app.ingress.outbox import (
     mark_outbox_failed,
     mark_outbox_sent,
 )
-from app.observability import log_event, log_exception
+from app.ops.observability import log_event, log_exception
 
 
 async def _resend_outbox_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -43,7 +43,7 @@ async def _resend_outbox_row(row: dict[str, Any]) -> dict[str, Any]:
 
         return await send_meta_instagram_reply(incoming, result)
 
-    from app.brevo_client import send_brevo_reply
+    from app.channels.brevo_client import send_brevo_reply
 
     send_result = await send_brevo_reply(incoming, result)
     return {
