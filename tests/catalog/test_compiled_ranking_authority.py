@@ -42,6 +42,10 @@ def test_executor_does_not_import_sales() -> None:
     _assert_no_sales_imports(_ROOT / "retrieval" / "executor.py")
 
 
+def test_rank_authority_module_does_not_import_sales() -> None:
+    _assert_no_sales_imports(_ROOT / "retrieval" / "rank_authority.py")
+
+
 def test_recommendation_uses_hybrid_rank_not_catalog_ranking() -> None:
     interpretation = SalesInterpretation(
         domain="commerce",

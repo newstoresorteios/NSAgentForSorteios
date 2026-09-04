@@ -29,7 +29,7 @@ from app.memory.working_memory import build_working_memory
 from app.verify.factual_validator import apply_factual_validation
 from app.ops.handoff_service import enrich_handoff_metadata
 from app.models import AgentResult, IncomingMessage
-from app.openai_agent import generate_agent_reply_async
+from app.agents.door import generate_agent_reply_async
 from app.verify.quality_judge import attach_judge_report, run_quality_judge
 from app.llm.response_composer import compose_outbound_reply
 from app.verify.response_critique import apply_response_critique_loop
@@ -263,11 +263,12 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         should_reset_browse_memory,
     )
 
-    if should_reset_browse_memory(
+    browse_reset_this_turn = should_reset_browse_memory(
         incoming.text,
         conversation_id=incoming.conversation_id,
         state=commerce_state,
-    ):
+    )
+    if browse_reset_this_turn:
         commerce_state = reset_browse_memory_keep_orders(commerce_state)
         if inbound_id is not None:
             commerce_state.history_cut_inbound_id = inbound_id
@@ -287,6 +288,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         **customer_context,
         "_commerce_state": commerce_state.model_dump(mode="json"),
         "_working_memory": working_memory,
+        "_browse_reset_this_turn": browse_reset_this_turn,
     }
     context_snapshot = {
         **summarize_commerce_state(commerce_state),
@@ -587,6 +589,29 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
                 ),
                 "critique_mode": critique_mode,
             }
+    double_check_mode = getattr(settings, "agent_double_check_mode", "enforce")
+    if double_check_mode not in {"off", "shadow", "enforce"}:
+        double_check_mode = "enforce"
+    from app.verify.double_check import apply_double_check_async
+
+    critique_regenerated = bool(
+        critique_report and getattr(critique_report, "regenerated", False)
+    )
+    openai_calls = runtime.openai_call_count if runtime else openai_calls
+    with runtime_stage("double_check"):
+        result, double_check_report = await apply_double_check_async(
+            incoming=incoming,
+            result=result,
+            commerce_state=commerce_state,
+            mode=double_check_mode,
+            critique_regenerated=critique_regenerated,
+            openai_call_count=openai_calls,
+        )
+        if (
+            double_check_report.applied
+            and runtime is not None
+        ):
+            runtime.register_fallback("double_check_applied")
     max_reply_chars = getattr(settings, "max_reply_chars", 900)
     result = compose_outbound_reply(
         incoming,

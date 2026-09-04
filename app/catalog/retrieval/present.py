@@ -82,12 +82,33 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
         factual_source = (
             "catalog_index" if session.catalog_index_primary else "tray_search"
         )
+        rank_pool = list(hard_filtered)
         hard_filtered = hybrid_rank_products(
             hard_filtered,
             interpretation,
             mode="recommendation",
             factual_source=factual_source,
         )
+        try:
+            from app.catalog.retrieval.rank_authority import (
+                product_rank_ids,
+                shadow_compare_rank,
+            )
+            from app.catalog.retrieval.scoring import score_catalog_candidates
+
+            alt = score_catalog_candidates(
+                rank_pool,
+                interpretation,
+                limit=customer_result_limit(),
+            )
+            shadow_compare_rank(
+                live_ids=product_rank_ids(hard_filtered)[: customer_result_limit()],
+                other_ids=product_rank_ids(alt),
+                other_name="score_catalog_candidates",
+                mode="recommendation",
+            )
+        except Exception as exc:
+            log_swallowed("present.rank_shadow", exc)
         hard_filtered = prefer_dial_and_case_matches(
             hard_filtered,
             interpretation,

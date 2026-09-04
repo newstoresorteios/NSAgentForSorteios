@@ -19,7 +19,10 @@ from pydantic import ValidationError
 from app.commerce.commerce_router import (
     extract_product_query,
     handle_commerce_message,
+    is_listed_catalog_follow_up,
+    is_outbound_catalog_image_request,
     resolve_commerce_action,
+    wants_all_listed_product_images,
     _product_lines,
 )
 from app.channels.audio_service import (
@@ -1210,11 +1213,29 @@ def _ranked_result(result: AgentResult, plan: dict[str, Any]) -> AgentResult | N
     interpretation = _commerce_plan_to_interpretation(plan)
     if interpretation is None or not products:
         return None
-    from app.catalog.retrieval.scoring import score_catalog_candidates
+    from app.catalog.retrieval.rank_authority import (
+        product_rank_ids,
+        rank_catalog_products,
+        shadow_compare_rank,
+    )
 
-    selected = score_catalog_candidates(products, interpretation)
+    selected = rank_catalog_products(products, interpretation, mode="exact")
     if not selected:
         return None
+    try:
+        from app.sales.workflows.catalog_ranking import rank_candidates
+
+        leftover = rank_candidates(products, plan, limit=len(selected))
+        shadow_compare_rank(
+            live_ids=product_rank_ids(selected),
+            other_ids=product_rank_ids(leftover),
+            other_name="catalog_ranking.rank_candidates",
+            mode="leftover",
+        )
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("ranked_result.shadow", exc)
     from app.commerce.commerce_router import _product_result
 
     action = "product_price" if plan.get("intent") == "price" else "product_search"
@@ -1326,28 +1347,6 @@ from .sales.policies.action_authority import (  # noqa: E402
 
 
 
-async def handle_sales_message(
-    message: IncomingMessage,
-    facts: dict[str, Any],
-    customer_context: dict[str, Any],
-    semantic_plan: dict[str, Any] | SalesInterpretation | None = None,
-    recent_turns: list[dict[str, Any]] | None = None,
-    commerce_state: CommerceConversationState | None = None,
-) -> AgentResult | None:
-    history_token = _sales_recent_turns.set(recent_turns)
-    try:
-        return await _handle_sales_message_inner(
-            message,
-            facts,
-            customer_context,
-            semantic_plan=semantic_plan,
-            recent_turns=recent_turns,
-            commerce_state=commerce_state,
-        )
-    finally:
-        _sales_recent_turns.reset(history_token)
-
-
 def _hydrate_sales_interpretation(
     semantic_plan: dict[str, Any] | SalesInterpretation | None,
     message: IncomingMessage,
@@ -1403,432 +1402,22 @@ def _hydrate_sales_interpretation(
     return interpretation
 
 
-async def _handle_sales_message_inner(
+async def _handle_sales_message_inner(*args, **kwargs):
+    from app.agents.commerce import handle_sales_message_inner
+
+    return await handle_sales_message_inner(*args, **kwargs)
+
+
+async def _handle_sales_catalog_inner(
     message: IncomingMessage,
     facts: dict[str, Any],
     customer_context: dict[str, Any],
-    semantic_plan: dict[str, Any] | SalesInterpretation | None = None,
+    *,
+    interpretation: SalesInterpretation | None,
+    plan: dict[str, Any],
+    state: CommerceConversationState,
     recent_turns: list[dict[str, Any]] | None = None,
-    commerce_state: CommerceConversationState | None = None,
 ) -> AgentResult | None:
-    if inbound_audio_failed(message):
-        return audio_transcription_failed_result()
-
-    interpretation = _hydrate_sales_interpretation(
-        semantic_plan, message, recent_turns, commerce_state=commerce_state
-    )
-    from app.commerce.commerce_router import (
-        is_listed_catalog_follow_up,
-        is_outbound_catalog_image_request,
-        wants_all_listed_product_images,
-    )
-    state = commerce_state or CommerceConversationState()
-    from app.memory.context_resume import (
-        build_pending_payment_resume_result,
-        build_presented_catalog_resume_result,
-        should_redisplay_presented_catalog,
-        should_resume_pending_order,
-    )
-
-    if should_resume_pending_order(
-        message.text,
-        state,
-        is_greeting=is_any_greeting(message.text),
-    ):
-        stored_payment = build_pending_payment_resume_result(state)
-        if stored_payment is not None:
-            return _mark_sales_result(
-                stored_payment,
-                interpretation=interpretation,
-                goal=(interpretation.goal if interpretation is not None else "buy"),
-                response_source="context_resume_payment_url",
-                used_openai_responder=False,
-                used_tray=False,
-            )
-    if should_redisplay_presented_catalog(message.text, state):
-        presented = build_presented_catalog_resume_result(state)
-        if presented is not None:
-            if interpretation is not None:
-                interpretation._clear_pending_action = False
-            return _mark_sales_result(
-                presented,
-                interpretation=interpretation,
-                goal=(interpretation.goal if interpretation is not None else "find"),
-                response_source="context_resume_presented_catalog",
-                used_openai_responder=False,
-                used_tray=False,
-            )
-    if interpretation is not None:
-        from .sales.purchase_selection import repair_presented_purchase_selection
-
-        interpretation = repair_presented_purchase_selection(
-            interpretation,
-            message_text=message.text,
-            state=state,
-            recent_turns=recent_turns,
-        )
-        from .sales.answer_council import apply_turn_contract_for_search
-
-        interpretation = apply_turn_contract_for_search(
-            interpretation,
-            message_text=message.text,
-            commerce_state=state,
-        )
-    deterministic_confirmation = _confirmation_text_kind(state, message.text)
-    if deterministic_confirmation == "confirm":
-        return await _confirm_current_order_review(
-            message=message,
-            plan={"intent": "commerce", "goal": "buy"},
-            state=state,
-            source="contextual_text",
-        )
-    if deterministic_confirmation == "reject":
-        rejected = AgentResult(
-            reply_text="A confirmação do pedido foi cancelada.",
-            intent="commerce",
-            response_metadata={
-                "domain": "commerce",
-                "clear_pending_action": True,
-                "order_state": {
-                    "order_confirmation_status": "not_ready",
-                    "order_review_version": None,
-                    "confirmed_order_review_version": None,
-                },
-                "used_tray": False,
-            },
-        )
-        print("[sales.order.confirmation.turn]", {
-            "pending_action_before": state.pending_action,
-            "confirmation_source": "contextual_text",
-            "explicit_change_detected": False,
-            "review_version_present": bool(state.order_review_version),
-            "confirmed_review_version_present": bool(state.confirmed_order_review_version),
-            "branch_taken": "reject_order_review",
-            "prepare_order_called": False,
-            "confirm_prepared_order_called": False,
-            "create_order_called": False,
-            "pending_action_after": None,
-        })
-        return await _respond_to_commerce_service(
-            message=message,
-            plan={"intent": "commerce", "goal": "buy"},
-            result=rejected,
-            interpretation=None,
-            state=evolve_commerce_state(state, rejected),
-        )
-
-    from .sales.policies.objection_authority import try_objection_authority_result
-
-    objection_result = try_objection_authority_result(message, interpretation, state)
-    if objection_result is not None:
-        print("[sales.objection.authority]", {
-            "kind": (objection_result.response_metadata or {}).get("objection_kind"),
-            "handoff": objection_result.handoff_required,
-        })
-        return _mark_sales_result(
-            objection_result,
-            interpretation=interpretation,
-            goal=(interpretation.goal if interpretation is not None else "discover"),
-            response_source="deterministic_objection",
-            used_openai_responder=False,
-            used_tray=False,
-            fallback_reason=objection_result.safety_reason,
-        )
-
-    log_purchase_progress("interpretation", "start")
-    if interpretation is not None:
-        plan = interpretation_to_plan(interpretation, message.text)
-    elif isinstance(semantic_plan, SalesInterpretation):
-        plan = interpretation_to_plan(semantic_plan, message.text)
-    elif semantic_plan and semantic_plan.get("domain") == "commerce":
-        plan = semantic_plan
-    else:
-        plan = await plan_sales_request(message)
-    if not plan:
-        log_purchase_progress(
-            "interpretation",
-            "blocked",
-            "sales_plan_missing",
-        )
-        return None
-    log_purchase_progress("interpretation", "success")
-    if (
-        interpretation is not None
-        and interpretation.active_topic == "purchase_option_choice"
-        and interpretation.needs_clarification
-        and str(interpretation.clarification_question or "").strip()
-    ):
-        return _mark_sales_result(
-            AgentResult(
-                reply_text=html.unescape(
-                    str(interpretation.clarification_question).strip()
-                ),
-                intent="commerce",
-                handoff_required=False,
-                safety_reason="purchase_option_choice",
-                response_metadata={"domain": "commerce"},
-            ),
-            interpretation=interpretation,
-            goal="buy",
-            response_source="deterministic_fallback",
-            used_openai_responder=False,
-            used_tray=False,
-            fallback_reason="purchase_option_choice",
-        )
-    if interpretation is not None:
-        print("[sales.semantic.result]", {
-            "scope_domain": interpretation.domain,
-            "intent": plan.get("intent"),
-            "goal": interpretation.goal,
-            "reference_type": interpretation.reference_type,
-            "has_subject": bool(
-                interpretation.subject.product_type
-                or interpretation.subject.brand
-                or interpretation.subject.model
-                or interpretation.subject.reference
-                or interpretation.subject.ean
-            ),
-            "purchase_action": interpretation.purchase_action,
-            "product_action": interpretation.product_action,
-            "payment_action": interpretation.payment_action,
-            "checkout_channel_preference": interpretation.checkout_channel_preference,
-            "image_request": interpretation.image_request,
-            "confirmation": interpretation.confirmation,
-            "pending_action_disposition": (
-                interpretation.confirmation
-                if state.pending_action
-                else "none"
-            ),
-        })
-    print("[sales.purchase.orchestrator]", {
-        "has_purchase_action": bool(
-            interpretation and interpretation.purchase_action
-        ),
-        "has_payment_action": bool(
-            interpretation and interpretation.payment_action
-        ),
-        "has_active_product": state.active_product is not None,
-        "purchase_item_count": len(
-            interpretation.purchase_items
-            if interpretation is not None
-            else []
-        ),
-        "reference_type": (
-            interpretation.reference_type
-            if interpretation is not None
-            else None
-        ),
-        "reference_position_present": bool(
-            interpretation
-            and interpretation.reference_position is not None
-        ),
-        "confirmation": (
-            interpretation.confirmation
-            if interpretation is not None
-            else None
-        ),
-        "has_pending_action": bool(state.pending_action),
-        "current_purchase_stage": state.purchase_stage,
-    })
-    if interpretation is not None and interpretation.payment_action == "order_payment":
-        if state.pix_payment_id and not state.order_id:
-            payment_result = await refresh_direct_pix_checkout(state=state)
-        else:
-            payment_result = await inspect_order_payment(
-                state=state,
-                execute=execute_tool,
-                order_id=interpretation.order_id,
-            )
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=payment_result,
-            interpretation=interpretation,
-            state=evolve_commerce_state(state, payment_result),
-        )
-    if interpretation is not None and interpretation.order_action is not None:
-        order_result = await get_order_facts(
-            state=state,
-            execute=execute_tool,
-            order_id=interpretation.order_id,
-        )
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=order_result,
-            interpretation=interpretation,
-            state=evolve_commerce_state(state, order_result),
-        )
-    if (
-        interpretation is not None
-        and state.pending_action == "awaiting_order_confirmation"
-        and interpretation.confirmation == "confirm"
-        and interpretation.purchase_action not in {
-            "set_cart_item_quantity", "remove_cart_item",
-        }
-        and interpretation.checkout_data is None
-        and interpretation.shipping_action is None
-        and interpretation.payment_action is None
-        and interpretation.checkout_channel_preference is None
-        and not interpretation.domain_change_explicit
-    ):
-        confirmed = confirm_prepared_order(state)
-        confirmed_state = evolve_commerce_state(state, confirmed)
-        order_result = await _fulfill_confirmed_order(
-            confirmed_state, message=message,
-        )
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=order_result,
-            interpretation=interpretation,
-            state=evolve_commerce_state(confirmed_state, order_result),
-        )
-    if interpretation is not None and interpretation.checkout_data is not None:
-        checkout_updates = interpretation.checkout_data.model_dump(
-            mode="json",
-            exclude_none=True,
-        )
-        checkout_result = update_checkout_data(
-            state,
-            checkout_updates,
-        )
-        field_errors = checkout_result.commercial_data.get("field_errors")
-        field_errors = field_errors if isinstance(field_errors, dict) else {}
-        missing_fields = checkout_result.commercial_data.get("missing_fields")
-        missing_fields = missing_fields if isinstance(missing_fields, list) else []
-        enriched_updates = await enrich_checkout_data_from_cep(
-            checkout_updates,
-            known_zipcode=state.checkout_draft.address.zip_code,
-            missing_fields=missing_fields,
-            field_errors=field_errors,
-        )
-        cep_resolution_applied = enriched_updates != checkout_updates
-        if cep_resolution_applied:
-            checkout_updates = enriched_updates
-            checkout_result = update_checkout_data(state, checkout_updates)
-            field_errors = checkout_result.commercial_data.get("field_errors")
-            field_errors = field_errors if isinstance(field_errors, dict) else {}
-            missing_fields = checkout_result.commercial_data.get("missing_fields")
-            missing_fields = missing_fields if isinstance(missing_fields, list) else []
-        repair_attempted = should_repair_checkout_data(
-            message.text,
-            checkout_updates,
-            missing_fields,
-            field_errors,
-        )
-        if repair_attempted:
-            repaired_updates = await repair_checkout_data_with_openai(
-                message_text=message.text,
-                updates=checkout_updates,
-                missing_fields=missing_fields,
-                field_errors=field_errors,
-            )
-            if repaired_updates != checkout_updates:
-                checkout_result = update_checkout_data(state, repaired_updates)
-            checkout_result.response_metadata["checkout_data_repair_attempted"] = True
-            checkout_result.response_metadata["checkout_data_repair_applied"] = (
-                repaired_updates != checkout_updates
-            )
-        checkout_result.response_metadata["checkout_cep_resolution_applied"] = (
-            cep_resolution_applied
-        )
-        payment_preference = (
-            interpretation.payment_method_preference
-            or state.payment_method_preference
-        )
-        if payment_preference is not None:
-            checkout_result.response_metadata["payment_method_preference"] = (
-                payment_preference
-            )
-        checkout_result = await _advance_whatsapp_checkout(
-            state,
-            checkout_result,
-            payment_preference,
-            interpretation.installment_count,
-        )
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=checkout_result,
-            interpretation=interpretation,
-            state=evolve_commerce_state(state, checkout_result),
-        )
-    if interpretation is not None and interpretation.shipping_action == "quote":
-        shipping_result = await quote_shipping(
-            state=state,
-            zipcode=interpretation.shipping_zipcode or "",
-            execute=execute_tool,
-        )
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=shipping_result,
-            interpretation=interpretation,
-        )
-    if interpretation is not None and interpretation.shipping_action == "list_methods":
-        shipping_result = await list_shipping_methods(execute=execute_tool)
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=shipping_result,
-            interpretation=interpretation,
-        )
-    if interpretation is not None and interpretation.shipping_action == "select":
-        shipping_result = select_shipping(
-            state,
-            selection_id=interpretation.shipping_selection_id,
-            selection_position=interpretation.shipping_selection_position,
-        )
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=shipping_result,
-            interpretation=interpretation,
-        )
-    if (
-        interpretation is not None
-        and interpretation.confirmation == "confirm"
-        and state.pending_action == "awaiting_shipping_selection"
-        and len(state.shipping_quotes) == 1
-    ):
-        shipping_result = select_shipping(state, selection_position=1)
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=shipping_result,
-            interpretation=interpretation,
-        )
-    if interpretation is not None and interpretation.checkout_action == "prepare_order":
-        order_result = await prepare_order(state=state, execute=execute_tool)
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=order_result,
-            interpretation=interpretation,
-        )
-    if interpretation is not None and interpretation.checkout_action == "create_order":
-        order_result = await _fulfill_confirmed_order(state, message=message)
-        return await _respond_to_commerce_service(
-            message=message,
-            plan=plan,
-            result=order_result,
-            interpretation=interpretation,
-            state=evolve_commerce_state(state, order_result),
-        )
-    if (
-        interpretation is not None
-        and state.pending_action
-        and interpretation.confirmation == "reject"
-    ):
-        return _pending_action_rejected_result(interpretation, state)
-    if (
-        interpretation is not None
-        and state.pending_action
-        and state.pending_action != "awaiting_payment"
-        and interpretation.confirmation == "none"
-    ):
-        interpretation._clear_pending_action = True
     resolved_product = None
     resolved_by = "none"
     if interpretation is not None:
@@ -3765,3 +3354,6 @@ async def _handle_sales_message_inner(
             else "sales_responder_unavailable"
         ),
     )
+
+
+from app.agents.commerce import handle_sales_message as handle_sales_message

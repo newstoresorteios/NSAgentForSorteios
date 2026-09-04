@@ -26,6 +26,7 @@ def _pipeline_settings():
         agent_trusted_fact_domains="",
         agent_critique_mode="off",
         agent_quality_judge_mode="off",
+        agent_double_check_mode="enforce",
         agent_emergency_rollback=False,
         max_reply_chars=900,
         agent_persona_tenant_id="newstore",
@@ -95,6 +96,69 @@ async def test_listed_products_run_factual_once_after_scope_council(monkeypatch)
     assert order.count("factual") == 1
     factual_at = order.index("factual")
     assert order.index("scope") < order.index("council") < order.index("compliance") < factual_at
+    double_check = (result.response_metadata or {}).get("double_check") or {}
+    assert double_check.get("mode") == "enforce"
+    assert double_check.get("skipped") is False
+    assert double_check.get("phase1_ran") is False
+    assert double_check.get("phase1_gate") == "no_high_risk_signal"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_marks_browse_reset_for_door(monkeypatch):
+    import app.message_pipeline as pipeline
+
+    seen: dict[str, object] = {}
+
+    async def fake_generate(_incoming, customer_context):
+        seen["flag"] = customer_context.get("_browse_reset_this_turn")
+        return AgentResult(
+            reply_text="oi",
+            intent="general",
+            response_metadata={"response_source": "local_greeting", "domain": "greeting"},
+        )
+
+    monkeypatch.setattr(pipeline, "get_settings", _pipeline_settings)
+    monkeypatch.setattr(
+        pipeline,
+        "load_commerce_conversation_state",
+        lambda **_k: {
+            "last_presented_products": [
+                {"position": 1, "product_id": "1", "name": "Tissot PRX"},
+            ],
+            "active_domain": "commerce",
+        },
+    )
+    monkeypatch.setattr(pipeline, "persist_customer_commerce_session", lambda **_k: None)
+    monkeypatch.setattr(pipeline, "upsert_customer_identity_links", lambda *_a, **_k: None)
+    monkeypatch.setattr(pipeline, "generate_agent_reply_async", fake_generate)
+    monkeypatch.setattr(pipeline, "apply_factual_validation", lambda result, **_k: result)
+    monkeypatch.setattr(
+        pipeline,
+        "compose_outbound_reply",
+        lambda incoming, result, **_k: result,
+    )
+    monkeypatch.setattr(
+        "app.sales.scope_send_gate.apply_scope_send_gate_with_retry",
+        lambda result, **_k: _async_identity(result),
+    )
+    monkeypatch.setattr(
+        "app.sales.answer_council.apply_answer_council_with_retry",
+        lambda result, **_k: _async_identity(result),
+    )
+    monkeypatch.setattr(
+        "app.verify.outbound_compliance.apply_outbound_compliance",
+        lambda *, incoming, result, interpretation: (result, None),
+    )
+
+    await pipeline.process_incoming_message(
+        IncomingMessage(text="oi", conversation_id="browse-reset"),
+        {},
+    )
+    assert seen["flag"] is True
+
+
+async def _async_identity(result):
+    return result, None, None
 
 
 @pytest.mark.asyncio

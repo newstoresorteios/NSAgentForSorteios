@@ -873,6 +873,14 @@ async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapter
 
     started = time.perf_counter()
     try:
+        try:
+            from app.sales.policies.tool_policy import apply_tool_policy
+
+            blocked = apply_tool_policy(name, arguments)
+        except Exception:
+            blocked = None
+        if blocked is not None:
+            return blocked
         result = await _execute_tool(name, arguments, client)
         ok = "error" not in result
         elapsed_ms = (time.perf_counter() - started) * 1000

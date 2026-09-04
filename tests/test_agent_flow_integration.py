@@ -52,8 +52,10 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
         limit=8,
         sender_key=None,
         hard_cap=40,
+        after_inbound_id=None,
     ):
         _ = hard_cap
+        _ = after_inbound_id
         rows = [
             row for row in state["inbound"]
             if row["id"] < before_inbound_id

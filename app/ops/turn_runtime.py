@@ -13,6 +13,7 @@ LLMCallType = Literal[
     "response_composition",
     "checkout_repair",
     "judge",
+    "double_check",
     "audio_transcription",
     "audio_tts",
     "legacy",

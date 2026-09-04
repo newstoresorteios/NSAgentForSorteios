@@ -108,6 +108,7 @@ def rank_candidates(
     plan: dict[str, Any],
     limit: int = 3,
 ) -> list[dict[str, Any]]:
+    """Leftover scorer. Live lists use ``rank_catalog_products`` / hybrid."""
     ranked = [
         (score_candidate(candidate, plan), candidate)
         for candidate in candidates

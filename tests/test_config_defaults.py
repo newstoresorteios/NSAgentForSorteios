@@ -62,6 +62,8 @@ def test_llm_budget_defaults_are_conservative_etapa6():
     assert Settings.model_fields["agent_quality_judge_sample_rate"].default == 0.0
     assert Settings.model_fields["agent_answer_council_enabled"].default is True
     assert Settings.model_fields["agent_answer_council_max_restarts"].default == 1
+    assert Settings.model_fields["agent_double_check_mode"].default == "enforce"
+    assert Settings.model_fields["agent_tool_policy_mode"].default == "shadow"
     assert Settings.model_fields["agent_presenter_mode"].default == "thin"
 
 
@@ -111,3 +113,23 @@ def test_persona_and_memory_rollout_defaults():
     assert Settings.model_fields["agent_learning_bootstrap_hours"].default == 24
     assert Settings.model_fields["agent_full_obs_logs"].default is False
     assert Settings.model_fields["agent_http_obs_logs"].default is False
+
+
+def test_core_shims_keep_legacy_import_identity():
+    from app import config, db, models, security
+    from app.core import config as core_config
+    from app.core import db as core_db
+    from app.core import models as core_models
+    from app.core import security as core_security
+
+    assert config is core_config
+    assert models is core_models
+    assert db is core_db
+    assert security is core_security
+    assert config.get_settings is core_config.get_settings
+    assert config.Settings is core_config.Settings
+    assert models.IncomingMessage is core_models.IncomingMessage
+    assert models.SalesInterpretation is core_models.SalesInterpretation
+    assert db.get_conn is core_db.get_conn
+    assert db._prepare_inbound_message is core_db._prepare_inbound_message
+    assert security.verify_brevo_webhook is core_security.verify_brevo_webhook
