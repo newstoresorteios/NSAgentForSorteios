@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import get_settings
 from app.models import AgentResult, IncomingMessage
+from app.verify import log_swallowed
 from app.ops.runtime_context import get_current_turn
 from app.ops.turn_runtime import LLMCallBudgetExceeded
 
@@ -195,8 +196,8 @@ def collect_judge_risk_signals(
         try:
             if float(confidence) < 0.45:
                 signals.append("low_interpretation_confidence")
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            log_swallowed("judge.confidence", exc)
     return signals
 
 

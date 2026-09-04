@@ -521,7 +521,7 @@ def turn_understanding_to_sales(
     subject = ProductSubject(
         product_type=hard.category or entities.category,
         brand=hard.brand or entities.brand or soft.brand,
-        model=hard.model or entities.model or soft.model,
+        model=hard.model or entities.model,
         reference=hard.reference or entities.reference,
         ean=hard.ean or entities.ean,
     )
@@ -549,6 +549,11 @@ def turn_understanding_to_sales(
     gender = hard.gender or entities.gender or soft.recipient
     if gender and gender not in preferences.attributes:
         preferences.attributes.append(gender)
+    if soft.model and not subject.model:
+        if not preferences.style:
+            preferences.style = soft.model
+        elif soft.model not in preferences.attributes:
+            preferences.attributes.append(soft.model)
     if hard.exact_only and "somente" not in preferences.attributes:
         preferences.attributes.append("somente")
     if hard.brand_exclusive and hard.brand and f"somente:{hard.brand}" not in preferences.attributes:

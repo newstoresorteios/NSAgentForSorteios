@@ -13,6 +13,7 @@ from app.verify.fact_sources import (
     StructuredFact,
     infer_source_for_payload_key,
 )
+from app.verify import log_swallowed
 from app.verify.fact_authority import (
     authorize_products_for_responder,
     filter_commerce_safe_evidence,
@@ -419,7 +420,8 @@ def _ground_catalog_display_pix(
         return
     try:
         from app.commerce.commerce_router import _list_price, _payment_details, _pix_cash_price
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        log_swallowed("factual.display_pix", exc)
         return
     source = FactSource.TRAY_LIVE if used_tray else FactSource.TRAY_ADAPTER
     for product in products:

@@ -19,6 +19,7 @@ from app.commerce.commerce_context import (
 )
 from app.config import get_settings
 from app.identity.greeting_policy import is_generic_greeting_reply
+from app.verify import log_swallowed
 from app.verify.guardrails import detect_trade_in_or_appraisal_request
 from app.ops.handoff_service import build_human_handoff_result
 from app.models import AgentResult, IncomingMessage
@@ -690,7 +691,8 @@ async def _regenerate_reply(
         regenerated.response_metadata = dict(regenerated.response_metadata or {})
         regenerated.response_metadata["critique_regenerated"] = True
         return regenerated
-    except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError):
+    except (APIError, OpenAIGatewayError, LLMCallBudgetExceeded, ValueError, TypeError) as exc:
+        log_swallowed("critique.regenerate", exc)
         return None
 
 

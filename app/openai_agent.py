@@ -28,6 +28,7 @@ from app.memory.context_builder import (
 from app.verify.guardrails import (
     detect_available_numbers_inquiry,
     detect_blocked_request,
+    detect_explicit_raffle_intent,
     default_safe_handoff,
 )
 from app.ops.handoff_service import build_human_handoff_result, should_request_human_handoff
@@ -461,24 +462,14 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
         return third_party_reply
 
     if message.input_modality == "audio" and message.transcription_failed:
-        return AgentResult(
-            reply_text=(
-                "Recebi seu áudio, mas não consegui entender agora. "
-                "Pode repetir por texto ou enviar outro áudio?"
-            ),
-            intent="audio_transcription_failed",
-            handoff_required=False,
-        )
+        from app.channels.audio_service import audio_transcription_failed_result
+
+        return audio_transcription_failed_result()
 
     if message.input_modality == "audio" and not (message.text or "").strip():
-        return AgentResult(
-            reply_text=(
-                "Recebi seu áudio, mas não consegui transcrever. "
-                "Pode repetir por texto ou enviar outro áudio?"
-            ),
-            intent="audio_transcription_failed",
-            handoff_required=False,
-        )
+        from app.channels.audio_service import audio_transcription_failed_result
+
+        return audio_transcription_failed_result()
 
     facts = gather_customer_facts(message, customer_context)
     facts["scope_domain"] = scope.get("domain")
@@ -634,6 +625,21 @@ async def _generate_agent_reply_async_inner(
             used_openai_interpreter=False,
             used_openai_responder=False,
             used_tray=False,
+        )
+    from app.channels.audio_service import (
+        audio_transcription_failed_result,
+        inbound_audio_failed,
+    )
+
+    if inbound_audio_failed(message):
+        return _annotate_agent_result(
+            audio_transcription_failed_result(),
+            domain="technical_fallback",
+            response_source="deterministic_fallback",
+            used_openai_interpreter=False,
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason="audio_transcription_failed",
         )
 
     raw_inbound_id = (message.raw or {}).get("inbound_id")
@@ -815,8 +821,16 @@ async def _generate_agent_reply_async_inner(
         message_text=message.text,
     )
     commerce_state = hydrate_state_from_handles(commerce_state, context_handles)
+    from .sales.dialogue_phase import (
+        is_fresh_commerce_start,
+        reset_browse_memory_keep_orders,
+    )
+
+    fresh_start = is_fresh_commerce_start(message.text)
+    if fresh_start:
+        commerce_state = reset_browse_memory_keep_orders(commerce_state)
     customer_context["_commerce_state"] = commerce_state.model_dump(mode="json")
-    resume_pending_order_early = should_resume_pending_order(
+    resume_pending_order_early = (not fresh_start) and should_resume_pending_order(
         message.text,
         commerce_state,
         is_greeting=soft_greeting,
@@ -873,7 +887,7 @@ async def _generate_agent_reply_async_inner(
             used_openai_responder=False,
             used_tray=False,
         )
-    if should_redisplay_presented_catalog(message.text, commerce_state):
+    if (not fresh_start) and should_redisplay_presented_catalog(message.text, commerce_state):
         presented = build_presented_catalog_resume_result(commerce_state)
         if presented is not None:
             return _annotate_agent_result(
@@ -1249,6 +1263,7 @@ async def _generate_agent_reply_async_inner(
     interpretation, domain_context_applied = apply_commerce_domain_context(
         interpretation,
         commerce_state,
+        message_text=message.text,
     )
     print("[sales.domain.context]", {
         "previous_domain": commerce_state.active_domain,
@@ -1261,10 +1276,9 @@ async def _generate_agent_reply_async_inner(
         "context_override": domain_context_applied,
     })
     primary_intent = detect_primary_intent(message.text)
-    raffle_intents = {"balance", "coupon_code", "simulation", "raffle_history", "current_raffle", "rules"}
     scope_domain = (
         "raffle"
-        if not used_openai_interpreter and primary_intent in raffle_intents
+        if detect_explicit_raffle_intent(message.text)
         else interpretation.domain
     )
     print("[agent.scope]", {"domain": scope_domain})
@@ -1290,10 +1304,14 @@ async def _generate_agent_reply_async_inner(
         )
     ):
         payment_resume = build_pending_payment_resume_result(commerce_state)
-        if payment_resume is not None and should_resume_pending_order(
-            message.text,
-            commerce_state,
-            is_greeting=True,
+        if (
+            payment_resume is not None
+            and not fresh_start
+            and should_resume_pending_order(
+                message.text,
+                commerce_state,
+                is_greeting=True,
+            )
         ):
             return _annotate_agent_result(
                 payment_resume,
@@ -1404,17 +1422,6 @@ async def _generate_agent_reply_async_inner(
             used_openai_responder=False,
             used_tray=False,
         )
-    if message.input_modality == "audio" and (message.transcription_failed or not (message.text or "").strip()):
-        return _annotate_agent_result(
-            generate_agent_reply(message, customer_context),
-            domain=scope_domain,
-            goal=interpretation.goal,
-            response_source="technical_fallback",
-            used_openai_interpreter=used_openai_interpreter,
-            used_openai_responder=False,
-            used_tray=False,
-            fallback_reason="audio_transcription_failed",
-        )
     facts = gather_customer_facts(message, customer_context)
     facts["scope_domain"] = scope_domain
     if scope_domain == "commerce":
@@ -1470,6 +1477,25 @@ async def _generate_agent_reply_async_inner(
                 fallback_reason=interpretation._fallback_reason,
                 interpretation_confidence=interpretation.confidence,
             )
+        return _annotate_agent_result(
+            AgentResult(
+                reply_text=(
+                    "Me diz em uma frase o que você busca — "
+                    "marca, modelo ou faixa de investimento."
+                ),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="commerce_clarification",
+            ),
+            domain="commerce",
+            goal=interpretation.goal,
+            response_source="deterministic_fallback",
+            used_openai_interpreter=used_openai_interpreter,
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason="commerce_handle_empty",
+            interpretation_confidence=interpretation.confidence,
+        )
     print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})
     result = await generate_openai_reply_async(message, customer_context, facts)
     return _annotate_agent_result(

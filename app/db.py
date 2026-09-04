@@ -1298,7 +1298,7 @@ def persist_customer_commerce_session(
         )
         merged = merge_commerce_states(commerce_state, donor)
         score = commerce_state_resumable_score(merged)
-        if score <= 0:
+        if score <= 0 and not merged.get("forget_shortlist"):
             return
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1452,7 +1452,10 @@ def load_commerce_conversation_state(
         else {}
     )
     if durable:
-        merged = merge_commerce_states(merged, durable)
+        if durable.get("forget_shortlist"):
+            merged = merge_commerce_states(durable, merged)
+        else:
+            merged = merge_commerce_states(merged, durable)
 
     print("[sales.context.state] loaded", {
         "candidates": len(collected),

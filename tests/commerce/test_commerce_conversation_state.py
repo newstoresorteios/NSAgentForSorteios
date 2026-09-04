@@ -106,16 +106,16 @@ def test_new_presented_list_replaces_previous_positions():
     assert reference.product_id == "901"
 
 
-def test_openai_domain_is_not_reclassified_by_state():
+def test_openai_false_raffle_is_pinned_to_commerce():
     interpreted = _interpretation(domain="raffle", domain_change_explicit=False)
 
     contextual, changed = apply_commerce_domain_context(interpreted, _state())
 
-    assert contextual.domain == "raffle"
-    assert changed is False
+    assert contextual.domain == "commerce"
+    assert changed is True
 
 
-def test_openai_payment_domain_remains_authoritative():
+def test_openai_payment_false_raffle_is_pinned_to_commerce():
     state = _state().model_copy(update={"purchase_stage": "payment_discussion"})
     interpreted = _interpretation(
         domain="raffle",
@@ -126,8 +126,56 @@ def test_openai_payment_domain_remains_authoritative():
 
     contextual, _ = apply_commerce_domain_context(interpreted, state)
 
-    assert contextual.domain == "raffle"
+    assert contextual.domain == "commerce"
     assert contextual.goal == "buy"
+
+
+def test_openai_out_of_scope_is_pinned_mid_sale():
+    interpreted = _interpretation(domain="out_of_scope", domain_change_explicit=False)
+
+    contextual, changed = apply_commerce_domain_context(
+        interpreted,
+        _state(),
+        message_text="tenho uma dúvida",
+    )
+
+    assert contextual.domain == "commerce"
+    assert changed is True
+
+
+def test_explicit_raffle_message_is_not_pinned():
+    interpreted = _interpretation(domain="commerce", domain_change_explicit=False)
+
+    contextual, changed = apply_commerce_domain_context(
+        interpreted,
+        _state(),
+        message_text="qual é o meu saldo?",
+    )
+
+    assert contextual.domain == "commerce"
+    assert changed is False
+
+    raffle_interp = _interpretation(domain="raffle", domain_change_explicit=False)
+    contextual, changed = apply_commerce_domain_context(
+        raffle_interp,
+        _state(),
+        message_text="qual é o meu saldo?",
+    )
+    assert contextual.domain == "raffle"
+    assert changed is False
+
+
+def test_fresh_start_is_not_pinned_to_commerce():
+    interpreted = _interpretation(domain="raffle", domain_change_explicit=False)
+
+    contextual, changed = apply_commerce_domain_context(
+        interpreted,
+        _state(),
+        message_text="quero começar uma conversa nova",
+    )
+
+    assert contextual.domain == "raffle"
+    assert changed is False
 
 
 def test_explicit_raffle_change_is_preserved():

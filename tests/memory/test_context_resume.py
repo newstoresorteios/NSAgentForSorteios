@@ -34,6 +34,35 @@ def test_merge_recovers_order_wiped_by_later_greeting():
     assert merged["pending_action"] == "awaiting_payment"
 
 
+def test_merge_forget_shortlist_keeps_order_and_drops_old_list():
+    latest = {
+        "forget_shortlist": True,
+        "last_presented_products": [],
+        "active_product": None,
+        "dialogue_phase": "discovery",
+        "order_id": None,
+    }
+    previous = {
+        "order_id": "25422",
+        "order_payment_url": "https://pay.example/1",
+        "pending_action": "awaiting_payment",
+        "last_presented_products": [
+            {"position": 1, "product_id": "641", "name": "Tissot"},
+        ],
+        "active_product": {"product_id": "641", "name": "Tissot"},
+        "active_preferences": {"locked_identity": {"product_id": "641"}},
+        "dialogue_phase": "shortlist",
+    }
+    merged = merge_commerce_states(latest, previous)
+    assert merged["order_id"] == "25422"
+    assert merged["order_payment_url"] == "https://pay.example/1"
+    assert merged["last_presented_products"] == []
+    assert merged["active_product"] is None
+    assert merged["forget_shortlist"] is True
+    assert (merged.get("active_preferences") or {}).get("locked_identity") is None
+    assert merged["dialogue_phase"] == "discovery"
+
+
 def test_merge_keeps_latest_presented_list_over_richer_cart_donor():
     latest = {
         "last_presented_products": [

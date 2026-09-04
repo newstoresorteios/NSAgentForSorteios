@@ -53,6 +53,40 @@ _NEW_BROWSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_FRESH_START_RE = re.compile(
+    r"\b("
+    r"come[cç]ar\s+(de\s+novo|outra|do\s+zero|uma\s+nova|uma\s+conversa)|"
+    r"recome[cç]ar|"
+    r"nova\s+conversa|outra\s+conversa|conversa\s+nova|"
+    r"do\s+zero|"
+    r"vamos\s+come[cç]ar\s+outra"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_fresh_commerce_start(message_text: str | None) -> bool:
+    """Customer asked to start over — not a follow-up on the last shortlist."""
+    return bool(_FRESH_START_RE.search(_fold(message_text)))
+
+
+def reset_browse_memory_keep_orders(
+    state: CommerceConversationState,
+) -> CommerceConversationState:
+    """Drop catalog memory; keep unpaid order / cart so payment resume still works."""
+    updated = state.model_copy(deep=True)
+    updated.last_presented_products = []
+    updated.active_product = None
+    updated.active_topic = None
+    updated.dialogue_phase = "discovery"
+    updated.forget_shortlist = True
+    updated.product_resolution_state = None
+    prefs = dict(updated.active_preferences or {})
+    prefs.pop("locked_identity", None)
+    updated.active_preferences = prefs
+    return updated
+
+
 _SHORTLIST_REJECTION_RE = re.compile(
     r"^\s*(nenhuma|nenhum|nenhuma dessas|nenhum desses|"
     r"nao gostei de nenhuma|não gostei de nenhuma|"
@@ -131,6 +165,8 @@ def message_resets_dialogue_to_discovery(
     interpretation: SalesInterpretation | None,
 ) -> bool:
     folded = _fold(message_text)
+    if is_fresh_commerce_start(message_text):
+        return True
     if _SHORTLIST_REJECTION_RE.match(folded):
         return True
     if interpretation is None:

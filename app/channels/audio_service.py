@@ -10,6 +10,7 @@ from openai import APIStatusError, OpenAI
 
 from app.config import get_settings
 from app.llm.openai_runtime import execute_openai_call_sync
+from app.models import AgentResult, IncomingMessage
 
 AUDIO_MIME_PREFIXES = ("audio/",)
 AUDIO_MIME_TYPES = {
@@ -17,6 +18,29 @@ AUDIO_MIME_TYPES = {
     "application/octet-stream",
 }
 AUDIO_EXTENSIONS = (".ogg", ".opus", ".mp3", ".m4a", ".aac", ".amr", ".wav", ".webm")
+
+AUDIO_TRANSCRIPTION_FAILED_REPLY = (
+    "Recebi seu áudio, mas não consegui transcrever. "
+    "Pode repetir por texto ou enviar outro áudio?"
+)
+
+
+def inbound_audio_failed(message: IncomingMessage | None) -> bool:
+    if message is None:
+        return False
+    return message.input_modality == "audio" and (
+        bool(message.transcription_failed) or not (message.text or "").strip()
+    )
+
+
+def audio_transcription_failed_result() -> AgentResult:
+    return AgentResult(
+        reply_text=AUDIO_TRANSCRIPTION_FAILED_REPLY,
+        intent="audio_transcription_failed",
+        handoff_required=False,
+        safety_reason="audio_transcription_failed",
+    )
+
 
 _WHISPER_BRAND_PROMPT = (
     "Transcrição de mensagem de WhatsApp em português do Brasil sobre a New Store "

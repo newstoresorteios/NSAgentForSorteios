@@ -102,6 +102,57 @@ async def enrich_agent_result(incoming: IncomingMessage, result: AgentResult) ->
     return result
 
 
+_GATE_BLOCK_REASONS = {
+    "commerce_clarification",
+    "scope_send_gate_blocked",
+    "answer_council_blocked",
+    "recommendation_budget_miss",
+}
+
+
+def _persist_commerce_session(
+    incoming: IncomingMessage,
+    commerce_state: CommerceConversationState,
+    result: AgentResult,
+) -> AgentResult:
+    result.response_metadata = dict(result.response_metadata or {})
+    result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
+    result.response_metadata["working_memory"] = build_working_memory(commerce_state)
+    upsert_customer_identity_links(incoming, commerce_state)
+    persist_customer_commerce_session(
+        person_keys=resolve_person_key_candidates(
+            sender_key=incoming.sender_key,
+            sender_phone=incoming.sender_phone,
+            state=commerce_state,
+        ),
+        commerce_state=commerce_state.model_dump(mode="json"),
+        channel=incoming.channel,
+        conversation_id=incoming.conversation_id,
+        sender_key=incoming.sender_key,
+        sender_phone=incoming.sender_phone,
+    )
+    return result
+
+
+def _realign_commerce_state_to_reply(
+    previous: CommerceConversationState,
+    result: AgentResult,
+) -> CommerceConversationState:
+    state = evolve_commerce_state(previous, result)
+    products = (result.commercial_data or {}).get("products")
+    presented = [
+        item for item in products if isinstance(item, dict)
+    ] if isinstance(products, list) else []
+    if (
+        result.safety_reason in _GATE_BLOCK_REASONS
+        and len(presented) < 2
+        and not (result.response_metadata or {}).get("presented_products")
+    ):
+        state.last_presented_products = []
+        state.forget_shortlist = True
+    return state
+
+
 async def process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
     settings = get_settings()
     runtime = get_current_turn()
@@ -155,6 +206,13 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         commerce_state = CommerceConversationState.from_payload(
             load_commerce_conversation_state(**state_lookup)
         )
+    from app.sales.dialogue_phase import (
+        is_fresh_commerce_start,
+        reset_browse_memory_keep_orders,
+    )
+
+    if is_fresh_commerce_start(incoming.text):
+        commerce_state = reset_browse_memory_keep_orders(commerce_state)
     # New product photo starts a fresh identification — never price the
     # previous SKU (e.g. CW Rosa) while Vision runs on a Beaubleu.
     if (incoming.image_url or "").strip():
@@ -217,8 +275,9 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
 
     with runtime_stage("agent_decision"):
         result = await generate_agent_reply_async(incoming, customer_context)
+    commerce_state_before_evolve = commerce_state
     previous_dialogue_phase = commerce_state.dialogue_phase
-    commerce_state = evolve_commerce_state(commerce_state, result)
+    commerce_state = evolve_commerce_state(commerce_state_before_evolve, result)
     if commerce_state.dialogue_phase != previous_dialogue_phase:
         from app.ops.observability import record_dialogue_phase_transition
 
@@ -227,21 +286,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             to_phase=commerce_state.dialogue_phase,
             channel=incoming.channel,
         )
-    result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
-    result.response_metadata["working_memory"] = build_working_memory(commerce_state)
-    upsert_customer_identity_links(incoming, commerce_state)
-    persist_customer_commerce_session(
-        person_keys=resolve_person_key_candidates(
-            sender_key=incoming.sender_key,
-            sender_phone=incoming.sender_phone,
-            state=commerce_state,
-        ),
-        commerce_state=commerce_state.model_dump(mode="json"),
-        channel=incoming.channel,
-        conversation_id=incoming.conversation_id,
-        sender_key=incoming.sender_key,
-        sender_phone=incoming.sender_phone,
-    )
+    result = _persist_commerce_session(incoming, commerce_state, result)
     decision = build_agent_decision(
         incoming,
         result,
@@ -337,6 +382,22 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         result=result,
         interpretation=interpretation,
     )
+    commerce_state = _realign_commerce_state_to_reply(
+        commerce_state_before_evolve,
+        result,
+    )
+    result = apply_factual_validation(
+        result,
+        decision=decision,
+        mode=getattr(
+            settings,
+            "agent_factual_validation_mode",
+            "enforce",
+        ),
+        trusted_domains=trusted_fact_domains,
+        commerce_state=commerce_state.model_dump(mode="json"),
+    )
+    result = _persist_commerce_session(incoming, commerce_state, result)
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
     from app.ops.rollout import (
@@ -405,6 +466,10 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
                 )
             )
             if critique_changed:
+                commerce_state = _realign_commerce_state_to_reply(
+                    commerce_state_before_evolve,
+                    result,
+                )
                 result = apply_factual_validation(
                     result,
                     decision=decision,
@@ -416,6 +481,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
                     trusted_domains=trusted_fact_domains,
                     commerce_state=commerce_state.model_dump(mode="json"),
                 )
+                result = _persist_commerce_session(incoming, commerce_state, result)
                 validation = result.response_metadata.get("factual_validation") or {}
                 result.response_metadata["factual_validation_post_critique"] = True
                 factual_ok = bool(validation.get("valid", True))

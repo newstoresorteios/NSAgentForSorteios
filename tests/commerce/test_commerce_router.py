@@ -79,6 +79,88 @@ async def test_agent_commerce_calls_tray_before_openai(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_commerce_handle_none_does_not_open_openai_tool_loop(monkeypatch):
+    from app import openai_agent
+    from app.models import SalesInterpretation
+
+    async def fake_interpret(*_a, **_k):
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="discover",
+            subject={"product_type": "relógio"},
+            preferences={},
+            information_needed=["catalog"],
+            references_previous_context=False,
+            needs_clarification=True,
+            confidence=0.4,
+        )
+        interpretation._source = "openai"
+        return interpretation
+
+    async def fake_handle(*_a, **_k):
+        return None
+
+    async def openai_must_not_run(*_a, **_k):
+        raise AssertionError("commerce None must not fall through to tool loop")
+
+    monkeypatch.setattr(openai_agent, "interpret_message", fake_interpret)
+    monkeypatch.setattr(openai_agent, "handle_sales_message", fake_handle)
+    monkeypatch.setattr(openai_agent, "generate_openai_reply_async", openai_must_not_run)
+    monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_k: [])
+    monkeypatch.setattr(openai_agent, "detect_blocked_request", lambda _t: None)
+    monkeypatch.setattr(
+        openai_agent,
+        "should_request_human_handoff",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(openai_agent, "extract_order_reference", lambda _t: None)
+    monkeypatch.setattr(openai_agent, "extract_valid_tax_document", lambda _t: None)
+    monkeypatch.setattr(
+        openai_agent,
+        "contains_tax_document_candidate",
+        lambda _t: False,
+    )
+    monkeypatch.setattr(
+        openai_agent,
+        "extract_handles_from_conversation",
+        lambda **_k: {},
+    )
+    monkeypatch.setattr(
+        openai_agent,
+        "hydrate_state_from_handles",
+        lambda state, _h: state,
+    )
+    monkeypatch.setattr(openai_agent, "is_order_lookup_request", lambda _t, **_k: False)
+    monkeypatch.setattr(openai_agent, "is_payment_link_request", lambda _t: False)
+    monkeypatch.setattr(
+        openai_agent,
+        "is_unpaid_order_resume_request",
+        lambda _t: False,
+    )
+    monkeypatch.setattr(
+        openai_agent,
+        "should_resume_pending_order",
+        lambda *_a, **_k: False,
+    )
+    monkeypatch.setattr(openai_agent, "has_resumable_commerce", lambda _s: False)
+    monkeypatch.setattr(openai_agent, "_is_greeting", lambda _t: False)
+    monkeypatch.setattr(openai_agent, "is_soft_greeting", lambda _t: False)
+    monkeypatch.setattr(
+        openai_agent,
+        "should_redisplay_presented_catalog",
+        lambda *_a, **_k: False,
+    )
+
+    result = await openai_agent.generate_agent_reply_async(
+        IncomingMessage(text="me explica melhor", conversation_id="c-hatch"),
+        {},
+    )
+    assert result.safety_reason == "commerce_clarification"
+    assert "marca" in result.reply_text.casefold()
+    assert result.response_metadata.get("fallback_reason") == "commerce_handle_empty"
+
+
+@pytest.mark.asyncio
 async def test_inventory_searches_then_checks_single_product(monkeypatch):
     calls = []
 

@@ -26,6 +26,11 @@ def test_fixed_safety_policy_blocks_prompt_and_secret_leak_instructions():
 def test_blocked_topics_still_detected():
     assert detect_blocked_request("quero comprar número da sorte") is not None
     assert detect_blocked_request("tem tissot seastar?") is None
+    assert detect_blocked_request("quero apostar no jogo") == "blocked_topic:apostar"
+    assert detect_blocked_request("casa de bet hoje") == "blocked_topic:bet"
+    assert detect_blocked_request("fala com o Beto") is None
+    assert detect_blocked_request("Albert Einstein") is None
+    assert detect_blocked_request("versão beta do site") is None
 
 
 def test_repo_env_example_has_no_live_secrets():

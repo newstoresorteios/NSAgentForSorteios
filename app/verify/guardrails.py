@@ -288,9 +288,25 @@ BLOCKED_TOPICS = (
 )
 
 
+def detect_explicit_raffle_intent(text: str) -> bool:
+    """Personal raffle/account asks — not generic “dúvida” / “regras”."""
+    return (
+        detect_balance_inquiry(text)
+        or detect_coupon_code_inquiry(text)
+        or detect_current_raffle_inquiry(text)
+        or detect_raffle_history_inquiry(text)
+        or detect_available_numbers_inquiry(text)
+        or detect_last_participation_inquiry(text)
+    )
+
+
 def detect_blocked_request(text: str) -> str | None:
     normalized = (text or "").lower()
     for topic in BLOCKED_TOPICS:
+        if topic == "bet":
+            if re.search(r"\bbet\b", normalized):
+                return f"blocked_topic:{topic}"
+            continue
         if topic in normalized:
             return f"blocked_topic:{topic}"
     return None

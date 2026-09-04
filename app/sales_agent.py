@@ -22,6 +22,10 @@ from app.commerce.commerce_router import (
     resolve_commerce_action,
     _product_lines,
 )
+from app.channels.audio_service import (
+    audio_transcription_failed_result,
+    inbound_audio_failed,
+)
 from app.catalog.category.resolver import CategoryResolver
 from app.commerce.checkout_service import checkout_capabilities, select_checkout_channel
 from app.commerce.checkout_data_service import (
@@ -787,8 +791,10 @@ def interpretation_to_plan(
     ))
     if interpretation.purchase_action == "create_cart":
         intent = "purchase_intent"
-    elif retrieval_signal and interpretation.goal in {"discover", "recommend", "buy"}:
+    elif retrieval_signal and interpretation.goal == "recommend":
         intent = "recommendation"
+    elif retrieval_signal and interpretation.goal == "find":
+        intent = "product_search"
     else:
         intent = "clarification" if interpretation.needs_clarification else goal_to_intent.get(
             interpretation.goal or "discover",
@@ -1510,6 +1516,29 @@ async def generate_clarification_reply(
         )
 
 
+def _deterministic_tray_copy_ready(
+    tray_result: AgentResult,
+    plan: dict[str, Any] | None,
+) -> bool:
+    """Keep Tray list/price copy when the LLM would only reword it."""
+    if tray_result.safety_reason:
+        return False
+    products = (tray_result.commercial_data or {}).get("products")
+    if not isinstance(products, list) or not products:
+        return False
+    if not (tray_result.reply_text or "").strip():
+        return False
+    plan = plan or {}
+    intent = str(plan.get("intent") or "")
+    goal = str(plan.get("goal") or "")
+    presented = bool((tray_result.response_metadata or {}).get("presented_products"))
+    if intent in {"recommendation", "product_search", "product_comparison"}:
+        return True
+    if presented and goal in {"find", "recommend", "discover", "compare", "inspect"}:
+        return True
+    return False
+
+
 async def _sales_response_with_openai(
     message: IncomingMessage,
     plan: dict[str, Any],
@@ -1538,6 +1567,15 @@ async def _sales_response_with_openai(
         return None
     if (tray_result.commercial_data or {}).get("input_template"):
         return None
+    if _deterministic_tray_copy_ready(tray_result, plan):
+        return _mark_sales_result(
+            tray_result,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
+        )
     try:
         from app.llm.openai_errors import OpenAIGatewayError
         from app.llm.openai_gateway import generate_text_output
@@ -1836,17 +1874,8 @@ async def _handle_sales_message_inner(
     recent_turns: list[dict[str, Any]] | None = None,
     commerce_state: CommerceConversationState | None = None,
 ) -> AgentResult | None:
-    if message.input_modality == "audio" and (
-        message.transcription_failed or not (message.text or "").strip()
-    ):
-        return AgentResult(
-            reply_text=(
-                "Recebi seu áudio, mas não consegui transcrever. "
-                "Pode repetir por texto ou enviar outro áudio?"
-            ),
-            intent="audio_transcription_failed",
-            handoff_required=False,
-        )
+    if inbound_audio_failed(message):
+        return audio_transcription_failed_result()
 
     interpretation = _hydrate_sales_interpretation(
         semantic_plan, message, recent_turns, commerce_state=commerce_state

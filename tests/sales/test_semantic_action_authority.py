@@ -64,9 +64,67 @@ def test_structured_generic_purchase_is_discovery_without_cart_action():
 
     plan = interpretation_to_plan(interpretation, "mensagem semântica")
 
-    assert plan["intent"] == "recommendation"
+    assert plan["intent"] == "clarification"
     assert plan["purchase_action"] is None
     assert interpretation.image_request is False
+
+
+def test_recommend_with_retrieval_stays_recommendation():
+    from app.sales_agent import interpretation_to_plan
+
+    interpretation = _interpretation(
+        goal="recommend",
+        subject={"product_type": "relógio", "brand": "Tissot"},
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        purchase_action=None,
+    )
+    plan = interpretation_to_plan(interpretation, "me sugere um Tissot")
+    assert plan["intent"] == "recommendation"
+
+
+def test_find_with_retrieval_is_product_search_not_recommendation():
+    from app.sales_agent import interpretation_to_plan
+
+    interpretation = _interpretation(
+        goal="find",
+        subject={"product_type": "relógio", "brand": "Tissot"},
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        purchase_action=None,
+    )
+    plan = interpretation_to_plan(interpretation, "procure Tissot")
+    assert plan["intent"] == "product_search"
+
+
+@pytest.mark.asyncio
+async def test_tray_list_copy_skips_openai_responder(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="test-key", openai_model="gpt-4.1-mini"),
+    )
+
+    tray = _catalog_result("641")
+    tray.reply_text = "1. Tissot Seastar — R$ 6.399,99"
+    result = await sales_agent._sales_response_with_openai(
+        IncomingMessage(text="me mostra Tissot"),
+        {"goal": "recommend", "intent": "recommendation"},
+        tray,
+        _interpretation(
+            goal="recommend",
+            subject={"brand": "Tissot", "product_type": "relógio"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+    )
+    assert result is not None
+    assert result.reply_text == "1. Tissot Seastar — R$ 6.399,99"
+    assert result.response_metadata["used_openai_responder"] is False
+    assert result.response_metadata["response_source"] == "deterministic_fallback"
+    assert result.commercial_data["products"][0]["id"] == "641"
 
 
 @pytest.mark.asyncio
@@ -338,6 +396,14 @@ async def test_complete_pipeline_keeps_current_semantics_above_old_state(monkeyp
     monkeypatch.setattr(sales_agent, "_sales_response_with_openai", _no_responder)
     monkeypatch.setattr(sales_agent, "execute_tool", execute)
     monkeypatch.setattr(sales_agent, "get_settings", _settings)
+
+    async def pass_council(result, **_kwargs):
+        return result, None, None
+
+    monkeypatch.setattr(
+        "app.sales.answer_council.apply_answer_council_with_retry",
+        pass_council,
+    )
 
     async def turn(text: str) -> AgentResult:
         result = await message_pipeline.process_incoming_message(

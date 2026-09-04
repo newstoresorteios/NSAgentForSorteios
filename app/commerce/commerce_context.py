@@ -143,6 +143,8 @@ class CommerceConversationState(BaseModel):
     active_topic: str | None = None
     active_product: CommerceProductReference | None = None
     last_presented_products: list[PresentedCommerceProduct] = Field(default_factory=list)
+    # Explicit “start over”: persist/load must not revive the last shortlist.
+    forget_shortlist: bool = False
     last_story_product: dict[str, Any] | None = None
     # found_available | found_unknown | found_unavailable | plausible_matches | None
     product_resolution_state: str | None = None
@@ -507,20 +509,31 @@ def resolve_purchase_item_reference(
 def apply_commerce_domain_context(
     interpretation: SalesInterpretation,
     state: CommerceConversationState,
+    *,
+    message_text: str | None = None,
 ) -> tuple[SalesInterpretation, bool]:
-    if interpretation._source == "openai":
+    """Keep an open sale on commerce unless the customer explicitly left it.
+
+    OpenAI raffle/out-of-scope without an explicit raffle ask is treated as a
+    mislabel (e.g. “dúvida”). Greeting and local raffle fallback stay as-is.
+    Fresh-start phrasing is not pinned — that would revive the last shortlist.
+    """
+    if interpretation.domain_change_explicit or interpretation.domain == "commerce":
         return interpretation, False
-    previous_domain = state.active_domain
-    if (
-        previous_domain == "commerce"
-        and interpretation.domain != "commerce"
-        and interpretation.domain != "greeting"
-        and not (
-            interpretation._source != "openai"
-            and interpretation.domain == "raffle"
-        )
-        and not interpretation.domain_change_explicit
+    from app.sales.dialogue_phase import is_fresh_commerce_start
+    from app.verify.guardrails import detect_explicit_raffle_intent
+
+    if is_fresh_commerce_start(message_text) or detect_explicit_raffle_intent(
+        message_text or ""
     ):
+        return interpretation, False
+    if interpretation.domain == "greeting":
+        return interpretation, False
+    if interpretation.domain == "raffle" and interpretation._source != "openai":
+        return interpretation, False
+    if state.active_domain != "commerce":
+        return interpretation, False
+    if interpretation.domain in {"raffle", "out_of_scope", "store_general"}:
         return interpretation.model_copy(update={"domain": "commerce"}), True
     return interpretation, False
 
@@ -888,8 +901,10 @@ def evolve_commerce_state(
                 )
     if metadata.get("presented_products") and compact_products:
         state.last_presented_products = compact_products
+        state.forget_shortlist = False
     elif len(compact_products) >= 2:
         state.last_presented_products = compact_products
+        state.forget_shortlist = False
     story_ref = metadata.get("last_story_product")
     if isinstance(story_ref, dict) and story_ref.get("story_media_id"):
         state.last_story_product = story_ref

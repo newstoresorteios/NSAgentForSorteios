@@ -97,6 +97,62 @@ def _prefer_latest_presentation(merged: dict[str, Any], latest: dict[str, Any]) 
     return merged
 
 
+_ORDER_RECOVERY_KEYS = (
+    "order_id",
+    "order_status",
+    "order_status_group",
+    "order_session_id",
+    "order_created_at",
+    "order_lookup_id",
+    "order_payment_method_id",
+    "order_payment_method",
+    "order_payment_type",
+    "order_payment_url",
+    "order_payment_status",
+    "order_has_payment",
+    "order_payment_date",
+    "pending_action",
+    "purchase_stage",
+    "cart_session_id",
+    "cart_url",
+    "checkout_draft",
+)
+
+
+def _copy_missing_fields(base: dict[str, Any], donor: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    for key in keys:
+        if base.get(key) in (None, "", [], {}) and donor.get(key) not in (
+            None,
+            "",
+            [],
+            {},
+        ):
+            base[key] = donor[key]
+    if (
+        base.get("pending_action") is None
+        and donor.get("pending_action") == "awaiting_payment"
+    ):
+        base["pending_action"] = "awaiting_payment"
+    return base
+
+
+def _strip_browse_memory(payload: dict[str, Any]) -> dict[str, Any]:
+    stripped = dict(payload)
+    stripped["last_presented_products"] = []
+    stripped["active_product"] = None
+    stripped["active_topic"] = None
+    stripped["forget_shortlist"] = True
+    stripped["product_resolution_state"] = None
+    prefs = stripped.get("active_preferences")
+    if isinstance(prefs, dict):
+        cleaned = dict(prefs)
+        cleaned.pop("locked_identity", None)
+        stripped["active_preferences"] = cleaned
+    if stripped.get("dialogue_phase") == "shortlist":
+        stripped["dialogue_phase"] = "discovery"
+    return stripped
+
+
 def merge_commerce_states(
     primary: dict[str, Any] | None,
     fallback: dict[str, Any] | None,
@@ -106,42 +162,17 @@ def merge_commerce_states(
     donor = dict(fallback or {})
     if not donor:
         return base
+    if base.get("forget_shortlist"):
+        recovered = _copy_missing_fields(base, donor, _ORDER_RECOVERY_KEYS)
+        return _strip_browse_memory(recovered)
     if commerce_state_resumable_score(base) >= commerce_state_resumable_score(donor):
         # Still recover order fields if a later greeting/cart turn wiped them.
         if not base.get("order_id") and donor.get("order_id"):
-            for key in (
-                "order_id",
-                "order_status",
-                "order_status_group",
-                "order_session_id",
-                "order_created_at",
-                "order_lookup_id",
-                "order_payment_method_id",
-                "order_payment_method",
-                "order_payment_type",
-                "order_payment_url",
-                "order_payment_status",
-                "order_has_payment",
-                "order_payment_date",
-                "pending_action",
-                "purchase_stage",
-                "active_product",
-                "cart_session_id",
-                "cart_url",
-                "checkout_draft",
-            ):
-                if base.get(key) in (None, "", [], {}) and donor.get(key) not in (
-                    None,
-                    "",
-                    [],
-                    {},
-                ):
-                    base[key] = donor[key]
-            if (
-                base.get("pending_action") is None
-                and donor.get("pending_action") == "awaiting_payment"
-            ):
-                base["pending_action"] = "awaiting_payment"
+            _copy_missing_fields(
+                base,
+                donor,
+                _ORDER_RECOVERY_KEYS + ("active_product",),
+            )
         return base
     # Richer cart/order donor wins, but never discard the latest product shortlist.
     return _prefer_latest_presentation(dict(donor), base)

@@ -184,6 +184,48 @@ def test_roundtrip_adapters_preserve_commerce_fields():
     assert back.hard_constraints.budget_max == 3000
 
 
+def test_soft_model_stays_preference_not_subject_identity():
+    understanding = TurnUnderstanding(
+        language="pt-BR",
+        primary_intent="commerce_discover",
+        user_goal="Tissot casual",
+        confidence=0.9,
+        entities=ExtractedEntities(brand="Tissot", category="relógio"),
+        hard_constraints=ProductHardConstraints(brand="Tissot", category="relógio"),
+        soft_preferences=ProductSoftPreferences(model="casual", style=None),
+        required_tools=["search_products"],
+        answer_strategy="search_catalog",
+        clarification_required=False,
+        requested_action=RequestedAction(kind="none"),
+    )
+    sales = turn_understanding_to_sales(understanding)
+    assert sales.subject.brand == "Tissot"
+    assert sales.subject.model is None
+    assert sales.preferences.style == "casual"
+
+
+def test_hard_model_still_becomes_subject_identity():
+    understanding = TurnUnderstanding(
+        language="pt-BR",
+        primary_intent="commerce_find",
+        user_goal="Tissot Seastar",
+        confidence=0.94,
+        entities=ExtractedEntities(brand="Tissot", model="Seastar", category="relógio"),
+        hard_constraints=ProductHardConstraints(
+            brand="Tissot",
+            model="Seastar",
+            category="relógio",
+        ),
+        soft_preferences=ProductSoftPreferences(),
+        required_tools=["search_products"],
+        answer_strategy="search_catalog",
+        clarification_required=False,
+        requested_action=RequestedAction(kind="none"),
+    )
+    sales = turn_understanding_to_sales(understanding)
+    assert sales.subject.model == "Seastar"
+
+
 def test_exclusive_marker_maps_to_hard_constraints():
     sales = SalesInterpretation(
         domain="commerce",
