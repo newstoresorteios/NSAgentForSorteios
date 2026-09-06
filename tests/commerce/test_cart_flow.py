@@ -176,9 +176,16 @@ async def test_list_selection_revalidates_price_quantity_and_creates_cart(monkey
     assert result.response_metadata["cart_state"]["cart_url"] == (
         "https://loja.example/checkout/SESSION-1"
     )
-    assert "cart_url" not in result.commercial_data["cart"]
-    assert "cart_url" not in result.commercial_data["checkout"]
-    assert "https://loja.example/checkout/SESSION-1" not in result.reply_text
+    assert result.commercial_data["cart"]["cart_url"] == (
+        "https://loja.example/checkout/SESSION-1"
+    )
+    assert result.commercial_data["checkout"]["cart_url"] == (
+        "https://loja.example/checkout/SESSION-1"
+    )
+    assert "https://loja.example/checkout/SESSION-1" in result.reply_text
+    assert "paga" in result.reply_text.casefold()
+    assert "joão" not in result.reply_text.casefold()
+    assert "consultor" not in result.reply_text.casefold()
     assert result.commercial_data["current_price"] == "125.50"
 
 
@@ -501,7 +508,10 @@ async def test_repeated_cart_creation_reconciles_without_post(monkeypatch):
     assert result is not None
     assert [name for name, _ in calls] == ["get_cart_complete"]
     assert result.commercial_data["cart"]["already_satisfied"] is True
-    assert "cart_url" not in result.commercial_data["cart"]
+    assert result.commercial_data["cart"]["cart_url"] == (
+        "https://loja.example/checkout/S1"
+    )
+    assert "https://loja.example/checkout/S1" in result.reply_text
     assert result.response_metadata["used_tray"] is True
 
 @pytest.mark.asyncio
@@ -759,26 +769,12 @@ async def test_active_product_purchase_does_not_search_by_name(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cart_success_uses_openai_sales_responder(monkeypatch):
+async def test_cart_success_keeps_pay_link_copy_without_openai(monkeypatch):
     import app.sales_agent as sales_agent
 
-    captured = {}
-
     class FakeCompletions:
-        async def create(self, **kwargs):
-            captured.update(kwargs)
-            return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        message=SimpleNamespace(
-                            content=(
-                                "Pronto, seu produto está no carrinho. "
-                                "Finalize pelo checkout oficial informado."
-                            )
-                        )
-                    )
-                ]
-            )
+        async def create(self, **_kwargs):
+            raise AssertionError("live cart copy must not go through OpenAI")
 
     class FakeOpenAI:
         def __init__(self, **_kwargs):
@@ -794,7 +790,7 @@ async def test_cart_success_uses_openai_sales_responder(monkeypatch):
     )
     install_fake_openai_client(monkeypatch, FakeOpenAI)
     tray_result = AgentResult(
-        reply_text="fallback",
+        reply_text="Carrinho atualizado.",
         intent="commerce",
         commercial_data={
             "cart": {
@@ -814,10 +810,13 @@ async def test_cart_success_uses_openai_sales_responder(monkeypatch):
     )
 
     assert result is not None
-    assert result.response_metadata["response_source"] == "openai"
+    assert result.response_metadata["response_source"] == "deterministic_fallback"
+    assert result.response_metadata["used_openai_responder"] is False
     assert result.response_metadata["purchase_stage"] == "cart_created"
-    assert "cartão, CVV" in captured["messages"][0]["content"]
-    assert "requires_channel_choice" in captured["messages"][0]["content"]
+    assert "https://loja.example/checkout/S1" in result.reply_text
+    assert "paga" in result.reply_text.casefold()
+    assert "joão" not in result.reply_text.casefold()
+    assert "consultor" not in result.reply_text.casefold()
 
 
 @pytest.mark.asyncio

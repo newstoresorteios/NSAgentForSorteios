@@ -124,6 +124,7 @@ def claim_pending_inbox(
     limit: int = 5,
     lease_seconds: int = 90,
     owner: str | None = None,
+    conversation_keys: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     settings = get_settings()
     if not settings.database_url:
@@ -132,11 +133,17 @@ def claim_pending_inbox(
     lease_owner = owner or f"worker:{uuid4().hex[:12]}"
     expires = datetime.now(timezone.utc) + timedelta(seconds=max(15, lease_seconds))
     claimed: list[dict[str, Any]] = []
+    keys = [
+        str(key).strip()
+        for key in (conversation_keys or [])
+        if str(key or "").strip()
+    ]
+    key_filter = "AND conversation_key = ANY(%(conversation_keys)s)" if keys else ""
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 WITH next_rows AS (
                   SELECT id
                   FROM public.ai_inbound_inbox
@@ -149,6 +156,7 @@ def claim_pending_inbox(
                         AND lease_expires_at < now()
                       )
                     )
+                    {key_filter}
                   ORDER BY created_at ASC
                   FOR UPDATE SKIP LOCKED
                   LIMIT %(limit)s
@@ -171,6 +179,7 @@ def claim_pending_inbox(
                     "limit": max(1, min(int(limit), 25)),
                     "owner": lease_owner,
                     "expires": expires,
+                    "conversation_keys": keys or None,
                 },
             )
             rows = cur.fetchall() or []

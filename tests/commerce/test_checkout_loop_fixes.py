@@ -121,7 +121,9 @@ async def test_openai_429_greeting_not_shortlist_prompt(monkeypatch):
         interpretation=fallback_interp,
     )
     assert "Qual opção da lista" not in defensive
-    assert "WhatsApp" in defensive or "Como posso" in defensive or "ajudar" in defensive.lower()
+    assert "https://loja.example/checkout/SESSION-5585999498149" in defensive
+    assert "paga" in defensive.casefold()
+    assert "joão" not in defensive.casefold()
 
 
 @pytest.mark.asyncio

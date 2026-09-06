@@ -9,7 +9,10 @@ from typing import Any
 from openai import APIError, BadRequestError
 
 from app.channels.channel_profiles import channel_system_hint
-from app.commerce.checkout_service import checkout_capabilities
+from app.commerce.checkout_service import (
+    apply_live_cart_pay_copy,
+    checkout_capabilities,
+)
 from app.commerce.commerce_context import CommerceConversationState
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.ops.turn_runtime import LLMCallBudgetExceeded
@@ -70,6 +73,8 @@ def deterministic_tray_copy_ready(
     """Keep Tray list/price copy when the LLM would only reword it."""
     if tray_result.safety_reason:
         return False
+    if apply_live_cart_pay_copy(tray_result) is not None:
+        return True
     products = (tray_result.commercial_data or {}).get("products")
     if not isinstance(products, list) or not products:
         return False
@@ -305,6 +310,16 @@ async def sales_response_with_openai(
         return None
     if (tray_result.commercial_data or {}).get("input_template"):
         return None
+    pay_copy = apply_live_cart_pay_copy(tray_result, commerce_state=state)
+    if pay_copy is not None:
+        return _mark_sales_result(
+            pay_copy,
+            interpretation=interpretation,
+            goal=plan.get("goal"),
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
+        )
     if deterministic_tray_copy_ready(tray_result, plan):
         return _mark_sales_result(
             tray_result,

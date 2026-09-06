@@ -431,8 +431,12 @@ REGRAS ADICIONAIS DE CHECKOUT E PAGAMENTO:
   produto referenciado. Link de produto é diferente de link do carrinho.
 - Use checkout_channel_preference=whatsapp ou site quando o cliente escolher
   semanticamente onde deseja continuar.
-- Quando FACTS.checkout.requires_channel_choice=true, conduza uma escolha curta entre
-  os canais marcados como suportados. Não ofereça um canal com suporte false.
+- Quando FACTS.checkout.cart_url existir, o item já está no carrinho e reservado.
+  Diga para entrar no link oficial e pagar. Não ofereça João, consultor, equipe
+  ou transferência humana para fechar a compra.
+- Quando FACTS.checkout.requires_channel_choice=true e não houver cart_url,
+  conduza uma escolha curta entre os canais marcados como suportados.
+  Não ofereça um canal com suporte false.
 - Se o site for escolhido e site_checkout_supported=true, use somente cart_url.
 - Nao repita confirmacao de carrinho quando o estado factual indicar que o item ja esta
   na quantidade desejada. Respeite pending_action e purchase_stage atuais.
