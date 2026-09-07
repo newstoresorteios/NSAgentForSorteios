@@ -182,6 +182,8 @@ class SalesInterpretation(BaseModel):
     _turn_contract_bound: bool = PrivateAttr(default=False)
     _excluded_product_ids: list[str] = PrivateAttr(default_factory=list)
     _turn_understanding: Any = PrivateAttr(default=None)
+    _catalog_memory_rehydrate_skipped: bool = PrivateAttr(default=False)
+    _prior_catalog_theme: str | None = PrivateAttr(default=None)
 
     def resolved_answer_strategy(self) -> str | None:
         """Public field first; private TurnUnderstanding is only a fallback."""

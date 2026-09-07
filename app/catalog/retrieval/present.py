@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.catalog.retrieval.availability import (
     apply_persona_presentation_order,
     product_availability_state,
+    select_diverse_brand_shortlist,
 )
 from app.catalog.retrieval.limits import customer_result_limit
 from app.catalog.retrieval.revalidate import revalidate_products
@@ -130,7 +131,11 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
     else:
         ranked = hard_filtered
     ranked = apply_persona_presentation_order(ranked)
-    selected = ranked[: customer_result_limit()]
+    selected = select_diverse_brand_shortlist(
+        ranked,
+        interpretation,
+        limit=customer_result_limit(),
+    )
     refreshed, revalidation_failed = await revalidate_products(
         selected,
         interpretation,

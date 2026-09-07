@@ -101,11 +101,20 @@ def test_excluded_ids_drop_hermetique_when_mk2_locked():
 
 def test_tray_extras_send_current_price_range_and_color():
     extras = tray_list_query_extras(
-        _interp(preferences={"budget_max": 10000, "color": "cinza"})
+        _interp(brand="Tissot", preferences={"budget_max": 10000, "color": "cinza"})
     )
     assert extras["current_price_range"] == "0,10000"
     assert extras["property_name"] == "Cor"
     assert extras["property_value"] == "Cinza"
+
+
+def test_tray_extras_omit_color_and_without_brand():
+    extras = tray_list_query_extras(
+        _interp(brand=None, preferences={"budget_max": 2500, "color": "dourado"})
+    )
+    assert extras["current_price_range"] == "0,2500"
+    assert "property_name" not in extras
+    assert "property_value" not in extras
 
 
 def test_open_sale_and_greeting_block():

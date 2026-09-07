@@ -739,6 +739,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
                 ),
                 interpretation=interpretation,
                 inbound_id=inbound_id,
+                message_text=incoming.text,
             )
             result.response_metadata = dict(result.response_metadata or {})
             result.response_metadata["contact_preference_memory"] = pref_result

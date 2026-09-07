@@ -93,6 +93,14 @@ def is_fresh_commerce_start(message_text: str | None) -> bool:
     return bool(_FRESH_START_RE.search(_fold(message_text)))
 
 
+def is_generic_catalog_ask(message_text: str | None) -> bool:
+    """Open catalog ask — not a named SKU follow-up or checkout close."""
+    folded = _fold(message_text)
+    if not folded:
+        return False
+    return bool(_FRESH_CATALOG_ASK_RE.search(folded) or _NEW_BROWSE_RE.search(folded))
+
+
 def _scrub_catalog_preferences(prefs: dict[str, Any] | None) -> dict[str, Any]:
     cleaned = dict(prefs or {})
     for key in _CATALOG_PREF_KEYS:

@@ -652,6 +652,7 @@ def _rehydrate_contact_preferences(
             interpretation,
             tenant_id=str(getattr(settings, "agent_persona_tenant_id", "newstore")),
             sender_key=sender_key,
+            message_text=message.text,
         )
     except Exception as exc:
         print(

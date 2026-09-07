@@ -442,6 +442,13 @@ def _persona_qualification_question(
             return None
         if discovery_state.get("persona_qualification_required") is False:
             return None
+    existing_question = str(interpretation.clarification_question or "").strip()
+    if (
+        getattr(interpretation, "_prior_catalog_theme", None)
+        and existing_question
+        and "outras marcas" in existing_question.casefold()
+    ):
+        return existing_question
     try:
         from app.persona.persona_runtime import get_persona_runtime
 

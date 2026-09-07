@@ -25,6 +25,46 @@ def apply_persona_presentation_order(
         return products
     return ready + other
 
+
+def select_diverse_brand_shortlist(
+    products: list[dict[str, Any]],
+    interpretation: Any,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """When no brand is locked, prefer distinct brands on the customer shortlist."""
+    if not products or limit <= 0:
+        return []
+    try:
+        from app.catalog.specs.identity_lock import specific_product_lock
+
+        if specific_product_lock(interpretation):
+            return products[:limit]
+    except Exception as exc:
+        from app.catalog.retrieval.runtime import log_swallowed
+
+        log_swallowed("availability.specific_lock", exc)
+    subject = getattr(interpretation, "subject", None)
+    if _fold(getattr(subject, "brand", None)):
+        return products[:limit]
+    picked: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    overflow: list[dict[str, Any]] = []
+    for product in products:
+        label = _fold(product.get("brand"))
+        if label and label not in seen:
+            picked.append(product)
+            seen.add(label)
+            if len(picked) >= limit:
+                return picked
+        else:
+            overflow.append(product)
+    for product in overflow:
+        picked.append(product)
+        if len(picked) >= limit:
+            break
+    return picked
+
 def _known_unavailable(product: dict[str, Any]) -> bool:
     availability_fields = (
         product.get("available"),
