@@ -301,6 +301,20 @@ def ensure_tables() -> None:
                 ON public.ai_pix_payments(settlement_status, status)
                 WHERE status = 'approved';
 
+                CREATE INDEX IF NOT EXISTS idx_ai_pix_payments_tray_order
+                ON public.ai_pix_payments(tray_order_id)
+                WHERE tray_order_id IS NOT NULL;
+
+                CREATE INDEX IF NOT EXISTS idx_ai_pix_payments_cart_session
+                ON public.ai_pix_payments(cart_session_id)
+                WHERE cart_session_id IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS public.ai_tray_sync_cursors (
+                    cursor_key text PRIMARY KEY,
+                    last_event_id bigint NOT NULL DEFAULT 0,
+                    updated_at timestamptz NOT NULL DEFAULT now()
+                );
+
                 CREATE TABLE IF NOT EXISTS public.ai_agent_persona_versions (
                     id bigserial PRIMARY KEY,
                     tenant_id text NOT NULL,

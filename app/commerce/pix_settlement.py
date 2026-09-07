@@ -103,6 +103,30 @@ async def _default_create_order(payload: dict[str, Any]) -> Any:
     return await TrayAdapterClient().create_order(payload)
 
 
+def _orders_from_list(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("orders") or payload.get("data") or []
+    return [item for item in items if isinstance(item, dict)]
+
+
+async def find_existing_tray_order(order_payload: dict[str, Any]) -> str | None:
+    session_id = str(order_payload.get("session_id") or "").strip()
+    if not session_id:
+        return None
+    try:
+        listed = await TrayAdapterClient().list_orders(session_id=session_id)
+    except Exception:
+        return None
+    for order in _orders_from_list(listed):
+        if str(order.get("session_id") or "").strip() not in {"", session_id}:
+            continue
+        order_id = order.get("order_id") or order.get("id")
+        if order_id is not None:
+            return str(order_id)
+    return None
+
+
 async def settle_approved_pix_payment(
     payment_id: str,
     *,
@@ -231,6 +255,27 @@ async def settle_approved_pix_payment(
             "settlement_status": latest.get("settlement_status"),
         }
 
+    existing_order_id = await find_existing_tray_order(order_payload)
+    if existing_order_id:
+        updated = repo.mark_pix_settlement(
+            pid,
+            settlement_status="completed",
+            tray_order_id=existing_order_id,
+            settlement_error=None,
+        )
+        print("[mp.settle] reconciled", {
+            "payment_id": pid,
+            "tray_order_id": existing_order_id,
+        })
+        return {
+            "ok": True,
+            "action": "settled",
+            "reason": "reconciled_existing_tray_order",
+            "payment_id": pid,
+            "tray_order_id": existing_order_id,
+            "settlement_status": (updated or {}).get("settlement_status") or "completed",
+        }
+
     create = create_order or _default_create_order
     try:
         created = await create(order_payload)
@@ -307,3 +352,28 @@ async def settle_approved_pix_payment(
         "expected_amount_cents": expected_cents,
         "settlement_status": (updated or {}).get("settlement_status") or "completed",
     }
+
+
+async def retry_failed_pix_settlements(*, limit: int = 10) -> dict[str, Any]:
+    try:
+        rows = repo.list_retryable_pix_settlements(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        print("[mp.settle.retry.list_failed]", {"error_type": type(exc).__name__})
+        return {"ok": False, "reason": "db_unavailable", "error_type": type(exc).__name__}
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        pid = str(row.get("mp_payment_id") or "").strip()
+        if not pid:
+            continue
+        status = str(row.get("settlement_status") or "")
+        if status in {"failed", "processing"}:
+            repo.requeue_pix_settlement(pid)
+        result = await settle_approved_pix_payment(pid)
+        print("[mp.settle.retry]", {
+            "payment_id": pid,
+            "ok": result.get("ok"),
+            "action": result.get("action"),
+            "reason": result.get("reason"),
+        })
+        results.append(result)
+    return {"ok": True, "attempted": len(results), "results": results}

@@ -1356,27 +1356,20 @@ async def tray_keepalive_cron():
             except ValueError:
                 pass
 
-            # Proactive OAuth refresh when access is missing/invalid, or daily soak.
-            # Hobby keepalive is once-daily — force refresh each run to avoid stale
-            # access tokens with null expiry (adaptor reports expires_at=null).
-            auth = await client.get(f"{base}/tray/test-auth")
-            payload["test_auth_status_code"] = auth.status_code
+            # Do not call /tray/test-auth: it consumes the one-time OAuth code.
+            payload["elapsed_ms"] = int((__import__("time").monotonic() - started) * 1000)
+            payload["ok"] = (
+                health.status_code == 200
+                and tray_health.status_code == 200
+            )
             try:
-                auth_body = auth.json()
-                if isinstance(auth_body, dict):
-                    payload["test_auth_ok"] = bool(auth_body.get("success"))
-                    payload["authenticated"] = bool(auth_body.get("authenticated"))
-            except ValueError:
-                payload["test_auth_ok"] = False
+                from app.tray.tray_sync import run_tray_sync
 
-        payload["elapsed_ms"] = int((__import__("time").monotonic() - started) * 1000)
-        payload["ok"] = (
-            health.status_code == 200
-            and tray_health.status_code == 200
-            and bool(payload.get("test_auth_ok"))
-        )
-        log_event("tray.keepalive", payload)
-        return payload
+                payload["sync"] = await run_tray_sync()
+            except Exception as exc:  # noqa: BLE001
+                payload["sync_error"] = type(exc).__name__
+            log_event("tray.keepalive", payload)
+            return payload
     except Exception as exc:  # noqa: BLE001
         payload["elapsed_ms"] = int((__import__("time").monotonic() - started) * 1000)
         payload["error"] = type(exc).__name__
@@ -1390,6 +1383,26 @@ async def tray_keepalive_cron():
 )
 async def tray_keepalive_cron_manual():
     return await tray_keepalive_cron()
+
+
+@app.get(
+    "/api/cron/tray-sync",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def tray_sync_cron():
+    from app.tray.tray_sync import run_tray_sync
+
+    result = await run_tray_sync()
+    log_event("tray.sync.cron.completed", result if isinstance(result, dict) else {})
+    return result
+
+
+@app.post(
+    "/api/cron/tray-sync",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def tray_sync_cron_manual():
+    return await tray_sync_cron()
 
 
 @app.get(

@@ -466,6 +466,7 @@ class TrayAdapterClient:
 
     async def search_products(self, *, name: str | None = None, reference: str | None = None,
                               ean: str | None = None, brand: str | None = None,
+                              brand_id: str | int | None = None,
                               category_id: str | int | None = None, available: Any = None,
                               available_in_store: Any = None, stock: Any = None,
                               promotion: Any = None, limit: int = 5,
@@ -478,9 +479,10 @@ class TrayAdapterClient:
                               price_range: str | None = None) -> Any:
         return await self._request("GET", "/internal/products", params={
             "name": name, "reference": reference, "ean": ean, "brand": brand,
+            "brand_id": brand_id,
             "category_id": category_id, "available": available,
             "available_in_store": available_in_store, "stock": stock,
-            "promotion": promotion, "limit": min(max(limit, 1), 20), "page": page,
+            "promotion": promotion, "limit": min(max(limit, 1), 50), "page": page,
             "current_price_range": current_price_range,
             "property_name": property_name,
             "property_value": property_value,
@@ -712,6 +714,14 @@ class TrayAdapterClient:
             f"/internal/orders/{order_id}/shipping",
             json_body=payload,
         )
+
+    async def list_webhook_events(
+        self, *, limit: int = 50, since_id: int | None = None
+    ) -> Any:
+        params: dict[str, Any] = {"limit": min(max(int(limit), 1), 100)}
+        if since_id is not None:
+            params["since_id"] = int(since_id)
+        return await self._request("GET", "/internal/webhooks/events", params=params)
 
     async def list_product_properties(self, **params: Any) -> Any:
         params.setdefault("limit", 20)
