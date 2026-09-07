@@ -245,6 +245,8 @@ async def recover_order_id_from_customer(
             for order in orders
             if _order_matches_preferred_codes(order, preferred)
         ]
+        if preferred and not matched:
+            continue
         pool = matched or orders
         ranked = sorted(
             pool,

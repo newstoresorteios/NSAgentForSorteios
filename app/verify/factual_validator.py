@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -75,6 +76,7 @@ class FactPack(BaseModel):
     order_ids: set[str] = Field(default_factory=set)
     monetary_values: set[Decimal] = Field(default_factory=set)
     stock_available: bool | None = None
+    stock_by_product_id: dict[str, bool] = Field(default_factory=dict)
     has_promotional_price: bool = False
     payment_confirmed: bool | None = None
     product_ids: set[str] = Field(default_factory=set)
@@ -172,17 +174,69 @@ def _truthy_available(value: Any) -> bool | None:
     return None
 
 
+_PAYMENT_NEGATION_PHRASES = (
+    "unpaid",
+    "not approved",
+    "not paid",
+    "nao pago",
+    "nao aprovado",
+    "pending unpaid",
+)
+_PAYMENT_NEGATIVE_WORDS = frozenset(
+    {
+        "unpaid",
+        "pending",
+        "awaiting",
+        "aguardando",
+        "aguard",
+        "rejected",
+        "cancelled",
+        "canceled",
+        "refunded",
+        "estornado",
+        "recusado",
+        "cancelado",
+    }
+)
+_PAYMENT_POSITIVE_WORDS = frozenset(
+    {
+        "paid",
+        "approved",
+        "pago",
+        "aprovado",
+        "accredited",
+        "confirmed",
+        "confirmado",
+    }
+)
+
+
+def _fold_payment_status(value: Any) -> str:
+    text = str(value).strip().casefold()
+    text = "".join(
+        ch
+        for ch in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(ch)
+    )
+    text = text.replace("_", " ").replace("-", " ")
+    return " ".join(text.split())
+
+
 def _payment_confirmed(value: Any) -> bool | None:
     if value is None:
         return None
-    text = str(value).strip().casefold()
-    if any(token in text for token in ("approved", "paid", "pago", "aprovado")):
-        return True
-    if any(
-        token in text
-        for token in ("pending", "awaiting", "aguard", "unpaid", "rejected", "cancel")
-    ):
+    if isinstance(value, bool):
+        return value
+    text = _fold_payment_status(value)
+    if not text:
+        return None
+    if any(phrase in text for phrase in _PAYMENT_NEGATION_PHRASES):
         return False
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+    if tokens & _PAYMENT_NEGATIVE_WORDS:
+        return False
+    if tokens & _PAYMENT_POSITIVE_WORDS:
+        return True
     return None
 
 
@@ -365,11 +419,18 @@ def _collect_facts(
         available = _truthy_available(value)
         if available is not None:
             entity_type = "inventory"
-            pack.stock_available = (
-                available
-                if pack.stock_available is None
-                else (pack.stock_available or available)
-            )
+            if entity_id:
+                pack.stock_by_product_id[str(entity_id)] = available
+            values = list(pack.stock_by_product_id.values())
+            if values:
+                if all(values):
+                    pack.stock_available = True
+                elif not any(values):
+                    pack.stock_available = False
+                else:
+                    pack.stock_available = None
+            elif pack.stock_available is None:
+                pack.stock_available = available
             _append_evidence(
                 pack,
                 source=source,

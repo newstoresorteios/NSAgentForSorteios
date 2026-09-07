@@ -8,6 +8,7 @@ Hard rules:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from typing import Any, Awaitable, Callable
 
@@ -153,13 +154,21 @@ async def settle_approved_pix_payment(
             "settlement_status": "completed",
         }
     if current_settlement == "processing":
-        return {
-            "ok": True,
-            "action": "in_progress",
-            "reason": "settlement_in_progress",
-            "payment_id": pid,
-            "settlement_status": "processing",
-        }
+        updated = row.get("updated_at")
+        stale = False
+        if isinstance(updated, datetime):
+            stamp = updated if updated.tzinfo else updated.replace(tzinfo=timezone.utc)
+            stale = (datetime.now(timezone.utc) - stamp).total_seconds() > 600
+        if stale:
+            repo.requeue_pix_settlement(pid)
+        else:
+            return {
+                "ok": True,
+                "action": "in_progress",
+                "reason": "settlement_in_progress",
+                "payment_id": pid,
+                "settlement_status": "processing",
+            }
 
     if mp_payload is None:
         try:

@@ -1159,6 +1159,8 @@ class FallbackOpenAIGateway:
             )
             result.api_mode = "responses"
             return result
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError):
+            raise
         except Exception as exc:
             if not self._fallback_enabled():
                 raise
@@ -1208,6 +1210,8 @@ class FallbackOpenAIGateway:
             )
             result.api_mode = "responses"
             return result
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError):
+            raise
         except Exception as exc:
             if not self._fallback_enabled():
                 raise
@@ -1337,6 +1341,8 @@ class CanaryOpenAIGateway:
                 "latency_ms": result.latency_ms,
             })
             return result
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError):
+            raise
         except Exception as exc:
             if mode_label != "canary_responses" or not self._fallback_enabled():
                 raise
@@ -1390,6 +1396,8 @@ class CanaryOpenAIGateway:
                 "latency_ms": result.latency_ms,
             })
             return result
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError):
+            raise
         except Exception as exc:
             if mode_label != "canary_responses" or not self._fallback_enabled():
                 raise

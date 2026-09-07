@@ -123,6 +123,19 @@ def test_inbox_conversation_key_fills_missing_conversation_id(monkeypatch):
     monkeypatch.setattr(worker_mod, "insert_agent_response", lambda *_a, **_k: None)
     monkeypatch.setattr(worker_mod, "mark_inbox_processed", lambda *_a, **_k: None)
     monkeypatch.setattr(worker_mod, "mark_inbox_failed", lambda *_a, **_k: None)
+    enqueue_order: list[str] = []
+
+    def fake_enqueue(**_k):
+        enqueue_order.append("enqueue")
+        return 99
+
+    async def ordered_send(_incoming, _result):
+        enqueue_order.append("send")
+        return {"ok": True}
+
+    monkeypatch.setattr(worker_mod, "enqueue_accepted_outbound", fake_enqueue)
+    monkeypatch.setattr(worker_mod, "mark_outbox_sent", lambda *_a, **_k: enqueue_order.append("sent"))
+    monkeypatch.setattr(worker_mod, "_send_reply", ordered_send)
 
     result = asyncio.run(
         worker_mod.process_inbox_row(
@@ -137,6 +150,108 @@ def test_inbox_conversation_key_fills_missing_conversation_id(monkeypatch):
     assert result["ok"] is True
     assert captured["conversation_id"] == "wa-thread-history"
     assert captured["enforce"] is True
+    assert enqueue_order[:2] == ["enqueue", "send"]
+
+
+def test_complete_duplicate_skips_inbox(monkeypatch):
+    import asyncio
+
+    from app.ingress import worker as worker_mod
+    from app.models import IncomingMessage
+
+    processed: list[object] = []
+
+    monkeypatch.setattr(
+        worker_mod,
+        "incoming_from_inbox_payload",
+        lambda *_args, **_kwargs: IncomingMessage(
+            provider="brevo",
+            channel="whatsapp",
+            text="oi",
+            sender_key="whatsapp:5511999999999",
+            message_id="msg-dup",
+        ),
+    )
+    monkeypatch.setattr(worker_mod, "is_caption_echo_of_recent_image", lambda _incoming: False)
+    monkeypatch.setattr(worker_mod, "attach_recent_image_for_followup", lambda incoming: incoming)
+    monkeypatch.setattr(worker_mod, "claim_inbound_message", lambda *_a, **_k: (False, 22))
+    monkeypatch.setattr(worker_mod, "has_successful_agent_response", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        worker_mod,
+        "mark_inbox_processed",
+        lambda *a, **k: processed.append((a, k)),
+    )
+    monkeypatch.setattr(
+        "app.message_pipeline.process_incoming_message",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("complete duplicate must not process")),
+    )
+
+    result = asyncio.run(
+        worker_mod.process_inbox_row(
+            {
+                "id": 5,
+                "payload_json": {},
+                "attempts": 1,
+                "conversation_key": "wa-thread-history",
+            }
+        )
+    )
+    assert result["ok"] is True
+    assert result["skipped"] == "duplicate_message"
+    assert processed
+
+
+def test_incomplete_duplicate_is_reprocessed(monkeypatch):
+    import asyncio
+
+    from app.ingress import worker as worker_mod
+    from app.models import AgentResult, IncomingMessage
+
+    process_calls: list[str] = []
+
+    monkeypatch.setattr(
+        worker_mod,
+        "incoming_from_inbox_payload",
+        lambda *_args, **_kwargs: IncomingMessage(
+            provider="brevo",
+            channel="whatsapp",
+            text="oi",
+            sender_key="whatsapp:5511999999999",
+            message_id="msg-retry",
+        ),
+    )
+    monkeypatch.setattr(worker_mod, "is_caption_echo_of_recent_image", lambda _incoming: False)
+    monkeypatch.setattr(worker_mod, "attach_recent_image_for_followup", lambda incoming: incoming)
+    monkeypatch.setattr(worker_mod, "claim_inbound_message", lambda *_a, **_k: (False, 22))
+    monkeypatch.setattr("app.ops.human_takeover.human_takeover_active", lambda *_a, **_k: False)
+    monkeypatch.setattr(worker_mod, "has_successful_agent_response", lambda *_a, **_k: False)
+
+    async def fake_process(incoming, _context):
+        process_calls.append(incoming.text or "")
+        return AgentResult(reply_text="ok", intent="commerce")
+
+    async def fake_send(_incoming, _result):
+        return {"ok": True}
+
+    monkeypatch.setattr("app.message_pipeline.process_incoming_message", fake_process)
+    monkeypatch.setattr(worker_mod, "_send_reply", fake_send)
+    monkeypatch.setattr(worker_mod, "insert_agent_response", lambda *_a, **_k: None)
+    monkeypatch.setattr(worker_mod, "mark_inbox_processed", lambda *_a, **_k: None)
+    monkeypatch.setattr(worker_mod, "mark_inbox_failed", lambda *_a, **_k: None)
+
+    result = asyncio.run(
+        worker_mod.process_inbox_row(
+            {
+                "id": 5,
+                "payload_json": {},
+                "attempts": 2,
+                "conversation_key": "wa-thread-history",
+            }
+        )
+    )
+    assert result["ok"] is True
+    assert result.get("skipped") != "duplicate_message"
+    assert process_calls == ["oi"]
 
 
 def test_ingress_exception_handlers_are_not_bare_pass():

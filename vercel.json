@@ -43,11 +43,11 @@
     },
     {
       "path": "/api/cron/process-inbox",
-      "schedule": "10 3 * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/process-outbox",
-      "schedule": "15 3 * * *"
+      "schedule": "2-59/5 * * * *"
     },
     {
       "path": "/api/cron/order-tracking-audit",

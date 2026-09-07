@@ -465,6 +465,24 @@ async def test_top_three_are_revalidated_with_current_product_data():
 
 
 @pytest.mark.asyncio
+async def test_revalidate_drops_omitted_live_price_and_stock():
+    async def execute(_name, arguments):
+        return {"id": arguments["product_id"], "name": "Live name"}
+
+    refreshed, failed = await revalidate_products(
+        [{"id": "1", "current_price": 1000, "stock": 4}],
+        _interpretation(),
+        execute,
+    )
+    assert failed is False
+    assert refreshed
+    assert "current_price" not in refreshed[0]
+    assert "stock" not in refreshed[0]
+    assert refreshed[0]["_revalidated"] is False
+    assert refreshed[0].get("_field_sources") == {}
+
+
+@pytest.mark.asyncio
 async def test_revalidate_aborts_remaining_skus_on_rate_limit():
     calls = []
 

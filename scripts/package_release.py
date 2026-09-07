@@ -172,8 +172,6 @@ def classify_secret_value(
     cleaned = _strip_quotes(value)
     folded = cleaned.casefold()
     rel = path.replace("\\", "/")
-    in_tests = "/tests/" in f"/{rel}" or rel.startswith("tests/")
-
     if not cleaned or (cleaned.startswith("${") and cleaned.endswith("}")):
         return SecretFinding(
             path=rel,
@@ -209,7 +207,7 @@ def classify_secret_value(
             classification="placeholder",
             blocking=False,
         )
-    if in_tests or folded in _TEST_FIXTURE_VALUES or folded.startswith("tok-"):
+    if folded in _TEST_FIXTURE_VALUES or folded.startswith("tok-"):
         return SecretFinding(
             path=rel,
             variable=variable,

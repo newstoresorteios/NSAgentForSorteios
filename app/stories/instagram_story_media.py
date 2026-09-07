@@ -1,6 +1,9 @@
 """Safe Instagram Story media download (SSRF-hardened, streaming).
 
 Operational URLs keep signed query strings. Logs only use SafeMediaReference.
+
+INCOMPLETE: ``SupabasePrivateStoryMediaStorage.get_private`` and
+``extract_video_frames_best_effort`` are stubs. Do not treat them as ready.
 """
 
 from __future__ import annotations
@@ -188,40 +191,25 @@ def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 def validate_story_media_url(url: str) -> tuple[str, list[str]]:
     """Validate operational URL. Returns (url, resolved_ip_strings).
 
+    Uses the shared HTTPS/allowlist/DNS policy in ``app.core.remote_media``.
     Preserves the full signed URL. DNS rebinding residual risk is documented:
     we resolve once before connect; httpx may re-resolve — prefer egress allowlist
     in production.
     """
-    text = (url or "").strip()
-    if not text:
-        raise StoryMediaError("url_missing")
-    parsed = urlparse(text)
-    if parsed.scheme != "https":
-        raise StoryMediaError("scheme_not_https")
-    host = parsed.hostname or ""
-    if not host:
-        raise StoryMediaError("host_missing")
-    if host.casefold() in {"localhost", "metadata", "metadata.google.internal"}:
-        raise StoryMediaError("host_blocked")
-    if not _allowed_host(host):
-        raise StoryMediaError("host_not_allowed")
+    from app.core.remote_media import (
+        RemoteMediaError,
+        validate_remote_media_url_with_ips,
+    )
+
+    suffixes = tuple(_configured_allowed_suffixes())
     try:
-        infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise StoryMediaError("dns_failed") from exc
-    resolved: list[str] = []
-    for info in infos:
-        raw_ip = info[4][0]
-        try:
-            ip = ipaddress.ip_address(raw_ip)
-        except ValueError:
-            continue
-        if _is_blocked_ip(ip):
-            raise StoryMediaError("private_ip_blocked")
-        resolved.append(str(ip))
-    if not resolved:
-        raise StoryMediaError("dns_failed")
-    return text, resolved
+        return validate_remote_media_url_with_ips(
+            url,
+            allowed_suffixes=suffixes,
+            resolver=socket.getaddrinfo,
+        )
+    except RemoteMediaError as exc:
+        raise StoryMediaError(exc.code) from exc
 
 
 def _sniff_mime(content: bytes) -> str | None:

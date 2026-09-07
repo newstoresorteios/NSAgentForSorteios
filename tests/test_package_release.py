@@ -114,3 +114,15 @@ def test_validate_no_secrets_clean(tmp_path: Path):
     f = tmp_path / "readme.md"
     f.write_text("Set OPENAI_API_KEY in Vercel only.\n", encoding="utf-8")
     assert validate_no_secrets([f], root=tmp_path) == []
+
+
+def test_tests_directory_does_not_exempt_real_secrets(tmp_path: Path):
+    from scripts.package_release import classify_secret_value
+
+    leaked = classify_secret_value(
+        variable="OPENAI_API_KEY",
+        value="sk-proj-abcdefghijklmnopqrstuvwxyz",
+        path="tests/leaked.py",
+    )
+    assert leaked.classification == "real"
+    assert leaked.blocking is True

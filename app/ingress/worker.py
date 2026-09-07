@@ -19,7 +19,7 @@ from app.ingress.inbox import (
     mark_inbox_failed,
     mark_inbox_processed,
 )
-from app.ingress.outbox import enqueue_outbound
+from app.ingress.outbox import enqueue_accepted_outbound, mark_outbox_failed, mark_outbox_sent
 from app.ingress.reconstruct import incoming_from_inbox_payload
 from app.models import AgentResult, IncomingMessage
 from app.ops.observability import log_event, log_exception
@@ -91,8 +91,16 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "inbox_id": inbox_id, "error": "claim_failed"}
 
     if not claimed:
-        mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
-        return {"ok": True, "inbox_id": inbox_id, "skipped": "duplicate_message"}
+        if inbound_id and has_successful_agent_response(inbound_id):
+            mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
+            return {"ok": True, "inbox_id": inbox_id, "skipped": "duplicate_message"}
+        if not inbound_id:
+            mark_inbox_failed(inbox_id, error="duplicate_without_inbound_id")
+            return {
+                "ok": False,
+                "inbox_id": inbox_id,
+                "error": "duplicate_without_inbound_id",
+            }
 
     if isinstance(incoming.raw, dict):
         incoming.raw["inbound_id"] = inbound_id
@@ -144,8 +152,22 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
         result = await process_incoming_message(incoming, customer_context)
     finally:
         reset_current_turn(token)
+    outbox_id = enqueue_accepted_outbound(
+        incoming=incoming,
+        result=result,
+        inbox_id=inbox_id,
+        inbound_id=inbound_id,
+    )
     send_info = await _send_reply(incoming, result)
     send_ok = bool(send_info.get("ok"))
+    if outbox_id is not None:
+        if send_ok:
+            mark_outbox_sent(outbox_id, provider_response=send_info)
+        else:
+            mark_outbox_failed(
+                outbox_id,
+                error=str(send_info.get("error") or "send_failed"),
+            )
 
     try:
         response_id = insert_agent_response(
@@ -185,18 +207,6 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
         )
 
     if not send_ok:
-        enqueue_outbound(
-            provider=incoming.provider or "meta",
-            channel=incoming.channel,
-            reply_text=result.reply_text or "",
-            inbox_id=inbox_id,
-            inbound_id=inbound_id,
-            conversation_key=incoming.conversation_id or incoming.sender_key,
-            visitor_id=incoming.visitor_id,
-            sender_key=incoming.sender_key,
-            recipient_external_id=incoming.sender_external_id,
-            reply_payload={"send_error": send_info},
-        )
         mark_inbox_failed(
             inbox_id,
             error=str(send_info.get("error") or "send_failed"),

@@ -398,7 +398,7 @@ def test_phase0_greeting_in_checkout_enforce_resumes_pix():
     assert "https://pay.example/x" in result.reply_text
 
 
-def test_phase0_budget_over_enforce_does_not_rewrite():
+def test_phase0_budget_over_enforce_uses_insufficiency():
     listed = AgentResult(
         reply_text="Encontrei o Tissot PRX por R$ 8.000.",
         intent="commerce",
@@ -416,8 +416,10 @@ def test_phase0_budget_over_enforce_does_not_rewrite():
     )
     assert report.approved is False
     assert any(issue.code == "budget_over" for issue in report.issues)
-    assert report.applied is False
-    assert result.reply_text == listed.reply_text
+    assert report.applied is True
+    assert result.reply_text != listed.reply_text
+    assert result.safety_reason == "double_check_insufficient"
+    assert "8.000" not in result.reply_text
 
 
 @pytest.mark.asyncio

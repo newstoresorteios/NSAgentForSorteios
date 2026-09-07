@@ -1,9 +1,9 @@
 """Independent DoubleCheck — phase 0 deterministic, phase 1 cheap LLM.
 
 Rebuilds the turn contract from the customer text and listed IDs. Does not
-inherit SalesInterpretation. Enforce only swaps a known payment resume
-(PIX denied, greeting-in-checkout, phase-1 PIX veto). Other vetoes stay
-on the original copy. Phase 1 never invents SKU or price.
+inherit SalesInterpretation. Enforce swaps a known payment resume when
+available; otherwise a non-approved verdict becomes an insufficiency reply,
+not the original copy. Phase 1 never invents SKU or price.
 """
 
 from __future__ import annotations
@@ -283,6 +283,29 @@ def _payment_resume_result(
         return None
 
 
+_INSUFFICIENCY_DEFAULT = (
+    "Não consigo confirmar isso com segurança agora. "
+    "Posso verificar de novo ou te passar para um atendente."
+)
+
+
+def _enforce_insufficiency(
+    result: AgentResult,
+    report: DoubleCheckReport,
+) -> AgentResult:
+    fallback = str(
+        (result.response_metadata or {}).get("factual_fallback_text") or ""
+    ).strip() or _INSUFFICIENCY_DEFAULT
+    updated = result.model_copy(deep=True)
+    updated.reply_text = fallback
+    updated.safety_reason = "double_check_insufficient"
+    report.applied = True
+    report.applied_code = report.applied_code or "insufficiency"
+    updated.response_metadata = dict(updated.response_metadata or {})
+    updated.response_metadata["double_check"] = report.model_dump(mode="json")
+    return updated
+
+
 def _apply_payment_resume(
     *,
     report: DoubleCheckReport,
@@ -350,6 +373,7 @@ def apply_double_check(
                     },
                 )
                 return resume, report
+        return _enforce_insufficiency(result, report), report
 
     result.response_metadata["double_check"] = report.model_dump(mode="json")
     if not report.approved:
@@ -613,6 +637,8 @@ async def apply_double_check_async(
             )
             if resume is not None:
                 return resume, report
+            if report.mode == "enforce":
+                return _enforce_insufficiency(result, report), report
 
     result.response_metadata = dict(result.response_metadata or {})
     result.response_metadata["double_check"] = report.model_dump(mode="json")

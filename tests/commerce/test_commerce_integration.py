@@ -425,7 +425,11 @@ async def test_tray_diagnostic_uses_client_and_is_admin_protected(monkeypatch):
 async def test_brevo_duplicate_message_is_skipped_before_processing(monkeypatch):
     import api.index as index
 
-    monkeypatch.setattr(index, "inbound_message_exists", lambda provider, message_id: provider == "brevo" and message_id == "msg-1")
+    monkeypatch.setattr(
+        index,
+        "inbound_already_completed",
+        lambda provider, message_id: provider == "brevo" and message_id == "msg-1",
+    )
     monkeypatch.setattr(index, "insert_inbound_message", lambda *_: (_ for _ in ()).throw(AssertionError("duplicate must not be inserted")))
     monkeypatch.setattr(index, "process_incoming_message", lambda *_: (_ for _ in ()).throw(AssertionError("duplicate must not be processed")))
     index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
@@ -439,3 +443,50 @@ async def test_brevo_duplicate_message_is_skipped_before_processing(monkeypatch)
         index.app.dependency_overrides.pop(index.verify_brevo_webhook, None)
     assert response.status_code == 200
     assert response.json() == {"ok": True, "skipped": True, "reason": "duplicate_message"}
+
+
+@pytest.mark.asyncio
+async def test_brevo_incomplete_duplicate_is_reprocessed(monkeypatch):
+    import api.index as index
+
+    processed: list[str] = []
+
+    class FakeSend:
+        ok = True
+        dry_run = True
+        status_code = 200
+        error = None
+
+        def model_dump(self):
+            return {"ok": True, "dry_run": True}
+
+    monkeypatch.setattr(index, "inbound_already_completed", lambda *_a, **_k: False)
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(index, "claim_inbound_message", lambda *_a, **_k: (False, 77))
+    monkeypatch.setattr(index, "has_successful_agent_response", lambda *_a, **_k: False)
+    monkeypatch.setattr(index, "is_latest_inbound_message", lambda *_a, **_k: True)
+    monkeypatch.setattr(index, "find_customer_profile_by_phone", lambda _phone: {})
+    monkeypatch.setattr(
+        index,
+        "process_incoming_message",
+        lambda incoming, *_a, **_k: processed.append(incoming.text or "") or _async_result("commerce"),
+    )
+    async def fake_send(*_a, **_k):
+        return FakeSend()
+
+    monkeypatch.setattr(index, "send_brevo_reply", fake_send)
+    monkeypatch.setattr(index, "insert_agent_response", lambda *_a, **_k: 1)
+    index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=index.app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/webhooks/brevo/whatsapp",
+                json={"id": "msg-retry", "from": "5511999999999", "text": "olá de novo"},
+            )
+    finally:
+        index.app.dependency_overrides.pop(index.verify_brevo_webhook, None)
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("ok") is True
+    assert body.get("skipped") is not True
+    assert processed == ["olá de novo"]

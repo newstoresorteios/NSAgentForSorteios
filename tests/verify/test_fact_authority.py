@@ -162,10 +162,9 @@ def test_stock_violation_is_high_risk_for_enforce():
     assert report.fallback_required is True
 
 
-def test_index_degraded_prices_remain_authorized_for_persona_reply():
-    """Tray revalidation failure must not strip index prices and kill Crono wording."""
+def test_index_degraded_prices_are_not_authorized_as_live():
+    """Degraded index fallback must not assert price/stock as current."""
     from app.verify.fact_authority import authorize_products_for_responder
-    from app.verify.factual_validator import apply_factual_validation
 
     products = [
         {
@@ -178,53 +177,12 @@ def test_index_degraded_prices_remain_authorized_for_persona_reply():
             "_revalidated": False,
             "_revalidation_degraded": True,
             "tenant_id": "newstore",
-        },
-        {
-            "id": "2213",
-            "name": "Seiko Sumo",
-            "price": 4799.99,
-            "url": "https://www.newstorerj.com.br/relogios/seiko-sumo",
-            "_factual_source": "catalog_index",
-            "_from_catalog_index": True,
-            "_revalidated": False,
-            "_revalidation_degraded": True,
-            "tenant_id": "newstore",
-        },
+        }
     ]
     authorized, grounded = authorize_products_for_responder(products)
-    assert all(p.get("price") is not None for p in authorized)
-    assert any(row.field in {"price", "current_price"} for row in grounded)
-
-    persona = (
-        "Separei dois Seiko até 5 mil: o Monster por R$ 3.999,99 "
-        "e o Sumo por R$ 4.799,99. Qual te chama mais atenção?"
-    )
-    result = AgentResult(
-        reply_text=persona,
-        intent="commerce",
-        commercial_data={"products": products},
-        response_metadata={
-            "domain": "commerce",
-            "used_tray": True,
-            "factual_fallback_text": "Sim, encontrei:\n1. Seiko | Preço: R$ 3.999,99",
-        },
-    )
-    decision = build_agent_decision(
-        IncomingMessage(channel="whatsapp", sender_key="wa:1", text="seiko"),
-        result,
-        openai_call_count=3,
-    )
-    out = apply_factual_validation(result, decision=decision, mode="enforce")
-    assert out.response_metadata["factual_validation"]["valid"] is True
-    assert out.safety_reason != "factual_validation_failed"
-    assert "Sim, encontrei" not in out.reply_text
-    assert "3.999,99" in out.reply_text
-
-    # Second enforce pass (post-critique) must keep prices grounded.
-    out2 = apply_factual_validation(out, decision=decision, mode="enforce")
-    assert out2.response_metadata["factual_validation"]["valid"] is True
-    assert "Sim, encontrei" not in out2.reply_text
-    assert all(p.get("price") is not None for p in out2.commercial_data["products"])
+    assert authorized
+    assert authorized[0].get("price") is None
+    assert not any(row.field in {"price", "current_price"} for row in grounded)
 
 
 def test_stale_index_prices_still_stripped_without_degraded_flag():

@@ -712,6 +712,12 @@ def test_package_release_classifies_placeholders():
     )
     assert real.classification == "real"
     assert real.blocking is True
+    leaked_in_tests = classify_secret_value(
+        variable="OPENAI_API_KEY",
+        value="sk-proj-abcdefghijklmnopqrstuvwxyz",
+        path="tests/leaked.py",
+    )
+    assert leaked_in_tests.blocking is True
 
 
 @pytest.mark.offline_eval

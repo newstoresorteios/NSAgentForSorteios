@@ -27,7 +27,10 @@ def get_returning_id(row: Any) -> int | None:
 
 @contextmanager
 def get_conn() -> Iterator[psycopg.Connection]:
-    """Agent-dedicated Postgres (ai_* tables and agent operational state)."""
+    """Agent-dedicated Postgres (ai_* tables and agent operational state).
+
+    No connection pool — do not add one until p95 latency is measured.
+    """
     settings = get_settings()
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
@@ -946,22 +949,18 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
             return get_returning_id(row)
 
 
-def inbound_message_exists(provider: str | None, message_id: str | None) -> bool:
-    """Return whether this provider message was already recorded.
-
-    Missing IDs are intentionally never deduplicated because two identical texts
-    can be legitimate separate messages.
-    """
+def get_inbound_message_id(provider: str | None, message_id: str | None) -> int | None:
+    """Return the inbound row id for this provider message, if it exists."""
     settings = get_settings()
     if not settings.database_url or not provider or not message_id:
-        return False
+        return None
 
     ensure_tables()
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT 1
+                SELECT id
                 FROM public.ai_inbound_messages
                 WHERE provider = %(provider)s
                   AND message_id = %(message_id)s
@@ -969,7 +968,25 @@ def inbound_message_exists(provider: str | None, message_id: str | None) -> bool
                 """,
                 {"provider": provider, "message_id": message_id},
             )
-            return cur.fetchone() is not None
+            row = cur.fetchone()
+            return get_returning_id(row) if row else None
+
+
+def inbound_message_exists(provider: str | None, message_id: str | None) -> bool:
+    """Return whether this provider message was already recorded.
+
+    Missing IDs are intentionally never deduplicated because two identical texts
+    can be legitimate separate messages.
+    """
+    return get_inbound_message_id(provider, message_id) is not None
+
+
+def inbound_already_completed(provider: str | None, message_id: str | None) -> bool:
+    """True only when the inbound exists and a successful outbound already went out."""
+    inbound_id = get_inbound_message_id(provider, message_id)
+    if inbound_id is None:
+        return False
+    return has_successful_agent_response(inbound_id)
 
 
 def claim_inbound_message(message: dict[str, Any]) -> tuple[bool, int | None]:

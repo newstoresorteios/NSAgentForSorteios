@@ -89,12 +89,18 @@ async def create_and_persist_pix_payment(
     settings: Settings | None = None,
 ) -> tuple[PixPaymentCreated, int | None]:
     cfg = settings or get_settings()
+    import hashlib
+
+    stable_key = hashlib.sha256(
+        f"{cart_session_id or ''}:{external_reference or ''}:{transaction_amount}".encode()
+    ).hexdigest()
     created = await create_pix_payment(
         transaction_amount=transaction_amount,
         description=description,
         payer_email=payer_email,
         external_reference=external_reference,
         metadata=metadata,
+        idempotency_key=stable_key,
         settings=cfg,
     )
     expires_at = datetime.now(timezone.utc) + timedelta(

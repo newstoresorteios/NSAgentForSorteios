@@ -6,9 +6,53 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from app.models import IncomingMessage
+
 from app.config import get_settings
 from app.db import ensure_tables, get_conn, to_jsonb
 from app.ops.observability import log_event
+
+
+def build_outbound_envelope(incoming: Any, result: Any) -> dict[str, Any]:
+    incoming_payload: dict[str, Any] = {}
+    if incoming is not None and hasattr(incoming, "model_dump"):
+        incoming_payload = incoming.model_dump(mode="json")
+    elif isinstance(incoming, dict):
+        incoming_payload = dict(incoming)
+    return {
+        "incoming": incoming_payload,
+        "result": {
+            "reply_text": getattr(result, "reply_text", None),
+            "intent": getattr(result, "intent", None),
+            "safety_reason": getattr(result, "safety_reason", None),
+        },
+        "provider": incoming_payload.get("provider"),
+        "channel": incoming_payload.get("channel"),
+    }
+
+
+def enqueue_accepted_outbound(
+    *,
+    incoming: Any,
+    result: Any,
+    inbox_id: int | None = None,
+    inbound_id: int | None = None,
+) -> int | None:
+    return enqueue_outbound(
+        provider=str(getattr(incoming, "provider", None) or "brevo"),
+        channel=str(getattr(incoming, "channel", None) or "unknown"),
+        reply_text=str(getattr(result, "reply_text", None) or ""),
+        inbox_id=inbox_id,
+        inbound_id=inbound_id,
+        conversation_key=(
+            getattr(incoming, "conversation_id", None)
+            or getattr(incoming, "sender_key", None)
+        ),
+        visitor_id=getattr(incoming, "visitor_id", None),
+        sender_key=getattr(incoming, "sender_key", None),
+        recipient_external_id=getattr(incoming, "sender_external_id", None),
+        reply_payload=build_outbound_envelope(incoming, result),
+    )
 
 
 def enqueue_outbound(
@@ -30,6 +74,76 @@ def enqueue_outbound(
     ensure_tables()
     with get_conn() as conn:
         with conn.cursor() as cur:
+            if inbound_id is not None:
+                cur.execute(
+                    """
+                    SELECT id, status
+                    FROM public.ai_outbound_outbox
+                    WHERE inbound_id = %(inbound_id)s
+                    ORDER BY
+                      CASE status
+                        WHEN 'sent' THEN 0
+                        WHEN 'leased' THEN 1
+                        WHEN 'pending' THEN 2
+                        WHEN 'failed' THEN 3
+                        ELSE 4
+                      END,
+                      id DESC
+                    LIMIT 1
+                    """,
+                    {"inbound_id": inbound_id},
+                )
+                existing = cur.fetchone()
+                if existing:
+                    existing_id = int(
+                        existing["id"] if isinstance(existing, dict) else existing[0]
+                    )
+                    existing_status = str(
+                        existing["status"] if isinstance(existing, dict) else existing[1]
+                    )
+                    if existing_status == "sent":
+                        return existing_id
+                    cur.execute(
+                        """
+                        UPDATE public.ai_outbound_outbox
+                        SET reply_text = %(reply_text)s,
+                            reply_payload = %(reply_payload)s,
+                            provider = %(provider)s,
+                            channel = %(channel)s,
+                            conversation_key = %(conversation_key)s,
+                            visitor_id = %(visitor_id)s,
+                            sender_key = %(sender_key)s,
+                            recipient_external_id = %(recipient_external_id)s,
+                            status = 'pending',
+                            last_error = NULL,
+                            updated_at = now()
+                        WHERE id = %(id)s
+                          AND status <> 'sent'
+                        """,
+                        {
+                            "id": existing_id,
+                            "inbox_id": inbox_id,
+                            "inbound_id": inbound_id,
+                            "provider": provider,
+                            "channel": (channel or "unknown").lower(),
+                            "conversation_key": conversation_key,
+                            "visitor_id": visitor_id,
+                            "sender_key": sender_key,
+                            "recipient_external_id": recipient_external_id,
+                            "reply_text": reply_text or "",
+                            "reply_payload": to_jsonb(reply_payload or {}),
+                        },
+                    )
+                    log_event(
+                        "outbox.enqueued",
+                        {
+                            "outbox_id": existing_id,
+                            "provider": provider,
+                            "channel": channel,
+                            "reused": True,
+                        },
+                    )
+                    return existing_id
             cur.execute(
                 """
                 INSERT INTO public.ai_outbound_outbox (
@@ -141,6 +255,42 @@ def claim_pending_outbox(
                 }
             )
     return result
+
+
+def incoming_from_outbox_row(row: dict[str, Any]) -> IncomingMessage:
+    payload = row.get("reply_payload") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    incoming_data = payload.get("incoming")
+    if isinstance(incoming_data, dict) and incoming_data:
+        try:
+            return IncomingMessage.model_validate(incoming_data)
+        except Exception as exc:
+            from app.ingress import log_swallowed
+
+            log_swallowed("outbox.incoming_payload", exc)
+    return IncomingMessage(
+        text="",
+        channel=str(row.get("channel") or "whatsapp"),
+        provider=str(row.get("provider") or "brevo"),
+        conversation_id=row.get("conversation_key"),
+        sender_key=row.get("sender_key"),
+        visitor_id=row.get("visitor_id"),
+        sender_external_id=row.get("recipient_external_id"),
+        sender_phone=(
+            incoming_data.get("sender_phone")
+            if isinstance(incoming_data, dict)
+            else None
+        ),
+        raw=incoming_data.get("raw") if isinstance(incoming_data, dict) else {},
+        image_url=incoming_data.get("image_url") if isinstance(incoming_data, dict) else None,
+        audio_url=incoming_data.get("audio_url") if isinstance(incoming_data, dict) else None,
+        instagram_story=(
+            incoming_data.get("instagram_story")
+            if isinstance(incoming_data, dict)
+            else None
+        ),
+    )
 
 
 def mark_outbox_sent(

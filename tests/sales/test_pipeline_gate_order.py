@@ -68,9 +68,14 @@ async def test_listed_products_run_factual_once_after_scope_council(monkeypatch)
         order.append("compliance")
         return result, None
 
+    persist_calls: list[object] = []
     monkeypatch.setattr(pipeline, "get_settings", _pipeline_settings)
     monkeypatch.setattr(pipeline, "load_commerce_conversation_state", lambda **_k: {})
-    monkeypatch.setattr(pipeline, "persist_customer_commerce_session", lambda **_k: None)
+    monkeypatch.setattr(
+        pipeline,
+        "persist_customer_commerce_session",
+        lambda **_k: persist_calls.append(1),
+    )
     monkeypatch.setattr(pipeline, "upsert_customer_identity_links", lambda *_a, **_k: None)
     monkeypatch.setattr(pipeline, "generate_agent_reply_async", fake_generate)
     monkeypatch.setattr(pipeline, "apply_factual_validation", fake_factual)
@@ -101,6 +106,7 @@ async def test_listed_products_run_factual_once_after_scope_council(monkeypatch)
     assert double_check.get("skipped") is False
     assert double_check.get("phase1_ran") is False
     assert double_check.get("phase1_gate") == "no_high_risk_signal"
+    assert persist_calls == [1]
 
 
 @pytest.mark.asyncio

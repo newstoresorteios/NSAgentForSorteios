@@ -33,6 +33,7 @@ from app.models import AgentResult
 from app.db import (
     claim_inbound_message,
     has_successful_agent_response,
+    inbound_already_completed,
     inbound_message_exists,
     insert_agent_response,
     insert_inbound_message,
@@ -316,7 +317,7 @@ async def root():
     }
 
 
-AGENT_VERSION = "openai-db-context-multichannel-runtime-v78"
+AGENT_VERSION = "openai-db-context-multichannel-runtime-v97"
 
 
 @app.get("/api/health")
@@ -813,7 +814,9 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
 
     # Cheap duplicate check before waiting on the conversation lock. Brevo often
     # redelivers the same fragment while Vision/catalog still holds the lock.
-    if incoming.message_id and inbound_message_exists(incoming.provider, incoming.message_id):
+    if incoming.message_id and inbound_already_completed(
+        incoming.provider, incoming.message_id
+    ):
         return _skip_webhook_event(
             event_name=event_name,
             reason="duplicate_message",
@@ -981,10 +984,16 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         )
         raise HTTPException(status_code=500, detail={"error": "inbound_insert_failed"}) from exc
     if not claimed:
-        return _skip_webhook_event(
-            event_name=event_name,
-            reason="duplicate_message",
-        )
+        if inbound_id and has_successful_agent_response(inbound_id):
+            return _skip_webhook_event(
+                event_name=event_name,
+                reason="duplicate_message",
+            )
+        if not inbound_id:
+            return _skip_webhook_event(
+                event_name=event_name,
+                reason="duplicate_message",
+            )
 
     # Central ChatBô: se um humano assumiu, grava inbound mas não responde.
     try:
@@ -1101,9 +1110,28 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         provider_send_ok = True
         provider_response = {"skipped": True, "reason": "already_sent"}
     else:
+        from app.ingress.outbox import (
+            enqueue_accepted_outbound,
+            mark_outbox_failed,
+            mark_outbox_sent,
+        )
+
+        outbox_id = enqueue_accepted_outbound(
+            incoming=incoming,
+            result=agent_result,
+            inbound_id=inbound_id,
+        )
         send_result = await send_brevo_reply(incoming, agent_result)
         provider_send_ok = send_result.ok
         provider_response = send_result.model_dump()
+        if outbox_id is not None:
+            if provider_send_ok:
+                mark_outbox_sent(outbox_id, provider_response=provider_response)
+            else:
+                mark_outbox_failed(
+                    outbox_id,
+                    error=str(send_result.error or "send_failed"),
+                )
         log_event(
             "brevo.webhook.send_result",
             {
@@ -2111,6 +2139,7 @@ async def cron_instagram_story_media_retention_get():
     dependencies=[Depends(verify_remarketing_cron)],
 )
 async def cron_process_inbox():
+    """Safety-net drain for inbox. Cadence is minutes in vercel.json; do not rely on daily."""
     from app.ingress.worker import process_inbox_batch
 
     return await process_inbox_batch()
@@ -2129,6 +2158,7 @@ async def cron_process_inbox_get():
     dependencies=[Depends(verify_remarketing_cron)],
 )
 async def cron_process_outbox():
+    """Retry accepted outbound rows. Cadence is minutes in vercel.json."""
     from app.ingress.outbox_worker import process_outbox_batch
 
     return await process_outbox_batch()

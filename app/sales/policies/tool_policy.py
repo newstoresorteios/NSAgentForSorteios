@@ -76,6 +76,14 @@ def evaluate_tool_policy(
     }
 
 
+def policy_unavailable_payload(name: str) -> dict[str, Any]:
+    return {
+        "error": "tool_policy_unavailable",
+        "error_type": "tool_policy_unavailable",
+        "tool": name,
+    }
+
+
 def apply_tool_policy(
     name: str,
     arguments: dict[str, Any] | None,
@@ -83,37 +91,38 @@ def apply_tool_policy(
     """Return an error payload only when mode is enforce and the tool is blocked.
 
     Shadow logs and returns None so Tray still runs.
+    Exceptions fail closed — they must not look like an allow.
     """
     if name not in MUTATING_TOOLS:
         return None
     try:
         settings = get_settings()
         mode = str(getattr(settings, "agent_tool_policy_mode", "shadow") or "shadow")
-    except Exception:
-        mode = "shadow"
-    mode = mode.strip().casefold()
-    if mode not in {"off", "shadow", "enforce"}:
-        mode = "shadow"
-    if mode == "off":
-        return None
-    verdict = evaluate_tool_policy(name, arguments)
-    if verdict["action"] != "block":
-        return None
-    print(
-        "[sales.tool.policy]",
-        {
+        mode = mode.strip().casefold()
+        if mode not in {"off", "shadow", "enforce"}:
+            mode = "shadow"
+        if mode == "off":
+            return None
+        verdict = evaluate_tool_policy(name, arguments)
+        if verdict["action"] != "block":
+            return None
+        print(
+            "[sales.tool.policy]",
+            {
+                "tool": name,
+                "mode": mode,
+                "would_block": True,
+                "enforced": mode == "enforce",
+                "reasons": verdict["reasons"],
+            },
+        )
+        if mode != "enforce":
+            return None
+        return {
+            "error": "tool_policy_blocked",
+            "error_type": "tool_policy_blocked",
+            "policy_reasons": list(verdict["reasons"]),
             "tool": name,
-            "mode": mode,
-            "would_block": True,
-            "enforced": mode == "enforce",
-            "reasons": verdict["reasons"],
-        },
-    )
-    if mode != "enforce":
-        return None
-    return {
-        "error": "tool_policy_blocked",
-        "error_type": "tool_policy_blocked",
-        "policy_reasons": list(verdict["reasons"]),
-        "tool": name,
-    }
+        }
+    except Exception:
+        return policy_unavailable_payload(name)

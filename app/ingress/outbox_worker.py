@@ -20,38 +20,21 @@ async def _resend_outbox_row(row: dict[str, Any]) -> dict[str, Any]:
     if not reply_text.strip():
         return {"ok": False, "error": "empty_reply"}
 
-    # Minimal IncomingMessage-shaped send path.
-    from app.models import AgentResult, IncomingMessage
+    from app.ingress.outbox import incoming_from_outbox_row
+    from app.ingress.worker import _send_reply
+    from app.models import AgentResult
 
-    incoming = IncomingMessage(
-        text="",
-        channel=channel or "whatsapp",
-        provider=provider or "brevo",
-        conversation_id=row.get("conversation_key"),
-        sender_key=row.get("sender_key"),
-        visitor_id=row.get("visitor_id"),
-        sender_external_id=row.get("recipient_external_id"),
-    )
+    incoming = incoming_from_outbox_row(row)
+    if not incoming.provider:
+        incoming.provider = provider or "brevo"
+    if not incoming.channel:
+        incoming.channel = channel or "whatsapp"
     result = AgentResult(
         reply_text=reply_text,
         intent="commerce",
         handoff_required=False,
     )
-
-    if provider == "meta" or channel == "instagram":
-        from app.channels.meta_instagram import send_meta_instagram_reply
-
-        return await send_meta_instagram_reply(incoming, result)
-
-    from app.channels.brevo_client import send_brevo_reply
-
-    send_result = await send_brevo_reply(incoming, result)
-    return {
-        "ok": bool(send_result.ok),
-        "status_code": send_result.status_code,
-        "provider_response": send_result.model_dump(),
-        "error": send_result.error,
-    }
+    return await _send_reply(incoming, result)
 
 
 async def process_outbox_batch(*, limit: int | None = None) -> dict[str, Any]:

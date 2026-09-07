@@ -580,6 +580,32 @@ async def test_fallback_on_responses_failure(responses_settings):
 
 
 @pytest.mark.asyncio
+async def test_fallback_does_not_swallow_refusal(responses_settings):
+    async def _refuse(**_kwargs):
+        raise OpenAIRefusalError("refused")
+
+    chat_called = {"n": 0}
+
+    class _Chat:
+        async def parse_structured(self, **_kwargs):
+            chat_called["n"] += 1
+            raise AssertionError("Chat fallback must not run on refusal")
+
+    client = SimpleNamespace(responses=_FakeResponses(parse_fn=_refuse))
+    gateway = FallbackOpenAIGateway(
+        primary=ResponsesGateway(client=client),
+        fallback=_Chat(),
+    )
+    with pytest.raises(OpenAIRefusalError):
+        await gateway.parse_structured(
+            model="gpt-4.1-mini",
+            text_format=_Label,
+            messages=[{"role": "user", "content": "x"}],
+        )
+    assert chat_called["n"] == 0
+
+
+@pytest.mark.asyncio
 async def test_never_sends_previous_response_id_even_if_flag_true(monkeypatch):
     monkeypatch.setattr(
         "app.llm.openai_gateway.get_settings",
