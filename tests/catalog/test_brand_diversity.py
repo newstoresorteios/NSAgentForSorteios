@@ -1,8 +1,13 @@
+import pytest
+
 from app.catalog.retrieval.availability import select_diverse_brand_shortlist
 from app.catalog.retrieval.hard_filter import (
     hard_filter_products,
     relax_soft_filters_for_empty_pool,
 )
+from app.catalog.retrieval.near_match import recover_open_browse_without_soft_filters
+from app.catalog.retrieval.session import RetrievalSession
+from app.catalog.retrieval.types import ProductRetrievalPlan
 from app.models import SalesInterpretation
 
 
@@ -87,3 +92,47 @@ def test_relax_soft_color_keeps_budget_when_pool_would_be_empty():
     )
     assert {item["id"] for item in relaxed} == {"1", "2"}
     assert all((item.get("price") or 0) <= 2500 for item in relaxed)
+
+
+@pytest.mark.asyncio
+async def test_empty_color_and_retries_budget_only():
+    interpretation = _interp(
+        preferences={"color": "dourado", "style": "social", "budget_max": 2500}
+    )
+    calls: list[dict] = []
+
+    async def execute_tool(name: str, arguments: dict) -> dict:
+        calls.append(arguments)
+        assert "property_name" not in arguments
+        assert arguments.get("current_price_range") == "0,2500"
+        return {
+            "products": [
+                {
+                    "id": "11",
+                    "brand": "Seiko",
+                    "name": "Seiko 5",
+                    "price": 1800,
+                    "available": True,
+                },
+                {
+                    "id": "12",
+                    "brand": "Tissot",
+                    "name": "Tissot PRX",
+                    "price": 2200,
+                    "available": True,
+                },
+            ]
+        }
+
+    session = RetrievalSession(
+        interpretation=interpretation,
+        retrieval_plan=ProductRetrievalPlan(mode="recommendation", requests=()),
+        message_text="2500 reais",
+        execute_tool=execute_tool,
+        has_budget=True,
+    )
+    recovered = await recover_open_browse_without_soft_filters(session)
+    assert recovered is True
+    assert calls
+    assert {item["brand"] for item in session.hard_filtered} == {"Seiko", "Tissot"}
+

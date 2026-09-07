@@ -306,6 +306,8 @@ async def sales_response_with_openai(
         "customer_orders_lookup_technical_failure",
         "product_media_link_fallback",
         "product_image_link_fallback",
+        "recommendation_no_match",
+        "recommendation_budget_miss",
     }:
         return None
     if (tray_result.commercial_data or {}).get("input_template"):

@@ -636,3 +636,34 @@ def test_persona_question_prefers_prior_catalog_theme_resume():
         assert "outras marcas" in question
     finally:
         persona_runtime.reset_persona_runtime(token)
+
+
+@pytest.mark.asyncio
+async def test_recommendation_no_match_skips_openai_name_question(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="sk-test", openai_model="gpt-4.1-mini"),
+    )
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("openai responder must not rewrite catalog miss")
+
+    monkeypatch.setattr(
+        "app.llm.openai_gateway.generate_text_output",
+        boom,
+    )
+    tray_result = AgentResult(
+        reply_text="Não encontrei opções disponíveis para esses critérios agora.",
+        intent="commerce",
+        safety_reason="recommendation_no_match",
+    )
+    rewritten = await sales_agent._sales_response_with_openai(
+        IncomingMessage(text="2500 reais"),
+        {"goal": "recommend", "intent": "recommendation"},
+        tray_result,
+        _interpretation(product_type="relógio", goal="recommend", needs_clarification=False),
+    )
+    assert rewritten is None
