@@ -128,6 +128,14 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
         from app.catalog.retrieval.rerank import rerank_products
 
         ranked = await rerank_products(enriched, interpretation)
+        # A semantic top-N may contain only one brand. Retain eligible candidates
+        # for the final diversity pass instead of treating that top-N as the pool.
+        ranked_ids = {str(p.get("id")) for p in ranked if p.get("id") is not None}
+        ranked = ranked + [
+            p for p in rank_pool
+            if p.get("id") is not None and str(p["id"]) not in ranked_ids
+            and product_availability_state(p) != "unavailable"
+        ]
     else:
         ranked = hard_filtered
     ranked = apply_persona_presentation_order(ranked)

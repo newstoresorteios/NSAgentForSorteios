@@ -84,7 +84,9 @@ def deterministic_tray_copy_ready(
     intent = str(plan.get("intent") or "")
     goal = str(plan.get("goal") or "")
     presented = bool((tray_result.response_metadata or {}).get("presented_products"))
-    if intent in {"recommendation", "product_search", "product_comparison"}:
+    if intent in {"recommendation", "product_comparison"} or goal in {"recommend", "compare"}:
+        return False
+    if intent == "product_search":
         return True
     if presented and goal in {"find", "recommend", "discover", "compare", "inspect"}:
         return True
@@ -355,7 +357,9 @@ async def sales_response_with_openai(
             used_openai_responder=False,
             used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
         )
-    if deterministic_tray_copy_ready(tray_result, plan):
+    if deterministic_tray_copy_ready(tray_result, plan) and not (
+        interpretation is not None and interpretation.references_previous_context
+    ):
         return _mark_sales_result(
             tray_result,
             interpretation=interpretation,

@@ -298,6 +298,9 @@ _KNOWN_WATCH_BRANDS: tuple[str, ...] = (
 
 _OTHER_BRANDS_RE = re.compile(
     r"\b("
+    r"(?:outras?|mais)\s+sugest[õo]es?\s+(?:de\s+)?marcas?|"
+    r"(?:um|uma)\s+de\s+cada\s+marca|"
+    r"marcas?\s+(?:diferentes?|variadas?)|"
     r"outras?\s+marcas?|"
     r"outras?\s+op(?:ç|c)(?:õ|o)es?\s+(?:de\s+)?marcas?|"
     r"de\s+outras?\s+marcas?|"
@@ -451,6 +454,11 @@ def apply_brand_unlock_to_interpretation(
             subject.brand = None
     if unlock:
         subject.brand = None
+        # Product identities suggested by us are not customer constraints.
+        for field in ("model", "reference", "ean"):
+            value = getattr(subject, field, None)
+            if value and _fold(value) not in _fold(message_text):
+                setattr(subject, field, None)
         explicit = list(prefs.explicit_no_preferences or [])
         if "brand" not in explicit:
             prefs.explicit_no_preferences = explicit + ["brand"]

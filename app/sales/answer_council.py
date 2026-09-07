@@ -601,6 +601,14 @@ def apply_turn_contract_for_search(
             interpretation, message_text, commerce_state
         )
         return interpretation
+    from app.catalog.specs.catalog_specs import (
+        apply_brand_unlock_to_interpretation,
+        message_requests_other_brands,
+    )
+
+    if message_requests_other_brands(message_text):
+        interpretation = interpretation.model_copy(deep=True)
+        apply_brand_unlock_to_interpretation(interpretation, message_text=message_text)
     contract = build_turn_contract(
         message_text=message_text,
         interpretation=interpretation,
@@ -611,6 +619,12 @@ def apply_turn_contract_for_search(
         apply_corrections(interpretation, contract, codes) if codes else interpretation
     )
     updated._turn_contract_bound = True
+    if message_requests_other_brands(message_text):
+        presented = getattr(commerce_state, "last_presented_products", None) or []
+        updated._previously_presented_brands = [
+            item.get("brand") if isinstance(item, dict) else getattr(item, "brand", None)
+            for item in presented
+        ]
     updated._excluded_product_ids = excluded_product_ids_for_turn(
         updated, message_text, commerce_state
     )

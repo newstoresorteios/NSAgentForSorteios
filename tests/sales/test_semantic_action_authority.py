@@ -146,8 +146,17 @@ def test_find_with_retrieval_is_product_search_not_recommendation():
 
 
 @pytest.mark.asyncio
-async def test_tray_list_copy_skips_openai_responder(monkeypatch):
+async def test_tray_recommendation_uses_openai_with_catalog_facts(monkeypatch):
     import app.sales_agent as sales_agent
+    import app.llm.openai_gateway as gateway
+
+    calls = []
+
+    async def generate(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(text="Separei este Tissot Seastar para você.")
+
+    monkeypatch.setattr(gateway, "generate_text_output", generate)
 
     monkeypatch.setattr(
         sales_agent,
@@ -169,9 +178,11 @@ async def test_tray_list_copy_skips_openai_responder(monkeypatch):
         ),
     )
     assert result is not None
-    assert result.reply_text == "1. Tissot Seastar — R$ 6.399,99"
-    assert result.response_metadata["used_openai_responder"] is False
-    assert result.response_metadata["response_source"] == "deterministic_fallback"
+    assert result.reply_text == "Separei este Tissot Seastar para você."
+    assert result.response_metadata["used_openai_responder"] is True
+    assert result.response_metadata["response_source"] == "openai"
+    assert calls and '"641"' in calls[0]["messages"][-1]["content"]
+    assert result.response_metadata["factual_fallback_text"] == tray.reply_text
     assert result.commercial_data["products"][0]["id"] == "641"
 
 
