@@ -151,7 +151,11 @@ def classify_sales_route_kind(
 
 def should_skip_catalog_fanout(interpretation: SalesInterpretation | None) -> bool:
     """Talk/inspect turns must not fan-out Tray list search."""
-    if interpretation is None or interpretation.purchase_action:
+    if interpretation is None:
+        return False
+    if getattr(interpretation, "_slot_answer_hold", False):
+        return True
+    if interpretation.purchase_action:
         return False
     strategy = interpretation.resolved_answer_strategy()
     if strategy in _TALK_STRATEGIES:
@@ -237,6 +241,8 @@ def route_sales_intent(
         and (plan_intent == "clarification" or vague_query)
     )
     skip_catalog_fanout = should_skip_catalog_fanout(interpretation)
+    if discovery_state and discovery_state.get("slot_answer_hold"):
+        skip_catalog_fanout = True
     route_kind = classify_sales_route_kind(
         interpretation=interpretation,
         message_text=message_text,

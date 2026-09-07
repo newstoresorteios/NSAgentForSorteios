@@ -107,6 +107,29 @@ async def generate_clarification_reply(
     )
 
     settings = get_settings()
+    slot_hold = bool(
+        getattr(interpretation, "_slot_answer_hold", False)
+        or (isinstance(discovery_state, dict) and discovery_state.get("slot_answer_hold"))
+    )
+    bound_sale = bool(
+        isinstance(discovery_state, dict) and discovery_state.get("has_bound_sale_target")
+    )
+    from .qualification_slots import is_shipping_city_prompt
+
+    def _catalog_continue() -> AgentResult:
+        from .answer_council import _continue_prompt_result
+
+        return _mark_sales_result(
+            _continue_prompt_result(),
+            interpretation=interpretation,
+            goal=interpretation.goal,
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=used_tray,
+        )
+
+    if slot_hold:
+        return _catalog_continue()
     persona_gate = bool(
         isinstance(discovery_state, dict)
         and discovery_state.get("persona_qualification_required")
@@ -124,6 +147,8 @@ async def generate_clarification_reply(
             )
 
     deterministic_question = persona_question or interpretation.clarification_question
+    if is_shipping_city_prompt(deterministic_question) and not bound_sale:
+        return _catalog_continue()
     if not deterministic_question or _comparison_needs_qualification(interpretation):
         if _comparison_needs_qualification(interpretation):
             deterministic_question = _comparison_clarification_question(
@@ -134,6 +159,8 @@ async def generate_clarification_reply(
                 interpretation.clarification_question
                 or _persona_qualification_question(interpretation, discovery_state)
             )
+    if is_shipping_city_prompt(deterministic_question) and not bound_sale:
+        return _catalog_continue()
 
     if interpretation.stop_clarification and (deterministic_question or "").strip():
         return _mark_sales_result(
@@ -157,6 +184,8 @@ async def generate_clarification_reply(
         and not _comparison_needs_qualification(interpretation)
         and not persona_gate
     ):
+        if is_shipping_city_prompt(interpretation.clarification_question) and not bound_sale:
+            return _catalog_continue()
         return _mark_sales_result(
             AgentResult(
                 reply_text=html.unescape(interpretation.clarification_question.strip()),
@@ -242,6 +271,8 @@ async def generate_clarification_reply(
         content = text_result.text
         if not content or not content.strip():
             raise ValueError("clarification_response_empty")
+        if is_shipping_city_prompt(content) and not bound_sale:
+            return _catalog_continue()
         return _mark_sales_result(
             AgentResult(
                 reply_text=html.unescape(content.strip()),
@@ -297,6 +328,8 @@ async def sales_response_with_openai(
     )
 
     settings = get_settings()
+    if interpretation is not None and getattr(interpretation, "_slot_answer_hold", False):
+        return None
     if not settings.openai_api_key or tray_result.safety_reason in {
         "tray_adapter_unavailable", "product_match_failed", "product_not_found",
         "ambiguous_product", "product_context_missing", "coupon_not_found",

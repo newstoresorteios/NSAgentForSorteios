@@ -558,6 +558,115 @@ def test_name_city_urgency_do_not_unlock_catalog_search():
         reset_persona_runtime(token)
 
 
+def test_city_uf_suffixes_are_plausible_slot_answers():
+    from app.sales.qualification_slots import (
+        _is_plausible_city,
+        is_qualification_slot_answer,
+    )
+
+    turns = [
+        {"role": "assistant", "content": "Para qual cidade e estado seria a entrega?"},
+    ]
+    assert _is_plausible_city("Florianópolis") is True
+    assert _is_plausible_city("Conselheiro mairinck - pR") is True
+    assert _is_plausible_city("Curitiba, PR") is True
+    assert _is_plausible_city("Londrina/PR") is True
+    assert is_qualification_slot_answer(turns, "Conselheiro mairinck - pR") is True
+
+
+def test_city_slot_answer_holds_retrieval_without_tray():
+    from app.sales.qualification_slots import (
+        SHIPPING_CITY,
+        continue_commerce_from_qualification_answer,
+        covered_qualification_dims,
+    )
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        subject={"product_type": "relógio"},
+        preferences={
+            "color": "dourado",
+            "style": "social",
+            "budget_max": 2500,
+            "explicit_no_preferences": ["brand"],
+        },
+        references_previous_context=True,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    turns = [
+        {"role": "assistant", "content": "Para qual cidade e estado seria a entrega?"},
+    ]
+    updated = continue_commerce_from_qualification_answer(
+        interpretation,
+        turns,
+        "Conselheiro mairinck - pR",
+    )
+    assert SHIPPING_CITY in covered_qualification_dims(updated)
+    assert updated._slot_answer_hold is True
+    assert updated.ready_for_retrieval is False
+    assert updated.enough_information_to_search is False
+
+    import app.sales_agent as sales_agent
+    from app.sales.intent_router import should_skip_catalog_fanout
+
+    state = sales_agent._discovery_state(
+        updated,
+        turns,
+        message_text="Conselheiro mairinck - pR",
+    )
+    assert state["force_retrieval"] is False
+    assert state["slot_answer_hold"] is True
+    assert should_skip_catalog_fanout(updated) is True
+
+
+def test_name_without_brand_holds_and_named_brand_still_searches():
+    from app.sales.qualification_slots import continue_commerce_from_qualification_answer
+
+    leftover = SalesInterpretation(
+        domain="commerce",
+        goal="discover",
+        subject={"product_type": "relógio"},
+        preferences={
+            "color": "dourado",
+            "style": "social",
+            "budget_max": 2500,
+            "explicit_no_preferences": ["brand"],
+        },
+        references_previous_context=True,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    name_turns = [{"role": "assistant", "content": "Como posso te chamar?"}]
+    named = continue_commerce_from_qualification_answer(
+        leftover,
+        name_turns,
+        "Tironi",
+    )
+    assert named.preferences.recipient == "Tironi"
+    assert named._slot_answer_hold is True
+    assert named.ready_for_retrieval is False
+
+    seiko = SalesInterpretation(
+        domain="greeting",
+        goal=None,
+        subject={"brand": "Seiko", "product_type": "relógio"},
+        preferences={},
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    joao = continue_commerce_from_qualification_answer(seiko, [], "Sou o João")
+    assert joao.domain == "commerce"
+    assert joao.preferences.recipient == "João"
+    assert joao._slot_answer_hold is False
+
+
 def test_brand_plus_budget_unlocks_without_persona_slots():
     from app.sales.discovery import build_qualification_snapshot
     from app.sales.qualification_slots import fulfillment_slots_ready

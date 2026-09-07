@@ -32,6 +32,27 @@ from .discovery import (
 )
 
 
+def _explicit_no_brand(
+    interpretation: SalesInterpretation | None,
+    commerce_state: Any | None = None,
+) -> bool:
+    """Customer said they do not want a brand lock (outras marcas / explicit_no)."""
+    tokens: list[str] = []
+    if interpretation is not None:
+        tokens.extend(interpretation.preferences.explicit_no_preferences or [])
+        for item in interpretation.preferences.attributes or []:
+            folded = str(item or "").strip().casefold()
+            if folded in {"explicit_no:brand", "explicit_no_preference_brand"}:
+                return True
+    if commerce_state is not None:
+        prefs = getattr(commerce_state, "active_preferences", None)
+        if isinstance(prefs, dict):
+            extra = prefs.get("explicit_no_preferences")
+            if isinstance(extra, list):
+                tokens.extend(str(item) for item in extra if item)
+    return "brand" in {str(item).strip().casefold() for item in tokens if item}
+
+
 def _fold_identity(value: Any) -> str:
     text = str(value or "").strip().casefold()
     return " ".join(text.split())
@@ -274,6 +295,7 @@ class InboundView(BaseModel):
     commerce_browse: bool = False
     live_shortlist: bool = False
     live_checkout: bool = False
+    bound_sale_target: bool = False
 
 
 class TurnContract(BaseModel):
@@ -298,6 +320,7 @@ class TurnContract(BaseModel):
     must_not_re_greet: bool = False
     must_not_claim_stale_occasion: bool = False
     must_not_claim_stale_checkout: bool = False
+    has_bound_sale_target: bool = False
     hard_codes: list[str] = Field(default_factory=list)
 
 
@@ -391,7 +414,7 @@ def inbound_from_memory(
         brand = interpretation.subject.brand
         model = interpretation.subject.model
     locked_brand, locked_model = locked_identity_from_state(commerce_state)
-    if not brand:
+    if not brand and not _explicit_no_brand(interpretation, commerce_state):
         brand = locked_brand
     if not model:
         model = locked_model
@@ -426,6 +449,8 @@ def inbound_from_memory(
         or getattr(commerce_state, "pending_action", None)
         or phase in {"shortlist", "buy", "checkout"}
     )
+    from .qualification_slots import has_bound_sale_target
+
     return InboundView(
         source="memory",
         brand=brand,
@@ -437,6 +462,7 @@ def inbound_from_memory(
         style=str(style).strip() if style else None,
         live_shortlist=live_shortlist,
         live_checkout=live_checkout,
+        bound_sale_target=has_bound_sale_target(commerce_state),
     )
 
 
@@ -515,10 +541,18 @@ def merge_inbound_views(
     from app.catalog.specs.catalog_specs import message_requests_other_brands
 
     brand_unlock = message_requests_other_brands(message_text)
-    if brand_unlock or (message_view.commerce_browse and not message_view.brand):
-        if memory_view.brand and not message_view.brand:
+    stated_brands = _mentioned_watch_brands(message_text)
+    explicit_no_brand = _explicit_no_brand(interpretation)
+    if stated_brands:
+        brand = message_view.brand or stated_brands[0]
+    elif (
+        brand_unlock
+        or (message_view.commerce_browse and not message_view.brand)
+        or explicit_no_brand
+    ):
+        if memory_view.brand or (message_view.brand and explicit_no_brand):
             stale.append("brand")
-        brand = message_view.brand
+        brand = None
     else:
         brand = message_view.brand or memory_view.brand
     model = message_view.model
@@ -653,6 +687,7 @@ def merge_inbound_views(
         must_not_re_greet=must_not_re_greet,
         must_not_claim_stale_occasion="occasion" in stale,
         must_not_claim_stale_checkout="checkout" in stale,
+        has_bound_sale_target=memory_view.bound_sale_target,
         hard_codes=codes,
     )
 
