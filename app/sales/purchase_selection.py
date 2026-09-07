@@ -76,9 +76,16 @@ _NEW_BROWSE_RE = re.compile(
     r"\b("
     r"outras?\s+op(?:ç|c)(?:õ|o)es|outra\s+marca|outras?\s+marcas|"
     r"me\s+mostra|mostrar|ver\s+op(?:ç|c)(?:õ|o)es|sugest|"
-    r"procuro|busco|quero\s+ver|quero\s+um\s+(?!d[eo]s?\b)|"
+    r"procuro|busco|quero\s+ver|"
+    r"quero\s+(?:comprar\s+)?um(?:a)?\s+(?!d[eo]s?\b)|"
     r"gostaria\s+de\s+(?:ver|um|uma)"
     r")\b",
+    re.IGNORECASE,
+)
+_BUDGET_NUM_RE = re.compile(
+    r"(?:menos\s+de|ate|até|por\s+(?:menos\s+de|ate|até)|"
+    r"no\s+m[aá]ximo|abaixo\s+de|r\$)\s*$"
+    r"|(?:mil|k|reais|000)\b",
     re.IGNORECASE,
 )
 
@@ -131,6 +138,11 @@ def parse_list_position_selection(text: str | None) -> int | None:
     if not match:
         return None
     if match.group("num"):
+        start, end = match.span("num")
+        if _BUDGET_NUM_RE.search(folded[max(0, start - 24):start]) or _BUDGET_NUM_RE.match(
+            folded[end:].lstrip()
+        ):
+            return None
         return int(match.group("num"))
     ordinal = match.group("ord")
     if ordinal:

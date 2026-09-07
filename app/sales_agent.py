@@ -855,6 +855,16 @@ async def interpret_message(
         from app.sales import log_swallowed
 
         log_swallowed("interpreter.persona_block", exc)
+    try:
+        from app.persona.store_knowledge import format_institutional_knowledge_block
+
+        knowledge_block = format_institutional_knowledge_block(current_text)
+        if knowledge_block:
+            system_instructions = f"{system_instructions}\n\n{knowledge_block}"
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("interpreter.institutional_knowledge", exc)
     messages = [
         {"role": "system", "content": system_instructions},
         state_message,
@@ -1383,6 +1393,7 @@ def _hydrate_sales_interpretation(
         recent_user_context_text,
     )
     from .sales.qualification_slots import (
+        apply_stored_qualification_slots,
         continue_commerce_from_qualification_answer,
         rehydrate_qualification_slots_from_turns,
     )
@@ -1401,6 +1412,15 @@ def _hydrate_sales_interpretation(
         from app.sales import log_swallowed
 
         log_swallowed("hydrate.qual_rehydrate", exc)
+    try:
+        semantic_plan = apply_stored_qualification_slots(
+            semantic_plan,
+            commerce_state,
+        )
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("hydrate.qual_state", exc)
     interpretation = normalize_sales_interpretation(
         semantic_plan,
         message_text=message.text,
@@ -1419,6 +1439,14 @@ def _hydrate_sales_interpretation(
     interpretation = _rehydrate_contact_preferences(interpretation, message)
     if is_outbound_catalog_image_request(message.text):
         interpretation = interpretation.model_copy(update={"image_request": True})
+    try:
+        from .sales.qualification_slots import store_qualification_slots_on_state
+
+        store_qualification_slots_on_state(commerce_state, interpretation)
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("hydrate.qual_store", exc)
     return interpretation
 
 

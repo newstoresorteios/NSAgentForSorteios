@@ -33,10 +33,21 @@ def mark_sales_result(
         marked.response_metadata.setdefault(
             "purchase_stage", interpretation.purchase_stage
         )
-        marked.response_metadata.setdefault(
-            "active_preferences",
-            interpretation.preferences.model_dump(mode="json", exclude_none=True),
+        existing_prefs = marked.response_metadata.get("active_preferences")
+        prefs = (
+            dict(existing_prefs)
+            if isinstance(existing_prefs, dict)
+            else interpretation.preferences.model_dump(mode="json", exclude_none=True)
         )
+        try:
+            from .qualification_slots import attach_qualification_slots
+
+            prefs = attach_qualification_slots(prefs, interpretation)
+        except Exception as exc:
+            from app.sales import log_swallowed
+
+            log_swallowed("result.qual_slots", exc)
+        marked.response_metadata["active_preferences"] = prefs
         # Needed for durable contact preference memory after the turn.
         marked.response_metadata["interpretation"] = interpretation.model_dump(
             mode="json"

@@ -73,6 +73,8 @@ def _interp(**overrides) -> SalesInterpretation:
         ("quero um de mergulho", None),
         ("Quero o Baltic", None),
         ("mk2 37mm", None),
+        ("quero comprar um relógio por menos de 5 mil", None),
+        ("relógio até 5 mil", None),
     ],
 )
 def test_parse_list_position_selection(text, expected):

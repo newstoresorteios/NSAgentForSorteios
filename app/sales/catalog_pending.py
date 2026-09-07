@@ -462,6 +462,50 @@ async def apply_catalog_pending(
             interpretation.subject.model,
         ))
     ):
+        from .intent_router import route_sales_intent
+
+        pending_route = route_sales_intent(
+            interpretation=interpretation,
+            plan=plan,
+            message_text=message.text,
+            commerce_state=state,
+        )
+        if pending_route.blocks_compiled_product_retrieval(None, interpretation):
+            print("[sales.pending] compiled_skipped", {
+                "route_kind": pending_route.route_kind,
+                "purchase_action": purchase_action,
+            })
+            return CatalogPendingResolution(
+                interpretation=interpretation,
+                plan=plan,
+                purchase_action=purchase_action,
+                resolved_product=resolved_product,
+                resolved_by=resolved_by,
+                purchase_requests=purchase_requests,
+                unresolved_purchase_items=unresolved_purchase_items,
+                unresolved_candidates=unresolved_candidates,
+                pending_link_requested=pending_link_requested,
+                pending_action_used=pending_action_used,
+                early_result=sales._mark_sales_result(
+                    AgentResult(
+                        reply_text=sales._purchase_close_hold_reply(
+                            message=message,
+                            state=state,
+                            interpretation=interpretation,
+                        ),
+                        intent="commerce",
+                        handoff_required=False,
+                        safety_reason="purchase_close_hold",
+                        response_metadata={"domain": "commerce"},
+                    ),
+                    interpretation=interpretation,
+                    goal=(interpretation.goal if interpretation else "buy"),
+                    response_source="deterministic_fallback",
+                    used_openai_responder=False,
+                    used_tray=False,
+                    fallback_reason="purchase_close_hold",
+                ),
+            )
         sales.log_purchase_progress("product_resolution", "start")
         lookup = await sales._execute_compiled_product_retrieval(
             interpretation,

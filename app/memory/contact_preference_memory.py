@@ -606,6 +606,11 @@ def persist_contact_preferences_from_interpretation(
     )
     explicit_no_brand = _explicit_no_brand_active(existing, interpretation)
     if explicit_no_brand:
+        items = [
+            item
+            for item in items
+            if str(item.get("memory_key") or "") != "brand_preference"
+        ]
         try:
             from app.memory.contact_memory_repository import forget_contact_memory
 

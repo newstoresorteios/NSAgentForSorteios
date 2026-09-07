@@ -90,7 +90,43 @@ _INSTITUTIONAL_SNIPPETS: tuple[dict[str, Any], ...] = (
             "Para avaliação de seminovos ou casos complexos, encaminhe ao atendente humano."
         ),
     },
+    {
+        "title": "Pagamento e PIX",
+        "cues": (
+            "pix",
+            "pagamento",
+            "pagar",
+            "boleto",
+            "cartão",
+            "cartao",
+            "parcel",
+            "link de pagamento",
+            "link do pagamento",
+        ),
+        "body": (
+            "Pagamento oficial é pelo link do carrinho/checkout da Tray "
+            "ou pelo PIX gerado nesse checkout. "
+            "Não invente chave PIX, código, boleto ou valor. "
+            "Se o link já está nos FACTS, peça para abrir e pagar o link. "
+            "Não reabra atendimento humano só para pagar."
+        ),
+    },
 )
+
+
+def format_institutional_knowledge_block(
+    message_text: str | None,
+    *,
+    persona_metadata: dict[str, Any] | None = None,
+) -> str:
+    """Prompt-ready institutional snippets for the current turn (no prices)."""
+    from app.persona.persona_knowledge_repository import format_relevant_knowledge_block
+
+    package = fetch_institutional_knowledge(
+        message_text,
+        persona_metadata=persona_metadata,
+    )
+    return format_relevant_knowledge_block(package.as_relevant_knowledge()).strip()
 
 
 def _persona_institutional_items(metadata: dict[str, Any] | None) -> list[dict[str, str]]:

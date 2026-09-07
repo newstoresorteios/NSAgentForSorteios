@@ -49,6 +49,7 @@ async def retrieve_catalog_or_clarify(
     print("[sales.agent] planner", {
         "source": plan.get("_source", "fallback"),
         "action": plan.get("intent"),
+        "route_kind": intent_route.route_kind,
         "has_query": bool(plan.get("query")),
         "has_brand": bool((plan.get("filters") or {}).get("brand")),
         "has_model": bool((plan.get("filters") or {}).get("model")),
@@ -76,39 +77,42 @@ async def retrieve_catalog_or_clarify(
             recent_turns=recent_turns,
             discovery_state=discovery_state,
         )
+    def _close_hold_result() -> AgentResult:
+        try:
+            from app.ops.observability import record_close_miss
+
+            record_close_miss(
+                reason="purchase_close_hold",
+                channel=message.channel,
+                dialogue_phase=(state.dialogue_phase if state else None),
+            )
+        except Exception as exc:
+            from app.sales import log_swallowed
+
+            log_swallowed("handle.record_close_miss", exc)
+        return sales._mark_sales_result(
+            AgentResult(
+                reply_text=sales._purchase_close_hold_reply(
+                    message=message,
+                    state=state,
+                    interpretation=interpretation,
+                ),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="purchase_close_hold",
+                response_metadata={"domain": "commerce"},
+            ),
+            interpretation=interpretation,
+            goal=(interpretation.goal if interpretation else "buy"),
+            response_source="deterministic_fallback",
+            used_openai_responder=False,
+            used_tray=False,
+            fallback_reason="purchase_close_hold",
+        )
+
     if plan.get("intent") == "clarification" or vague_query:
         if intent_route.purchase_close_hold:
-            try:
-                from app.ops.observability import record_close_miss
-
-                record_close_miss(
-                    reason="purchase_close_hold",
-                    channel=message.channel,
-                    dialogue_phase=(state.dialogue_phase if state else None),
-                )
-            except Exception as exc:
-                from app.sales import log_swallowed
-
-                log_swallowed("handle.record_close_miss", exc)
-            return sales._mark_sales_result(
-                AgentResult(
-                    reply_text=sales._purchase_close_hold_reply(
-                        message=message,
-                        state=state,
-                        interpretation=interpretation,
-                    ),
-                    intent="commerce",
-                    handoff_required=False,
-                    safety_reason="purchase_close_hold",
-                    response_metadata={"domain": "commerce"},
-                ),
-                interpretation=interpretation,
-                goal=(interpretation.goal if interpretation else "buy"),
-                response_source="deterministic_fallback",
-                used_openai_responder=False,
-                used_tray=False,
-                fallback_reason="purchase_close_hold",
-            )
+            return _close_hold_result()
         clarification = str(plan.get("clarification_question") or "").strip()
         if not clarification and interpretation is not None:
             clarification = (
@@ -161,6 +165,16 @@ async def retrieve_catalog_or_clarify(
             interpretation,
             resolved_product,
         )
+    elif intent_route.blocks_compiled_product_retrieval(
+        resolved_product,
+        interpretation,
+    ):
+        print("[sales.agent] compiled_skipped", {
+            "route_kind": intent_route.route_kind,
+            "purchase_close": intent_route.purchase_close,
+            "action": action,
+        })
+        return _close_hold_result()
     elif intent_route.skip_catalog_fanout:
         tray_result = sales._session_product_facts_result(state, resolved_product)
         print("[sales.agent] talk_first", {
@@ -188,6 +202,7 @@ async def retrieve_catalog_or_clarify(
             intent_route.skip_catalog_fanout
             or intent_route.purchase_close
             or intent_route.purchase_close_hold
+            or intent_route.route_kind == "close"
         )
         if leftover_blocked:
             print("[sales.agent] leftover_skipped", {
@@ -195,38 +210,12 @@ async def retrieve_catalog_or_clarify(
                 "purchase_close_hold": intent_route.purchase_close_hold,
                 "skip_catalog_fanout": intent_route.skip_catalog_fanout,
             })
-            if intent_route.purchase_close or intent_route.purchase_close_hold:
-                try:
-                    from app.ops.observability import record_close_miss
-
-                    record_close_miss(
-                        reason="purchase_close_hold",
-                        channel=message.channel,
-                        dialogue_phase=(state.dialogue_phase if state else None),
-                    )
-                except Exception as exc:
-                    from app.sales import log_swallowed
-
-                    log_swallowed("handle.record_close_miss", exc)
-                return sales._mark_sales_result(
-                    AgentResult(
-                        reply_text=sales._purchase_close_hold_reply(
-                            message=message,
-                            state=state,
-                            interpretation=interpretation,
-                        ),
-                        intent="commerce",
-                        handoff_required=False,
-                        safety_reason="purchase_close_hold",
-                        response_metadata={"domain": "commerce"},
-                    ),
-                    interpretation=interpretation,
-                    goal=(interpretation.goal if interpretation else "buy"),
-                    response_source="deterministic_fallback",
-                    used_openai_responder=False,
-                    used_tray=False,
-                    fallback_reason="purchase_close_hold",
-                )
+            if (
+                intent_route.purchase_close
+                or intent_route.purchase_close_hold
+                or intent_route.route_kind == "close"
+            ):
+                return _close_hold_result()
             tray_result = sales._session_product_facts_result(state, resolved_product)
         else:
             queries = [str(plan.get("query") or "").strip()]
@@ -302,6 +291,18 @@ async def retrieve_catalog_or_clarify(
             from app.sales import log_swallowed
 
             log_swallowed("handle.locked_identity", exc)
+        try:
+            from .qualification_slots import attach_qualification_slots
+
+            prefs_dump = attach_qualification_slots(
+                prefs_dump,
+                interpretation,
+                prior=state.active_preferences,
+            )
+        except Exception as exc:
+            from app.sales import log_swallowed
+
+            log_swallowed("handle.qual_slots", exc)
         tray_result.response_metadata.update({
             "active_topic": interpretation.active_topic,
             "purchase_stage": interpretation.purchase_stage,

@@ -1151,7 +1151,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         provider_response["_agent_runtime"] = runtime_summary
 
     try:
-        insert_agent_response(
+        response_id = insert_agent_response(
             {
                 "inbound_id": inbound_id,
                 "channel": incoming.channel,
@@ -1165,6 +1165,21 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                 "provider_response": provider_response,
             }
         )
+        try:
+            from app.learning.attendance_learning import (
+                attach_response_id_to_pipeline_reviews,
+            )
+
+            attach_response_id_to_pipeline_reviews(
+                inbound_id=inbound_id,
+                response_id=response_id,
+            )
+        except Exception as exc:
+            log_exception(
+                "brevo.webhook.pipeline_review_bind_failed",
+                exc,
+                {"inbound_id": inbound_id},
+            )
     except Exception as exc:
         log_exception(
             "brevo.webhook.response_insert_failed",

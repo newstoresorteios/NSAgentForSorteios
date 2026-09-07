@@ -888,6 +888,17 @@ def evolve_commerce_state(
             if field in pix_state:
                 setattr(state, field, pix_state[field])
     active_preferences = _compact_preferences(metadata.get("active_preferences"))
+    try:
+        from app.sales.qualification_slots import merge_persisted_qualification_slots
+
+        active_preferences = _compact_preferences(
+            merge_persisted_qualification_slots(
+                active_preferences,
+                state.active_preferences,
+            )
+        )
+    except Exception as exc:
+        print("[commerce.qual_slots]", {"error_type": type(exc).__name__})
     if active_preferences:
         state.active_preferences = active_preferences
 

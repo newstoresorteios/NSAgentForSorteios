@@ -186,6 +186,76 @@ def test_golden_explicit_no_brand_blocks_certina_rehydrate():
     assert "brand" in list(updated.preferences.explicit_no_preferences or [])
 
 
+def test_persist_does_not_rewrite_brand_after_explicit_no(monkeypatch):
+    store = InMemoryMemoryStore().install(monkeypatch)
+    import app.memory.contact_memory_repository as mem_repo
+    import app.memory.contact_preference_memory as module
+
+    settings = SimpleNamespace(
+        agent_contact_preference_memory_enabled=True,
+        agent_contact_preference_summary_enabled=False,
+        agent_contact_preference_rehydrate_enabled=True,
+        agent_contact_preference_ttl_days=60,
+        agent_contact_theme_ttl_days=30,
+        agent_contact_preference_min_confidence=0.7,
+        agent_max_conversation_summary_chars=2500,
+        agent_max_active_contact_memories=20,
+    )
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "upsert_contact_memory", mem_repo.upsert_contact_memory)
+    monkeypatch.setattr(
+        module,
+        "get_active_contact_memories",
+        mem_repo.get_active_contact_memories,
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_consolidation.consolidate_contact_memories",
+        lambda **kwargs: 0,
+    )
+
+    persist_contact_preferences_from_interpretation(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+        conversation_key="whatsapp:1",
+        interpretation=_interp(
+            subject={"brand": "Certina"},
+            preferences={"style": "clássico"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+    )
+    persist_contact_preferences_from_interpretation(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+        conversation_key="whatsapp:1",
+        interpretation=_interp(
+            subject={"brand": "Certina"},
+            preferences={"explicit_no_preferences": ["brand"], "style": "cronógrafo"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+    )
+    # Sticky Certina on a later turn must not resurrect brand_preference.
+    persist_contact_preferences_from_interpretation(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+        conversation_key="whatsapp:1",
+        interpretation=_interp(
+            subject={"brand": "Certina"},
+            preferences={"style": "cronógrafo"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+    )
+    memories = mem_repo.get_active_contact_memories(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+    )
+    keys = {item.memory_key for item in memories}
+    assert "brand_preference" not in keys
+    assert "explicit_no:brand" in keys
+
+
 def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
     store = InMemoryMemoryStore().install(monkeypatch)
     import app.memory.contact_memory_repository as mem_repo

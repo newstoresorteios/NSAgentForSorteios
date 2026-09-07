@@ -130,9 +130,16 @@ def _rewrite_live_cart_pay_link(
     if rewritten is not None:
         return rewritten
     url = official_cart_url(getattr(commerce_state, "cart_url", None))
-    if not url:
-        return None
     if getattr(commerce_state, "checkout_channel_preference", None) == "whatsapp":
+        if not url and not getattr(commerce_state, "cart_session_id", None):
+            return None
+        from app.commerce.checkout_service import checkout_channel_choice_prompt
+
+        updated = result.model_copy(deep=True)
+        updated.reply_text = checkout_channel_choice_prompt(commerce_state)
+        updated.handoff_required = False
+        return updated
+    if not url:
         return None
     updated = result.model_copy(deep=True)
     updated.reply_text = cart_pay_link_copy(

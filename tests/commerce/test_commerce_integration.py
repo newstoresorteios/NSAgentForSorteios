@@ -252,7 +252,8 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
     assert args["name"] == "relógio"
     assert args["available"] is True
     assert args["current_price_range"] == "0,5000"
-    assert result.reply_text == "Encontrei uma opção dentro da faixa informada."
+    folded = (result.reply_text or "").casefold()
+    assert "relógio esportivo preto" in folded
     assert result.safety_reason != "recommendation_not_found"
     assert result.response_metadata["used_tray"] is True
 

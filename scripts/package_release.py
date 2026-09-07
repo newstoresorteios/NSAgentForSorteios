@@ -11,11 +11,10 @@ import fnmatch
 import re
 import sys
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
-
-from pydantic import BaseModel, Field
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -120,11 +119,12 @@ _TEST_FIXTURE_VALUES = frozenset(
 )
 
 
-class SecretFinding(BaseModel):
+@dataclass(frozen=True)
+class SecretFinding:
     path: str
     variable: str
     classification: Literal["real", "placeholder", "test_fixture"]
-    blocking: bool = Field(description="True only for real secrets")
+    blocking: bool
 
 
 def _is_excluded_file(rel: Path) -> bool:

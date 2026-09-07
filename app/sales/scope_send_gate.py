@@ -18,6 +18,9 @@ SCOPE_SEND_FALLBACK = (
     "Preciso confirmar no catálogo as opções que combinam com o que você pediu. "
     "Me dá um instante que já volto com sugestões certinhas."
 )
+PURCHASE_CLOSE_RELIST_FALLBACK = (
+    "Qual opção da lista você quer comprar (1, 2 ou 3)?"
+)
 
 _RETRYABLE_SCOPE_GATE_REASONS = frozenset({
     "all_excluded_brand",
@@ -108,6 +111,41 @@ def requested_brands_from_context(
     return ordered
 
 
+def _purchase_close_blocks_relist(
+    interpretation: SalesInterpretation | None,
+    message_text: str | None,
+    commerce_state: CommerceConversationState | None,
+) -> bool:
+    """True when a new 2+ SKU list would ignore an in-progress close."""
+    try:
+        from .dialogue_phase import message_resets_dialogue_to_discovery
+
+        if message_resets_dialogue_to_discovery(message_text, interpretation):
+            return False
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("scope_gate.browse_reset", exc)
+    if interpretation is None:
+        return False
+    if interpretation.purchase_action in {
+        "create_cart",
+        "show_cart_link",
+        "checkout_question",
+        "inspect_cart",
+    }:
+        return True
+    if interpretation.reference_position is not None:
+        return True
+    has_shortlist = bool(
+        commerce_state is not None and commerce_state.last_presented_products
+    )
+    phase = getattr(commerce_state, "dialogue_phase", None) if commerce_state else None
+    if interpretation.goal == "buy" and (has_shortlist or phase in {"shortlist", "buy", "checkout"}):
+        return True
+    return False
+
+
 def validate_scope_send_gate(
     result: AgentResult,
     *,
@@ -119,7 +157,8 @@ def validate_scope_send_gate(
     products = _presented_products(result)
     if not products:
         return ScopeSendGateReport(valid=True)
-    if not metadata.get("presented_products"):
+    # Single-SKU inspect/price may carry a product without presenting a list.
+    if not metadata.get("presented_products") and len(products) < 2:
         return ScopeSendGateReport(valid=True)
 
     excluded = list(
@@ -168,6 +207,20 @@ def validate_scope_send_gate(
                 excluded_brands=excluded,
                 presented_brands=presented_brands,
             )
+
+    if (
+        len(products) >= 2
+        and _purchase_close_blocks_relist(
+            interpretation, message_text, commerce_state
+        )
+    ):
+        return ScopeSendGateReport(
+            valid=False,
+            reason="purchase_close_relist",
+            requested_brands=requested,
+            excluded_brands=excluded,
+            presented_brands=presented_brands,
+        )
 
     return ScopeSendGateReport(
         valid=True,
@@ -235,6 +288,29 @@ def build_scope_corrected_interpretation(
     return corrected
 
 
+def _repair_purchase_close_relist(
+    *,
+    message_text: str | None,
+    interpretation: SalesInterpretation | None,
+    commerce_state: CommerceConversationState | None,
+) -> AgentResult | None:
+    """Honor the session pick/shortlist instead of a generic re-ask."""
+    try:
+        from .answer_council import _continue_commerce_reply, build_turn_contract
+
+        contract = build_turn_contract(
+            message_text=message_text,
+            interpretation=interpretation,
+            commerce_state=commerce_state,
+        )
+        return _continue_commerce_reply(commerce_state, contract)
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("scope_gate.purchase_close_repair", exc)
+        return None
+
+
 def apply_scope_send_gate(
     result: AgentResult,
     *,
@@ -260,16 +336,38 @@ def apply_scope_send_gate(
 
         log_swallowed("scope_gate.record_mismatch", exc)
 
+    if report.reason == "purchase_close_relist":
+        repaired = _repair_purchase_close_relist(
+            message_text=message_text,
+            interpretation=interpretation,
+            commerce_state=commerce_state,
+        )
+        if repaired is not None:
+            metadata = dict(repaired.response_metadata or {})
+            products = (repaired.commercial_data or {}).get("products") or []
+            metadata["presented_products"] = len(products) >= 2
+            metadata["scope_send_gate"] = report.model_dump(mode="json")
+            metadata["scope_send_gate_repaired"] = "purchase_close_session"
+            metadata["factual_fallback_text"] = repaired.reply_text
+            repaired.response_metadata = metadata
+            repaired.safety_reason = "scope_send_gate_blocked"
+            return repaired, report
+
     fixed = result.model_copy(deep=True)
     commercial = dict(fixed.commercial_data or {})
     commercial.pop("products", None)
     fixed.commercial_data = commercial or None
-    fixed.reply_text = SCOPE_SEND_FALLBACK
+    fallback = (
+        PURCHASE_CLOSE_RELIST_FALLBACK
+        if report.reason == "purchase_close_relist"
+        else SCOPE_SEND_FALLBACK
+    )
+    fixed.reply_text = fallback
     fixed.safety_reason = "scope_send_gate_blocked"
     metadata = dict(fixed.response_metadata or {})
     metadata["presented_products"] = False
     metadata["scope_send_gate"] = report.model_dump(mode="json")
-    metadata["factual_fallback_text"] = SCOPE_SEND_FALLBACK
+    metadata["factual_fallback_text"] = fallback
     fixed.response_metadata = metadata
     return fixed, report
 

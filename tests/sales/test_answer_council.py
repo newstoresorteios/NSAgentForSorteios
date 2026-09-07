@@ -783,6 +783,41 @@ async def test_council_rewrites_joao_handoff_on_live_cart():
     assert "passo para" not in folded
 
 
+@pytest.mark.asyncio
+async def test_council_rewrites_whatsapp_channel_handoff_without_site_link():
+    from app.sales.answer_council import apply_answer_council_with_retry
+
+    state = _tissot_cart_state(checkout_channel_preference="whatsapp")
+    draft = AgentResult(
+        reply_text=(
+            "Se quiser, eu já te passo para o João, da equipe da New Store, "
+            "e seguimos com a compra."
+        ),
+        intent="commerce",
+        commercial_data={
+            "cart": {
+                "status": "cart_created",
+                "cart_url": "https://loja.example/checkout/tissot",
+            },
+            "checkout": {"cart_ready": True},
+        },
+        response_metadata={"purchase_stage": "cart_created"},
+    )
+    result, _decision, _interp = await apply_answer_council_with_retry(
+        draft,
+        incoming=IncomingMessage(channel="whatsapp", text="como fecho a compra?"),
+        interpretation=_interpretation(brand="Tissot", goal="buy", preferences={}),
+        commerce_state=state,
+    )
+    folded = (result.reply_text or "").casefold()
+    assert "joão" not in folded
+    assert "consultor" not in folded
+    assert "passo para" not in folded
+    assert "https://loja.example/checkout/tissot" not in (result.reply_text or "")
+    assert "whatsapp" in folded
+    assert result.handoff_required is False
+
+
 def test_first_search_drops_stale_checkout_purchase_action():
     interp = _interpretation(brand=None, goal="buy", preferences={})
     interp.purchase_action = "create_cart"
