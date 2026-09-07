@@ -42,6 +42,7 @@ from app.catalog.retrieval.variants import enrich_product_variants
 from app.commerce.commerce_context import CommerceProductReference
 from app.commerce.commerce_router import _product_result
 from app.models import AgentResult, SalesInterpretation
+from app.tray.tool_errors import is_upstream_not_found
 
 
 async def execute_contextual_product_lookup(
@@ -61,6 +62,13 @@ async def execute_contextual_product_lookup(
     })
     current = await tool("get_product", {"product_id": product_id})
     if "error" in current:
+        if is_upstream_not_found(current):
+            return AgentResult(
+                reply_text="Não encontrei esse produto no catálogo da loja.",
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="product_not_found",
+            )
         return AgentResult(
             reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
             intent="commerce",
@@ -83,6 +91,13 @@ async def execute_contextual_product_lookup(
     if "inventory" in interpretation.information_needed:
         inventory = await tool("check_inventory", {"product_id": product_id})
         if "error" in inventory:
+            if is_upstream_not_found(inventory):
+                return AgentResult(
+                    reply_text="Não encontrei esse produto no catálogo da loja.",
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="product_not_found",
+                )
             return AgentResult(
                 reply_text="Não consegui consultar as informações da loja neste momento. Tente novamente em instantes.",
                 intent="commerce",

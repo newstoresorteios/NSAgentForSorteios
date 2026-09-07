@@ -840,6 +840,17 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             return _reduce_order_payment(
                 await client.get_order_payment(arguments["order_id"])
             )
+        if name == "cancel_order":
+            return await client.cancel_order(arguments["order_id"])
+        if name == "update_order_shipping":
+            payload = {
+                key: value
+                for key, value in arguments.items()
+                if key != "order_id" and value is not None
+            }
+            return await client.update_order_shipping(arguments["order_id"], payload)
+        if name == "list_product_properties":
+            return await client.list_product_properties(**arguments)
         raise ValueError(f"unknown_tool:{name}")
     except TrayAdapterError as exc:
         print("[tray.tool] request_failed", {

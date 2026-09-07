@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
@@ -100,3 +102,23 @@ def test_breaker_opens_after_threshold_generic_503():
     breaker.record_failure(status_code=503, error="tray_adapter_http_503")
     assert breaker.snapshot().state == "open"
     assert breaker.allow_request() is False
+
+
+def test_half_open_allows_only_one_probe():
+    breaker = TrayCircuitBreaker(failure_threshold=1, open_seconds=0.01, enabled=True)
+    breaker.record_failure(status_code=503, error="tray_adapter_http_503", force_open=True)
+    time.sleep(1.05)
+    assert breaker.snapshot().state == "half_open"
+    assert breaker.allow_request() is True
+    assert breaker.allow_request() is False
+    breaker.record_success()
+    assert breaker.snapshot().state == "closed"
+
+
+def test_half_open_404_closes_circuit():
+    breaker = TrayCircuitBreaker(failure_threshold=1, open_seconds=0.01, enabled=True)
+    breaker.record_failure(status_code=503, force_open=True)
+    time.sleep(1.05)
+    assert breaker.allow_request() is True
+    breaker.record_failure(status_code=404, error="missing")
+    assert breaker.snapshot().state == "closed"

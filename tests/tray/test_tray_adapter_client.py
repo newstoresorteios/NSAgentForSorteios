@@ -55,6 +55,23 @@ async def test_order_list_can_filter_by_confirmed_customer_id():
 
 
 @pytest.mark.asyncio
+async def test_cancel_shipping_and_properties_use_internal_routes():
+    fake = FakeClient(FakeResponse(payload={"success": True}))
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+    await client.cancel_order("88")
+    await client.update_order_shipping("88", {"sending_code": "BR123"})
+    await client.list_product_properties(limit=10)
+    assert [call[0][1] for call in fake.calls] == [
+        "https://tray.example/internal/orders/88/cancel",
+        "https://tray.example/internal/orders/88/shipping",
+        "https://tray.example/internal/products/properties",
+    ]
+    assert fake.calls[0][0][0] == "PUT"
+    assert fake.calls[1][1]["json"] == {"sending_code": "BR123"}
+    assert fake.calls[2][1]["params"] == {"limit": 10}
+
+
+@pytest.mark.asyncio
 async def test_categories_and_variants_use_new_read_only_routes():
     fake = FakeClient()
     client = TrayAdapterClient("https://tray.example", "secret", fake)

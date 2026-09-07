@@ -49,6 +49,7 @@ class TrayCircuitBreaker:
         self._blocked_calls = 0
         self._successful_calls = 0
         self._failed_calls = 0
+        self._half_open_probe_outstanding = False
 
     def reset(self) -> None:
         with self._lock:
@@ -57,6 +58,7 @@ class TrayCircuitBreaker:
             self._half_open_successes = 0
             self._opened_until = 0.0
             self._last_failure_error = None
+            self._half_open_probe_outstanding = False
 
     def snapshot(self) -> CircuitSnapshot:
         with self._lock:
@@ -80,6 +82,11 @@ class TrayCircuitBreaker:
             if self._state == "open":
                 self._blocked_calls += 1
                 return False
+            if self._state == "half_open":
+                if self._half_open_probe_outstanding:
+                    self._blocked_calls += 1
+                    return False
+                self._half_open_probe_outstanding = True
             return True
 
     def record_success(self) -> None:
@@ -87,6 +94,7 @@ class TrayCircuitBreaker:
             return
         with self._lock:
             self._successful_calls += 1
+            self._half_open_probe_outstanding = False
             if self._state == "half_open":
                 self._half_open_successes += 1
                 if self._half_open_successes >= self.half_open_successes:
@@ -110,26 +118,40 @@ class TrayCircuitBreaker:
             return
         with self._lock:
             self._failed_calls += 1
+            self._half_open_probe_outstanding = False
             self._last_failure_error = (error or "").strip() or None
             auth_fail = _is_auth_failure(status_code, error)
             # Auth failures trip faster: one is enough to open.
             if force_open or auth_fail:
                 self._trip_open_unlocked(time.monotonic())
                 return
-            if status_code in {502, 503, 504} or status_code is None:
+            transient = status_code in {502, 503, 504} or status_code is None
+            if self._state == "half_open":
+                if transient:
+                    self._trip_open_unlocked(time.monotonic())
+                else:
+                    self._state = "closed"
+                    self._failure_count = 0
+                    self._half_open_successes = 0
+                    self._opened_until = 0.0
+                    self._last_failure_error = None
+                return
+            if transient:
                 self._failure_count += 1
-                if self._state == "half_open" or self._failure_count >= self.failure_threshold:
+                if self._failure_count >= self.failure_threshold:
                     self._trip_open_unlocked(time.monotonic())
 
     def _trip_open_unlocked(self, now: float) -> None:
         self._state = "open"
         self._opened_until = now + self.open_seconds
         self._half_open_successes = 0
+        self._half_open_probe_outstanding = False
 
     def _maybe_transition_unlocked(self, now: float) -> None:
         if self._state == "open" and now >= self._opened_until:
             self._state = "half_open"
             self._half_open_successes = 0
+            self._half_open_probe_outstanding = False
 
 
 def _is_auth_failure(status_code: int | None, error: str | None) -> bool:
