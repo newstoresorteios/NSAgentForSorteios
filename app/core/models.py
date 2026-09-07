@@ -184,6 +184,7 @@ class SalesInterpretation(BaseModel):
     _turn_understanding: Any = PrivateAttr(default=None)
     _catalog_memory_rehydrate_skipped: bool = PrivateAttr(default=False)
     _prior_catalog_theme: str | None = PrivateAttr(default=None)
+    _slot_answer_hold: bool = PrivateAttr(default=False)
 
     def resolved_answer_strategy(self) -> str | None:
         """Public field first; private TurnUnderstanding is only a fallback."""

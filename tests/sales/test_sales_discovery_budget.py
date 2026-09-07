@@ -639,6 +639,120 @@ def test_persona_question_prefers_prior_catalog_theme_resume():
 
 
 @pytest.mark.asyncio
+async def test_name_answer_without_sku_does_not_ask_delivery(monkeypatch):
+    interpretation = _interpretation(
+        product_type="relógio",
+        preferences={
+            "color": "dourado",
+            "style": "social",
+            "budget_max": 2500,
+            "explicit_no_preferences": ["brand"],
+        },
+        goal="discover",
+        enough=True,
+        ready=True,
+        needs_clarification=False,
+        clarification_question="Para qual cidade e estado seria a entrega?",
+    )
+    turns = [
+        {"role": "assistant", "content": "Como posso te chamar?"},
+    ]
+    result, calls = await _run_sales(
+        monkeypatch,
+        interpretation,
+        turns,
+        text="Tironi",
+    )
+    assert [call for call in calls if call[0] == "search_products"] == []
+    folded = (result.reply_text or "").casefold()
+    assert "cidade" not in folded
+    assert "entrega" not in folded
+    assert "marca" in folded or "investimento" in folded
+
+
+@pytest.mark.asyncio
+async def test_city_answer_does_not_fanout_tray(monkeypatch):
+    interpretation = _interpretation(
+        product_type="relógio",
+        preferences={
+            "color": "dourado",
+            "style": "social",
+            "budget_max": 2500,
+            "explicit_no_preferences": ["brand"],
+        },
+        goal="find",
+        enough=True,
+        ready=True,
+        needs_clarification=False,
+    )
+    turns = [
+        {"role": "assistant", "content": "Para qual cidade e estado seria a entrega?"},
+    ]
+    result, calls = await _run_sales(
+        monkeypatch,
+        interpretation,
+        turns,
+        text="Conselheiro mairinck - pR",
+    )
+    assert [call for call in calls if call[0] == "search_products"] == []
+    assert result.response_metadata.get("used_tray") is not True
+
+
+def test_persona_does_not_ask_city_without_bound_sku():
+    import app.persona.persona_runtime as persona_runtime
+    from app.sales.discovery import _persona_qualification_question
+
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Para qual cidade seria a entrega?",
+            "Você tem pressa para receber ou pode esperar uma peça sob encomenda?",
+            "Qual faixa de investimento você tem em mente?",
+            "Como posso te chamar?",
+        ],
+    )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = SalesInterpretation(
+            domain="commerce",
+            goal="buy",
+            subject={"product_type": "relógio"},
+            preferences={"budget_max": 2500, "recipient": "Tironi"},
+            checkout_action="update_data",
+            purchase_stage="shipping",
+            references_previous_context=True,
+            enough_information_to_search=False,
+            ready_for_retrieval=False,
+            needs_clarification=True,
+            confidence=0.9,
+        )
+        question = _persona_qualification_question(
+            interpretation,
+            {
+                "persona_qualification_required": True,
+                "has_bound_sale_target": False,
+                "qualification": {
+                    "ready": False,
+                    "covered_dims": ["customer_name", "budget"],
+                    "has_budget": True,
+                    "has_style": False,
+                    "has_brand": False,
+                    "has_product_type": True,
+                    "has_urgency": False,
+                },
+                "recent_questions": ["Qual faixa de investimento você tem em mente?"],
+            },
+        )
+        folded = (question or "").casefold()
+        assert "cidade" not in folded
+        assert "entrega" not in folded
+    finally:
+        persona_runtime.reset_persona_runtime(token)
+
+
+@pytest.mark.asyncio
 async def test_recommendation_no_match_skips_openai_name_question(monkeypatch):
     import app.sales_agent as sales_agent
 

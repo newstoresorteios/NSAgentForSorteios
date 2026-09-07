@@ -25,7 +25,15 @@ _QUESTION_SLOT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 _NAME_RE = re.compile(r"^[A-Za-zÀ-ú][A-Za-zÀ-ú'\- ]{0,40}$")
-_CITY_RE = re.compile(r"^[A-Za-zÀ-ú][A-Za-zÀ-ú'\- ]{1,60}$")
+# "Florianópolis", "Conselheiro Mairinck - PR", "Curitiba, PR", "Londrina/PR"
+_CITY_RE = re.compile(
+    r"^[A-Za-zÀ-ú][A-Za-zÀ-ú'\-. ]{0,60}"
+    r"(?:\s*[-,/\u2013\u2014]\s*[A-Za-zÀ-ú]{2,20})?$"
+)
+_SHIPPING_CITY_ASK_RE = re.compile(
+    r"(para qual cidade|cidade e estado|cidade seria|sua cidade|seria a entrega)",
+    re.IGNORECASE,
+)
 _BUDGET_ANSWER_RE = re.compile(
     r"\b(at[eé]|mil|r\$|reais|investimento|orçamento|orcamento|\d)\b",
     re.IGNORECASE,
@@ -135,7 +143,7 @@ def continue_commerce_from_qualification_answer(
                     "needs_clarification": False,
                 }
             )
-        return updated
+        return _stamp_slot_answer_hold(updated, CUSTOMER_NAME)
     if not is_qualification_slot_answer(
         recent_turns,
         message_text,
@@ -162,7 +170,90 @@ def continue_commerce_from_qualification_answer(
                 "needs_clarification": False,
             }
         )
+    return _stamp_slot_answer_hold(updated, slot)
+
+
+def is_shipping_city_prompt(text: str | None) -> bool:
+    """True when assistant copy is asking for delivery city — not bare 'entrega'."""
+    return bool(_SHIPPING_CITY_ASK_RE.search(str(text or "")))
+
+
+def has_bound_sale_target(commerce_state: Any | None) -> bool:
+    """A chosen SKU, live cart, or order — not a leftover shortlist."""
+    if commerce_state is None:
+        return False
+    return any(
+        (
+            getattr(commerce_state, "active_product", None),
+            getattr(commerce_state, "cart_session_id", None),
+            getattr(commerce_state, "cart_id", None),
+            getattr(commerce_state, "order_id", None),
+            getattr(commerce_state, "order_lookup_id", None),
+        )
+    )
+
+
+def catalog_lock_allows_name_search(interpretation: SalesInterpretation) -> bool:
+    """Name after a locked brand/SKU may still retrieve (João after Seiko)."""
+    if str(interpretation.subject.brand or "").strip():
+        return True
+    if interpretation.subject.reference or interpretation.subject.ean:
+        return True
+    return _has_explicit_model(interpretation)
+
+
+def _stamp_slot_answer_hold(
+    interpretation: SalesInterpretation,
+    slot: str | None,
+) -> SalesInterpretation:
+    hold = False
+    if slot == SHIPPING_CITY:
+        hold = True
+    elif slot == CUSTOMER_NAME:
+        hold = not catalog_lock_allows_name_search(interpretation)
+    if not hold:
+        return interpretation
+    updated = interpretation.model_copy(
+        update={
+            "ready_for_retrieval": False,
+            "enough_information_to_search": False,
+        }
+    )
+    updated._slot_answer_hold = True
     return updated
+
+
+def current_qualification_slot_holds_retrieval(
+    interpretation: SalesInterpretation,
+    recent_turns: list[dict[str, Any]] | None,
+    message_text: str | None,
+    *,
+    conversation_id: str | None = None,
+    include_other_threads: bool = False,
+) -> bool:
+    """City answers never search. Name answers search only with a brand/SKU lock."""
+    if getattr(interpretation, "_slot_answer_hold", False):
+        return True
+    introduced = extract_introduced_name(message_text)
+    if introduced:
+        return not catalog_lock_allows_name_search(interpretation)
+    if not is_qualification_slot_answer(
+        recent_turns,
+        message_text,
+        conversation_id=conversation_id,
+        include_other_threads=include_other_threads,
+    ):
+        return False
+    slot = last_assistant_qualification_slot(
+        recent_turns,
+        conversation_id=conversation_id,
+        include_other_threads=include_other_threads,
+    )
+    if slot == SHIPPING_CITY:
+        return True
+    if slot == CUSTOMER_NAME:
+        return not catalog_lock_allows_name_search(interpretation)
+    return False
 
 
 def _qual_attr_key(slot: str) -> str:

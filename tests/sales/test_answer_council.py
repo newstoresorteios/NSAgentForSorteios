@@ -653,6 +653,75 @@ def test_nessa_faixa_inherits_memory_color():
     assert "color" not in contract.stale_fields
 
 
+def test_explicit_no_brand_blocks_memory_citizen_lock():
+    interp = _interpretation(
+        brand=None,
+        preferences={"budget_max": 2500, "explicit_no_preferences": ["brand"]},
+    )
+    state = CommerceConversationState(
+        active_preferences={
+            "budget": {"max": 2500},
+            "locked_identity": {"brand": "Citizen"},
+            "explicit_no_preferences": ["brand"],
+        }
+    )
+    contract = build_turn_contract(
+        message_text="Conselheiro mairinck - pR",
+        interpretation=interp,
+        commerce_state=state,
+    )
+    assert contract.brand is None
+    assert "brand_lock" not in contract.hard_codes
+    bound = apply_turn_contract_for_search(
+        interp,
+        message_text="Conselheiro mairinck - pR",
+        commerce_state=state,
+    )
+    assert bound.subject.brand is None
+
+
+def test_council_rejects_delivery_question_without_sku():
+    interp = _interpretation(brand=None, preferences={"budget_max": 2500})
+    contract = build_turn_contract(
+        message_text="Tironi",
+        interpretation=interp,
+        commerce_state=None,
+    )
+    assert contract.sku_lock is False
+    assert contract.has_bound_sale_target is False
+    draft = AgentResult(
+        reply_text="Tironi, para qual cidade e estado seria a entrega?",
+        intent="commerce",
+        commercial_data={"products": []},
+    )
+    report = check_pedido(draft, contract)
+    assert "asked_delivery_without_sku" in report.issues
+    decision = judge_council(
+        report,
+        check_fatos(draft, contract),
+        attempt=1,
+        max_restarts=1,
+    )
+    assert "stop_fulfillment_qualify" in decision.correction_codes
+
+
+def test_council_allows_delivery_question_with_bound_cart():
+    interp = _interpretation(brand="Tissot", preferences={})
+    contract = build_turn_contract(
+        message_text="Florianópolis",
+        interpretation=interp,
+        commerce_state=_tissot_cart_state(),
+    )
+    assert contract.has_bound_sale_target is True
+    draft = AgentResult(
+        reply_text="Para qual cidade seria a entrega?",
+        intent="commerce",
+        commercial_data={"products": []},
+    )
+    report = check_pedido(draft, contract)
+    assert "asked_delivery_without_sku" not in report.issues
+
+
 def test_budget_only_answer_drops_unstated_color_and_style():
     interp = _interpretation(
         brand=None,

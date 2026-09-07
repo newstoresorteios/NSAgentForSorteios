@@ -48,7 +48,14 @@ _MUST_RETRIEVE_CODES = frozenset(
     }
 )
 _SKIP_RETRIEVAL_CODES = frozenset(
-    {"honor_sku_lock", "stop_requalify", "clear_fake_name", "pay_the_link"}
+    {
+        "honor_sku_lock",
+        "stop_requalify",
+        "clear_fake_name",
+        "pay_the_link",
+        "hold_slot_answer",
+        "stop_fulfillment_qualify",
+    }
 )
 _HUMAN_HANDOFF_ON_CART_RE = re.compile(
     r"("
@@ -284,6 +291,15 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
             issues.append("reopened_discovery_on_purchase_close")
     if (contract.sku_lock or contract.live_shortlist) and _REQUALIFY_RE.search(reply):
         issues.append("requalify_after_sku")
+    from .qualification_slots import is_shipping_city_prompt
+
+    delivery_allowed = bool(
+        contract.sku_lock
+        or contract.has_bound_sale_target
+        or _result_has_live_cart_url(result)
+    )
+    if is_shipping_city_prompt(reply) and not delivery_allowed:
+        issues.append("asked_delivery_without_sku")
     if contract.must_not_claim_stale_checkout and reply_claims_checkout(reply):
         issues.append("claimed_stale_checkout")
     if (
@@ -377,6 +393,8 @@ def judge_council(
         codes.append("drop_stale_checkout")
     if "handoff_on_live_cart" in issues:
         codes.append("pay_the_link")
+    if "asked_delivery_without_sku" in issues:
+        codes.append("stop_fulfillment_qualify")
     return CouncilDecision(
         approved=approved,
         issues=issues,
@@ -503,6 +521,10 @@ def apply_corrections(
     else:
         updated.ready_for_retrieval = True
         updated.enough_information_to_search = True
+    if "hold_slot_answer" in codes or getattr(updated, "_slot_answer_hold", False):
+        updated.ready_for_retrieval = False
+        updated.enough_information_to_search = False
+        updated._slot_answer_hold = True
     if "forbid_near_match" in codes:
         updated._forbid_near_match = True
         from .discovery import _specific_product_lock
@@ -552,7 +574,12 @@ def pre_search_correction_codes(
         if recipient and not _looks_like_person_name(recipient):
             codes.append("clear_fake_name")
         if contract.brand and not (interpretation.subject.brand or "").strip():
-            codes.append("brand_lock")
+            from .turn_contract import _explicit_no_brand
+
+            if not _explicit_no_brand(interpretation):
+                codes.append("brand_lock")
+        if getattr(interpretation, "_slot_answer_hold", False):
+            codes.append("hold_slot_answer")
         if contract.model and not (interpretation.subject.model or "").strip():
             codes.append("model_lock")
     elif contract.model:

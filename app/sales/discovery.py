@@ -510,12 +510,13 @@ def _persona_qualification_question(
         preference_hints.append(
             ("model_intent", ("modelo em mente", "sugestão", "sugestao", "marca"))
         )
+    bound_sale = bool((discovery_state or {}).get("has_bound_sale_target"))
     if _is_fulfillment_qualification_turn(interpretation):
         if "customer_name" not in known:
             preference_hints.append(("customer_name", ("chamar", "como posso te chamar", "seu nome")))
-        if "shipping_city" not in known:
+        if "shipping_city" not in known and bound_sale:
             preference_hints.append(("shipping_city", ("para qual cidade", "cidade", "entrega")))
-        if not snap.get("has_urgency") and "urgency" not in known:
+        if not snap.get("has_urgency") and "urgency" not in known and bound_sale:
             preference_hints.append(
                 ("urgency", ("pressa para receber", "pode esperar", "sob encomenda"))
             )
@@ -528,14 +529,25 @@ def _persona_qualification_question(
             if any(needle in folded for needle in needles) and _unused(prompt):
                 return prompt
 
+    from .qualification_slots import is_shipping_city_prompt
+
+    def _city_or_urgency_prompt(prompt: str) -> bool:
+        folded = prompt.casefold()
+        return is_shipping_city_prompt(prompt) or any(
+            needle in folded
+            for needle in ("pressa para receber", "pode esperar", "sob encomenda")
+        )
+
     fulfillment = _is_fulfillment_qualification_turn(interpretation)
     for prompt in prompts:
         if not _unused(prompt):
             continue
         if not fulfillment and _is_fulfillment_persona_prompt(prompt):
             continue
+        if not bound_sale and _city_or_urgency_prompt(prompt):
+            continue
         return prompt
-    if not fulfillment:
+    if not fulfillment or not bound_sale:
         return None
     return prompts[0] if prompts else None
 
@@ -694,7 +706,17 @@ def _discovery_state(
                 commerce_state=commerce_state,
             )
         ),
+        "has_bound_sale_target": False,
+        "slot_answer_hold": False,
     }
+    try:
+        from .qualification_slots import has_bound_sale_target
+
+        state["has_bound_sale_target"] = has_bound_sale_target(commerce_state)
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.bound_sale_target", exc)
     if _needs_persona_qualification(interpretation, state):
         state["force_retrieval"] = False
         state["persona_qualification_required"] = True
@@ -742,6 +764,23 @@ def _discovery_state(
         state["force_retrieval"] = False
     elif strategy == "answer_directly" and interpretation.goal == "inspect":
         state["force_retrieval"] = False
+    try:
+        from .qualification_slots import current_qualification_slot_holds_retrieval
+
+        if current_qualification_slot_holds_retrieval(
+            interpretation,
+            recent_turns,
+            message_text,
+        ):
+            interpretation._slot_answer_hold = True
+            state["slot_answer_hold"] = True
+            state["force_retrieval"] = False
+            state["enough_information_to_search"] = False
+            state["ready_for_retrieval"] = False
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("discovery.slot_answer_hold", exc)
     return state
 
 
@@ -752,6 +791,10 @@ def _needs_clarification_before_retrieval(
 ) -> bool:
     if discovery_state.get("order_context_blocks_clarification"):
         return False
+    if getattr(interpretation, "_slot_answer_hold", False) or discovery_state.get(
+        "slot_answer_hold"
+    ):
+        return True
     from .purchase_selection import skips_discovery_clarification
 
     if skips_discovery_clarification(interpretation):
