@@ -148,7 +148,7 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
     send_ok = bool(send_info.get("ok"))
 
     try:
-        insert_agent_response(
+        response_id = insert_agent_response(
             {
                 "inbound_id": inbound_id,
                 "channel": incoming.channel,
@@ -162,6 +162,21 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
                 "provider_response": send_info,
             }
         )
+        try:
+            from app.learning.attendance_learning import (
+                attach_response_id_to_pipeline_reviews,
+            )
+
+            attach_response_id_to_pipeline_reviews(
+                inbound_id=inbound_id,
+                response_id=response_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_exception(
+                "inbox.pipeline_review_bind_failed",
+                exc,
+                {"inbox_id": inbox_id, "inbound_id": inbound_id},
+            )
     except Exception as exc:  # noqa: BLE001
         log_exception(
             "inbox.response_persist_failed",

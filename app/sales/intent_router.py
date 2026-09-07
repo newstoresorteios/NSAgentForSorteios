@@ -2,12 +2,37 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from app.commerce.commerce_context import CommerceConversationState
 from ..models import SalesInterpretation
 from .discovery import _discovery_state, _needs_clarification_before_retrieval
+
+_GENERIC_LOOKUP_MODELS = frozenset({"relogio", "watch", "produto", "product"})
+
+
+def _fold_lookup_model(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value.casefold())
+    return "".join(ch for ch in text if not unicodedata.combining(ch)).strip()
+
+
+def has_compiled_lookup_identity(interpretation: SalesInterpretation | None) -> bool:
+    """True when close can look up a named SKU instead of holding the shortlist."""
+    if interpretation is None:
+        return False
+    subject = interpretation.subject
+    if subject.reference or subject.ean:
+        return True
+    model = str(subject.model or "").strip()
+    if not model:
+        return False
+    return _fold_lookup_model(model) not in _GENERIC_LOOKUP_MODELS
+
+RouteKind = Literal[
+    "browse", "refine", "reject", "close", "inspect", "talk", "qualify"
+]
 
 _VAGUE_QUERIES = frozenset(
     {
@@ -37,11 +62,91 @@ class SalesIntentRoute:
     vague_query_clarification: bool = False
     purchase_close_hold: bool = False
     skip_catalog_fanout: bool = False
+    route_kind: RouteKind = "browse"
+
+    def blocks_compiled_product_retrieval(
+        self,
+        resolved_product: Any = None,
+        interpretation: SalesInterpretation | None = None,
+    ) -> bool:
+        """Close without a bound or named SKU must not fan-out Tray list search."""
+        if resolved_product is not None or self.route_kind != "close":
+            return False
+        return not has_compiled_lookup_identity(interpretation)
 
 
 _TALK_STRATEGIES = frozenset(
     {"acknowledge", "clarify", "handoff", "refuse"}
 )
+
+
+def classify_sales_route_kind(
+    *,
+    interpretation: SalesInterpretation | None,
+    message_text: str | None,
+    commerce_state: CommerceConversationState | None,
+    browse_reset: bool,
+    purchase_close: bool,
+    skip_catalog_fanout: bool,
+    needs_clarification_before_retrieval: bool,
+    vague_query_clarification: bool,
+) -> RouteKind:
+    """Policy table: buy/reject/refine/talk — not one regex per incident."""
+    if browse_reset:
+        try:
+            from app.catalog.specs.catalog_specs import (
+                extract_rejected_brands_from_text,
+                message_requests_other_brands,
+            )
+
+            if message_requests_other_brands(message_text) or extract_rejected_brands_from_text(
+                message_text
+            ):
+                return "reject"
+        except Exception as exc:
+            from app.sales import log_swallowed
+
+            log_swallowed("intent_router.reject_brands", exc)
+        return "browse"
+    try:
+        from .purchase_selection import (
+            is_bare_purchase_closing,
+            is_checkout_utterance,
+            parse_list_position_selection,
+        )
+
+        if (
+            parse_list_position_selection(message_text)
+            or is_bare_purchase_closing(message_text)
+            or is_checkout_utterance(message_text)
+        ):
+            return "close"
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("intent_router.close_utterance", exc)
+    if interpretation is not None and interpretation.purchase_action in {
+        "create_cart",
+        "show_cart_link",
+        "checkout_question",
+    }:
+        return "close"
+    if interpretation is not None and interpretation.reference_position is not None:
+        return "close"
+    if skip_catalog_fanout:
+        if interpretation is not None and interpretation.goal == "inspect":
+            return "inspect"
+        return "talk"
+    if needs_clarification_before_retrieval or vague_query_clarification:
+        return "qualify"
+    if commerce_state is not None and (
+        commerce_state.active_product is not None
+        or commerce_state.last_presented_products
+    ):
+        prefs = getattr(interpretation, "preferences", None) if interpretation else None
+        if prefs is not None and (prefs.color or prefs.material):
+            return "refine"
+    return "browse"
 
 
 def should_skip_catalog_fanout(interpretation: SalesInterpretation | None) -> bool:
@@ -131,6 +236,17 @@ def route_sales_intent(
         and not session_in_checkout_phase(commerce_state)
         and (plan_intent == "clarification" or vague_query)
     )
+    skip_catalog_fanout = should_skip_catalog_fanout(interpretation)
+    route_kind = classify_sales_route_kind(
+        interpretation=interpretation,
+        message_text=message_text,
+        commerce_state=commerce_state,
+        browse_reset=browse_reset,
+        purchase_close=purchase_close,
+        skip_catalog_fanout=skip_catalog_fanout,
+        needs_clarification_before_retrieval=needs_clarification_before_retrieval,
+        vague_query_clarification=vague_query_clarification,
+    )
 
     return SalesIntentRoute(
         discovery_state=discovery_state,
@@ -143,5 +259,6 @@ def route_sales_intent(
         vague_query=vague_query,
         vague_query_clarification=vague_query_clarification,
         purchase_close_hold=purchase_close_hold,
-        skip_catalog_fanout=should_skip_catalog_fanout(interpretation),
+        skip_catalog_fanout=skip_catalog_fanout,
+        route_kind=route_kind,
     )

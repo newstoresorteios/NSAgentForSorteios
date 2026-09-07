@@ -236,3 +236,59 @@ def hard_filter_products(
     except Exception as exc:
         log_swallowed("hard_filter.chronograph", exc)
     return selected
+
+
+def interpretation_without_soft_prefs(
+    interpretation: SalesInterpretation,
+) -> SalesInterpretation:
+    """Drop color/style/occasion so a hard budget/brand filter can recover a pool."""
+    prefs = interpretation.preferences
+    return interpretation.model_copy(
+        update={
+            "preferences": prefs.model_copy(
+                update={"color": None, "style": None, "occasion": None}
+            )
+        }
+    )
+
+
+def relax_soft_filters_for_empty_pool(
+    products: list[dict[str, Any]],
+    interpretation: SalesInterpretation,
+    *,
+    mode: Literal["exact", "recommendation"] = "recommendation",
+    message_text: str | None = None,
+) -> list[dict[str, Any]]:
+    """Keep budget (and brand, if set). Soften color/style when they emptied the pool."""
+    if mode != "recommendation" or not products:
+        return []
+    prefs = interpretation.preferences
+    if not (prefs.color or prefs.style or prefs.occasion):
+        return []
+    relaxed = interpretation_without_soft_prefs(interpretation)
+    hits = hard_filter_products(
+        products,
+        relaxed,
+        mode=mode,
+        message_text=message_text,
+    )
+    if hits:
+        print(
+            "[sales.hard_filter.relax_soft]",
+            {
+                "before": 0,
+                "after": len(hits),
+                "dropped": [
+                    key
+                    for key, value in (
+                        ("color", prefs.color),
+                        ("style", prefs.style),
+                        ("occasion", prefs.occasion),
+                    )
+                    if value
+                ],
+                "kept_brand": bool(interpretation.subject.brand),
+                "kept_budget": prefs.budget_max is not None or prefs.budget_min is not None,
+            },
+        )
+    return hits

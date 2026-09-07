@@ -598,3 +598,41 @@ async def test_brand_comparison_without_model_asks_instead_of_searching(monkeypa
         assert "newstorerj.com.br" not in result.reply_text
     finally:
         persona_runtime.reset_persona_runtime(token)
+
+
+def test_persona_question_prefers_prior_catalog_theme_resume():
+    import app.persona.persona_runtime as persona_runtime
+    from app.memory.contact_preference_memory import prior_catalog_theme_resume_question
+    from app.sales.discovery import _persona_qualification_question
+
+    runtime = persona_runtime.PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        require_qualification_before_catalog=True,
+        qualification_prompts=[
+            "Qual faixa de investimento você tem em mente?",
+            "É para uso no dia a dia, trabalho, esporte ou uma ocasião especial?",
+        ],
+    )
+    token = persona_runtime.set_persona_runtime(runtime)
+    try:
+        interpretation = _interpretation(
+            product_type="relógio",
+            goal="discover",
+            needs_clarification=True,
+            enough=False,
+            ready=False,
+        )
+        interpretation._prior_catalog_theme = "Bulova"
+        interpretation.clarification_question = prior_catalog_theme_resume_question(
+            "Bulova"
+        )
+        question = _persona_qualification_question(
+            interpretation,
+            {"persona_qualification_required": True},
+        )
+        assert question is not None
+        assert "Bulova" in question
+        assert "outras marcas" in question
+    finally:
+        persona_runtime.reset_persona_runtime(token)

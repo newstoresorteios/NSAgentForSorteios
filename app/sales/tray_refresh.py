@@ -182,9 +182,12 @@ def tray_list_query_extras(interpretation: SalesInterpretation | None) -> dict[s
             extras["current_price_range"] = f"0,{ceiling}"
         except (TypeError, ValueError):
             pass
+    # Color is a soft rank signal unless a brand is locked. AND-ing Cor on an
+    # open browse emptied the adaptor (dourado + teto, no brand).
+    brand_locked = bool(str(interpretation.subject.brand or "").strip())
     color = str(interpretation.preferences.color or "").strip().casefold() or None
     tray_color = _TRAY_COLOR_PROPERTY.get(color or "")
-    if tray_color:
+    if tray_color and brand_locked:
         extras["property_name"] = "Cor"
         extras["property_value"] = tray_color
     attrs = " ".join(str(item) for item in (interpretation.preferences.attributes or []))

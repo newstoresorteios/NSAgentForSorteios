@@ -450,6 +450,177 @@ async def test_scope_send_gate_retry_at_most_once(monkeypatch):
     assert "catálogo" in fixed.reply_text.casefold()
 
 
+def test_scope_send_gate_blocks_list_without_presented_flag():
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="recommend",
+        subject={"product_type": "relógio"},
+        preferences={"attributes": ["exclude_brand:Certina"]},
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    result = AgentResult(
+        reply_text="Opções Certina",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "c1", "name": "Certina DS Action", "brand": "Certina"},
+                {"id": "c2", "name": "Certina DS-7", "brand": "Certina"},
+            ]
+        },
+        response_metadata={"domain": "commerce"},
+    )
+    report = validate_scope_send_gate(result, interpretation=interpretation)
+    assert report.valid is False
+    assert report.reason == "all_excluded_brand"
+
+
+def test_scope_send_gate_allows_first_buy_browse():
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="buy",
+        subject={"product_type": "relógio"},
+        preferences={"style": "mergulho"},
+        references_previous_context=False,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    result = AgentResult(
+        reply_text="Encontrei estas 3 opções.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "a", "brand": "Baltic", "name": "Baltic A"},
+                {"id": "b", "brand": "Seiko", "name": "Seiko B"},
+                {"id": "c", "brand": "Hamilton", "name": "Hamilton C"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+    report = validate_scope_send_gate(
+        result,
+        interpretation=interpretation,
+        message_text="queria um relógio de mergulho",
+        commerce_state=CommerceConversationState(),
+    )
+    assert report.valid is True
+
+
+def test_scope_send_gate_blocks_purchase_close_relist():
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="buy",
+        subject={"brand": "Baltic", "product_type": "relógio"},
+        preferences={},
+        purchase_action="create_cart",
+        reference_position=2,
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    state = CommerceConversationState(
+        dialogue_phase="shortlist",
+        last_presented_products=[
+            {"position": 1, "product_id": "a", "name": "Baltic A", "brand": "Baltic"},
+            {"position": 2, "product_id": "b", "name": "Baltic B", "brand": "Baltic"},
+        ],
+    )
+    result = AgentResult(
+        reply_text="Encontrei estas 3 opções Baltic.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "a", "brand": "Baltic", "name": "Baltic A"},
+                {"id": "b", "brand": "Baltic", "name": "Baltic B"},
+                {"id": "c", "brand": "Baltic", "name": "Baltic C"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+    report = validate_scope_send_gate(
+        result,
+        interpretation=interpretation,
+        message_text="Quero comprar o 2",
+        commerce_state=state,
+    )
+    assert report.valid is False
+    assert report.reason == "purchase_close_relist"
+    fixed, _ = apply_scope_send_gate(
+        result,
+        interpretation=interpretation,
+        message_text="Quero comprar o 2",
+        commerce_state=state,
+    )
+    text = fixed.reply_text.casefold()
+    assert "baltic b" in text
+    assert "opção 2" in text or "opcao 2" in text
+    products = (fixed.commercial_data or {}).get("products") or []
+    assert len(products) == 1
+    assert str(products[0].get("product_id") or products[0].get("id")) == "b"
+    assert (fixed.response_metadata or {}).get("presented_products") is False
+    assert (fixed.response_metadata or {}).get("scope_send_gate_repaired") == (
+        "purchase_close_session"
+    )
+    assert "scope_send_gate_retry" not in (fixed.response_metadata or {})
+    assert "joão" not in text
+    assert "consultor" not in text
+
+
+def test_scope_send_gate_replays_shortlist_on_bare_close():
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="buy",
+        subject={"brand": "Baltic", "product_type": "relógio"},
+        preferences={},
+        purchase_action="create_cart",
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    state = CommerceConversationState(
+        dialogue_phase="shortlist",
+        last_presented_products=[
+            {"position": 1, "product_id": "a", "name": "Baltic A", "brand": "Baltic"},
+            {"position": 2, "product_id": "b", "name": "Baltic B", "brand": "Baltic"},
+            {"position": 3, "product_id": "c", "name": "Baltic C", "brand": "Baltic"},
+        ],
+    )
+    result = AgentResult(
+        reply_text="Encontrei estas 3 opções Baltic.",
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "a", "brand": "Baltic", "name": "Baltic A"},
+                {"id": "b", "brand": "Baltic", "name": "Baltic B"},
+                {"id": "c", "brand": "Baltic", "name": "Baltic C"},
+            ]
+        },
+        response_metadata={"presented_products": True, "domain": "commerce"},
+    )
+    fixed, report = apply_scope_send_gate(
+        result,
+        interpretation=interpretation,
+        message_text="fechado",
+        commerce_state=state,
+    )
+    assert report.valid is False
+    assert report.reason == "purchase_close_relist"
+    text = fixed.reply_text.casefold()
+    assert "qual você quer fechar" in text
+    assert "baltic a" in text
+    assert "baltic b" in text
+    products = (fixed.commercial_data or {}).get("products") or []
+    assert len(products) == 3
+    assert (fixed.response_metadata or {}).get("presented_products") is True
+    assert (fixed.response_metadata or {}).get("scope_send_gate_repaired") == (
+        "purchase_close_session"
+    )
+    assert "scope_send_gate_retry" not in (fixed.response_metadata or {})
+    assert "joão" not in text
+    assert "consultor" not in text
+
+
 def test_build_scope_corrected_interpretation_clears_sticky_certina():
     interpretation = SalesInterpretation(
         domain="commerce",

@@ -13,6 +13,19 @@ from app.ops.runtime_context import register_integration_failure, register_tray_
 from app.tray.tray_circuit_breaker import get_tray_circuit_breaker
 
 
+_shared_http_client: httpx.AsyncClient | None = None
+
+
+def _get_shared_http_client(timeout_seconds: float) -> httpx.AsyncClient:
+    global _shared_http_client
+    if _shared_http_client is None or _shared_http_client.is_closed:
+        _shared_http_client = httpx.AsyncClient(
+            timeout=timeout_seconds,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _shared_http_client
+
+
 _AUTH_FAIL_MARKERS = frozenset(
     {
         "tray_authentication_failed",
@@ -213,7 +226,7 @@ def _tray_error_diagnostics(payload: Any) -> dict[str, Any]:
 
 
 class TrayAdapterClient:
-    timeout_seconds = 75.0
+    timeout_seconds = 30.0
     max_get_attempts = 2
     retry_backoff_seconds = DEFAULT_BACKOFF_SECONDS
     transient_status_codes = frozenset({502, 503, 504})
@@ -293,8 +306,7 @@ class TrayAdapterClient:
             )
         register_tray_call()
         clean_params = {key: value for key, value in (params or {}).items() if value is not None}
-        own_client = self._http_client is None
-        client = self._http_client or httpx.AsyncClient(timeout=self.timeout_seconds)
+        client = self._http_client or _get_shared_http_client(self.timeout_seconds)
         max_attempts = self.max_get_attempts if method.upper() == "GET" else 1
         operation = self._operation_name(path)
         is_cart_create = method.upper() == "POST" and path == "/internal/carts"
@@ -451,12 +463,10 @@ class TrayAdapterClient:
                 "timeout": False,
             })
             raise TrayAdapterError("tray_adapter_invalid_response") from exc
-        finally:
-            if own_client:
-                await client.aclose()
 
     async def search_products(self, *, name: str | None = None, reference: str | None = None,
                               ean: str | None = None, brand: str | None = None,
+                              brand_id: str | int | None = None,
                               category_id: str | int | None = None, available: Any = None,
                               available_in_store: Any = None, stock: Any = None,
                               promotion: Any = None, limit: int = 5,
@@ -469,9 +479,10 @@ class TrayAdapterClient:
                               price_range: str | None = None) -> Any:
         return await self._request("GET", "/internal/products", params={
             "name": name, "reference": reference, "ean": ean, "brand": brand,
+            "brand_id": brand_id,
             "category_id": category_id, "available": available,
             "available_in_store": available_in_store, "stock": stock,
-            "promotion": promotion, "limit": min(max(limit, 1), 20), "page": page,
+            "promotion": promotion, "limit": min(max(limit, 1), 50), "page": page,
             "current_price_range": current_price_range,
             "property_name": property_name,
             "property_value": property_value,
@@ -691,6 +702,32 @@ class TrayAdapterClient:
 
     async def get_order_payment(self, order_id: str | int) -> Any:
         return await self._request("GET", f"/internal/orders/{order_id}/payment")
+
+    async def cancel_order(self, order_id: str | int) -> Any:
+        return await self._request("PUT", f"/internal/orders/{order_id}/cancel")
+
+    async def update_order_shipping(
+        self, order_id: str | int, payload: dict[str, Any]
+    ) -> Any:
+        return await self._request(
+            "PUT",
+            f"/internal/orders/{order_id}/shipping",
+            json_body=payload,
+        )
+
+    async def list_webhook_events(
+        self, *, limit: int = 50, since_id: int | None = None
+    ) -> Any:
+        params: dict[str, Any] = {"limit": min(max(int(limit), 1), 100)}
+        if since_id is not None:
+            params["since_id"] = int(since_id)
+        return await self._request("GET", "/internal/webhooks/events", params=params)
+
+    async def list_product_properties(self, **params: Any) -> Any:
+        params.setdefault("limit", 20)
+        return await self._request(
+            "GET", "/internal/products/properties", params=params
+        )
 
     async def list_categories(
         self,

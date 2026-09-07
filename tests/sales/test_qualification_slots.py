@@ -10,11 +10,13 @@ from app.persona.persona_runtime import (
 )
 from app.catalog.specs.preference_normalize import normalize_sales_interpretation
 from app.sales.discovery import _persona_qualification_question
+from app.commerce.commerce_context import CommerceConversationState
 from app.sales.qualification_slots import (
     CUSTOMER_NAME,
     SHIPPING_CITY,
     URGENCY,
     apply_qualification_slot_answer,
+    apply_stored_qualification_slots,
     classify_qualification_question,
     covered_qualification_dims,
     rehydrate_qualification_slots_from_turns,
@@ -82,6 +84,181 @@ def test_rehydrate_turns_replays_joao_sequence():
     assert SHIPPING_CITY in dims
     assert CUSTOMER_NAME in dims
     assert updated.preferences.recipient == "João"
+
+
+def test_stored_qualification_slots_survive_without_turns():
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="buy",
+        subject={"brand": "Baltic", "product_type": "relógio"},
+        preferences={},
+        references_previous_context=True,
+        needs_clarification=True,
+        confidence=0.9,
+    )
+    state = CommerceConversationState(
+        dialogue_phase="shortlist",
+        active_preferences={
+            "recipient": "João",
+            "attributes": [
+                "qual:name:João",
+                "qual:city:Florianópolis",
+                "qual:urgency:can_wait",
+            ],
+        },
+    )
+    updated = apply_stored_qualification_slots(interpretation, state)
+    dims = covered_qualification_dims(updated)
+    assert CUSTOMER_NAME in dims
+    assert SHIPPING_CITY in dims
+    assert URGENCY in dims
+    assert updated.preferences.recipient == "João"
+
+
+def test_store_writes_qualification_slots_onto_state():
+    from app.sales.qualification_slots import store_qualification_slots_on_state
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="discover",
+        subject={"brand": "Baltic", "product_type": "relógio"},
+        preferences={
+            "recipient": "João",
+            "attributes": [
+                "qual:name:João",
+                "qual:city:Florianópolis",
+                "qual:urgency:can_wait",
+            ],
+        },
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    state = CommerceConversationState()
+    store_qualification_slots_on_state(state, interpretation)
+    slots = (state.active_preferences or {}).get("qualification_slots")
+    assert slots[CUSTOMER_NAME] == "João"
+    assert slots[SHIPPING_CITY] == "Florianópolis"
+    assert slots[URGENCY] == "can_wait"
+
+    blank = SalesInterpretation(
+        domain="commerce",
+        goal="buy",
+        subject={"brand": "Baltic", "product_type": "relógio"},
+        preferences={},
+        references_previous_context=True,
+        needs_clarification=True,
+        confidence=0.9,
+    )
+    restored = apply_stored_qualification_slots(blank, state)
+    assert restored.preferences.recipient == "João"
+    assert CUSTOMER_NAME in covered_qualification_dims(restored)
+    assert SHIPPING_CITY in covered_qualification_dims(restored)
+
+
+def test_evolve_keeps_qualification_slots_when_later_dump_omits_them():
+    from app.commerce.commerce_context import evolve_commerce_state
+    from app.models import AgentResult
+    from app.sales.qualification_slots import store_qualification_slots_on_state
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="discover",
+        subject={"product_type": "relógio"},
+        preferences={
+            "recipient": "João",
+            "attributes": ["qual:name:João", "qual:city:Florianópolis"],
+        },
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    state = CommerceConversationState()
+    store_qualification_slots_on_state(state, interpretation)
+    evolved = evolve_commerce_state(
+        state,
+        AgentResult(
+            reply_text="Encontrei 3 opções.",
+            intent="commerce",
+            response_metadata={
+                "domain": "commerce",
+                "active_preferences": {"budget_max": 10000},
+            },
+        ),
+    )
+    slots = (evolved.active_preferences or {}).get("qualification_slots") or {}
+    assert slots[CUSTOMER_NAME] == "João"
+    assert slots[SHIPPING_CITY] == "Florianópolis"
+    assert evolved.active_preferences.get("budget_max") == 10000
+
+    blank = SalesInterpretation(
+        domain="commerce",
+        goal="buy",
+        subject={"brand": "Baltic"},
+        preferences={},
+        references_previous_context=True,
+        needs_clarification=True,
+        confidence=0.9,
+    )
+    restored = apply_stored_qualification_slots(blank, evolved)
+    assert restored.preferences.recipient == "João"
+    assert SHIPPING_CITY in covered_qualification_dims(restored)
+
+
+def test_browse_reset_keeps_qualification_slots():
+    from app.sales.dialogue_phase import reset_browse_memory_keep_orders
+
+    state = CommerceConversationState(
+        last_presented_products=[
+            {"position": 1, "product_id": "P1", "name": "Seiko 5"},
+        ],
+        active_preferences={
+            "budget_max": 4000,
+            "locked_identity": {"brand": "Seiko"},
+            "qualification_slots": {
+                CUSTOMER_NAME: "João",
+                SHIPPING_CITY: "Florianópolis",
+            },
+        },
+    )
+    reset = reset_browse_memory_keep_orders(state)
+    assert reset.last_presented_products == []
+    assert "locked_identity" not in (reset.active_preferences or {})
+    assert "budget_max" not in (reset.active_preferences or {})
+    slots = (reset.active_preferences or {}).get("qualification_slots") or {}
+    assert slots[CUSTOMER_NAME] == "João"
+    assert slots[SHIPPING_CITY] == "Florianópolis"
+
+
+def test_mark_sales_result_writes_qualification_slots():
+    from app.models import AgentResult
+    from app.sales.result_utils import mark_sales_result
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="discover",
+        subject={"product_type": "relógio"},
+        preferences={
+            "recipient": "João",
+            "attributes": ["qual:name:João", "qual:city:Florianópolis"],
+        },
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+    marked = mark_sales_result(
+        AgentResult(reply_text="ok", intent="commerce"),
+        interpretation=interpretation,
+        goal="discover",
+        response_source="deterministic_fallback",
+        used_openai_responder=False,
+        used_tray=False,
+    )
+    slots = (marked.response_metadata.get("active_preferences") or {}).get(
+        "qualification_slots"
+    ) or {}
+    assert slots[CUSTOMER_NAME] == "João"
+    assert slots[SHIPPING_CITY] == "Florianópolis"
 
 
 def test_rehydrate_name_without_clarification_metadata():

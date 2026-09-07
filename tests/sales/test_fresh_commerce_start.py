@@ -5,6 +5,7 @@ from app.models import SalesInterpretation
 from app.sales.dialogue_phase import (
     BROWSE_IDLE_SECONDS,
     is_fresh_commerce_start,
+    is_generic_catalog_ask,
     message_resets_dialogue_to_discovery,
     reset_browse_memory_keep_orders,
     should_reset_browse_memory,
@@ -51,6 +52,13 @@ def _interp(**overrides) -> SalesInterpretation:
     }
     payload.update(overrides)
     return SalesInterpretation(**payload)
+
+
+def test_generic_catalog_ask_matches_new_browse():
+    assert is_generic_catalog_ask("quero um relogio")
+    assert is_generic_catalog_ask("quero um relógio")
+    assert is_generic_catalog_ask("pode ser de outras marcas")
+    assert is_generic_catalog_ask("tem em preto?") is False
 
 
 def test_fresh_start_phrases_are_generic_and_narrow():
@@ -237,5 +245,6 @@ def test_checkout_utterance_is_not_generic_buy():
     assert is_checkout_utterance("pode montar o pedido pra mim")
     assert is_checkout_utterance("quero fechar")
     assert is_checkout_utterance("me manda o link de pagamento")
+    assert is_checkout_utterance("como podes fazer pra fechar a compra?")
     assert is_checkout_utterance("quero comprar um relógio") is False
     assert is_checkout_utterance("procuro um seiko") is False

@@ -41,6 +41,7 @@ def test_claim_sql_reclaims_expired_leased_rows():
     expired = "lease_expires_at < now()"
     assert reclaim in inbox_sql and expired in inbox_sql
     assert reclaim in outbox_sql and expired in outbox_sql
+    assert "conversation_key = ANY(%(conversation_keys)s)" in inbox_sql
 
 
 def test_reconstruct_fills_conversation_id_from_payload_top_level():

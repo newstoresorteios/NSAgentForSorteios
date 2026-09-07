@@ -733,6 +733,91 @@ def test_checker_rejects_cart_prompt_on_open_browse():
     assert "drop_stale_checkout" in decision.correction_codes
 
 
+@pytest.mark.asyncio
+async def test_council_rewrites_joao_handoff_on_live_cart():
+    from app.sales.answer_council import apply_answer_council_with_retry
+
+    state = _tissot_cart_state()
+    draft = AgentResult(
+        reply_text=(
+            "Fechei ele pra você por aqui: https://loja.example/checkout/tissot "
+            "Se quiser, eu já te passo para o João, da equipe da New Store, "
+            "e seguimos com a compra."
+        ),
+        intent="commerce",
+        commercial_data={
+            "cart": {
+                "status": "cart_created",
+                "cart_url": "https://loja.example/checkout/tissot",
+            },
+            "checkout": {"cart_ready": True},
+        },
+        response_metadata={"purchase_stage": "cart_created"},
+    )
+    contract = build_turn_contract(
+        message_text="como fecho a compra?",
+        interpretation=_interpretation(brand="Tissot", goal="buy", preferences={}),
+        commerce_state=state,
+    )
+    report = check_pedido(draft, contract)
+    assert "handoff_on_live_cart" in report.issues
+    decision = judge_council(
+        report,
+        check_fatos(draft, contract),
+        attempt=1,
+        max_restarts=1,
+    )
+    assert "pay_the_link" in decision.correction_codes
+
+    result, _decision, _interp = await apply_answer_council_with_retry(
+        draft,
+        incoming=IncomingMessage(channel="whatsapp", text="como fecho a compra?"),
+        interpretation=_interpretation(brand="Tissot", goal="buy", preferences={}),
+        commerce_state=state,
+    )
+    folded = (result.reply_text or "").casefold()
+    assert "https://loja.example/checkout/tissot" in (result.reply_text or "")
+    assert "paga" in folded
+    assert "joão" not in folded
+    assert "consultor" not in folded
+    assert "passo para" not in folded
+
+
+@pytest.mark.asyncio
+async def test_council_rewrites_whatsapp_channel_handoff_without_site_link():
+    from app.sales.answer_council import apply_answer_council_with_retry
+
+    state = _tissot_cart_state(checkout_channel_preference="whatsapp")
+    draft = AgentResult(
+        reply_text=(
+            "Se quiser, eu já te passo para o João, da equipe da New Store, "
+            "e seguimos com a compra."
+        ),
+        intent="commerce",
+        commercial_data={
+            "cart": {
+                "status": "cart_created",
+                "cart_url": "https://loja.example/checkout/tissot",
+            },
+            "checkout": {"cart_ready": True},
+        },
+        response_metadata={"purchase_stage": "cart_created"},
+    )
+    result, _decision, _interp = await apply_answer_council_with_retry(
+        draft,
+        incoming=IncomingMessage(channel="whatsapp", text="como fecho a compra?"),
+        interpretation=_interpretation(brand="Tissot", goal="buy", preferences={}),
+        commerce_state=state,
+    )
+    folded = (result.reply_text or "").casefold()
+    assert "joão" not in folded
+    assert "consultor" not in folded
+    assert "passo para" not in folded
+    assert "https://loja.example/checkout/tissot" not in (result.reply_text or "")
+    assert "whatsapp" in folded
+    assert result.handoff_required is False
+
+
 def test_first_search_drops_stale_checkout_purchase_action():
     interp = _interpretation(brand=None, goal="buy", preferences={})
     interp.purchase_action = "create_cart"

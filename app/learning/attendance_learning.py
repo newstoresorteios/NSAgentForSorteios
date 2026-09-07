@@ -32,6 +32,8 @@ __all__ = (
     "classify_pipeline_block",
     "promote_insights_to_extensions",
     "record_pipeline_block_review",
+    "attach_response_id_to_pipeline_reviews",
+    "fetch_recent_reviews_for_cluster",
     "run_attendance_learning_batch",
 )
 
@@ -176,6 +178,93 @@ def record_pipeline_block_review(
             "outcome": classification["outcome"],
         })
     return review_id
+
+
+def attach_response_id_to_pipeline_reviews(
+    *,
+    inbound_id: int | None,
+    response_id: int | None,
+    tenant_id: str | None = None,
+) -> int:
+    """Link gate reviews written before persist to the saved agent response."""
+    if inbound_id is None or response_id is None:
+        return 0
+    settings = get_settings()
+    if not getattr(settings, "database_url", None):
+        return 0
+    resolved_tenant = str(
+        tenant_id
+        or getattr(settings, "agent_persona_tenant_id", "newstore")
+        or "newstore"
+    )
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE public.ai_attendance_reviews
+                    SET response_id = %s
+                    WHERE tenant_id = %s
+                      AND inbound_id = %s
+                      AND response_id IS NULL
+                    """,
+                    (int(response_id), resolved_tenant, int(inbound_id)),
+                )
+                return int(cur.rowcount or 0)
+    except Exception as exc:
+        print("[attendance.learning.attach_response_id_error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:160],
+        })
+        return 0
+
+
+def fetch_recent_reviews_for_cluster(
+    *,
+    tenant_id: str,
+    lookback_hours: int = 24,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Load recent reviews (including pipeline blocks without a new cursor row)."""
+    if not getattr(get_settings(), "database_url", None):
+        return []
+    since = datetime.now(timezone.utc) - timedelta(hours=max(int(lookback_hours), 1))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, conversation_key, customer_text, agent_reply,
+                       outcome, failure_codes
+                FROM public.ai_attendance_reviews
+                WHERE tenant_id = %s
+                  AND created_at >= %s
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (tenant_id, since, max(int(limit), 1)),
+            )
+            rows = cur.fetchall() or []
+    reviews: list[dict[str, Any]] = []
+    for row in rows:
+        codes = row[5] if len(row) > 5 else []
+        if isinstance(codes, str):
+            import json
+
+            try:
+                codes = json.loads(codes)
+            except Exception:
+                codes = []
+        if not isinstance(codes, list):
+            codes = []
+        reviews.append({
+            "id": row[0],
+            "conversation_id": row[1],
+            "customer_text": row[2],
+            "agent_reply": row[3],
+            "outcome": row[4],
+            "failure_codes": [str(item) for item in codes],
+        })
+    return reviews
 
 
 def upsert_learning_insight(
@@ -330,6 +419,25 @@ async def run_attendance_learning_batch(
             "customer_text": row.get("customer_text"),
             "agent_reply": row.get("agent_reply"),
             "conversation_id": row.get("conversation_id"),
+        })
+
+    try:
+        extras = fetch_recent_reviews_for_cluster(
+            tenant_id=tenant_id,
+            lookback_hours=bootstrap_hours,
+            limit=row_limit,
+        )
+        seen = {item["id"] for item in reviews}
+        for extra in extras:
+            extra_id = extra.get("id")
+            if extra_id is None or extra_id in seen:
+                continue
+            reviews.append(extra)
+            seen.add(extra_id)
+    except Exception as exc:
+        print("[attendance.learning.cluster_reviews_error]", {
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:160],
         })
 
     if rows:

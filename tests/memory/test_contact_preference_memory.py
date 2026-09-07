@@ -8,8 +8,10 @@ import pytest
 from app.memory.contact_preference_memory import (
     build_preference_memory_items,
     persist_contact_preferences_from_interpretation,
+    prior_catalog_theme_resume_question,
     rehydrate_interpretation_from_memories,
     should_persist_interpretation,
+    should_skip_catalog_memory_rehydrate,
 )
 from app.memory.memory_models import ContactMemory
 from app.models import SalesInterpretation
@@ -139,6 +141,7 @@ def test_rehydrate_fills_empty_fields_without_overwriting():
         subject={"brand": "Hamilton"},
         preferences={"color": "preto"},
         goal="discover",
+        references_previous_context=True,
     )
     updated, filled = rehydrate_interpretation_from_memories(interpretation, memories)
     assert updated.subject.brand == "Hamilton"  # current wins
@@ -184,6 +187,76 @@ def test_golden_explicit_no_brand_blocks_certina_rehydrate():
     assert updated.subject.brand is None
     assert "brand" not in filled
     assert "brand" in list(updated.preferences.explicit_no_preferences or [])
+
+
+def test_persist_does_not_rewrite_brand_after_explicit_no(monkeypatch):
+    store = InMemoryMemoryStore().install(monkeypatch)
+    import app.memory.contact_memory_repository as mem_repo
+    import app.memory.contact_preference_memory as module
+
+    settings = SimpleNamespace(
+        agent_contact_preference_memory_enabled=True,
+        agent_contact_preference_summary_enabled=False,
+        agent_contact_preference_rehydrate_enabled=True,
+        agent_contact_preference_ttl_days=60,
+        agent_contact_theme_ttl_days=30,
+        agent_contact_preference_min_confidence=0.7,
+        agent_max_conversation_summary_chars=2500,
+        agent_max_active_contact_memories=20,
+    )
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "upsert_contact_memory", mem_repo.upsert_contact_memory)
+    monkeypatch.setattr(
+        module,
+        "get_active_contact_memories",
+        mem_repo.get_active_contact_memories,
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_consolidation.consolidate_contact_memories",
+        lambda **kwargs: 0,
+    )
+
+    persist_contact_preferences_from_interpretation(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+        conversation_key="whatsapp:1",
+        interpretation=_interp(
+            subject={"brand": "Certina"},
+            preferences={"style": "clássico"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+    )
+    persist_contact_preferences_from_interpretation(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+        conversation_key="whatsapp:1",
+        interpretation=_interp(
+            subject={"brand": "Certina"},
+            preferences={"explicit_no_preferences": ["brand"], "style": "cronógrafo"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+    )
+    # Sticky Certina on a later turn must not resurrect brand_preference.
+    persist_contact_preferences_from_interpretation(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+        conversation_key="whatsapp:1",
+        interpretation=_interp(
+            subject={"brand": "Certina"},
+            preferences={"style": "cronógrafo"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+    )
+    memories = mem_repo.get_active_contact_memories(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+    )
+    keys = {item.memory_key for item in memories}
+    assert "brand_preference" not in keys
+    assert "explicit_no:brand" in keys
 
 
 def test_persist_contact_preferences_upserts_and_writes_summary(monkeypatch):
@@ -307,3 +380,201 @@ def test_greeting_domain_includes_prior_commerce_theme(monkeypatch):
     keys = {item.memory_key for item in selected}
     assert "last_commerce_theme" in keys
     assert "preferred_name" in keys
+
+
+def _catalog_memories() -> list[ContactMemory]:
+    return [
+        ContactMemory(
+            id=1,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="brand_preference",
+            memory_kind="brand_preference",
+            value={"brands": ["Bulova"], "active": "Bulova"},
+            safe_summary="brand=Bulova",
+            use_in_instructions=True,
+        ),
+        ContactMemory(
+            id=2,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="style_preference",
+            memory_kind="product_preference",
+            value={"value": "social"},
+            safe_summary="style=social",
+            use_in_instructions=True,
+        ),
+        ContactMemory(
+            id=3,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="color_preference",
+            memory_kind="color_preference",
+            value={"value": "dourado"},
+            safe_summary="color=dourado",
+            use_in_instructions=True,
+        ),
+        ContactMemory(
+            id=4,
+            tenant_id="newstore",
+            sender_key="whatsapp:1",
+            memory_key="price_preference",
+            memory_kind="price_preference",
+            value={"min": None, "max": 5000},
+            safe_summary="budget_max=5000",
+            use_in_instructions=True,
+        ),
+    ]
+
+
+def test_skip_catalog_rehydrate_on_new_browse_without_context():
+    interpretation = _interp(subject={}, preferences={}, goal="discover")
+    assert should_skip_catalog_memory_rehydrate(interpretation, "quero um relogio") is True
+    updated, filled = rehydrate_interpretation_from_memories(
+        interpretation,
+        _catalog_memories(),
+        message_text="quero um relogio",
+    )
+    assert updated.subject.brand is None
+    assert updated.preferences.style is None
+    assert updated.preferences.color is None
+    assert updated.preferences.budget_max is None
+    assert "brand" not in filled
+    assert "style" not in filled
+    assert "color" not in filled
+    assert updated._catalog_memory_rehydrate_skipped is True
+    assert updated._prior_catalog_theme == "Bulova"
+    assert "outras marcas" in (updated.clarification_question or "")
+
+
+def test_skip_catalog_rehydrate_on_other_brands():
+    interpretation = _interp(
+        subject={},
+        preferences={"explicit_no_preferences": ["brand"]},
+        goal="recommend",
+        references_previous_context=True,
+    )
+    updated, filled = rehydrate_interpretation_from_memories(
+        interpretation,
+        _catalog_memories(),
+        message_text="pode ser de outras marcas",
+    )
+    assert updated.subject.brand is None
+    assert updated.preferences.color is None
+    assert updated.preferences.style is None
+    assert "brand" not in filled
+    assert updated._catalog_memory_rehydrate_skipped is True
+    assert updated.needs_clarification is False or "outras marcas" not in (
+        updated.clarification_question or ""
+    )
+
+
+def test_skip_catalog_rehydrate_on_budget_without_context():
+    interpretation = _interp(
+        subject={"product_type": "relógio"},
+        preferences={"budget_max": 2500},
+        goal="recommend",
+    )
+    updated, filled = rehydrate_interpretation_from_memories(
+        interpretation,
+        _catalog_memories(),
+        message_text="até 2500 reais",
+    )
+    assert updated.subject.brand is None
+    assert updated.preferences.color is None
+    assert updated.preferences.style is None
+    assert updated.preferences.budget_max == 2500
+    assert updated._catalog_memory_rehydrate_skipped is True
+    assert updated.clarification_question is None
+
+
+def test_continue_prior_theme_fills_catalog_fields():
+    interpretation = _interp(
+        subject={},
+        preferences={},
+        goal="find",
+        references_previous_context=True,
+    )
+    updated, filled = rehydrate_interpretation_from_memories(
+        interpretation,
+        _catalog_memories(),
+        message_text="pode ser o mesmo",
+    )
+    assert updated.subject.brand == "Bulova"
+    assert updated.preferences.style == "social"
+    assert updated.preferences.color == "dourado"
+    assert "brand" in filled
+    assert updated._catalog_memory_rehydrate_skipped is False
+
+
+def test_persist_skips_unstated_catalog_after_new_browse(monkeypatch):
+    InMemoryMemoryStore().install(monkeypatch)
+    import app.memory.contact_memory_repository as mem_repo
+    import app.memory.contact_preference_memory as module
+
+    settings = SimpleNamespace(
+        agent_contact_preference_memory_enabled=True,
+        agent_contact_preference_summary_enabled=False,
+        agent_contact_preference_rehydrate_enabled=True,
+        agent_contact_preference_ttl_days=60,
+        agent_contact_theme_ttl_days=30,
+        agent_contact_preference_min_confidence=0.7,
+        agent_max_conversation_summary_chars=2500,
+        agent_max_active_contact_memories=20,
+    )
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(module, "upsert_contact_memory", mem_repo.upsert_contact_memory)
+    monkeypatch.setattr(
+        module,
+        "get_active_contact_memories",
+        mem_repo.get_active_contact_memories,
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_consolidation.consolidate_contact_memories",
+        lambda **kwargs: 0,
+    )
+
+    persist_contact_preferences_from_interpretation(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+        conversation_key="whatsapp:1",
+        interpretation=_interp(
+            subject={"brand": "Bulova"},
+            preferences={"style": "social", "color": "dourado"},
+            enough_information_to_search=True,
+            ready_for_retrieval=True,
+        ),
+    )
+    skipped = _interp(
+        subject={"product_type": "relógio"},
+        preferences={"budget_max": 2500, "explicit_no_preferences": ["brand"]},
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+    )
+    skipped._catalog_memory_rehydrate_skipped = True
+    persist_contact_preferences_from_interpretation(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+        conversation_key="whatsapp:1",
+        interpretation=skipped,
+        message_text="até 2500 reais",
+    )
+    memories = mem_repo.get_active_contact_memories(
+        tenant_id="newstore",
+        sender_key="whatsapp:1",
+    )
+    keys = {item.memory_key for item in memories}
+    assert "brand_preference" not in keys
+    assert "price_preference" in keys
+    assert "explicit_no:brand" in keys
+    price = next(item for item in memories if item.memory_key == "price_preference")
+    assert price.value.get("max") == 2500
+
+
+def test_resume_question_is_generic():
+    question = prior_catalog_theme_resume_question("Bulova")
+    assert question is not None
+    assert "Bulova" in question
+    assert "outras marcas" in question
+    assert "João" not in question
+    assert "Tironi" not in question

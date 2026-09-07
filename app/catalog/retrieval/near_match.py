@@ -230,6 +230,21 @@ async def handle_hard_filter_miss(session: RetrievalSession) -> AgentResult | No
         return None
     interpretation = session.interpretation
     plan = session.retrieval_plan
+    if plan.mode == "recommendation" and session.candidates:
+        try:
+            from app.catalog.retrieval.hard_filter import relax_soft_filters_for_empty_pool
+
+            relaxed = relax_soft_filters_for_empty_pool(
+                session.candidates,
+                interpretation,
+                mode="recommendation",
+                message_text=session.message_text,
+            )
+            if relaxed:
+                session.hard_filtered = relaxed
+                return None
+        except Exception as exc:
+            _runtime.log_swallowed("near_match.relax_soft", exc)
     reason = "exact_product_not_found" if plan.mode == "exact" else "hard_filter_empty"
     print("[sales.retrieval.empty]", {"reason": reason})
     if plan.mode == "recommendation":

@@ -273,3 +273,121 @@ def mark_pix_settlement(
                 ),
             )
             return _row_to_dict(cur.fetchone())
+
+
+_NON_RETRYABLE_SETTLEMENT = frozenset(
+    {
+        "amount_mismatch",
+        "checkout_snapshot_incomplete",
+        "stored_amount_missing",
+        "expected_amount_missing",
+        "mp_amount_missing",
+        "pix_not_approved",
+    }
+)
+
+
+def is_retryable_settlement_error(error: str | None) -> bool:
+    text = str(error or "").strip()
+    if text in _NON_RETRYABLE_SETTLEMENT:
+        return False
+    if not text:
+        return True
+    return text.startswith("tray_")
+
+
+def get_pix_payment_by_tray_order_id(tray_order_id: str) -> dict[str, Any] | None:
+    oid = str(tray_order_id or "").strip()
+    if not oid:
+        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM public.ai_pix_payments
+                WHERE tray_order_id = %s
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (oid,),
+            )
+            return _row_to_dict(cur.fetchone())
+
+
+def get_pix_payment_by_cart_session_id(cart_session_id: str) -> dict[str, Any] | None:
+    session_id = str(cart_session_id or "").strip()
+    if not session_id:
+        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM public.ai_pix_payments
+                WHERE cart_session_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            )
+            return _row_to_dict(cur.fetchone())
+
+
+def list_retryable_pix_settlements(*, limit: int = 10) -> list[dict[str, Any]]:
+    capped = min(max(int(limit), 1), 50)
+    stale_before = _now().timestamp() - 600
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM public.ai_pix_payments
+                WHERE lower(status) = 'approved'
+                  AND tray_order_id IS NULL
+                  AND settlement_status IN ('failed', 'pending', 'processing')
+                ORDER BY updated_at ASC
+                LIMIT %s
+                """,
+                (capped,),
+            )
+            rows = cur.fetchall() or []
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item = _row_to_dict(row)
+        if not item:
+            continue
+        status = str(item.get("settlement_status") or "")
+        if status == "failed" and not is_retryable_settlement_error(
+            item.get("settlement_error")
+        ):
+            continue
+        if status == "processing":
+            updated = item.get("updated_at")
+            stamp = updated.timestamp() if hasattr(updated, "timestamp") else 0
+            if stamp > stale_before:
+                continue
+        result.append(item)
+    return result
+
+
+def requeue_pix_settlement(mp_payment_id: str) -> dict[str, Any] | None:
+    """Move failed/stale processing back to pending when PIX is approved and Tray order is missing."""
+    now = _now()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE public.ai_pix_payments
+                SET settlement_status = 'pending',
+                    settlement_error = NULL,
+                    updated_at = %s
+                WHERE mp_payment_id = %s
+                  AND lower(status) = 'approved'
+                  AND tray_order_id IS NULL
+                  AND settlement_status IN ('failed', 'processing')
+                RETURNING *
+                """,
+                (now, str(mp_payment_id)),
+            )
+            return _row_to_dict(cur.fetchone())

@@ -400,6 +400,137 @@ def rehydrate_qualification_slots_from_turns(
     return updated
 
 
+def apply_stored_qualification_slots(
+    interpretation: SalesInterpretation,
+    commerce_state: Any | None,
+) -> SalesInterpretation:
+    """Replay name/city/urgency from commerce_state when history was trimmed."""
+    if commerce_state is None:
+        return interpretation
+    prefs = getattr(commerce_state, "active_preferences", None)
+    if not isinstance(prefs, dict) or not prefs:
+        return interpretation
+    attrs_src = prefs.get("attributes") if isinstance(prefs.get("attributes"), list) else []
+    stored = (
+        prefs.get("qualification_slots")
+        if isinstance(prefs.get("qualification_slots"), dict)
+        else {}
+    )
+    updated = interpretation
+    covered = covered_qualification_dims(updated)
+    for slot in (CUSTOMER_NAME, SHIPPING_CITY, URGENCY):
+        if slot in covered:
+            continue
+        value = stored.get(slot) or _get_qual_value(
+            [str(item) for item in attrs_src], slot
+        )
+        if slot == CUSTOMER_NAME and not value:
+            recipient = prefs.get("recipient")
+            if recipient and _is_plausible_name(str(recipient)):
+                value = str(recipient)
+        if value:
+            updated = apply_qualification_slot_answer(updated, slot, str(value))
+    return updated
+
+
+def qualification_slots_payload(
+    interpretation: SalesInterpretation | None,
+) -> dict[str, str]:
+    """Durable name/city/urgency values from the current interpretation."""
+    if interpretation is None:
+        return {}
+    known = known_preferences_from_qualification_slots(interpretation)
+    return {
+        str(key): str(value)
+        for key, value in known.items()
+        if str(value or "").strip()
+    }
+
+
+def _slots_from_preferences(prefs: dict[str, Any] | None) -> dict[str, str]:
+    if not isinstance(prefs, dict) or not prefs:
+        return {}
+    slots: dict[str, str] = {}
+    stored = prefs.get("qualification_slots")
+    if isinstance(stored, dict):
+        for key, value in stored.items():
+            text = str(value or "").strip()
+            if text:
+                slots[str(key)] = text
+    attrs = prefs.get("attributes") if isinstance(prefs.get("attributes"), list) else []
+    for slot in (CUSTOMER_NAME, SHIPPING_CITY, URGENCY):
+        if slot in slots:
+            continue
+        value = _get_qual_value([str(item) for item in attrs], slot)
+        if value:
+            slots[slot] = value
+    if CUSTOMER_NAME not in slots:
+        recipient = prefs.get("recipient")
+        if recipient and _is_plausible_name(str(recipient)):
+            slots[CUSTOMER_NAME] = str(recipient).strip()
+    return slots
+
+
+def merge_persisted_qualification_slots(
+    incoming: dict[str, Any] | None,
+    prior: dict[str, Any] | None,
+    *,
+    interpretation: SalesInterpretation | None = None,
+) -> dict[str, Any]:
+    """Keep persona slots across turns when a later prefs dump omits them."""
+    if incoming:
+        merged = dict(incoming)
+    elif isinstance(prior, dict) and prior:
+        merged = dict(prior)
+    else:
+        merged = {}
+    slots = _slots_from_preferences(prior)
+    slots.update(_slots_from_preferences(merged))
+    slots.update(qualification_slots_payload(interpretation))
+    if not slots:
+        return merged
+    merged["qualification_slots"] = slots
+    attrs = merged.get("attributes") if isinstance(merged.get("attributes"), list) else []
+    attrs = [str(item) for item in attrs]
+    for slot, value in slots.items():
+        attrs = _set_qual_value(attrs, slot, value)
+    merged["attributes"] = attrs
+    if CUSTOMER_NAME in slots and not merged.get("recipient"):
+        merged["recipient"] = slots[CUSTOMER_NAME]
+    return merged
+
+
+def attach_qualification_slots(
+    prefs: dict[str, Any] | None,
+    interpretation: SalesInterpretation | None,
+    *,
+    prior: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Stamp qualification_slots onto a prefs dump before persist."""
+    return merge_persisted_qualification_slots(
+        prefs,
+        prior,
+        interpretation=interpretation,
+    )
+
+
+def store_qualification_slots_on_state(
+    commerce_state: Any | None,
+    interpretation: SalesInterpretation | None,
+) -> Any | None:
+    """Write slots onto commerce_state so the same turn and the next one see them."""
+    if commerce_state is None or interpretation is None:
+        return commerce_state
+    prefs = getattr(commerce_state, "active_preferences", None)
+    current = dict(prefs) if isinstance(prefs, dict) else {}
+    commerce_state.active_preferences = merge_persisted_qualification_slots(
+        current,
+        current,
+        interpretation=interpretation,
+    )
+    return commerce_state
+
+
 def _has_explicit_model(interpretation: SalesInterpretation) -> bool:
     model = str(interpretation.subject.model or "").strip()
     if not model:
@@ -444,8 +575,10 @@ def covered_fulfillment_dims(interpretation: SalesInterpretation) -> set[str]:
 
         if interpretation_case_size_range(interpretation):
             covered.add("case_size")
-    except Exception:
-        pass
+    except Exception as exc:
+        from app.sales import log_swallowed
+
+        log_swallowed("qualification.case_size", exc)
     return covered
 
 

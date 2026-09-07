@@ -92,6 +92,26 @@ def test_purchase_close_skips_qualification_and_force_retrieval():
     assert route.discovery_state["persona_qualification_required"] is False
     assert route.discovery_state["force_retrieval"] is False
     assert route.purchase_close_hold is True
+    assert route.needs_clarification_before_retrieval is False
+
+
+@pytest.mark.offline_eval
+def test_first_seiko_without_state_still_asks_qualification():
+    interpretation = _interp(
+        goal="discover",
+        subject={"product_type": "relógio", "brand": "Seiko"},
+        needs_clarification=True,
+        stop_clarification=False,
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="recommendation", query="Seiko"),
+        message_text="quero um seiko",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.purchase_close is False
+    assert route.needs_clarification_before_retrieval is True
 
 
 @pytest.mark.offline_eval
@@ -130,6 +150,37 @@ def test_needs_clarification_before_retrieval_for_discover_goal():
     )
     assert route.needs_clarification_before_retrieval is True
     assert route.force_retrieval is False
+
+
+@pytest.mark.offline_eval
+def test_purchase_intent_after_close_repair_skips_clarification():
+    interpretation = _interp(
+        goal="buy",
+        purchase_action="create_cart",
+        stop_clarification=True,
+        needs_clarification=False,
+        ready_for_retrieval=False,
+    )
+    state = CommerceConversationState(
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "3917",
+                "name": "Seiko Land Tortoise",
+                "brand": "Seiko",
+            }
+        ],
+        active_product={"product_id": "3917", "name": "Seiko Land Tortoise", "brand": "Seiko"},
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="purchase_intent", goal="buy", query="Seiko"),
+        message_text="como podes fazer pra fechar a compra?",
+        commerce_state=state,
+        recent_turns=[],
+    )
+    assert route.needs_clarification_before_retrieval is False
+    assert route.purchase_close is True
 
 
 def test_inspect_answer_directly_does_not_force_retrieval():
@@ -242,3 +293,185 @@ def test_search_catalog_does_not_skip_fanout():
         recent_turns=[],
     )
     assert route.skip_catalog_fanout is False
+
+
+@pytest.mark.offline_eval
+def test_route_kind_close_for_list_position():
+    interpretation = _interp(
+        goal="buy",
+        purchase_action="create_cart",
+        stop_clarification=True,
+        needs_clarification=False,
+    )
+    state = CommerceConversationState(
+        last_presented_products=[
+            {"position": 1, "product_id": "P1", "name": "Seiko 5", "brand": "Seiko"},
+            {"position": 2, "product_id": "P2", "name": "Seiko Presage", "brand": "Seiko"},
+        ]
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="product_search", goal="buy", query="Seiko"),
+        message_text="quero o 2",
+        commerce_state=state,
+        recent_turns=[],
+    )
+    assert route.route_kind == "close"
+    assert route.blocks_compiled_product_retrieval(None) is True
+    assert route.blocks_compiled_product_retrieval(object()) is False
+    assert route.blocks_compiled_product_retrieval(None, interpretation) is True
+
+
+@pytest.mark.offline_eval
+def test_named_model_create_cart_does_not_block_compiled():
+    interpretation = _interp(
+        goal="buy",
+        purchase_action="create_cart",
+        stop_clarification=True,
+        needs_clarification=False,
+        subject={"brand": "Marca", "model": "Modelo", "product_type": "produto"},
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="purchase_intent", goal="buy", query="Modelo"),
+        message_text="compra direta de produto",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.route_kind == "close"
+    assert route.blocks_compiled_product_retrieval(None, interpretation) is False
+
+
+@pytest.mark.offline_eval
+def test_route_kind_reject_for_other_brands():
+    interpretation = _interp(
+        goal="find",
+        needs_clarification=False,
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        subject={"brand": "Tissot", "product_type": "relógio"},
+    )
+    state = CommerceConversationState(
+        last_presented_products=[
+            {"position": 1, "product_id": "C1", "name": "Certina DS", "brand": "Certina"},
+        ]
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="product_search", goal="find", query="Tissot"),
+        message_text="não precisa ser certina",
+        commerce_state=state,
+        recent_turns=[],
+    )
+    assert route.browse_reset is True
+    assert route.route_kind == "reject"
+    assert route.blocks_compiled_product_retrieval(None) is False
+
+
+@pytest.mark.offline_eval
+def test_route_kind_refine_color_on_shortlist():
+    interpretation = _interp(
+        goal="find",
+        needs_clarification=False,
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        stop_clarification=True,
+        preferences={"color": "preto"},
+        subject={"product_type": "relógio"},
+    )
+    state = CommerceConversationState(
+        last_presented_products=[
+            {"position": 1, "product_id": "P1", "name": "Seiko 5", "brand": "Seiko"},
+        ]
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="product_search", goal="find", query="preto"),
+        message_text="tem na cor preta?",
+        commerce_state=state,
+        recent_turns=[],
+    )
+    assert route.route_kind == "refine"
+    assert route.skip_catalog_fanout is False
+    assert route.blocks_compiled_product_retrieval(None) is False
+
+
+@pytest.mark.offline_eval
+def test_route_kind_inspect_for_talk_first():
+    interpretation = _interp(
+        goal="inspect",
+        needs_clarification=False,
+        ready_for_retrieval=True,
+        enough_information_to_search=True,
+        answer_strategy="answer_directly",
+        subject={"brand": "Bulova", "product_type": "relógio"},
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="product_search", goal="inspect", query="usa bateria"),
+        message_text="usa bateria?",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.route_kind == "inspect"
+
+
+@pytest.mark.offline_eval
+@pytest.mark.offline_eval
+def test_route_kind_browse_for_first_budget_ask():
+    interpretation = _interp(
+        goal="recommend",
+        subject={"product_type": "relógio"},
+        preferences={"budget_max": 5000},
+        needs_clarification=False,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="recommendation", query="relógio"),
+        message_text="quero comprar um relógio por menos de 5 mil",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.route_kind == "browse"
+    assert route.blocks_compiled_product_retrieval(None) is False
+
+
+def test_route_kind_browse_for_first_brand_ask():
+    interpretation = _interp(
+        goal="discover",
+        subject={"product_type": "relógio", "brand": "Seiko"},
+        needs_clarification=True,
+        stop_clarification=False,
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="recommendation", query="Seiko"),
+        message_text="quero um seiko",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.browse_reset is True
+    assert route.route_kind == "browse"
+    assert route.needs_clarification_before_retrieval is True
+
+
+@pytest.mark.offline_eval
+def test_route_kind_qualify_for_vague_followup():
+    interpretation = _interp(
+        goal="discover",
+        subject={"product_type": "relógio"},
+        needs_clarification=True,
+        stop_clarification=False,
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="clarification", query="alguma coisa"),
+        message_text="automático",
+        commerce_state=CommerceConversationState(),
+        recent_turns=[],
+    )
+    assert route.browse_reset is False
+    assert route.vague_query_clarification is True
+    assert route.route_kind == "qualify"

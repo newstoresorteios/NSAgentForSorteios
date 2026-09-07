@@ -64,6 +64,46 @@ def test_iq08_modules_reexported_from_sales_agent():
     assert respond_to_commerce_service.__name__ == "respond_to_commerce_service"
 
 
+def test_catalog_reference_reexported_from_sales_agent():
+    from app.sales.catalog_reference import resolve_catalog_reference as pkg_resolve
+    from app.sales_agent import resolve_catalog_reference as agent_resolve
+
+    assert pkg_resolve is agent_resolve
+
+
+def test_catalog_pending_reexported_from_sales_agent():
+    from app.sales.catalog_pending import apply_catalog_pending as pkg_pending
+    from app.sales_agent import apply_catalog_pending as agent_pending
+
+    assert pkg_pending is agent_pending
+
+
+def test_catalog_media_reexported_from_sales_agent():
+    from app.sales.catalog_media import (
+        try_catalog_media as pkg_media,
+        try_remove_cart_item as pkg_remove,
+    )
+    from app.sales_agent import try_catalog_media as agent_media
+    from app.sales_agent import try_remove_cart_item as agent_remove
+
+    assert pkg_media is agent_media
+    assert pkg_remove is agent_remove
+
+
+def test_catalog_purchase_reexported_from_sales_agent():
+    from app.sales.catalog_purchase import try_catalog_purchase as pkg_purchase
+    from app.sales_agent import try_catalog_purchase as agent_purchase
+
+    assert pkg_purchase is agent_purchase
+
+
+def test_catalog_retrieve_reexported_from_sales_agent():
+    from app.sales.catalog_retrieve import retrieve_catalog_or_clarify as pkg_retrieve
+    from app.sales_agent import retrieve_catalog_or_clarify as agent_retrieve
+
+    assert pkg_retrieve is agent_retrieve
+
+
 def test_interpreter_and_responder_facades_reexport_from_sales_agent():
     from app.sales.interpreter import interpretation_to_plan as pkg_plan
     from app.sales.responder import (

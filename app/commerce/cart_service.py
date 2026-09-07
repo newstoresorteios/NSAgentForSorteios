@@ -13,7 +13,11 @@ from app.commerce.commerce_context import (
     CommerceProductReference,
     normalize_variant_identity,
 )
-from app.commerce.checkout_service import checkout_capabilities
+from app.commerce.checkout_service import (
+    cart_pay_link_copy,
+    checkout_capabilities,
+    visible_cart_url,
+)
 from app.models import AgentResult, SalesInterpretation
 from app.catalog.product_retrieval import (
     commercial_availability_facts,
@@ -574,7 +578,8 @@ def current_cart_reply(
         return _validation_failure(
             "Ainda não há um carrinho ativo nesta conversa.",
         )
-    if state.checkout_channel_preference != "site":
+    public_url = visible_cart_url(state, cart_url=cart_url)
+    if not public_url:
         return AgentResult(
             reply_text="O link do carrinho só fica disponível no checkout pelo site.",
             intent="commerce",
@@ -598,13 +603,13 @@ def current_cart_reply(
         )
     checkout = checkout_capabilities(state)
     return AgentResult(
-        reply_text=f"Carrinho atual consultado.\n{cart_url}",
+        reply_text=cart_pay_link_copy(cart_url=public_url),
         intent="commerce",
         handoff_required=False,
         commercial_data={
             "cart": {
                 "status": "cart_ready",
-                "cart_url": cart_url,
+                "cart_url": public_url,
                 "items": [
                     _cart_item_state(item)
                     for item in state.cart_items
@@ -1053,8 +1058,9 @@ def _reconciled_cart_result(
         "changed": changed,
         "already_satisfied": already_satisfied,
     }
-    if state.checkout_channel_preference == "site":
-        cart_facts["cart_url"] = cart_url
+    public_url = visible_cart_url(checkout_state, cart_url=cart_url)
+    if public_url:
+        cart_facts["cart_url"] = public_url
     print("[sales.cart.ensure]", {
         "session_hash": state.cart_session_id[-8:],
         "product_id": requested.product_reference.product_id,
@@ -1064,7 +1070,11 @@ def _reconciled_cart_result(
         "changed": changed,
     })
     return AgentResult(
-        reply_text="Estado factual do carrinho confirmado.",
+        reply_text=(
+            cart_pay_link_copy(cart_url=public_url)
+            if public_url
+            else "Estado factual do carrinho confirmado."
+        ),
         intent="commerce",
         handoff_required=False,
         commercial_data={
@@ -1549,11 +1559,6 @@ async def _create_cart_items_checkout_impl(
         "eventual_consistency" if verification_pending else complete_error,
     )
     status = "cart_partial_failure" if partial else "cart_created"
-    reply = (
-        "Carrinho atualizado parcialmente."
-        if partial
-        else "Carrinho atualizado."
-    )
     print("[sales.cart.state]", {
         "purchase_stage": "cart_created",
         "has_cart_session": True,
@@ -1568,6 +1573,16 @@ async def _create_cart_items_checkout_impl(
     checkout_state.cart_url = cart_url
     checkout_state.cart_items = verified_items
     checkout = checkout_capabilities(checkout_state)
+    public_url = visible_cart_url(checkout_state, cart_url=cart_url)
+    if partial:
+        reply = "Carrinho atualizado parcialmente."
+    elif public_url:
+        reply = cart_pay_link_copy(
+            cart_url=public_url,
+            products=[item.product for item in prepared],
+        )
+    else:
+        reply = "Carrinho atualizado."
     return AgentResult(
         reply_text=reply,
         intent="commerce",
@@ -1601,6 +1616,7 @@ async def _create_cart_items_checkout_impl(
                     if verification_pending
                     else "confirmed"
                 ),
+                **({"cart_url": public_url} if public_url else {}),
             },
             "checkout": checkout,
             **(

@@ -4,10 +4,28 @@ import re
 from typing import Any
 
 from app.models import AgentResult, IncomingMessage
+from app.tray.tool_errors import is_upstream_not_found
 from app.tray.tray_tools import execute_tool
 
 
 COMMERCE_UNAVAILABLE = "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."
+PRODUCT_NOT_FOUND_REPLY = "N\u00e3o encontrei esse produto no cat\u00e1logo da loja."
+
+
+def _tool_error_result(payload: dict[str, Any]) -> AgentResult:
+    if is_upstream_not_found(payload):
+        return AgentResult(
+            reply_text=PRODUCT_NOT_FOUND_REPLY,
+            intent="commerce",
+            handoff_required=False,
+            safety_reason="product_not_found",
+        )
+    return AgentResult(
+        reply_text=COMMERCE_UNAVAILABLE,
+        intent="commerce",
+        handoff_required=False,
+        safety_reason="tray_adapter_unavailable",
+    )
 
 
 _CURRENT_PRODUCT_BY_CONTEXT: dict[str, dict[str, Any]] = {}
@@ -120,6 +138,11 @@ def is_outbound_catalog_image_request(text: str | None) -> bool:
             "pode mandar",
             "me manda",
             "me envia",
+            "pedi a imagem",
+            "pedi a foto",
+            "que pedi",
+            "cade a foto",
+            "cade a imagem",
         )
     )
     return ask_to_send
@@ -618,12 +641,12 @@ async def handle_commerce_message(
             _log_route(action, "check_inventory", False)
             inventory = await execute_tool("check_inventory", {"product_id": product_id})
             if "error" in inventory:
-                return AgentResult(reply_text=COMMERCE_UNAVAILABLE, intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
+                return _tool_error_result(inventory)
             return AgentResult(reply_text="Consulta de estoque:\n" + "\n".join(_product_lines([remembered], inventory)), intent="commerce", handoff_required=False, commercial_data={"products": [remembered], "inventory": inventory})
         _log_route(action, "get_product", False)
         current = await execute_tool("get_product", {"product_id": product_id})
         if "error" in current:
-            return AgentResult(reply_text=COMMERCE_UNAVAILABLE, intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
+            return _tool_error_result(current)
         identity = {key: remembered.get(key) for key in ("id", "name", "reference", "ean", "brand") if remembered.get(key) is not None}
         return _product_result(action, [{**identity, **current}])
 
@@ -636,7 +659,7 @@ async def handle_commerce_message(
         _log_route(action, "get_product", True)
         current = await execute_tool("get_product", {"product_id": str(products[0]["id"])})
         if "error" in current:
-            return AgentResult(reply_text=COMMERCE_UNAVAILABLE, intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
+            return _tool_error_result(current)
         identity = {key: products[0].get(key) for key in ("id", "name", "reference", "ean", "brand") if products[0].get(key) is not None}
         detail = {**identity, **current}
         _remember_product(message, detail)
@@ -657,5 +680,5 @@ async def handle_commerce_message(
     _log_route(action, "check_inventory", True)
     inventory = await execute_tool("check_inventory", {"product_id": str(product_id)})
     if "error" in inventory:
-        return AgentResult(reply_text=COMMERCE_UNAVAILABLE, intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
+        return _tool_error_result(inventory)
     return AgentResult(reply_text="Consulta de estoque:\n" + "\n".join(_product_lines(products, inventory)), intent="commerce", handoff_required=False, commercial_data={"products": products, "inventory": inventory})

@@ -134,6 +134,82 @@ async def test_settle_creates_tray_order_when_amounts_match(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_settle_reconciles_existing_tray_order_without_second_post(monkeypatch):
+    import app.commerce.pix_settlement as settlement
+
+    monkeypatch.setattr(settlement.repo, "get_pix_payment_by_mp_id", lambda _pid: _row())
+    monkeypatch.setattr(
+        settlement.repo,
+        "claim_pix_settlement",
+        lambda _pid: _row(settlement_status="processing"),
+    )
+    marked = {}
+
+    def mark(pid, **kwargs):
+        marked.update(kwargs)
+        return {
+            "settlement_status": kwargs["settlement_status"],
+            "tray_order_id": kwargs.get("tray_order_id"),
+        }
+
+    monkeypatch.setattr(settlement.repo, "mark_pix_settlement", mark)
+
+    async def existing(_payload):
+        return "tray-existing"
+
+    async def create(_payload):
+        raise AssertionError("create_order must not run when Tray already has the order")
+
+    monkeypatch.setattr(settlement, "find_existing_tray_order", existing)
+    result = await settle_approved_pix_payment(
+        "mp-1",
+        mp_payload={"id": "mp-1", "status": "approved", "transaction_amount": 10.5},
+        create_order=create,
+    )
+    assert result["ok"] is True
+    assert result["reason"] == "reconciled_existing_tray_order"
+    assert result["tray_order_id"] == "tray-existing"
+    assert marked["settlement_status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_retry_requeues_failed_tray_error_then_settles(monkeypatch):
+    import app.commerce.pix_settlement as settlement
+
+    monkeypatch.setattr(
+        settlement.repo,
+        "list_retryable_pix_settlements",
+        lambda limit=10: [
+            _row(settlement_status="failed", settlement_error="tray_error:timeout")
+        ],
+    )
+    requeued = {}
+
+    def requeue(pid):
+        requeued["pid"] = pid
+        return _row(settlement_status="pending")
+
+    monkeypatch.setattr(settlement.repo, "requeue_pix_settlement", requeue)
+
+    async def fake_settle(pid):
+        return {"ok": True, "action": "settled", "payment_id": pid}
+
+    monkeypatch.setattr(settlement, "settle_approved_pix_payment", fake_settle)
+    result = await settlement.retry_failed_pix_settlements()
+    assert result["ok"] is True
+    assert result["attempted"] == 1
+    assert requeued["pid"] == "mp-1"
+
+
+def test_amount_mismatch_is_not_retryable():
+    from app.commerce.pix_payment_repository import is_retryable_settlement_error
+
+    assert is_retryable_settlement_error("amount_mismatch") is False
+    assert is_retryable_settlement_error("tray_error:503") is True
+    assert is_retryable_settlement_error("tray_order_id_missing") is True
+
+
+@pytest.mark.asyncio
 async def test_settle_idempotent_when_already_completed(monkeypatch):
     import app.commerce.pix_settlement as settlement
 

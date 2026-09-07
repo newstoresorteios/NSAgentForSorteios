@@ -353,6 +353,56 @@ class CatalogIndexRepository:
             print("[catalog.index.delete_missing.error]", {"error_type": type(exc).__name__})
             return 0
 
+    def delete_by_product_id(self, *, tenant_id: str, product_id: str) -> int:
+        tenant = str(tenant_id or "").strip()
+        pid = str(product_id or "").strip()
+        if not tenant or not pid:
+            return 0
+        try:
+            from app.db import get_conn
+
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM public.ai_catalog_index
+                        WHERE tenant_id = %(tenant_id)s
+                          AND product_id = %(product_id)s
+                        """,
+                        {"tenant_id": tenant, "product_id": pid},
+                    )
+                    count = cur.rowcount or 0
+                conn.commit()
+            return int(count)
+        except Exception as exc:
+            print("[catalog.index.delete_product.error]", {"error_type": type(exc).__name__})
+            return 0
+
+    def delete_by_variant_id(self, *, tenant_id: str, variant_id: str) -> int:
+        tenant = str(tenant_id or "").strip()
+        vid = str(variant_id or "").strip()
+        if not tenant or not vid:
+            return 0
+        try:
+            from app.db import get_conn
+
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM public.ai_catalog_index
+                        WHERE tenant_id = %(tenant_id)s
+                          AND variant_id = %(variant_id)s
+                        """,
+                        {"tenant_id": tenant, "variant_id": vid},
+                    )
+                    count = cur.rowcount or 0
+                conn.commit()
+            return int(count)
+        except Exception as exc:
+            print("[catalog.index.delete_variant.error]", {"error_type": type(exc).__name__})
+            return 0
+
     def _fetch(
         self,
         sql: str,

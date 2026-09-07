@@ -157,9 +157,23 @@ async def turn_runtime_middleware(request: Request, call_next):
             )
         raise
     finally:
-        await release_conversation_lock(
-            getattr(request.state, "conversation_lock_handle", None)
-        )
+        lock_handle = getattr(request.state, "conversation_lock_handle", None)
+        await release_conversation_lock(lock_handle)
+        drain_keys = getattr(request.state, "inbox_drain_keys", None)
+        if lock_handle is not None and drain_keys:
+            try:
+                from app.ingress.busy import drain_lock_deferred_inbound
+
+                await drain_lock_deferred_inbound(
+                    conversation_keys=list(drain_keys),
+                    database_url=getattr(get_settings(), "database_url", ""),
+                )
+            except Exception as exc:
+                log_exception(
+                    "agent.lock.deferred_drain_failed",
+                    exc,
+                    {"drain_key_count": len(list(drain_keys))},
+                )
         context.finish_stage("request")
         summary = context.safe_summary()
         log_event(
@@ -820,12 +834,23 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                     15.0,
                 )
             )
-            # Keep waits short: the in-flight turn owns the work. Returning 503
-            # makes Brevo retry and amplifies lock contention during photo turns.
+            # Keep waits short: the in-flight turn owns the work. Do not
+            # return 503 — Brevo retries and the next interpret can change
+            # meaning (image follow-up → buy). Queue the same inbound instead.
             if (incoming.image_url or "").strip() or (
                 (incoming.attachment_type or "").lower() == "image"
             ):
                 lock_timeout = min(max(lock_timeout, 5.0), 12.0)
+            from app.ingress.busy import (
+                LOCK_DEFERRED_RETRY_SECONDS,
+                enqueue_lock_deferred_inbound,
+                inbox_drain_keys,
+            )
+
+            request.state.inbox_drain_keys = inbox_drain_keys(
+                lock_key=lock_key,
+                incoming=incoming,
+            )
             try:
                 with runtime_stage("conversation_lock_wait"):
                     request.state.conversation_lock_handle = (
@@ -854,9 +879,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                         "lock_timeout_seconds": lock_timeout,
                     },
                 )
-                # Contention: another worker holds the conversation — acknowledge
-                # and stop Brevo retries. DB lock failure is different: dropping
-                # the event loses photo turns, so fall back to a local-only lock.
+                # Infra failure: keep a local-only lock so photo turns survive.
                 if lock_error == "database_lock_unavailable":
                     try:
                         request.state.conversation_lock_handle = (
@@ -876,33 +899,55 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                             },
                         )
                     except ConversationLockUnavailable:
-                        return _skip_webhook_event(
+                        created, inbox_id = enqueue_lock_deferred_inbound(
+                            incoming,
                             event_name=event_name,
-                            reason="conversation_busy",
-                        )
-                else:
-                    if lock_error == "local_lock_timeout":
-                        log_event(
-                            "brevo.webhook.retry",
-                            {
-                                "reason": "conversation_busy",
-                                "channel": incoming.channel,
-                                "lock_timeout_seconds": lock_timeout,
-                            },
+                            conversation_key=lock_key,
                         )
                         return JSONResponse(
                             {
-                                "ok": False,
-                                "retry": True,
+                                "ok": True,
+                                "queued": True,
                                 "reason": "conversation_busy",
-                            },
-                            status_code=503,
-                            headers={"Retry-After": "5"},
+                                "inbox_id": inbox_id,
+                                "created": created,
+                            }
                         )
-                    return _skip_webhook_event(
+                else:
+                    created, inbox_id = enqueue_lock_deferred_inbound(
+                        incoming,
                         event_name=event_name,
-                        reason="conversation_busy",
+                        conversation_key=lock_key,
                     )
+                    try:
+                        request.state.conversation_lock_handle = (
+                            await acquire_conversation_lock(
+                                lock_key,
+                                database_url=getattr(
+                                    settings,
+                                    "database_url",
+                                    "",
+                                ),
+                                timeout_seconds=LOCK_DEFERRED_RETRY_SECONDS,
+                            )
+                        )
+                        log_event(
+                            "agent.lock.deferred_retry_acquired",
+                            {
+                                "channel": incoming.channel,
+                                "inbox_id": inbox_id,
+                            },
+                        )
+                    except ConversationLockUnavailable:
+                        return JSONResponse(
+                            {
+                                "ok": True,
+                                "queued": True,
+                                "reason": "conversation_busy",
+                                "inbox_id": inbox_id,
+                                "created": created,
+                            }
+                        )
 
     # Brevo often redelivers the caption as a second text-only webhook after the
     # photo+caption turn. Skip exact caption echoes so we don't reply twice.
@@ -1106,7 +1151,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
         provider_response["_agent_runtime"] = runtime_summary
 
     try:
-        insert_agent_response(
+        response_id = insert_agent_response(
             {
                 "inbound_id": inbound_id,
                 "channel": incoming.channel,
@@ -1120,6 +1165,21 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                 "provider_response": provider_response,
             }
         )
+        try:
+            from app.learning.attendance_learning import (
+                attach_response_id_to_pipeline_reviews,
+            )
+
+            attach_response_id_to_pipeline_reviews(
+                inbound_id=inbound_id,
+                response_id=response_id,
+            )
+        except Exception as exc:
+            log_exception(
+                "brevo.webhook.pipeline_review_bind_failed",
+                exc,
+                {"inbound_id": inbound_id},
+            )
     except Exception as exc:
         log_exception(
             "brevo.webhook.response_insert_failed",
@@ -1311,27 +1371,20 @@ async def tray_keepalive_cron():
             except ValueError:
                 pass
 
-            # Proactive OAuth refresh when access is missing/invalid, or daily soak.
-            # Hobby keepalive is once-daily — force refresh each run to avoid stale
-            # access tokens with null expiry (adaptor reports expires_at=null).
-            auth = await client.get(f"{base}/tray/test-auth")
-            payload["test_auth_status_code"] = auth.status_code
+            # Do not call /tray/test-auth: it consumes the one-time OAuth code.
+            payload["elapsed_ms"] = int((__import__("time").monotonic() - started) * 1000)
+            payload["ok"] = (
+                health.status_code == 200
+                and tray_health.status_code == 200
+            )
             try:
-                auth_body = auth.json()
-                if isinstance(auth_body, dict):
-                    payload["test_auth_ok"] = bool(auth_body.get("success"))
-                    payload["authenticated"] = bool(auth_body.get("authenticated"))
-            except ValueError:
-                payload["test_auth_ok"] = False
+                from app.tray.tray_sync import run_tray_sync
 
-        payload["elapsed_ms"] = int((__import__("time").monotonic() - started) * 1000)
-        payload["ok"] = (
-            health.status_code == 200
-            and tray_health.status_code == 200
-            and bool(payload.get("test_auth_ok"))
-        )
-        log_event("tray.keepalive", payload)
-        return payload
+                payload["sync"] = await run_tray_sync()
+            except Exception as exc:  # noqa: BLE001
+                payload["sync_error"] = type(exc).__name__
+            log_event("tray.keepalive", payload)
+            return payload
     except Exception as exc:  # noqa: BLE001
         payload["elapsed_ms"] = int((__import__("time").monotonic() - started) * 1000)
         payload["error"] = type(exc).__name__
@@ -1345,6 +1398,26 @@ async def tray_keepalive_cron():
 )
 async def tray_keepalive_cron_manual():
     return await tray_keepalive_cron()
+
+
+@app.get(
+    "/api/cron/tray-sync",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def tray_sync_cron():
+    from app.tray.tray_sync import run_tray_sync
+
+    result = await run_tray_sync()
+    log_event("tray.sync.cron.completed", result if isinstance(result, dict) else {})
+    return result
+
+
+@app.post(
+    "/api/cron/tray-sync",
+    dependencies=[Depends(verify_remarketing_cron)],
+)
+async def tray_sync_cron_manual():
+    return await tray_sync_cron()
 
 
 @app.get(

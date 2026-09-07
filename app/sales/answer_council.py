@@ -48,7 +48,19 @@ _MUST_RETRIEVE_CODES = frozenset(
     }
 )
 _SKIP_RETRIEVAL_CODES = frozenset(
-    {"honor_sku_lock", "stop_requalify", "clear_fake_name"}
+    {"honor_sku_lock", "stop_requalify", "clear_fake_name", "pay_the_link"}
+)
+_HUMAN_HANDOFF_ON_CART_RE = re.compile(
+    r"("
+    r"te passo para|"
+    r"j[aá] te passo|"
+    r"passo para (o|a|um|uma)|"
+    r"passo (voc[eê]|te) (para|pro|pra)|"
+    r"consultor humano|"
+    r"equipe da (new store|loja)|"
+    r"transfer(ir|ência) (para|pro|pra)"
+    r")",
+    re.IGNORECASE,
 )
 
 
@@ -88,6 +100,54 @@ def build_turn_contract(
 def _presented(result: AgentResult) -> list[dict[str, Any]]:
     products = (result.commercial_data or {}).get("products") or []
     return [item for item in products if isinstance(item, dict)]
+
+
+def _result_has_live_cart_url(result: AgentResult) -> bool:
+    from app.commerce.checkout_service import official_cart_url
+
+    data = result.commercial_data or {}
+    cart = data.get("cart") if isinstance(data.get("cart"), dict) else {}
+    checkout = data.get("checkout") if isinstance(data.get("checkout"), dict) else {}
+    meta = result.response_metadata or {}
+    cart_state = meta.get("cart_state") if isinstance(meta.get("cart_state"), dict) else {}
+    for candidate in (
+        cart.get("cart_url"),
+        checkout.get("cart_url"),
+        cart_state.get("cart_url"),
+    ):
+        if official_cart_url(candidate):
+            return True
+    return False
+
+
+def _rewrite_live_cart_pay_link(
+    result: AgentResult,
+    commerce_state: CommerceConversationState | None,
+) -> AgentResult | None:
+    from app.commerce.checkout_service import apply_live_cart_pay_copy, cart_pay_link_copy, official_cart_url
+
+    rewritten = apply_live_cart_pay_copy(result, commerce_state=commerce_state)
+    if rewritten is not None:
+        return rewritten
+    url = official_cart_url(getattr(commerce_state, "cart_url", None))
+    if getattr(commerce_state, "checkout_channel_preference", None) == "whatsapp":
+        if not url and not getattr(commerce_state, "cart_session_id", None):
+            return None
+        from app.commerce.checkout_service import checkout_channel_choice_prompt
+
+        updated = result.model_copy(deep=True)
+        updated.reply_text = checkout_channel_choice_prompt(commerce_state)
+        updated.handoff_required = False
+        return updated
+    if not url:
+        return None
+    updated = result.model_copy(deep=True)
+    updated.reply_text = cart_pay_link_copy(
+        cart_url=url,
+        products=_presented(result),
+    )
+    updated.handoff_required = False
+    return updated
 
 
 def _catalog_identity_applies(result: AgentResult, contract: TurnContract) -> bool:
@@ -226,6 +286,12 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
         issues.append("requalify_after_sku")
     if contract.must_not_claim_stale_checkout and reply_claims_checkout(reply):
         issues.append("claimed_stale_checkout")
+    if (
+        not contract.must_not_claim_stale_checkout
+        and (contract.live_checkout or _result_has_live_cart_url(result))
+        and _HUMAN_HANDOFF_ON_CART_RE.search(reply)
+    ):
+        issues.append("handoff_on_live_cart")
     if products and _catalog_identity_applies(result, contract):
         if contract.color and _presented_conflicts_color(products, contract.color):
             issues.append("ignored_color")
@@ -309,6 +375,8 @@ def judge_council(
         codes.append("enforce_style")
     if "claimed_stale_checkout" in issues or "fact_stale_checkout" in issues:
         codes.append("drop_stale_checkout")
+    if "handoff_on_live_cart" in issues:
+        codes.append("pay_the_link")
     return CouncilDecision(
         approved=approved,
         issues=issues,
@@ -692,6 +760,10 @@ def _fallback_blocked_reply(
     codes: list[str],
 ) -> AgentResult:
     code_set = set(codes)
+    if "pay_the_link" in code_set:
+        replacement = _rewrite_live_cart_pay_link(result, commerce_state)
+        if replacement is not None:
+            return replacement
     skip_retrieve = (code_set & _SKIP_RETRIEVAL_CODES) and not (
         code_set & _MUST_RETRIEVE_CODES
     )
@@ -897,6 +969,12 @@ async def apply_answer_council_with_retry(
             commerce_state=commerce_state,
         ):
             codes = set(decision.correction_codes)
+            if "pay_the_link" in codes:
+                replacement = _rewrite_live_cart_pay_link(current, commerce_state)
+                if replacement is not None:
+                    current = replacement
+                    attempt += 1
+                    continue
             if "clear_fake_name" in codes and not (codes & _MUST_RETRIEVE_CODES):
                 current = _sync_council_interpretation(current, current_interp)
                 attempt += 1

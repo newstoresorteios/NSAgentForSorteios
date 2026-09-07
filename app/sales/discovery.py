@@ -442,6 +442,13 @@ def _persona_qualification_question(
             return None
         if discovery_state.get("persona_qualification_required") is False:
             return None
+    existing_question = str(interpretation.clarification_question or "").strip()
+    if (
+        getattr(interpretation, "_prior_catalog_theme", None)
+        and existing_question
+        and "outras marcas" in existing_question.casefold()
+    ):
+        return existing_question
     try:
         from app.persona.persona_runtime import get_persona_runtime
 
@@ -744,6 +751,10 @@ def _needs_clarification_before_retrieval(
     discovery_state: dict[str, Any],
 ) -> bool:
     if discovery_state.get("order_context_blocks_clarification"):
+        return False
+    from .purchase_selection import skips_discovery_clarification
+
+    if skips_discovery_clarification(interpretation):
         return False
     if discovery_state.get("persona_qualification_required"):
         return True

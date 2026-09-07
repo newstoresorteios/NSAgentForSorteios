@@ -22,6 +22,10 @@
       "schedule": "5 3 * * *"
     },
     {
+      "path": "/api/cron/tray-sync",
+      "schedule": "20 3 * * *"
+    },
+    {
       "path": "/api/cron/remarketing",
       "schedule": "0 15 * * *"
     },

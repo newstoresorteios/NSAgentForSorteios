@@ -566,6 +566,79 @@ def test_record_pipeline_block_review_ignores_other_reasons(monkeypatch):
     assert record_pipeline_block_review(safety_reason="handoff_required") is None
 
 
+def test_attach_response_id_skips_without_database(monkeypatch):
+    from app.learning.attendance_learning import attach_response_id_to_pipeline_reviews
+
+    monkeypatch.setattr(
+        "app.learning.attendance_learning.get_settings",
+        lambda: SimpleNamespace(agent_persona_tenant_id="newstore"),
+    )
+    assert attach_response_id_to_pipeline_reviews(inbound_id=1, response_id=9) == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_clusters_existing_pipeline_reviews(monkeypatch):
+    extras = [
+        {
+            "id": 501,
+            "conversation_id": "wa:1",
+            "customer_text": "quero Hamilton",
+            "agent_reply": "Qual faixa?",
+            "outcome": "unclear",
+            "failure_codes": ["commerce_clarification"],
+        }
+    ]
+    monkeypatch.setattr(
+        "app.learning.attendance_learning.get_settings",
+        lambda: SimpleNamespace(
+            agent_persona_tenant_id="newstore",
+            agent_learning_bootstrap_hours=24,
+            agent_learning_batch_limit=200,
+            agent_learning_auto_promote=False,
+            agent_learning_auto_activate=False,
+            agent_learning_max_clusters=5,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.learning.attendance_learning.evaluate_canaries",
+        lambda **_k: {"rolled_back": 0, "confirmed": 0, "extended": 0},
+    )
+    monkeypatch.setattr(
+        "app.learning.attendance_learning.load_cursor",
+        lambda **_k: {},
+    )
+    monkeypatch.setattr(
+        "app.learning.attendance_learning.fetch_attendances_since",
+        lambda **_k: [],
+    )
+    monkeypatch.setattr("app.learning.attendance_learning.save_cursor", lambda **_k: None)
+    monkeypatch.setattr(
+        "app.learning.attendance_learning.fetch_recent_reviews_for_cluster",
+        lambda **_k: extras,
+    )
+    monkeypatch.setattr(
+        "app.learning.attendance_learning.compute_fail_rate",
+        lambda **_k: (0.0, 0),
+    )
+    monkeypatch.setattr(
+        "app.learning.attendance_learning.cluster_is_high_signal",
+        lambda code, count: True,
+    )
+
+    reflected: list[str] = []
+
+    async def capture(*, failure_code, reviews):
+        reflected.append(failure_code)
+        return None
+
+    monkeypatch.setattr("app.learning.attendance_learning.reflect_cluster", capture)
+
+    summary = await run_attendance_learning_batch()
+    assert "commerce_clarification" in reflected
+    assert summary["reviews_written"] == 1
+    assert summary["rows_scanned"] == 0
+
+
 def test_constitution_blocks_price_url_skip_tray(monkeypatch):
     monkeypatch.setattr(
         "app.learning.constitution.get_settings",

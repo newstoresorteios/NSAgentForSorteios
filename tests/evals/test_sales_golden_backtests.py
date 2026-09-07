@@ -1181,10 +1181,31 @@ def _clarification_turn(content: str) -> dict:
     }
 
 
+def _normalize_sales_with_slots(
+    interpretation: SalesInterpretation,
+    *,
+    message_text: str | None = None,
+    context_text: str | None = None,
+    recent_turns: list[dict] | None = None,
+) -> SalesInterpretation:
+    from app.catalog.specs.preference_normalize import normalize_sales_interpretation
+    from app.sales.qualification_slots import rehydrate_qualification_slots_from_turns
+
+    current = rehydrate_qualification_slots_from_turns(
+        interpretation,
+        recent_turns,
+        message_text=message_text,
+    )
+    return normalize_sales_interpretation(
+        current,
+        message_text=message_text,
+        context_text=context_text,
+    )
+
+
 @pytest.mark.offline_eval
 def test_golden_joao_qual_loop_does_not_reask_city_or_name():
     """Contact 5548999490859 (31/08) — answered slots must not restart from city/name."""
-    from app.catalog.specs.preference_normalize import normalize_sales_interpretation
     from app.sales.qualification_slots import covered_qualification_dims
     import app.sales_agent as sales_agent
 
@@ -1217,7 +1238,7 @@ def test_golden_joao_qual_loop_does_not_reask_city_or_name():
         current = base
         for question, answer in steps:
             turns.extend([_clarification_turn(question), {"role": "user", "content": answer}])
-            current = normalize_sales_interpretation(
+            current = _normalize_sales_with_slots(
                 current,
                 message_text=answer,
                 context_text="\n".join(
@@ -1228,7 +1249,7 @@ def test_golden_joao_qual_loop_does_not_reask_city_or_name():
                 recent_turns=turns[:-1],
             )
 
-        mk2 = normalize_sales_interpretation(
+        mk2 = _normalize_sales_with_slots(
             current,
             message_text="Que o baltic mk2 37mm",
             context_text="Quero o Baltic",
@@ -1399,7 +1420,7 @@ async def test_golden_joao_full_thread_replay(monkeypatch):
         ]
         for question, answer in qual_steps:
             turns.extend([_clarification_turn(question), {"role": "user", "content": answer}])
-            current = normalize_sales_interpretation(
+            current = _normalize_sales_with_slots(
                 current,
                 message_text=answer,
                 context_text="\n".join(
@@ -1429,7 +1450,7 @@ async def test_golden_joao_full_thread_replay(monkeypatch):
         )
 
         # Turn 8 — explicit Baltic mk2 37mm sku-lock must skip budget re-ask.
-        mk2 = normalize_sales_interpretation(
+        mk2 = _normalize_sales_with_slots(
             current,
             message_text="Que o baltic mk2 37mm",
             context_text="Quero o Baltic",

@@ -10,6 +10,7 @@ and qualification use prior context (current message always wins).
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -37,10 +38,37 @@ _MOVEMENT_LABELS = frozenset(
 )
 _GENERIC_THEME = "interesse comercial em relógios"
 _MAX_BRANDS = 5
+_CATALOG_MEMORY_KEYS = frozenset(
+    {
+        "brand_preference",
+        "style_preference",
+        "color_preference",
+        "material_preference",
+        "movement_preference",
+        "occasion",
+        "price_preference",
+        "last_commerce_theme",
+    }
+)
+_CONFIRM_PRIOR_THEME_RE = re.compile(
+    r"\b("
+    r"pode ser o mesmo|o mesmo de antes|mesma marca|mesma linha|"
+    r"seguir nela|seguir nessa|nessa linha|pode ser essa marca|"
+    r"pode continuar|continuar nela|continua nela"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _fold_label(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def _log_optional(scope: str, exc: BaseException) -> None:
+    print(
+        f"[memory.contact_preference.{scope}]",
+        {"error_type": type(exc).__name__, "error": str(exc)[:120]},
+    )
 
 
 def _fold_key(value: Any) -> str:
@@ -103,6 +131,7 @@ def should_persist_interpretation(interpretation: SalesInterpretation) -> bool:
             interpretation.preferences.occasion,
             interpretation.preferences.budget_min is not None,
             interpretation.preferences.budget_max is not None,
+            list(interpretation.preferences.explicit_no_preferences or []),
         )
     )
     if not has_signal:
@@ -403,6 +432,139 @@ def _explicit_no_brand_active(
     return False
 
 
+def confirms_prior_catalog_theme(message_text: str | None) -> bool:
+    """Customer explicitly asked to keep the previous catalog line."""
+    return bool(_CONFIRM_PRIOR_THEME_RE.search(str(message_text or "")))
+
+
+def prior_catalog_theme_from_memories(memories: list[ContactMemory]) -> str | None:
+    """Active brand from durable memory, if any."""
+    if _explicit_no_brand_active(memories):
+        return None
+    for item in memories:
+        if getattr(item, "status", "active") != "active":
+            continue
+        if item.memory_key != "brand_preference":
+            continue
+        brand = _active_brand_from_memory(item)
+        if brand:
+            return brand
+    return None
+
+
+def prior_catalog_theme_resume_question(brand: str | None) -> str | None:
+    """Generic resume ask — never contact-specific copy."""
+    label = _fold_label(brand)
+    if not label:
+        return None
+    return (
+        f"Você já tinha visto {label}. "
+        "Quer seguir nessa linha ou prefere ver outras marcas?"
+    )
+
+
+def should_skip_catalog_memory_rehydrate(
+    interpretation: SalesInterpretation,
+    message_text: str | None = None,
+) -> bool:
+    """New browse / unlocked brand must not silently reuse old catalog theme."""
+    try:
+        from app.catalog.specs.catalog_specs import message_requests_other_brands
+
+        if message_requests_other_brands(message_text):
+            return True
+    except Exception as exc:
+        _log_optional("skip_other_brands", exc)
+    if confirms_prior_catalog_theme(message_text):
+        return False
+    if not bool(getattr(interpretation, "references_previous_context", False)):
+        return True
+    try:
+        from app.sales.dialogue_phase import (
+            is_fresh_commerce_start,
+            is_generic_catalog_ask,
+            message_resets_dialogue_to_discovery,
+        )
+
+        if is_fresh_commerce_start(message_text) or is_generic_catalog_ask(message_text):
+            return True
+        if message_resets_dialogue_to_discovery(message_text, interpretation):
+            return True
+    except Exception as exc:
+        _log_optional("skip_dialogue_reset", exc)
+    return False
+
+
+def should_offer_prior_catalog_theme(
+    interpretation: SalesInterpretation,
+    message_text: str | None,
+    *,
+    prior_brand: str | None,
+) -> bool:
+    """Ask before silently searching a leftover brand on a generic new browse."""
+    if not prior_brand:
+        return False
+    if getattr(interpretation.subject, "brand", None):
+        return False
+    try:
+        from app.catalog.specs.catalog_specs import message_requests_other_brands
+
+        if message_requests_other_brands(message_text):
+            return False
+    except Exception as exc:
+        _log_optional("offer_other_brands", exc)
+    if confirms_prior_catalog_theme(message_text):
+        return False
+    try:
+        from app.sales.discovery import message_states_budget
+
+        if message_states_budget(message_text):
+            return False
+    except Exception as exc:
+        _log_optional("offer_budget", exc)
+    try:
+        from app.sales.dialogue_phase import is_generic_catalog_ask
+
+        return is_generic_catalog_ask(message_text)
+    except Exception as exc:
+        _log_optional("offer_generic_ask", exc)
+        return False
+
+
+def _stated_catalog_persist_keys(message_text: str | None) -> set[str]:
+    """Catalog memory keys the current message actually stated."""
+    allowed: set[str] = set()
+    if not str(message_text or "").strip():
+        return allowed
+    try:
+        from app.catalog.specs.identity_lock import mentioned_watch_brands
+        from app.catalog.specs.preference_normalize import (
+            message_states_color,
+            message_states_style,
+        )
+
+        if mentioned_watch_brands(message_text):
+            allowed.add("brand_preference")
+        if message_states_color(message_text):
+            allowed.add("color_preference")
+        if message_states_style(message_text):
+            allowed.add("style_preference")
+    except Exception as exc:
+        _log_optional("stated_color_style", exc)
+    try:
+        from app.sales.discovery import message_states_budget, message_states_occasion
+
+        if message_states_budget(message_text):
+            allowed.add("price_preference")
+        if message_states_occasion(message_text):
+            allowed.add("occasion")
+    except Exception as exc:
+        _log_optional("stated_budget_occasion", exc)
+    if allowed:
+        allowed.add("last_commerce_theme")
+    return allowed
+
+
 def _active_brand_from_memory(memory: ContactMemory) -> str | None:
     raw = _unwrap_value(memory.value)
     if isinstance(raw, dict):
@@ -423,13 +585,19 @@ def _active_brand_from_memory(memory: ContactMemory) -> str | None:
 def rehydrate_interpretation_from_memories(
     interpretation: SalesInterpretation,
     memories: list[ContactMemory],
+    *,
+    message_text: str | None = None,
 ) -> tuple[SalesInterpretation, list[str]]:
     """Fill empty preference/subject fields from durable contact memory.
 
     Current-turn interpretation always wins: we never overwrite non-empty fields.
+    New browse / unlocked brand skips catalog fields so leftover theme is not
+    silently AND-ed into Tray.
     """
     if not memories:
         return interpretation, []
+    skip_catalog = should_skip_catalog_memory_rehydrate(interpretation, message_text)
+    prior_brand = prior_catalog_theme_from_memories(memories)
     prefs = interpretation.preferences.model_copy(deep=True)
     subject = interpretation.subject.model_copy(deep=True)
     filled: list[str] = []
@@ -443,47 +611,62 @@ def rehydrate_interpretation_from_memories(
         if str(item).lower().startswith("exclude_brand:")
     }
 
-    brand_mem = by_key.get("brand_preference")
-    if brand_mem and not subject.brand and not explicit_no_brand:
-        brand = _active_brand_from_memory(brand_mem)
-        if brand and _fold_key(brand) not in excluded_from_attrs:
-            subject.brand = brand
-            filled.append("brand")
+    if not skip_catalog:
+        brand_mem = by_key.get("brand_preference")
+        if brand_mem and not subject.brand and not explicit_no_brand:
+            brand = _active_brand_from_memory(brand_mem)
+            if brand and _fold_key(brand) not in excluded_from_attrs:
+                subject.brand = brand
+                filled.append("brand")
 
-    style_mem = by_key.get("style_preference")
-    if style_mem and not prefs.style:
-        value = _fold_label(_unwrap_value(style_mem.value))
-        if value:
-            prefs.style = value
-            filled.append("style")
+        style_mem = by_key.get("style_preference")
+        if style_mem and not prefs.style:
+            value = _fold_label(_unwrap_value(style_mem.value))
+            if value:
+                prefs.style = value
+                filled.append("style")
 
-    color_mem = by_key.get("color_preference")
-    if color_mem and not prefs.color:
-        value = _fold_label(_unwrap_value(color_mem.value))
-        if value:
-            prefs.color = value
-            filled.append("color")
+        color_mem = by_key.get("color_preference")
+        if color_mem and not prefs.color:
+            value = _fold_label(_unwrap_value(color_mem.value))
+            if value:
+                prefs.color = value
+                filled.append("color")
 
-    material_mem = by_key.get("material_preference")
-    if material_mem and not prefs.material:
-        value = _fold_label(_unwrap_value(material_mem.value))
-        if value:
-            prefs.material = value
-            filled.append("material")
+        material_mem = by_key.get("material_preference")
+        if material_mem and not prefs.material:
+            value = _fold_label(_unwrap_value(material_mem.value))
+            if value:
+                prefs.material = value
+                filled.append("material")
 
-    movement_mem = by_key.get("movement_preference")
-    if movement_mem:
-        value = _fold_label(_unwrap_value(movement_mem.value))
-        if value and value not in list(prefs.attributes or []):
-            prefs.attributes = list(prefs.attributes or []) + [value]
-            filled.append("movement")
+        movement_mem = by_key.get("movement_preference")
+        if movement_mem:
+            value = _fold_label(_unwrap_value(movement_mem.value))
+            if value and value not in list(prefs.attributes or []):
+                prefs.attributes = list(prefs.attributes or []) + [value]
+                filled.append("movement")
 
-    occasion_mem = by_key.get("occasion")
-    if occasion_mem and not prefs.occasion:
-        value = _fold_label(_unwrap_value(occasion_mem.value))
-        if value:
-            prefs.occasion = value
-            filled.append("occasion")
+        occasion_mem = by_key.get("occasion")
+        if occasion_mem and not prefs.occasion:
+            value = _fold_label(_unwrap_value(occasion_mem.value))
+            if value:
+                prefs.occasion = value
+                filled.append("occasion")
+
+        price_mem = by_key.get("price_preference")
+        if price_mem and prefs.budget_min is None and prefs.budget_max is None:
+            raw = _unwrap_value(price_mem.value)
+            if isinstance(raw, dict):
+                try:
+                    if raw.get("min") is not None:
+                        prefs.budget_min = float(raw["min"])
+                        filled.append("budget_min")
+                    if raw.get("max") is not None:
+                        prefs.budget_max = float(raw["max"])
+                        filled.append("budget_max")
+                except (TypeError, ValueError):
+                    pass
 
     recipient_mem = by_key.get("recipient")
     if recipient_mem and not prefs.recipient:
@@ -491,20 +674,6 @@ def rehydrate_interpretation_from_memories(
         if value:
             prefs.recipient = value
             filled.append("recipient")
-
-    price_mem = by_key.get("price_preference")
-    if price_mem and prefs.budget_min is None and prefs.budget_max is None:
-        raw = _unwrap_value(price_mem.value)
-        if isinstance(raw, dict):
-            try:
-                if raw.get("min") is not None:
-                    prefs.budget_min = float(raw["min"])
-                    filled.append("budget_min")
-                if raw.get("max") is not None:
-                    prefs.budget_max = float(raw["max"])
-                    filled.append("budget_max")
-            except (TypeError, ValueError):
-                pass
 
     for memory in memories:
         if not str(memory.memory_key or "").startswith("explicit_no:"):
@@ -517,21 +686,43 @@ def rehydrate_interpretation_from_memories(
             prefs.explicit_no_preferences = current + [value]
             filled.append(f"explicit_no:{value}")
 
-    if not filled:
+    offer_resume = should_offer_prior_catalog_theme(
+        interpretation,
+        message_text,
+        prior_brand=prior_brand,
+    )
+    resume_question = (
+        prior_catalog_theme_resume_question(prior_brand) if offer_resume else None
+    )
+
+    if not filled and not skip_catalog and not resume_question:
         return interpretation, []
 
-    # Returning contact with prior commerce context: avoid re-asking dims we already know.
     updates: dict[str, Any] = {
         "preferences": prefs,
         "subject": subject,
     }
-    if interpretation.domain == "commerce" and (
-        subject.brand or prefs.style or prefs.budget_max is not None
+    if (
+        not skip_catalog
+        and interpretation.domain == "commerce"
+        and (subject.brand or prefs.style or prefs.budget_max is not None)
     ):
         # Soft unlock signal for discovery — persona gate still applies if brand-only.
         if interpretation.goal in {None, "discover", ""} and subject.brand:
             updates["goal"] = "find"
-    return interpretation.model_copy(update=updates), filled
+    if resume_question:
+        updates["needs_clarification"] = True
+        updates["clarification_question"] = resume_question
+        updates["enough_information_to_search"] = False
+        updates["ready_for_retrieval"] = False
+    updated = interpretation.model_copy(update=updates)
+    if skip_catalog:
+        updated._catalog_memory_rehydrate_skipped = True
+    if prior_brand and (skip_catalog or offer_resume):
+        updated._prior_catalog_theme = prior_brand
+    if not filled and not resume_question:
+        return updated, []
+    return updated, filled
 
 
 def rehydrate_interpretation_from_contact_memory(
@@ -539,6 +730,7 @@ def rehydrate_interpretation_from_contact_memory(
     *,
     tenant_id: str,
     sender_key: str | None,
+    message_text: str | None = None,
 ) -> SalesInterpretation:
     """Load active memories and fill empty interpretation fields."""
     settings = get_settings()
@@ -560,11 +752,22 @@ def rehydrate_interpretation_from_contact_memory(
             {"error_type": type(exc).__name__, "error": str(exc)[:160]},
         )
         return interpretation
-    updated, filled = rehydrate_interpretation_from_memories(interpretation, memories)
-    if filled:
+    updated, filled = rehydrate_interpretation_from_memories(
+        interpretation,
+        memories,
+        message_text=message_text,
+    )
+    if filled or getattr(updated, "_catalog_memory_rehydrate_skipped", False):
         print(
             "[memory.contact_preference.rehydrated]",
-            {"filled": filled[:12], "sender_key_present": True},
+            {
+                "filled": filled[:12],
+                "skipped_catalog": bool(
+                    getattr(updated, "_catalog_memory_rehydrate_skipped", False)
+                ),
+                "prior_theme": getattr(updated, "_prior_catalog_theme", None),
+                "sender_key_present": True,
+            },
         )
     return updated
 
@@ -577,6 +780,7 @@ def persist_contact_preferences_from_interpretation(
     interpretation: SalesInterpretation | None,
     inbound_id: int | None = None,
     response_id: int | None = None,
+    message_text: str | None = None,
 ) -> dict[str, Any]:
     """Upsert durable preferences + optional conversation summary continuity."""
     settings = get_settings()
@@ -604,8 +808,21 @@ def persist_contact_preferences_from_interpretation(
         interpretation,
         existing_memories=existing,
     )
+    if getattr(interpretation, "_catalog_memory_rehydrate_skipped", False):
+        stated = _stated_catalog_persist_keys(message_text)
+        items = [
+            item
+            for item in items
+            if str(item.get("memory_key") or "") not in _CATALOG_MEMORY_KEYS
+            or str(item.get("memory_key") or "") in stated
+        ]
     explicit_no_brand = _explicit_no_brand_active(existing, interpretation)
     if explicit_no_brand:
+        items = [
+            item
+            for item in items
+            if str(item.get("memory_key") or "") != "brand_preference"
+        ]
         try:
             from app.memory.contact_memory_repository import forget_contact_memory
 

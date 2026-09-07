@@ -206,15 +206,25 @@ async def test_image_only_fragment_is_not_skipped_as_no_text(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_conversation_busy_database_lock_returns_200_skip(monkeypatch):
+async def test_conversation_busy_database_lock_queues_same_inbound(monkeypatch):
     import api.index as index
     from app.ops.conversation_lock import ConversationLockUnavailable
+
+    queued: list[dict] = []
 
     async def busy_lock(*_args, **_kwargs):
         raise ConversationLockUnavailable("database_lock_busy")
 
+    def enqueue(incoming, **kwargs):
+        queued.append({"text": incoming.text, **kwargs})
+        return True, 77
+
     monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
     monkeypatch.setattr(index, "acquire_conversation_lock", busy_lock)
+    monkeypatch.setattr(
+        "app.ingress.busy.enqueue_lock_deferred_inbound",
+        enqueue,
+    )
     monkeypatch.setattr(
         index,
         "claim_inbound_message",
@@ -233,15 +243,19 @@ async def test_conversation_busy_database_lock_returns_200_skip(monkeypatch):
     response = await _post_webhook(index, _fragment_payload())
 
     assert response.status_code == 200
+    assert response.headers.get("retry-after") is None
     assert response.json() == {
         "ok": True,
-        "skipped": True,
+        "queued": True,
         "reason": "conversation_busy",
+        "inbox_id": 77,
+        "created": True,
     }
+    assert queued[0]["text"] == "mensagem inbound"
 
 
 @pytest.mark.asyncio
-async def test_conversation_local_lock_timeout_returns_503_retry(monkeypatch):
+async def test_conversation_local_lock_timeout_queues_same_inbound(monkeypatch):
     import api.index as index
     from app.ops.conversation_lock import ConversationLockUnavailable
 
@@ -250,6 +264,10 @@ async def test_conversation_local_lock_timeout_returns_503_retry(monkeypatch):
 
     monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
     monkeypatch.setattr(index, "acquire_conversation_lock", lock_timeout)
+    monkeypatch.setattr(
+        "app.ingress.busy.enqueue_lock_deferred_inbound",
+        lambda *_a, **_k: (True, 88),
+    )
     monkeypatch.setattr(
         index,
         "claim_inbound_message",
@@ -260,13 +278,53 @@ async def test_conversation_local_lock_timeout_returns_503_retry(monkeypatch):
 
     response = await _post_webhook(index, _fragment_payload())
 
-    assert response.status_code == 503
-    assert response.headers.get("retry-after") == "5"
-    assert response.json() == {
-        "ok": False,
-        "retry": True,
-        "reason": "conversation_busy",
-    }
+    assert response.status_code == 200
+    assert response.headers.get("retry-after") is None
+    assert response.json()["queued"] is True
+    assert response.json()["reason"] == "conversation_busy"
+    assert response.json()["inbox_id"] == 88
+
+
+@pytest.mark.asyncio
+async def test_lock_timeout_retry_processes_same_inbound(monkeypatch):
+    import api.index as index
+    from app.ops.conversation_lock import ConversationLockUnavailable
+
+    attempts = {"n": 0}
+    processed = []
+
+    async def lock_then_retry(*_args, **kwargs):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise ConversationLockUnavailable("local_lock_timeout")
+        return type("H", (), {"released": True, "key_hash": "test"})()
+
+    async def process(incoming, customer_context):
+        processed.append(incoming.text)
+        return AgentResult(reply_text="ok", intent="commerce")
+
+    async def send(*_args):
+        return BrevoSendResult(ok=True, dry_run=True, provider_response={"accepted": True})
+
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_args: False)
+    monkeypatch.setattr(index, "acquire_conversation_lock", lock_then_retry)
+    monkeypatch.setattr(
+        "app.ingress.busy.enqueue_lock_deferred_inbound",
+        lambda *_a, **_k: (True, 91),
+    )
+    monkeypatch.setattr(index, "claim_inbound_message", lambda _message: (True, 303))
+    monkeypatch.setattr(index, "is_latest_inbound_message", lambda *_args: True)
+    monkeypatch.setattr(index, "find_customer_profile_by_phone", lambda _phone: {})
+    monkeypatch.setattr(index, "process_incoming_message", process)
+    monkeypatch.setattr(index, "send_brevo_reply", send)
+    monkeypatch.setattr(index, "insert_agent_response", lambda _data: None)
+
+    response = await _post_webhook(index, _fragment_payload())
+
+    assert response.status_code == 200
+    assert response.json().get("queued") is not True
+    assert processed == ["mensagem inbound"]
+    assert attempts["n"] >= 2
 
 
 @pytest.mark.asyncio

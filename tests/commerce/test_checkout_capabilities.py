@@ -1,4 +1,9 @@
-from app.commerce.checkout_service import checkout_capabilities, select_checkout_channel
+from app.commerce.checkout_service import (
+    cart_pay_link_copy,
+    checkout_capabilities,
+    checkout_channel_choice_prompt,
+    select_checkout_channel,
+)
 from app.commerce.commerce_context import CommerceConversationState, evolve_commerce_state
 
 
@@ -35,6 +40,7 @@ def test_checkout_capabilities_reflect_only_supported_backend_paths():
         "selected_channel": None,
         "selected_channel_supported": None,
         "sensitive_payment_data_allowed_in_chat": False,
+        "cart_url": "https://loja.example/checkout/SESSION-1",
     }
 
 
@@ -47,6 +53,10 @@ def test_site_choice_updates_checkout_state_and_survives_roundtrip():
     )
 
     assert result.safety_reason is None
+    assert "https://loja.example/checkout/SESSION-1" in result.reply_text
+    assert "paga" in result.reply_text.casefold()
+    assert "joão" not in result.reply_text.casefold()
+    assert "consultor" not in result.reply_text.casefold()
     assert result.commercial_data["checkout"]["cart_url"] == (
         "https://loja.example/checkout/SESSION-1"
     )
@@ -79,3 +89,30 @@ def test_whatsapp_choice_enables_order_but_not_payment_execution():
     assert updated.pending_action == "awaiting_checkout_data"
     assert "Nome completo:" in result.reply_text
     assert "Estado/UF:" in result.reply_text
+
+
+def test_cart_pay_link_copy_tells_customer_to_open_link_and_pay():
+    copy = cart_pay_link_copy(
+        cart_url="https://loja.example/checkout/SRPG15",
+        products=[{"name": "Seiko Land Tortoise", "current_price": "4199.99"}],
+    )
+    folded = copy.casefold()
+    assert "https://loja.example/checkout/SRPG15" in copy
+    assert "reservado" in folded
+    assert "paga" in folded
+    assert "joão" not in folded
+    assert "joao" not in folded
+    assert "consultor" not in folded
+    assert "equipe" not in folded
+    assert "R$ 4.199,99" in copy
+    assert "PIX" in copy
+
+
+def test_checkout_prompt_is_pay_the_link_not_human_handoff():
+    prompt = checkout_channel_choice_prompt(_cart_state())
+    folded = prompt.casefold()
+    assert "https://loja.example/checkout/SESSION-1" in prompt
+    assert "paga" in folded
+    assert "whatsapp" not in folded
+    assert "joão" not in folded
+    assert "consultor" not in folded

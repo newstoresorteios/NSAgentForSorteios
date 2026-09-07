@@ -39,7 +39,7 @@ async def test_product_search_sends_bearer_params_and_limit():
     args, kwargs = fake.calls[0]
     assert args == ("GET", "https://tray.example/internal/products")
     assert kwargs["headers"] == {"Authorization": "Bearer secret"}
-    assert kwargs["params"] == {"name": "Tissot", "limit": 20}
+    assert kwargs["params"] == {"name": "Tissot", "limit": 50}
 
 
 @pytest.mark.asyncio
@@ -52,6 +52,33 @@ async def test_order_list_can_filter_by_confirmed_customer_id():
     args, kwargs = fake.calls[0]
     assert args == ("GET", "https://tray.example/internal/orders")
     assert kwargs["params"] == {"customer_id": "customer-7"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_shipping_and_properties_use_internal_routes():
+    fake = FakeClient(FakeResponse(payload={"success": True}))
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+    await client.cancel_order("88")
+    await client.update_order_shipping("88", {"sending_code": "BR123"})
+    await client.list_product_properties(limit=10)
+    assert [call[0][1] for call in fake.calls] == [
+        "https://tray.example/internal/orders/88/cancel",
+        "https://tray.example/internal/orders/88/shipping",
+        "https://tray.example/internal/products/properties",
+    ]
+    assert fake.calls[0][0][0] == "PUT"
+    assert fake.calls[1][1]["json"] == {"sending_code": "BR123"}
+    assert fake.calls[2][1]["params"] == {"limit": 10}
+
+
+@pytest.mark.asyncio
+async def test_list_webhook_events_sends_since_id():
+    fake = FakeClient(FakeResponse(payload={"events": []}))
+    client = TrayAdapterClient("https://tray.example", "secret", fake)
+    await client.list_webhook_events(limit=20, since_id=7)
+    args, kwargs = fake.calls[0]
+    assert args == ("GET", "https://tray.example/internal/webhooks/events")
+    assert kwargs["params"] == {"limit": 20, "since_id": 7}
 
 
 @pytest.mark.asyncio

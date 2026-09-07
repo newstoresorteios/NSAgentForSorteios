@@ -29,6 +29,8 @@ def test_outbound_catalog_image_request_is_not_inbound_photo_price():
 
     assert is_outbound_catalog_image_request("manda a foto dos três") is True
     assert wants_all_listed_product_images("manda a foto dos três") is True
+    assert is_outbound_catalog_image_request("que pedi a imagem") is True
+    assert is_outbound_catalog_image_request("cadê a foto") is True
     assert is_outbound_catalog_image_request("qual o preço do relógio da foto?") is False
     assert is_deictic_product_price_request("qual o preço desse?") is True
 
