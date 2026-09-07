@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.catalog.retrieval.limits import customer_result_limit
 from app.catalog.retrieval.revalidate import revalidate_products
 from app.catalog.retrieval.scoring import (
@@ -217,12 +219,81 @@ async def handle_empty_candidates(session: RetrievalSession) -> AgentResult | No
             handoff_required=False,
             safety_reason="product_not_found",
         )
+    recovered = await recover_open_browse_without_soft_filters(session)
+    if recovered:
+        return None
     return AgentResult(
         reply_text="Não encontrei opções disponíveis para esses critérios agora.",
         intent="commerce",
         handoff_required=False,
         safety_reason="recommendation_no_match",
     )
+
+
+async def recover_open_browse_without_soft_filters(session: RetrievalSession) -> bool:
+    """When leftover color/style AND-ed Tray to zero, retry budget-only."""
+    interpretation = session.interpretation
+    if session.retrieval_plan.mode != "recommendation":
+        return False
+    if (interpretation.subject.brand or "").strip():
+        return False
+    prefs = interpretation.preferences
+    if not (prefs.color or prefs.style or prefs.occasion):
+        return False
+    if prefs.budget_max is None and prefs.budget_min is None:
+        return False
+    name = str(interpretation.subject.product_type or "relógio").strip() or "relógio"
+    arguments: dict[str, Any] = {
+        "name": name,
+        "available": True,
+        "limit": max(session.retrieval_plan.candidate_limit, 20),
+        "page": 1,
+    }
+    if prefs.budget_max is not None:
+        try:
+            arguments["current_price_range"] = f"0,{max(0, int(float(prefs.budget_max)))}"
+        except (TypeError, ValueError):
+            pass
+    result = await session.search_products(arguments)
+    raw_products = (
+        result.get("products") if isinstance(result.get("products"), list) else []
+    )
+    if not raw_products:
+        print(
+            "[sales.retrieval.relax_empty_color]",
+            {"recovered": 0, "reason": "budget_only_empty"},
+        )
+        return False
+    session.absorb_products(raw_products)
+    from app.catalog.retrieval.hard_filter import (
+        hard_filter_products,
+        interpretation_without_soft_prefs,
+    )
+
+    relaxed = interpretation_without_soft_prefs(interpretation)
+    session.hard_filtered = hard_filter_products(
+        session.candidates,
+        relaxed,
+        mode="recommendation",
+        message_text=session.message_text,
+    )
+    print(
+        "[sales.retrieval.relax_empty_color]",
+        {
+            "recovered": len(raw_products),
+            "hard_filtered": len(session.hard_filtered),
+            "dropped": [
+                key
+                for key, value in (
+                    ("color", prefs.color),
+                    ("style", prefs.style),
+                    ("occasion", prefs.occasion),
+                )
+                if value
+            ],
+        },
+    )
+    return bool(session.hard_filtered)
 
 
 async def handle_hard_filter_miss(session: RetrievalSession) -> AgentResult | None:

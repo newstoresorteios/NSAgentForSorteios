@@ -477,7 +477,14 @@ def merge_inbound_views(
     ) -> str | None:
         if stated:
             return message_value
-        if message_view.commerce_browse:
+        # Open discovery budget ("2500 reais") must not AND leftover color/style.
+        # Keep them on a named-brand refine ("tem algum Seiko nessa faixa").
+        open_budget_answer = (
+            budget_from_message
+            and not message_view.brand
+            and not memory_view.live_shortlist
+        )
+        if message_view.commerce_browse or open_budget_answer:
             if memory_value:
                 stale.append(field)
             return None
