@@ -200,8 +200,8 @@ async def consume_tray_webhook_events(
             "cursor": cursor,
         }
     events = payload.get("events") if isinstance(payload, dict) else None
-    if not isinstance(events, list):
-        events = []
+    if not isinstance(events, list) or payload.get("error") or payload.get("success") is False:
+        return {"ok": False, "reason": "invalid_event_page", "cursor": cursor}
     if any(not isinstance(event, dict) or not str(event.get("id", "")).isdigit() for event in events):
         return {"ok": False, "reason": "invalid_event_page", "cursor": cursor}
     events.sort(key=lambda event: int(event["id"]))

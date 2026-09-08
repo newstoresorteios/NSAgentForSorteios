@@ -445,6 +445,20 @@ def apply_brand_unlock_to_interpretation(
     if not unlock and not rejected:
         return []
     attrs = list(prefs.attributes or [])
+    previous_brand = _fold(getattr(subject, "brand", None))
+    if unlock:
+        # Legacy explicit-brand attributes feed the hard filter independently of
+        # subject and TurnUnderstanding; clear that lock as well.
+        brand_labels = {_fold(brand) for brand in _KNOWN_WATCH_BRANDS}
+        if previous_brand:
+            brand_labels.add(previous_brand)
+        attrs = [
+            attr for attr in attrs
+            if not (
+                _fold(attr).startswith("somente:")
+                and _fold(str(attr).split(":", 1)[1]) in brand_labels
+            )
+        ]
     for brand in rejected:
         label = f"{_EXCLUDE_BRAND_ATTR_PREFIX}{brand}"
         if label not in attrs:
@@ -466,6 +480,8 @@ def apply_brand_unlock_to_interpretation(
     # Cached hard constraints must not resurrect the brand just removed.
     if hasattr(interpretation, "_turn_understanding"):
         interpretation._turn_understanding = None
+    if hasattr(interpretation, "_turn_contract_bound"):
+        interpretation._turn_contract_bound = False
     return rejected
 
 

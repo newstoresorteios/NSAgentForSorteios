@@ -29,11 +29,8 @@ async def _resend_outbox_row(row: dict[str, Any]) -> dict[str, Any]:
         incoming.provider = provider or "brevo"
     if not incoming.channel:
         incoming.channel = channel or "whatsapp"
-    result = AgentResult(
-        reply_text=reply_text,
-        intent="commerce",
-        handoff_required=False,
-    )
+    from app.ingress.outbox import result_from_outbox_row
+    result = result_from_outbox_row(row)
     return await _send_reply(incoming, result)
 
 
@@ -58,20 +55,39 @@ async def process_outbox_batch(*, limit: int | None = None) -> dict[str, Any]:
         if send_info.get("ok"):
             mark_outbox_sent(
                 outbox_id,
+                owner=row.get("lease_owner"),
                 provider_response=send_info.get("provider_response")
                 if isinstance(send_info.get("provider_response"), dict)
                 else send_info,
             )
+            try:
+                from app.db import insert_agent_response, has_successful_agent_response
+                from app.ingress.outbox import incoming_from_outbox_row, result_from_outbox_row
+                inbound_id = row.get("inbound_id")
+                if inbound_id and not has_successful_agent_response(inbound_id):
+                    incoming = incoming_from_outbox_row(row)
+                    result = result_from_outbox_row(row)
+                    insert_agent_response({
+                        "inbound_id": inbound_id, "channel": incoming.channel,
+                        "sender_key": incoming.sender_key, "sender_phone": incoming.sender_phone,
+                        "reply_text": result.reply_text, "intent": result.intent,
+                        "handoff_required": result.handoff_required, "safety_reason": result.safety_reason,
+                        "response_metadata": result.response_metadata,
+                        "provider_send_ok": True, "provider_response": send_info,
+                    })
+            except Exception as exc:
+                log_exception("outbox.response_persist_failed", exc, {"outbox_id": outbox_id})
             sent += 1
             details.append({"id": outbox_id, "status": "sent"})
             continue
 
-        max_attempts = 5
+        max_attempts = int(row.get("max_attempts") or 5)
         is_dead = attempts >= max_attempts
         mark_outbox_failed(
             outbox_id,
             error=str(send_info.get("error") or "send_failed"),
             dead=is_dead,
+            owner=row.get("lease_owner"),
         )
         if is_dead:
             dead += 1

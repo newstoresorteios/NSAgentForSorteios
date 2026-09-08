@@ -228,7 +228,38 @@ def _ensure_attribute(preferences: ProductPreferences, label: str) -> None:
         preferences.attributes = [*preferences.attributes, label]
 
 
+_BARE_BUDGET_RE = re.compile(
+    r"^\s*(?:r\$\s*)?(\d{1,3}(?:[.\s]\d{3})+|\d{4,6})(?P<cents>[.,]\d{2})?\s*(?:reais?|mil|k)?\s*$",
+    flags=re.IGNORECASE,
+)
+
+
+def extract_bare_budget_amount(text: str | None) -> float | None:
+    """A reply that is only a price, e.g. '2700' after a budget question.
+
+    1–3 digit tokens stay reserved for list positions and short SKUs.
+    """
+    raw = " ".join(str(text or "").strip().split())
+    match = _BARE_BUDGET_RE.match(raw)
+    if not match:
+        return None
+    token = match.group(1)
+    digits = re.sub(r"[.\s]", "", token)
+    try:
+        value = float(digits) + (float("0." + match.group("cents")[1:]) if match.group("cents") else 0.0)
+    except ValueError:
+        return None
+    if re.search(r"\b(?:mil|k)\b", raw, flags=re.IGNORECASE):
+        value *= 1000
+    if value < 100 or value > 500_000:
+        return None
+    return value
+
+
 def _extract_budget_max(text: str) -> float | None:
+    bare = extract_bare_budget_amount(text)
+    if bare is not None:
+        return bare
     match = re.search(
         r"(?:at[eé]|ate|menos de|no m[aá]ximo|at[eé] uns?|por at[eé])\s*"
         r"(?:r\$\s*)?([\d.,]+)\s*(mil|k)?",

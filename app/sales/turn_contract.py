@@ -495,8 +495,17 @@ def merge_inbound_views(
     occasion_from_message = bool(message_view.occasion) or message_states_occasion(
         message_text
     )
+    open_budget_answer = (
+        budget_from_message
+        and not message_view.brand
+        and not memory_view.live_shortlist
+    )
     if memory_view.occasion and not occasion_from_message:
-        if message_view.commerce_browse or message_view.asks_price_range:
+        if (
+            message_view.commerce_browse
+            or message_view.asks_price_range
+            or open_budget_answer
+        ):
             stale.append("occasion")
 
     def _merge_pref(
@@ -508,13 +517,8 @@ def merge_inbound_views(
     ) -> str | None:
         if stated:
             return message_value
-        # Open discovery budget ("2500 reais") must not AND leftover color/style.
+        # Open discovery budget ("2700" / "2500 reais") must not AND leftover color/style.
         # Keep them on a named-brand refine ("tem algum Seiko nessa faixa").
-        open_budget_answer = (
-            budget_from_message
-            and not message_view.brand
-            and not memory_view.live_shortlist
-        )
         if message_view.commerce_browse or open_budget_answer:
             if memory_value:
                 stale.append(field)

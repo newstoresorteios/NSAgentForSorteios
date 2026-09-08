@@ -206,7 +206,11 @@ async def test_purchase_intent_uses_product_entity_not_full_sentence(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
+@pytest.mark.parametrize("generated_text,uses_generated", [
+    ("Encontrei uma opção dentro da faixa informada.", False),
+    ("Separei o Relógio esportivo preto dentro da faixa informada.", True),
+])
+async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch, generated_text, uses_generated):
     import app.sales_agent as sales_agent
 
     settings = _settings(openai_api_key="test-key")
@@ -219,7 +223,7 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=selection))])
 
         async def create(self, **kwargs):
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Encontrei uma opção dentro da faixa informada."))])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=generated_text))])
 
     class FakeClient:
         def __init__(self, **kwargs):
@@ -266,6 +270,10 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
     assert listed and listed[0].get("id") == "2"
     assert listed[0].get("name") == "Relógio esportivo preto"
     folded = (result.reply_text or "").casefold()
+    assert "relógio esportivo preto" in folded
+    assert result.response_metadata["used_openai_responder"] is uses_generated
+    if not uses_generated:
+        assert result.response_metadata["fallback_reason"] == "recommendation_missing_candidate_identity"
     assert "não atendeu" not in folded
     assert "não encontrei" not in folded
     assert result.safety_reason not in {

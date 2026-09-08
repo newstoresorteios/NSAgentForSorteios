@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import json
+import re
+import unicodedata
 from typing import Any
 
 from openai import APIError, BadRequestError
@@ -23,6 +25,25 @@ from app.sales.discovery import (
     _persona_qualification_question,
 )
 from app.sales.result_utils import mark_sales_result as _mark_sales_result
+
+
+def recommendation_identifies_candidate(text: str, products: list[dict[str, Any]]) -> bool:
+    """Minimum presentation contract, separate from validation of factual claims.
+
+    A brand or bare numeric ID cannot identify an option. Accept a catalog name,
+    reference, or product URL, with accent/formatting normalization for names.
+    """
+    def fold(value: str) -> str:
+        value = unicodedata.normalize("NFKD", html.unescape(value).casefold())
+        return " ".join(re.findall(r"\w+", "".join(c for c in value if not unicodedata.combining(c))))
+
+    rendered = " " + fold(text) + " "
+    for product in products:
+        for field in ("name", "reference", "product_url", "url"):
+            identity = fold(str(product.get(field) or ""))
+            if identity and len(identity) >= 3 and " " + identity + " " in rendered:
+                return True
+    return False
 
 
 def responder_contract(state: CommerceConversationState | None) -> dict[str, Any]:
@@ -382,6 +403,14 @@ async def sales_response_with_openai(
             f"{channel_system_hint(message.channel)}\n\n"
             f"{format_capability_catalog_for_prompt()}"
         )
+        if plan.get("goal") in {"recommend", "compare"} or plan.get("intent") in {
+            "recommendation", "product_comparison",
+        }:
+            responder_prompt += (
+                "\nAo recomendar ou comparar opções de FACTS.products, identifique pelo menos "
+                "um candidato pelo nome do catálogo, referência ou URL do produto. "
+                "Uma frase genérica como 'encontrei uma opção' não apresenta o produto."
+            )
         history_turns = (
             recent_turns
             if recent_turns is not None
@@ -496,6 +525,25 @@ async def sales_response_with_openai(
             content = text_result.text
         if not content or not content.strip():
             return None
+        products = (tray_result.commercial_data or {}).get("products")
+        is_recommendation = plan.get("goal") in {"recommend", "compare"} or plan.get("intent") in {
+            "recommendation", "product_comparison",
+        }
+        if is_recommendation and isinstance(products, list) and products and not recommendation_identifies_candidate(
+            content, [product for product in products if isinstance(product, dict)]
+        ):
+            # Do not claim that options were presented when the model only says
+            # "I found an option". Reuse the grounded catalog copy without
+            # spending another call or keeping unsupported generated claims.
+            return _mark_sales_result(
+                tray_result,
+                interpretation=interpretation,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
+                fallback_reason="recommendation_missing_candidate_identity",
+            )
         final_result = AgentResult(
             reply_text=html.unescape(content.strip()),
             intent="commerce",

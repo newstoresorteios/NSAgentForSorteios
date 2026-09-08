@@ -605,8 +605,13 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "customer_found": bool(customer_context.get("found")),
         },
     )
-    agent_result = await process_incoming_message(incoming, customer_context)
-    agent_result = apply_integration_failure_handoff(agent_result)
+    from app.ingress.outbox import get_accepted_outbound, result_from_outbox_row
+    accepted = get_accepted_outbound(inbound_id)
+    if accepted is not None:
+        agent_result = result_from_outbox_row(accepted)
+    else:
+        agent_result = await process_incoming_message(incoming, customer_context)
+        agent_result = apply_integration_failure_handoff(agent_result)
 
     log_event(
         "brevo.webhook.agent_result",
@@ -675,29 +680,23 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             result=agent_result,
             inbound_id=inbound_id,
         )
-        send_result = await send_brevo_reply(incoming, agent_result)
-        provider_send_ok = send_result.ok
-        provider_response = send_result.model_dump()
+        from app.ingress.outbox import dispatch_accepted_outbound
+
+        send_result = None
+        async def send_accepted(accepted_incoming, accepted_result):
+            nonlocal send_result
+            send_result = await send_brevo_reply(accepted_incoming, accepted_result)
+            return send_result.model_dump()
+
         if outbox_id is not None:
-            if provider_send_ok:
-                mark_outbox_sent(outbox_id, provider_response=provider_response)
-            else:
-                mark_outbox_failed(
-                    outbox_id,
-                    error=str(send_result.error or "send_failed"),
-                )
-        log_event(
-            "brevo.webhook.send_result",
-            {
-                "ok": send_result.ok,
-                "dry_run": send_result.dry_run,
-                "status_code": send_result.status_code,
-                "error": send_result.error,
-                "channel": incoming.channel,
-                "inbound_id": inbound_id,
-                "reply_chars": len(agent_result.reply_text or ""),
-            },
-        )
+            provider_response = await dispatch_accepted_outbound(outbox_id, send_accepted)
+        else:
+            provider_response = await send_accepted(incoming, agent_result)
+        provider_send_ok = bool(provider_response.get("ok"))
+        log_event("brevo.webhook.send_result", {
+            "ok": provider_send_ok, "queued": bool(provider_response.get("queued")),
+            "channel": incoming.channel, "inbound_id": inbound_id,
+        })
     commerce_state = (agent_result.response_metadata or {}).get("commerce_state")
     decision_snapshot = (agent_result.response_metadata or {}).get(
         "decision_snapshot"

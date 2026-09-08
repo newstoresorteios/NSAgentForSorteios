@@ -145,9 +145,9 @@ def claim_pending_inbox(
             cur.execute(
                 f"""
                 WITH next_rows AS (
-                  SELECT id
-                  FROM public.ai_inbound_inbox
-                  WHERE attempts < max_attempts
+                  SELECT candidate.id
+                  FROM public.ai_inbound_inbox AS candidate
+                  WHERE candidate.attempts < candidate.max_attempts
                     AND (
                       status IN ('pending', 'failed')
                       OR (
@@ -157,7 +157,18 @@ def claim_pending_inbox(
                       )
                     )
                     {key_filter}
-                  ORDER BY created_at ASC
+                    AND NOT EXISTS (
+                      SELECT 1 FROM public.ai_inbound_inbox AS predecessor
+                      WHERE (predecessor.conversation_key = candidate.conversation_key
+                        OR predecessor.sender_key = candidate.sender_key)
+                        AND predecessor.provider = candidate.provider
+                        AND predecessor.channel = candidate.channel
+                        AND predecessor.status IN ('pending', 'failed', 'leased')
+                        AND (predecessor.attempts < predecessor.max_attempts
+                          OR (predecessor.status = 'leased' AND predecessor.lease_expires_at >= now()))
+                        AND (predecessor.created_at, predecessor.id) < (candidate.created_at, candidate.id)
+                    )
+                  ORDER BY candidate.created_at ASC, candidate.id ASC
                   FOR UPDATE SKIP LOCKED
                   LIMIT %(limit)s
                 )

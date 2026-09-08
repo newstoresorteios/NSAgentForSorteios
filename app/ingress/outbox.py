@@ -21,7 +21,7 @@ def build_outbound_envelope(incoming: Any, result: Any) -> dict[str, Any]:
         incoming_payload = dict(incoming)
     return {
         "incoming": incoming_payload,
-        "result": {
+        "result": result.model_dump(mode="json") if hasattr(result, "model_dump") else {
             "reply_text": getattr(result, "reply_text", None),
             "intent": getattr(result, "intent", None),
             "safety_reason": getattr(result, "safety_reason", None),
@@ -144,7 +144,7 @@ def enqueue_outbound(
 def claim_pending_outbox(
     *,
     limit: int = 10,
-    lease_seconds: int = 60,
+    lease_seconds: int = 120,
     owner: str | None = None,
 ) -> list[dict[str, Any]]:
     settings = get_settings()
@@ -185,7 +185,7 @@ def claim_pending_outbox(
                   outbox.id, outbox.inbox_id, outbox.inbound_id, outbox.provider,
                   outbox.channel, outbox.conversation_key, outbox.visitor_id,
                   outbox.sender_key, outbox.recipient_external_id,
-                  outbox.reply_text, outbox.reply_payload, outbox.attempts
+                  outbox.reply_text, outbox.reply_payload, outbox.attempts, outbox.lease_owner, outbox.max_attempts
                 """,
                 {
                     "limit": max(1, min(int(limit), 25)),
@@ -213,6 +213,8 @@ def claim_pending_outbox(
                     "reply_text": row[9],
                     "reply_payload": row[10],
                     "attempts": row[11],
+                    "lease_owner": row[12],
+                    "max_attempts": row[13],
                 }
             )
     return result
@@ -258,6 +260,7 @@ def mark_outbox_sent(
     outbox_id: int,
     *,
     provider_response: dict[str, Any] | None = None,
+    owner: str | None = None,
 ) -> None:
     settings = get_settings()
     if not settings.database_url:
@@ -275,16 +278,18 @@ def mark_outbox_sent(
                     lease_expires_at = NULL,
                     last_error = NULL
                 WHERE id = %(id)s
+                  AND (%(owner)s IS NULL OR (status = 'leased' AND lease_owner = %(owner)s))
                 """,
                 {
                     "id": outbox_id,
+                    "owner": owner,
                     "provider_response": to_jsonb(provider_response or {}),
                 },
             )
     log_event("outbox.sent", {"outbox_id": outbox_id})
 
 
-def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False) -> None:
+def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False, owner: str | None = None) -> None:
     settings = get_settings()
     if not settings.database_url:
         return
@@ -298,10 +303,12 @@ def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False) -> Non
                     updated_at = now(),
                     lease_owner = NULL,
                     lease_expires_at = NULL
-                WHERE id = %(id)s
+                WHERE id = %(id)s AND status <> 'sent'
+                  AND (%(owner)s IS NULL OR (status = 'leased' AND lease_owner = %(owner)s))
                 """,
                 {
                     "id": outbox_id,
+                    "owner": owner,
                     "status": "dead" if dead else "failed",
                     "error": (error or "")[:500],
                 },
@@ -328,10 +335,31 @@ def has_sent_outbound(inbound_id: int | None) -> bool:
             return cur.fetchone() is not None
 
 
-def claim_outbox_for_send(outbox_id: int, *, lease_seconds: int = 120) -> bool:
-    """Acquire ownership before the inline sender; cron uses the same state CAS."""
+def get_accepted_outbound(inbound_id: int | None) -> dict[str, Any] | None:
+    """Recover a previously accepted turn before any model/tool regeneration."""
+    if inbound_id is None or not get_settings().database_url:
+        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, status, reply_text, reply_payload
+                   FROM public.ai_outbound_outbox WHERE inbound_id = %s
+                   ORDER BY CASE status WHEN 'sent' THEN 0 WHEN 'leased' THEN 1
+                     WHEN 'pending' THEN 2 WHEN 'failed' THEN 3 ELSE 4 END, id DESC
+                   LIMIT 1""", (inbound_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return dict(row) if isinstance(row, dict) else dict(zip(
+        ("id", "status", "reply_text", "reply_payload"), row))
+
+
+def claim_outbox_for_send(outbox_id: int, *, lease_seconds: int = 120) -> dict[str, Any] | None:
+    """Claim and return the immutable accepted envelope, never a regenerated reply."""
     if not get_settings().database_url:
-        return False
+        return None
+    owner = f"inline:{uuid4().hex}"
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -341,7 +369,41 @@ def claim_outbox_for_send(outbox_id: int, *, lease_seconds: int = 120) -> bool:
                        attempts = attempts + 1, updated_at = now()
                    WHERE id = %s AND status IN ('pending', 'failed')
                      AND attempts < max_attempts
-                   RETURNING id""",
-                (f"inline:{uuid4().hex}", max(15, lease_seconds), outbox_id),
+                   RETURNING id, inbound_id, provider, channel, reply_text, reply_payload, lease_owner, attempts, max_attempts""",
+                (owner, max(15, lease_seconds), outbox_id),
             )
-            return cur.fetchone() is not None
+            row = cur.fetchone()
+    if not row:
+        return None
+    return dict(row) if isinstance(row, dict) else dict(zip(
+        ("id", "inbound_id", "provider", "channel", "reply_text", "reply_payload", "lease_owner", "attempts", "max_attempts"), row
+    ))
+
+
+def result_from_outbox_row(row: dict[str, Any]):
+    from app.models import AgentResult
+
+    payload = row.get("reply_payload") or {}
+    data = dict(payload.get("result") or {}) if isinstance(payload, dict) else {}
+    data["reply_text"] = str(row.get("reply_text") or data.get("reply_text") or "")
+    data["intent"] = data.get("intent") or "commerce"
+    return AgentResult.model_validate(data)
+
+
+async def dispatch_accepted_outbound(outbox_id: int, send) -> dict[str, Any]:
+    """Both immediate dispatch and retries acquire ownership before sending."""
+    row = claim_outbox_for_send(outbox_id)
+    if row is None:
+        status = get_outbox_status(outbox_id)
+        return {"ok": status == "sent", "queued": status in {"pending", "failed", "leased"},
+                "skipped": True, "status": status}
+    try:
+        info = await send(incoming_from_outbox_row(row), result_from_outbox_row(row))
+    except Exception as exc:
+        info = {"ok": False, "error": type(exc).__name__}
+    if info.get("ok"):
+        mark_outbox_sent(outbox_id, provider_response=info, owner=row["lease_owner"])
+    else:
+        mark_outbox_failed(outbox_id, error=str(info.get("error") or "send_failed"), owner=row["lease_owner"],
+            dead=int(row.get("attempts") or 1) >= int(row.get("max_attempts") or 5))
+    return info

@@ -751,6 +751,35 @@ def test_budget_only_answer_drops_unstated_color_and_style():
     assert bound.preferences.budget_max == 2500
 
 
+def test_bare_amount_answer_drops_unstated_color_and_style():
+    interp = _interpretation(
+        brand=None,
+        preferences={"color": "dourado", "style": "social", "occasion": "social", "budget_max": 2700},
+    )
+    contract = build_turn_contract(
+        message_text="2700",
+        interpretation=interp,
+        commerce_state=CommerceConversationState(
+            active_preferences={"color": "dourado", "style": "social"}
+        ),
+    )
+    assert contract.budget_max == 2700
+    assert contract.color is None
+    assert contract.style is None
+    assert "color" in contract.stale_fields
+    assert "style" in contract.stale_fields
+    bound = apply_turn_contract_for_search(
+        interp,
+        message_text="2700",
+        commerce_state=CommerceConversationState(
+            active_preferences={"color": "dourado", "style": "social"}
+        ),
+    )
+    assert bound.preferences.color is None
+    assert bound.preferences.style is None
+    assert bound.preferences.budget_max == 2700
+
+
 def _tissot_cart_state(**extra) -> CommerceConversationState:
     payload = {
         "cart_session_id": "tissot-leftover",

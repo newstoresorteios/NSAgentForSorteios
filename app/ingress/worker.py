@@ -40,7 +40,7 @@ async def _customer_context_for(incoming: IncomingMessage) -> dict[str, Any]:
 
 async def _send_reply(incoming: IncomingMessage, result: AgentResult) -> dict[str, Any]:
     provider = (incoming.provider or "").lower()
-    if provider == "meta" or (
+    if provider == "meta" or (not provider and
         (incoming.channel or "").lower() == "instagram"
         and str(getattr(get_settings(), "instagram_ingress_provider", "meta")).lower()
         in {"meta", "dual"}
@@ -165,7 +165,9 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
     from app.ops.runtime_context import reset_current_turn, set_current_turn
     from app.ops.turn_runtime import LLMCallBudget, TurnRuntimeContext
 
-    customer_context = await _customer_context_for(incoming)
+    from app.ingress.outbox import get_accepted_outbound, result_from_outbox_row
+    accepted = get_accepted_outbound(inbound_id)
+    customer_context = await _customer_context_for(incoming) if accepted is None else {}
     budget_cfg = build_llm_call_budget(execution_path="normal")
     turn = TurnRuntimeContext(
         trace_id=f"inbox-{inbox_id}",
@@ -177,7 +179,8 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
     turn.execution_path = str(budget_cfg.get("execution_path") or "normal")
     token = set_current_turn(turn)
     try:
-        result = await process_incoming_message(incoming, customer_context)
+        result = (result_from_outbox_row(accepted) if accepted is not None
+                  else await process_incoming_message(incoming, customer_context))
     finally:
         reset_current_turn(token)
     outbox_id = enqueue_accepted_outbound(
@@ -186,22 +189,15 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
         inbox_id=inbox_id,
         inbound_id=inbound_id,
     )
-    from app.ingress.outbox import claim_outbox_for_send, get_outbox_status
-    if outbox_id is not None and not claim_outbox_for_send(outbox_id):
-        status = get_outbox_status(outbox_id)
-        mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
-        return {"ok": True, "inbox_id": inbox_id, "inbound_id": inbound_id,
-                "skipped": "already_sent" if status == "sent" else "outbox_owned"}
-    send_info = await _send_reply(incoming, result)
-    send_ok = bool(send_info.get("ok"))
+    from app.ingress.outbox import dispatch_accepted_outbound
     if outbox_id is not None:
-        if send_ok:
-            mark_outbox_sent(outbox_id, provider_response=send_info)
-        else:
-            mark_outbox_failed(
-                outbox_id,
-                error=str(send_info.get("error") or "send_failed"),
-            )
+        send_info = await dispatch_accepted_outbound(outbox_id, _send_reply)
+    else:
+        send_info = await _send_reply(incoming, result)
+    send_ok = bool(send_info.get("ok"))
+    if send_info.get("queued"):
+        mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
+        return {"ok": True, "inbox_id": inbox_id, "inbound_id": inbound_id, "queued": True}
 
     try:
         response_id = insert_agent_response(

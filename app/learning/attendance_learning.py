@@ -351,17 +351,18 @@ async def run_attendance_learning_batch(
         auto_apply = bool(auto_promote)
     max_clusters = int(getattr(settings, "agent_learning_max_clusters", 5) or 5)
 
+    errors: list[str] = []
     rollback_summary = {"rolled_back": 0, "confirmed": 0, "extended": 0}
     try:
         rollback_summary = evaluate_canaries(tenant_id=tenant_id)
     except Exception as exc:
+        errors.append("canary_evaluation_failed")
         print("[attendance.learning.rollback_batch_error]", {
             "error_type": type(exc).__name__,
             "error": str(exc)[:160],
         })
 
     cursor = {}
-    errors: list[str] = []
     try:
         cursor = load_cursor(tenant_id=tenant_id) or {}
     except Exception as exc:
@@ -441,6 +442,7 @@ async def run_attendance_learning_batch(
             reviews.append(extra)
             seen.add(extra_id)
     except Exception as exc:
+        errors.append("cluster_reviews_fetch_failed")
         print("[attendance.learning.cluster_reviews_error]", {
             "error_type": type(exc).__name__,
             "error": str(exc)[:160],
@@ -470,6 +472,14 @@ async def run_attendance_learning_batch(
             )
         except Exception:
             errors.append("cursor_save_failed")
+
+    if errors:
+        return {
+            "ok": False, "errors": errors, "tenant_id": tenant_id,
+            "rows_scanned": len(rows), "reviews_written": len(reviews),
+            "cursor_from": cursor_from, "cursor_to": last_response_id,
+            "extensions_promoted": 0, "activated": 0,
+        }
 
     conversations = group_by_conversation(rows)
     buckets = aggregate_failures(reviews)

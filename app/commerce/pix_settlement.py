@@ -120,6 +120,8 @@ async def find_existing_tray_order(order_payload: dict[str, Any]) -> str | None:
         raise TrayAdapterError("tray_reconciliation_unavailable")
     if not isinstance(listed.get("orders"), list):
         raise TrayAdapterError("tray_reconciliation_invalid_response")
+    if any(not isinstance(order, dict) for order in listed["orders"]):
+        raise TrayAdapterError("tray_reconciliation_invalid_response")
     matches = []
     for order in _orders_from_list(listed):
         if str(order.get("session_id") or "").strip() != session_id:

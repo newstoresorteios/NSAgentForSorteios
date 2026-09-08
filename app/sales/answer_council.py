@@ -9,6 +9,7 @@ constraint miss.
 from __future__ import annotations
 
 import re
+import math
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -832,37 +833,84 @@ def _honest_constraint_reply(
     contract: TurnContract,
     interpretation: SalesInterpretation | None,
 ) -> AgentResult:
-    from .tray_query_authority import budget_hard_miss_result
-
-    # A rejected sentence is not evidence that the catalogue is empty.
-    # Rebuild only from the same candidates and re-run both deterministic checks.
-    products = _presented(result)
-    if products and result.safety_reason != "factual_validation_failed":
-        from app.commerce.commerce_router import _product_result
-
-        repaired = _product_result("product_search", products)
-        if check_pedido(repaired, contract).pass_check and check_fatos(repaired, contract).pass_check:
-            metadata = dict(result.response_metadata or {})
-            metadata.update(repaired.response_metadata or {})
-            metadata.update({"answer_council_recomposed": True, "presented_products": True})
-            repaired.response_metadata = metadata
-            return repaired
+    repaired = _recompose_catalog_reply(result, contract, interpretation)
+    if repaired is not None:
+        return repaired
     fixed = result.model_copy(deep=True)
     commercial = dict(fixed.commercial_data or {})
     commercial["products"] = []
     fixed.commercial_data = commercial
     fixed.reply_text = (
-        "N?o consegui confirmar uma sugest?o que atenda a todos os crit?rios nesta consulta. "
-        "Vou manter o que voc? pediu para continuarmos a busca."
+        "Não consegui confirmar uma sugestão que atenda a todos os critérios nesta consulta. "
+        "Vou manter o que você pediu para continuarmos a busca."
     )
+    fixed.reply_modality = "text"
+    fixed.reply_audio_bytes = None
+    fixed.reply_audio_url = None
+    fixed.reply_audio_mime_type = None
     fixed.safety_reason = "answer_council_blocked"
     metadata = dict(fixed.response_metadata or {})
+    metadata.pop("answer_council_recomposed", None)
     metadata.update({"presented_products": False, "guided_near_match": False,
                      "hard_budget_max": contract.budget_max,
                      "catalog_outcome": "validation_blocked",
                      "preserve_catalog_context": True})
     fixed.response_metadata = metadata
     return fixed
+
+
+def _recompose_catalog_reply(
+    result: AgentResult,
+    contract: TurnContract,
+    interpretation: SalesInterpretation | None,
+) -> AgentResult | None:
+    """Repair wording only; neither remove rejected facts nor relabel a near match."""
+    from app.catalog.retrieval.availability import product_availability_state
+    from app.catalog.retrieval.hard_filter import hard_filter_products
+    from app.commerce.commerce_router import _product_result
+
+    products = _presented(result)
+    metadata = dict(result.response_metadata or {})
+    validation = metadata.get("factual_validation") or {}
+    if (
+        not products
+        or contract.purchase_close
+        or result.handoff_required
+        or result.safety_reason == "factual_validation_failed"
+        or metadata.get("guided_near_match")
+        or (isinstance(validation, dict) and (
+            validation.get("violations") or validation.get("fallback_applied")
+        ))
+        or not check_fatos(result, contract).pass_check
+    ):
+        return None
+    for product in products:
+        price = effective_price(product)
+        if (
+            not product.get("id")
+            or product_availability_state(product) == "unavailable"
+            or (price is None and contract.budget_max is not None)
+            or (price is not None and (not math.isfinite(price) or price <= 0))
+        ):
+            return None
+        # The batch check intentionally accepts some mixed discovery pools.
+        # Wording repair must not promote a conflicting sibling alongside a hit.
+        row = _product_result("product_search", [product])
+        if not check_pedido(row, contract).pass_check or not check_fatos(row, contract).pass_check:
+            return None
+    if interpretation is not None:
+        eligible = hard_filter_products(
+            products, interpretation, mode="recommendation", message_text=contract.asked_text,
+        )
+        if len(eligible) != len(products):
+            return None
+    repaired = _product_result("product_search", products)
+    metadata.update({"answer_council_recomposed": True, "presented_products": True})
+    repaired.response_metadata = metadata
+    # Check the exact object being returned, including the original metadata.
+    if not check_pedido(repaired, contract).pass_check or not check_fatos(repaired, contract).pass_check:
+        return None
+    return repaired
 
 
 def _attach_decision(result: AgentResult, decision: CouncilDecision) -> AgentResult:
@@ -904,7 +952,13 @@ def _finish_council(
     commerce_state: CommerceConversationState | None,
 ) -> tuple[AgentResult, CouncilDecision, SalesInterpretation | None]:
     if (result.response_metadata or {}).get("answer_council_recomposed"):
-        decision.approved = check_pedido(result, contract).pass_check and check_fatos(result, contract).pass_check
+        original_issues = list(decision.issues)
+        decision = judge_council(
+            check_pedido(result, contract), check_fatos(result, contract),
+            attempt=decision.attempts, max_restarts=0,
+        )
+        decision.contract = contract.model_dump()
+        result.response_metadata["answer_council_repaired_issues"] = original_issues
     attached = _stamp_stale_checkout_clear(
         _attach_decision(result, decision),
         contract,
@@ -958,6 +1012,18 @@ async def apply_answer_council_with_retry(
             return _finish_council(
                 current, decision, current_interp, contract, commerce_state
             )
+        # A prose mistake does not require discarding valid catalog evidence and
+        # another remote lookup. Repair before the retry path empties the pool.
+        prose_issues = {
+            "stale_occasion_claimed", "re_greet_instead_of_commerce",
+            "commerce_phrase_used_as_name", "asked_delivery_without_sku",
+        }
+        if set(decision.issues) <= prose_issues:
+            repaired = _recompose_catalog_reply(current, contract, current_interp)
+            if repaired is not None:
+                return _finish_council(
+                    repaired, decision, current_interp, contract, commerce_state,
+                )
         if not decision.restart:
             blocked = _fallback_blocked_reply(
                 current,

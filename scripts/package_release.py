@@ -207,7 +207,7 @@ def classify_secret_value(
             classification="placeholder",
             blocking=False,
         )
-    if folded in _TEST_FIXTURE_VALUES or folded.startswith("tok-"):
+    if folded in _TEST_FIXTURE_VALUES:
         return SecretFinding(
             path=rel,
             variable=variable,

@@ -619,7 +619,24 @@ def rehydrate_interpretation_from_memories(
         if str(item).lower().startswith("exclude_brand:")
     }
 
-    if not skip_catalog:
+    budget_only = False
+    try:
+        from app.sales.discovery import message_states_budget
+        from app.catalog.specs.preference_normalize import (
+            message_states_color,
+            message_states_style,
+        )
+
+        budget_only = bool(
+            message_states_budget(message_text)
+            and not interpretation.references_previous_context
+            and not message_states_color(message_text)
+            and not message_states_style(message_text)
+        )
+    except Exception as exc:
+        _log_optional("budget_only_rehydrate", exc)
+
+    if not skip_catalog and not budget_only:
         from app.memory.memory_policy import BRAND_MEMORY_KEYS
 
         brand_mem = next(

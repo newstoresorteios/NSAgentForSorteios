@@ -165,6 +165,7 @@ async def test_tray_recommendation_uses_openai_with_catalog_facts(monkeypatch):
     )
 
     tray = _catalog_result("641")
+    tray.commercial_data["products"][0]["name"] = "Tissot Seastar"
     tray.reply_text = "1. Tissot Seastar — R$ 6.399,99"
     result = await sales_agent._sales_response_with_openai(
         IncomingMessage(text="me mostra Tissot"),

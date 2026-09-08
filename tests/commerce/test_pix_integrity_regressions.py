@@ -70,7 +70,7 @@ def test_valid_tray_event_reconciles_after_fresh_verification():
     assert writer.call_args.kwargs['tray_order_id'] == 'fake-order'
 
 
-@pytest.mark.parametrize('orders', [[{'id':'other'}], [{'id':'other','session_id':'other'}],
+@pytest.mark.parametrize('orders', [[None], ['invalid-order'], [{'id':'other'}], [{'id':'other','session_id':'other'}],
     [{'id':'1','session_id':'fake-cart','total':'99'}],
     [{'id':'1','session_id':'fake-cart','total':'100'},{'id':'2','session_id':'fake-cart','total':'100'}]])
 def test_reconciliation_requires_unique_verified_session_and_total(orders):

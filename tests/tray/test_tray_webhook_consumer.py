@@ -116,3 +116,19 @@ async def test_crash_before_checkpoint_replays_page(monkeypatch):
         await consumer.consume_tray_webhook_events(client=client)
     assert (await consumer.consume_tray_webhook_events(client=client))["ok"] is True
     assert apply.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [None, {}, {"events":None}, {"events":[],"success":False}, {"events":[],"error":"upstream"}])
+async def test_invalid_page_is_not_successful_empty_poll(monkeypatch, payload):
+    from unittest.mock import AsyncMock, Mock
+    from types import SimpleNamespace
+    import app.tray.tray_webhook_consumer as consumer
+
+    save = Mock()
+    monkeypatch.setattr(consumer,"load_webhook_cursor",lambda:10)
+    monkeypatch.setattr(consumer,"save_webhook_cursor",save)
+    client = SimpleNamespace(list_webhook_events=AsyncMock(return_value=payload))
+    result = await consumer.consume_tray_webhook_events(client=client)
+    assert result["ok"] is False and result["cursor"] == 10
+    save.assert_not_called()
