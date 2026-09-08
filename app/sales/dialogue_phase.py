@@ -333,8 +333,13 @@ def blocks_farewell_fast_path(state: CommerceConversationState | None) -> bool:
         return False
     if session_in_checkout_phase(state) or state.dialogue_phase == "checkout":
         return True
-    if str(getattr(state, "order_payment_url", None) or "").strip():
-        return True
+    # A leftover URL after a paid/cleared order must not block goodbye.
+    url = str(getattr(state, "order_payment_url", None) or "").strip()
+    if url:
+        from app.memory.context_resume import session_has_unpaid_order
+
+        if session_has_unpaid_order(state) or state.pending_action == "awaiting_payment":
+            return True
     if state.dialogue_phase in {"shortlist", "buy"}:
         return True
     if state.last_presented_products:

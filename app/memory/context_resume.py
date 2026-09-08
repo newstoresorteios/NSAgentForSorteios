@@ -388,7 +388,6 @@ def is_unpaid_order_resume_request(text: str | None) -> bool:
         "pagamento pendente",
         "confirmar se o pagamento",
         "confirma se o pagamento",
-        "pagamento",
     )
     conversation_signals = (
         "acabamos de conversar",

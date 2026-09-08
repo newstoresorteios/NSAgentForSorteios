@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.memory.context_resume import (
+    is_generic_buy_continue,
+    is_short_affirmation,
+)
 from app.models import AgentResult, IncomingMessage
 
 
@@ -11,6 +15,38 @@ def _door():
     import app.agents.door as door_mod
 
     return door_mod
+
+
+def _recite_stored_payment_url(
+    message: IncomingMessage,
+    commerce_state: Any,
+    *,
+    resume_pending_order_early: bool,
+) -> bool:
+    """Replay the transcript URL for link asks, buy-continue, and greetings.
+
+    Short affirmation and payment-status rechecks with a numeric order id
+    fall through to live inspect so a stale URL is not recited.
+    """
+    door = _door()
+    if not (
+        door.is_payment_link_request(message.text) or resume_pending_order_early
+    ):
+        return False
+    if door.is_payment_link_request(message.text) or is_generic_buy_continue(
+        message.text
+    ):
+        return True
+    order_id = str(getattr(commerce_state, "order_id", None) or "")
+    if order_id.isdigit() and (
+        is_short_affirmation(message.text)
+        or (
+            door.is_unpaid_order_resume_request(message.text)
+            and not door.is_soft_greeting(message.text)
+        )
+    ):
+        return False
+    return bool(resume_pending_order_early)
 
 
 async def try_tax_document_route(
@@ -62,8 +98,13 @@ async def try_order_resume_route(
 ) -> AgentResult | None:
     door = _door()
     stored_payment = door.build_pending_payment_resume_result(commerce_state)
-    if stored_payment is not None and (
-        door.is_payment_link_request(message.text) or resume_pending_order_early
+    # Goldens replay the stored link without Tray for an explicit link ask
+    # or generic buy-continue. "sim" and status rechecks with a numeric
+    # order_id must live-inspect so a stale URL is not recited.
+    if stored_payment is not None and _recite_stored_payment_url(
+        message,
+        commerce_state,
+        resume_pending_order_early=resume_pending_order_early,
     ):
         order_label = commerce_state.order_id or commerce_state.order_lookup_id
         print("[sales.order.route]", {

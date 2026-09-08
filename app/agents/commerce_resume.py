@@ -10,6 +10,10 @@ from typing import Any
 from app.memory.context_resume import (
     build_pending_payment_resume_result,
     build_presented_catalog_resume_result,
+    is_generic_buy_continue,
+    is_payment_link_request,
+    is_short_affirmation,
+    is_unpaid_order_resume_request,
     should_redisplay_presented_catalog,
     should_resume_pending_order,
 )
@@ -34,7 +38,17 @@ def try_commerce_resume(
         is_greeting=sales.is_any_greeting(message.text),
     ):
         stored_payment = build_pending_payment_resume_result(state)
-        if stored_payment is not None:
+        order_id = str(getattr(state, "order_id", None) or "")
+        live_recheck = (
+            order_id.isdigit()
+            and not is_payment_link_request(message.text)
+            and not is_generic_buy_continue(message.text)
+            and (
+                is_short_affirmation(message.text)
+                or is_unpaid_order_resume_request(message.text)
+            )
+        )
+        if stored_payment is not None and not live_recheck:
             return sales._mark_sales_result(
                 stored_payment,
                 interpretation=interpretation,
