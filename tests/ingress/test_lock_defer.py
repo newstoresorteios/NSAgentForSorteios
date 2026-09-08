@@ -83,7 +83,8 @@ async def test_drain_processes_pending_rows_for_the_same_conversation(monkeypatc
         lambda **kwargs: rows if "phone:1" in (kwargs.get("conversation_keys") or []) else [],
     )
 
-    async def process_row(row):
+    async def process_row(row, *, lock_held=False):
+        assert lock_held is True
         return {"ok": True, "inbox_id": row["id"]}
 
     monkeypatch.setattr("app.ingress.worker.process_inbox_row", process_row)

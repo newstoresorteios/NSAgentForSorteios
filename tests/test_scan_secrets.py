@@ -49,7 +49,7 @@ def test_scan_secrets_fails_when_env_local_is_tracked(tmp_path: Path):
 def test_arbitrary_tok_prefix_is_not_a_fixture():
     mod = _load_scan_secrets()
     finding = mod.classify_secret_value(
-        path="app/client.py", line_number=1, name="MP_ACCESS_TOKEN",
+        path="app/client.py", variable="MP_ACCESS_TOKEN",
         value="tok-" + "production-credential-value",
     )
     assert finding.classification == "real"

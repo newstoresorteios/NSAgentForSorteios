@@ -15,6 +15,9 @@ def test_classify_families():
     assert _classify("factual_validation_failed") == "factual_fail"
     assert _classify("tray_adapter_unavailable") == "tray_down"
     assert _classify("compliance_preference_reresearch") == "compliance_applied"
+    assert _classify("answer_council_blocked") == "council_blocked"
+    assert _classify("recommendation_budget_miss") == "constraint_miss"
+    assert _classify("product_context_missing") == "context_missing"
 
 
 def test_pct_rounding():

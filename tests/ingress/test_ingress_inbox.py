@@ -124,8 +124,13 @@ def test_inbox_conversation_key_fills_missing_conversation_id(monkeypatch):
     monkeypatch.setattr(worker_mod, "mark_inbox_processed", lambda *_a, **_k: None)
     monkeypatch.setattr(worker_mod, "mark_inbox_failed", lambda *_a, **_k: None)
     enqueue_order: list[str] = []
+    accepted: dict = {}
 
     def fake_enqueue(**_k):
+        from app.ingress.outbox import build_outbound_envelope
+
+        accepted.update(id=99, lease_owner="test-owner", reply_text=_k["result"].reply_text,
+                        reply_payload=build_outbound_envelope(_k["incoming"], _k["result"]))
         enqueue_order.append("enqueue")
         return 99
 
@@ -134,7 +139,8 @@ def test_inbox_conversation_key_fills_missing_conversation_id(monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(worker_mod, "enqueue_accepted_outbound", fake_enqueue)
-    monkeypatch.setattr(worker_mod, "mark_outbox_sent", lambda *_a, **_k: enqueue_order.append("sent"))
+    monkeypatch.setattr("app.ingress.outbox.claim_outbox_for_send", lambda *_a, **_k: accepted)
+    monkeypatch.setattr("app.ingress.outbox.mark_outbox_sent", lambda *_a, **_k: enqueue_order.append("sent"))
     monkeypatch.setattr(worker_mod, "_send_reply", ordered_send)
 
     result = asyncio.run(
