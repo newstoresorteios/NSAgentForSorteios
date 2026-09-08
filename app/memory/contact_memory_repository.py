@@ -53,7 +53,16 @@ def select_relevant_memories(
         sender_key=sender_key,
         limit=max(limit * 2, 20),
     )
-    usable = [item for item in active if item.use_in_instructions]
+    usable = [
+        item
+        for item in active
+        if item.use_in_instructions
+        # ``recipient`` used to conflate the current gift recipient with the
+        # customer's preferred name.  Keep legacy rows auditable in the DB,
+        # but never inject them into a new prompt.
+        and item.memory_key != "recipient"
+        and item.memory_kind != "recipient"
+    ]
     domain_norm = (domain or "").strip().lower()
     if domain_norm in {"payment", "order", "checkout", "shipping"}:
         prefer = {
@@ -78,7 +87,6 @@ def select_relevant_memories(
             "size_preference",
             "explicit_no_preference",
             "occasion",
-            "recipient",
             "conversation_goal",
             "preferred_name",
             "communication_style",
@@ -97,7 +105,6 @@ def select_relevant_memories(
             "color_preference",
             "material_preference",
             "occasion",
-            "recipient",
             "conversation_goal",
             "stable_customer_fact",
         }

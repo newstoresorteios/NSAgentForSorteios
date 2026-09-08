@@ -249,3 +249,57 @@ def test_conversation_scope_does_not_write_contact_memory(monkeypatch):
     )
     assert writes == []
     assert result.proposals_applied == 0
+
+
+def test_recipient_requires_conversation_scope():
+    contact = MemoryProposal(
+        action="upsert",
+        scope="contact",
+        kind="recipient",
+        key="recipient",
+        value="apelido não confirmado",
+        reason_code="explicit_user_identity",
+        confidence=0.99,
+        importance=0.99,
+    )
+    rejected = evaluate_memory_proposal(proposal=contact, sender_key="audit")
+    assert rejected.accepted is False
+    assert "conversation_scope_required" in rejected.rejection_codes
+
+    conversation = contact.model_copy(update={"scope": "conversation"})
+    accepted = evaluate_memory_proposal(proposal=conversation, sender_key="audit")
+    assert accepted.accepted is True
+    assert accepted.proposal_type == "conversation_memory"
+
+
+def test_deterministic_contact_preferences_do_not_persist_recipient():
+    from app.memory.contact_preference_memory import build_preference_memory_items
+
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        confidence=0.99,
+        needs_clarification=False,
+        references_previous_context=False,
+        preferences={"recipient": "apelido não confirmado", "budget_max": 2500},
+    )
+    items = build_preference_memory_items(interpretation)
+    assert "recipient" not in {item["memory_key"] for item in items}
+
+
+def test_legacy_recipient_memory_never_rehydrates_another_thread():
+    incoming = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        confidence=0.9,
+        needs_clarification=False,
+        references_previous_context=False,
+    )
+    legacy = memory("recipient", {"value": "apelido não confirmado"}, "recipient")
+    hydrated, filled = rehydrate_interpretation_from_memories(
+        incoming,
+        [legacy],
+        message_text="quero um relógio",
+    )
+    assert hydrated.preferences.recipient is None
+    assert "recipient" not in filled

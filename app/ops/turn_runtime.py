@@ -88,6 +88,7 @@ class TurnRuntimeContext(BaseModel):
     llm_calls_avoided: int = 0
     llm_avoided_reasons: list[dict[str, object]] = Field(default_factory=list)
     integration_failures: dict[str, int] = Field(default_factory=dict)
+    integration_request_ids: dict[str, list[str]] = Field(default_factory=dict)
     llm_budget: LLMCallBudget = Field(default_factory=LLMCallBudget)
     tray_calls: list[dict[str, object]] = Field(default_factory=list)
     openai_calls: list[dict[str, object]] = Field(default_factory=list)
@@ -234,6 +235,18 @@ class TurnRuntimeContext(BaseModel):
             self.integration_failures.get(provider, 0) + 1
         )
 
+    def register_integration_request_id(
+        self,
+        provider: str,
+        request_id: str | None,
+    ) -> None:
+        cleaned = str(request_id or "").strip()
+        if not cleaned or len(cleaned) > 128:
+            return
+        values = self.integration_request_ids.setdefault(provider, [])
+        if cleaned not in values:
+            values.append(cleaned)
+
     def register_fallback(self, reason: str | None) -> None:
         if reason and reason not in self.fallback_reasons:
             self.fallback_reasons.append(reason)
@@ -276,6 +289,10 @@ class TurnRuntimeContext(BaseModel):
                 "enforce": self.llm_budget.enforce,
             },
             "integration_failures": dict(self.integration_failures),
+            "integration_request_ids": {
+                provider: list(values[:10])
+                for provider, values in self.integration_request_ids.items()
+            },
             "tray_tools": [
                 {
                     "tool": item.get("tool"),

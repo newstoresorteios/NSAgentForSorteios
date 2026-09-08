@@ -9,7 +9,11 @@ import httpx
 
 from app.config import get_settings
 from app.ops.http_resilience import DEFAULT_BACKOFF_SECONDS, is_transient_status
-from app.ops.runtime_context import register_integration_failure, register_tray_call
+from app.ops.runtime_context import (
+    get_current_turn,
+    register_integration_failure,
+    register_tray_call,
+)
 from app.tray.tray_circuit_breaker import get_tray_circuit_breaker
 
 
@@ -239,7 +243,14 @@ class TrayAdapterClient:
         self._http_client = http_client
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.token}"}
+        headers = {"Authorization": f"Bearer {self.token}"}
+        runtime = get_current_turn()
+        trace_id = str(getattr(runtime, "trace_id", "") or "").strip()
+        if trace_id and len(trace_id) <= 64 and all(
+            char.isalnum() or char in {"-", "_"} for char in trace_id
+        ):
+            headers["X-Request-ID"] = trace_id
+        return headers
 
     @staticmethod
     def _response_has_key(
@@ -348,6 +359,31 @@ class TrayAdapterClient:
                         method,
                         f"{self.base_url}{path}",
                         **request_kwargs,
+                    )
+                    provider_request_id = None
+                    response_headers = getattr(response, "headers", None)
+                    if response_headers is not None:
+                        provider_request_id = (
+                            response_headers.get("rndr-id")
+                            or response_headers.get("x-trace-id")
+                            or response_headers.get("x-request-id")
+                        )
+                    runtime = get_current_turn()
+                    if runtime is not None:
+                        runtime.register_integration_request_id(
+                            "tray_render",
+                            provider_request_id,
+                        )
+                    from app.ops.observability import log_event
+
+                    log_event(
+                        "tray.http.response",
+                        {
+                            "operation": operation,
+                            "status_code": response.status_code,
+                            "attempt": attempt,
+                            "provider_request_id": provider_request_id,
+                        },
                     )
                     parsed_response: Any = None
                     response_is_json = False

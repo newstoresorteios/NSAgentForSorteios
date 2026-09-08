@@ -2,6 +2,7 @@
 
 from app.ops.integrity_kpis import (
     _classify,
+    _observability_completeness,
     _pct,
     build_integrity_kpi_report,
     fetch_queue_depths,
@@ -23,6 +24,26 @@ def test_classify_families():
 def test_pct_rounding():
     assert _pct(21, 100) == 21.0
     assert _pct(0, 0) == 0.0
+
+
+def test_observability_completeness_requires_every_turn_artifact():
+    partial = _observability_completeness(
+        responses=10,
+        metadata=9,
+        runtime=10,
+        prompt_compilations=8,
+    )
+    assert partial["metadata_pct"] == 90.0
+    assert partial["prompt_compilation_pct"] == 80.0
+    assert partial["complete"] is False
+
+    complete = _observability_completeness(
+        responses=10,
+        metadata=10,
+        runtime=10,
+        prompt_compilations=12,
+    )
+    assert complete["complete"] is True
 
 
 def test_build_report_without_database(monkeypatch):

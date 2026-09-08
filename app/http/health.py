@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
@@ -26,6 +28,14 @@ admin_router = APIRouter(prefix="/api/admin", tags=["admin-health"])
 
 def public_health_payload(settings=None) -> dict:
     cfg = settings or resolve("get_settings", get_settings)()
+    from app.ops.config_validation import configuration_warnings
+
+    warnings = configuration_warnings(cfg)
+    deployment_sha = (
+        os.getenv("VERCEL_GIT_COMMIT_SHA")
+        or os.getenv("GIT_COMMIT_SHA")
+        or "unknown"
+    ).strip()
     return {
         "ok": True,
         "service": getattr(cfg, "app_name", "NewStoreAgent"),
@@ -33,11 +43,19 @@ def public_health_payload(settings=None) -> dict:
         "dry_run": bool(getattr(cfg, "dry_run", False)),
         "environment": getattr(cfg, "environment", ""),
         "database_configured": bool(getattr(cfg, "database_url", "")),
+        "configuration_warning_count": len(warnings),
+        "deployment_sha": (
+            deployment_sha[:12]
+            if deployment_sha != "unknown"
+            else deployment_sha
+        ),
     }
 
 
 async def admin_diagnostics_payload(settings=None) -> dict:
     cfg = settings or resolve("get_settings", get_settings)()
+    from app.ops.config_validation import configuration_warnings
+
     openai_key = cfg.openai_api_key
     allowed_channels = get_allowed_channels(cfg)
     ordered_channels = [
@@ -59,6 +77,7 @@ async def admin_diagnostics_payload(settings=None) -> dict:
 
     return {
         "ok": True,
+        "configuration_warnings": configuration_warnings(cfg),
         "agent_version": AGENT_VERSION,
         "agent_mode": "openai_with_db_context",
         "openai_configured": bool(openai_key),

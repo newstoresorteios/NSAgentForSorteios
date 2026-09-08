@@ -313,6 +313,18 @@ def evaluate_memory_proposal(
         codes.append("sensitive")
 
     normalized_key = _normalize_key(proposal.key, proposal.kind)
+    if (
+        proposal.action == MemoryAction.upsert
+        and proposal.scope != MemoryScope.conversation
+        and (
+            proposal.kind == MemoryKind.recipient
+            or normalized_key == "recipient"
+        )
+    ):
+        # Recipient/name answers are scoped to the active conversation.  A
+        # durable preferred name requires ``preferred_name`` plus explicit
+        # identity evidence, which prevents cross-thread address leakage.
+        codes.append("conversation_scope_required")
     # Preferências de orçamento (kind/key) podem ter número; resto não guarda fato vivo.
     allow_budget_number = (
         proposal.kind == MemoryKind.price_preference

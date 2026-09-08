@@ -288,14 +288,11 @@ def build_preference_memory_items(
             summary=f"occasion={occasion}",
         )
 
-    recipient = _fold_label(prefs.recipient)
-    if recipient:
-        add(
-            memory_key="recipient",
-            memory_kind=MemoryKind.recipient.value,
-            value=recipient,
-            summary=f"recipient={recipient}",
-        )
+    # ``recipient`` is turn/conversation state.  It is also used by the sales
+    # flow for the customer's answer to "como posso te chamar?", so persisting
+    # it on the contact can address a later conversation with an unconfirmed
+    # word from an older thread.  Stable names use the dedicated
+    # ``preferred_name`` memory proposal after explicit identity evidence.
 
     if prefs.budget_min is not None or prefs.budget_max is not None:
         budget = {
@@ -698,12 +695,9 @@ def rehydrate_interpretation_from_memories(
                 except (TypeError, ValueError):
                     pass
 
-    recipient_mem = by_key.get("recipient")
-    if recipient_mem and not prefs.recipient:
-        value = _fold_label(_unwrap_value(recipient_mem.value))
-        if value:
-            prefs.recipient = value
-            filled.append("recipient")
+    # Legacy contact-scoped ``recipient`` rows are intentionally ignored.
+    # Conversation summaries/qualification slots retain the current thread's
+    # recipient without allowing it to cross into another conversation.
 
     for memory in memories:
         if not str(memory.memory_key or "").startswith("explicit_no:"):

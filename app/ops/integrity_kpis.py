@@ -151,6 +151,84 @@ def fetch_queue_depths() -> dict[str, Any]:
     return {"configured": True, **depths}
 
 
+def _observability_completeness(
+    *,
+    responses: int,
+    metadata: int,
+    runtime: int,
+    prompt_compilations: int,
+) -> dict[str, Any]:
+    return {
+        "responses": responses,
+        "metadata": metadata,
+        "runtime": runtime,
+        "prompt_compilations": prompt_compilations,
+        "metadata_pct": _pct(metadata, responses),
+        "runtime_pct": _pct(runtime, responses),
+        "prompt_compilation_pct": _pct(
+            min(prompt_compilations, responses),
+            responses,
+        ),
+        "complete": bool(
+            responses > 0
+            and metadata >= responses
+            and runtime >= responses
+            and prompt_compilations >= responses
+        ),
+    }
+
+
+def fetch_observability_completeness(*, days: int = 7) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.database_url:
+        return {"configured": False}
+    ensure_tables()
+    window = max(1, min(int(days), 90))
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      COUNT(*)::int AS responses,
+                      COUNT(*) FILTER (
+                        WHERE provider_response ? '_agent_metadata'
+                      )::int AS metadata,
+                      COUNT(*) FILTER (
+                        WHERE provider_response ? '_agent_runtime'
+                      )::int AS runtime,
+                      (
+                        SELECT COUNT(*)::int
+                        FROM public.ai_prompt_compilations
+                        WHERE created_at > now() - (%(days)s * interval '1 day')
+                      ) AS prompt_compilations
+                    FROM public.ai_agent_responses
+                    WHERE created_at > now() - (%(days)s * interval '1 day')
+                    """,
+                    {"days": window},
+                )
+                row = cur.fetchone() or {}
+    except Exception as exc:
+        log_swallowed("kpis.observability_completeness", exc)
+        return {"configured": True, "error": type(exc).__name__}
+    if not isinstance(row, dict):
+        row = {
+            "responses": row[0],
+            "metadata": row[1],
+            "runtime": row[2],
+            "prompt_compilations": row[3],
+        }
+    return {
+        "configured": True,
+        **_observability_completeness(
+            responses=int(row.get("responses") or 0),
+            metadata=int(row.get("metadata") or 0),
+            runtime=int(row.get("runtime") or 0),
+            prompt_compilations=int(row.get("prompt_compilations") or 0),
+        ),
+    }
+
+
 def build_integrity_kpi_report(*, days: int = 7) -> dict[str, Any]:
     """Aggregate assertiveness KPIs for admin / ops dashboards."""
     counts = fetch_safety_reason_counts(days=days)
@@ -200,6 +278,7 @@ def build_integrity_kpi_report(*, days: int = 7) -> dict[str, Any]:
         "vs_target": vs_target,
         "by_reason": counts[:40],
         "queues": fetch_queue_depths(),
+        "observability": fetch_observability_completeness(days=days),
         "async_ingress_enabled": bool(
             getattr(get_settings(), "agent_async_ingress_enabled", False)
         ),

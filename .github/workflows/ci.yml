@@ -25,6 +25,9 @@ jobs:
       - name: Secret scan
         run: python scripts/scan_secrets.py
 
+      - name: Deployment configuration contract
+        run: python scripts/validate_project_config.py
+
       - name: Release package dry-run
         run: python scripts/package_release.py --dry-run
 
@@ -37,8 +40,22 @@ jobs:
         run: |
           python -m pytest -q \
             --ignore=tests/evals \
+            --cov=app \
+            --cov=api \
+            --cov-branch \
+            --cov-fail-under=70 \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=xml \
             -x \
             --tb=short
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage
+          path: coverage.xml
+          if-no-files-found: ignore
 
   offline-eval:
     runs-on: ubuntu-latest

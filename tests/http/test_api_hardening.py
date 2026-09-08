@@ -58,9 +58,27 @@ async def test_public_health_http_is_slim(monkeypatch):
     assert response.status_code == 200
     assert body["ok"] is True
     assert body["agent_version"]
+    assert body["deployment_sha"] == "unknown"
     assert "openai_key_length" not in body
     assert "tray_adaptor_probe" not in body
     assert "raw_preview" not in body
+
+
+@pytest.mark.asyncio
+async def test_public_health_exposes_short_deployment_sha(monkeypatch):
+    import api.index as index
+
+    monkeypatch.setattr(index, "get_settings", lambda: _webhook_settings())
+    monkeypatch.setenv(
+        "VERCEL_GIT_COMMIT_SHA",
+        "bd7be8fb2aec43cdd0b364744422d69e26a19b7f",
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=index.app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/health")
+    assert response.json()["deployment_sha"] == "bd7be8fb2aec"
 
 
 @pytest.mark.asyncio

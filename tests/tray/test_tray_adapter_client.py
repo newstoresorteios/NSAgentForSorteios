@@ -13,9 +13,10 @@ def _reset_tray_circuit():
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None):
+    def __init__(self, status_code=200, payload=None, headers=None):
         self.status_code = status_code
         self._payload = payload if payload is not None else {"products": []}
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -40,6 +41,37 @@ async def test_product_search_sends_bearer_params_and_limit():
     assert args == ("GET", "https://tray.example/internal/products")
     assert kwargs["headers"] == {"Authorization": "Bearer secret"}
     assert kwargs["params"] == {"name": "Tissot", "limit": 50}
+
+
+@pytest.mark.asyncio
+async def test_tray_request_propagates_trace_and_records_render_request_id():
+    from app.ops.runtime_context import reset_current_turn, set_current_turn
+    from app.ops.turn_runtime import TurnRuntimeContext
+
+    fake = FakeClient(
+        FakeResponse(
+            payload={"products": []},
+            headers={"x-trace-id": "render-request-7"},
+        )
+    )
+    context = TurnRuntimeContext(trace_id="trace-7")
+    token = set_current_turn(context)
+    try:
+        await TrayAdapterClient(
+            "https://tray.example/",
+            "secret",
+            fake,
+        ).search_products(limit=20)
+    finally:
+        reset_current_turn(token)
+
+    assert fake.calls[0][1]["headers"] == {
+        "Authorization": "Bearer secret",
+        "X-Request-ID": "trace-7",
+    }
+    assert context.safe_summary()["integration_request_ids"] == {
+        "tray_render": ["render-request-7"]
+    }
 
 
 @pytest.mark.asyncio
