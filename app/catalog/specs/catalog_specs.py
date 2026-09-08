@@ -298,6 +298,9 @@ _KNOWN_WATCH_BRANDS: tuple[str, ...] = (
 
 _OTHER_BRANDS_RE = re.compile(
     r"\b("
+    r"(?:outras?|mais)\s+sugest[õo]es?\s+(?:de\s+)?marcas?|"
+    r"(?:um|uma)\s+de\s+cada\s+marca|"
+    r"marcas?\s+(?:diferentes?|variadas?)|"
     r"outras?\s+marcas?|"
     r"outras?\s+op(?:ç|c)(?:õ|o)es?\s+(?:de\s+)?marcas?|"
     r"de\s+outras?\s+marcas?|"
@@ -442,6 +445,20 @@ def apply_brand_unlock_to_interpretation(
     if not unlock and not rejected:
         return []
     attrs = list(prefs.attributes or [])
+    previous_brand = _fold(getattr(subject, "brand", None))
+    if unlock:
+        # Legacy explicit-brand attributes feed the hard filter independently of
+        # subject and TurnUnderstanding; clear that lock as well.
+        brand_labels = {_fold(brand) for brand in _KNOWN_WATCH_BRANDS}
+        if previous_brand:
+            brand_labels.add(previous_brand)
+        attrs = [
+            attr for attr in attrs
+            if not (
+                _fold(attr).startswith("somente:")
+                and _fold(str(attr).split(":", 1)[1]) in brand_labels
+            )
+        ]
     for brand in rejected:
         label = f"{_EXCLUDE_BRAND_ATTR_PREFIX}{brand}"
         if label not in attrs:
@@ -451,10 +468,20 @@ def apply_brand_unlock_to_interpretation(
             subject.brand = None
     if unlock:
         subject.brand = None
+        # Product identities suggested by us are not customer constraints.
+        for field in ("model", "reference", "ean"):
+            value = getattr(subject, field, None)
+            if value and _fold(value) not in _fold(message_text):
+                setattr(subject, field, None)
         explicit = list(prefs.explicit_no_preferences or [])
         if "brand" not in explicit:
             prefs.explicit_no_preferences = explicit + ["brand"]
     prefs.attributes = attrs
+    # Cached hard constraints must not resurrect the brand just removed.
+    if hasattr(interpretation, "_turn_understanding"):
+        interpretation._turn_understanding = None
+    if hasattr(interpretation, "_turn_contract_bound"):
+        interpretation._turn_contract_bound = False
     return rejected
 
 

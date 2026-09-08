@@ -134,7 +134,7 @@ async def test_get_order_facts_retries_split_candidates_after_422():
         return {"error": "commerce_upstream_error", "status_code": 404}
 
     result = await get_order_facts(
-        state=CommerceConversationState(),
+        state=CommerceConversationState(order_id="0CC131B51070AEF25400"),
         execute=execute,
         order_id="0CC131B51070AEF25400",
     )
@@ -321,3 +321,109 @@ async def test_pipeline_pix_request_reuses_payment_link_from_transcript(monkeypa
     assert "0CC131B51070AEF" in result.reply_text
     assert payment_url in result.reply_text
     assert result.response_metadata.get("response_source") == "context_resume_payment_url"
+
+
+@pytest.mark.asyncio
+async def test_recover_order_does_not_pick_unrelated_when_preferred_misses():
+    from app.commerce.order_context_recovery import recover_order_id_from_customer
+
+    async def execute(name, _args):
+        if name == "search_customer":
+            return {"customers": [{"id": 1}]}
+        if name == "list_orders":
+            return {
+                "orders": [
+                    {
+                        "id": 111,
+                        "code": "AAA",
+                        "status": "Pago",
+                        "created_at": "2026-01-02",
+                    },
+                    {
+                        "id": 222,
+                        "code": "BBB",
+                        "status": "Aguardando pagamento",
+                        "created_at": "2026-01-03",
+                    },
+                ]
+            }
+        raise AssertionError(name)
+
+    found = await recover_order_id_from_customer(
+        execute=execute,
+        handles={"documents": [("cpf", "12345678909")]},
+        preferred_codes=["99999"],
+    )
+    assert found is None
+
+
+@pytest.mark.asyncio
+async def test_get_order_facts_bare_id_without_identity_is_mismatch():
+    from app.commerce.order_service import get_order_facts
+
+    async def execute(name, args):
+        assert name == "get_order_complete"
+        return {
+            "success": True,
+            "order_id": str(args["order_id"]),
+            "status": "ENVIADO",
+            "status_group": "shipped",
+            "tracking_url": "https://rastreio.example/XYZ",
+        }
+
+    result = await get_order_facts(
+        state=CommerceConversationState(),
+        execute=execute,
+        order_id="12345",
+    )
+    assert result.safety_reason == "order_customer_mismatch"
+    assert (result.commercial_data or {}).get("success") is False
+    assert "rastreio.example" not in (result.reply_text or "")
+
+
+@pytest.mark.asyncio
+async def test_get_order_facts_allows_session_bound_order():
+    from app.commerce.order_service import get_order_facts
+
+    async def execute(name, args):
+        assert name == "get_order_complete"
+        return {
+            "success": True,
+            "order_id": str(args["order_id"]),
+            "status": "Aguardando pagamento",
+            "status_group": "open",
+        }
+
+    result = await get_order_facts(
+        state=CommerceConversationState(order_id="12345"),
+        execute=execute,
+        order_id="12345",
+    )
+    assert result.safety_reason != "order_customer_mismatch"
+    assert (result.commercial_data or {}).get("order_id") == "12345"
+
+
+@pytest.mark.asyncio
+async def test_get_order_facts_allows_matching_checkout_cpf():
+    from app.commerce.commerce_context import CheckoutCustomer, CheckoutDraft
+    from app.commerce.order_service import get_order_facts
+
+    async def execute(name, args):
+        assert name == "get_order_complete"
+        return {
+            "success": True,
+            "order_id": str(args["order_id"]),
+            "status": "Aguardando pagamento",
+            "status_group": "open",
+            "customer": {"cpf": "12345678909"},
+        }
+
+    result = await get_order_facts(
+        state=CommerceConversationState(
+            checkout_draft=CheckoutDraft(customer=CheckoutCustomer(cpf="12345678909")),
+        ),
+        execute=execute,
+        order_id="25400",
+    )
+    assert result.safety_reason != "order_customer_mismatch"
+    assert (result.commercial_data or {}).get("order_id") == "25400"

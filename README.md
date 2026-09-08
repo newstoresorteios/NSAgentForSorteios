@@ -89,20 +89,29 @@ deltas de prompt com constituição + canary; kill-switch:
 ## Arquivos principais
 
 ```txt
-api/index.py                         # FastAPI app para Vercel
-app/webhook_parser.py                # Parser defensivo do payload Brevo
-app/openai_agent.py                  # Chamada OpenAI + instruções do agente
-app/openai_gateway.py                # Gateway Chat Completions / Responses / shadow
-app/response_presenter.py            # Naturalidade / regras de apresentação
-app/product_snapshot.py              # ProductSnapshot + cache TTL Tray
-app/turn_metrics.py                  # Evento turn.quality (sem PII)
-app/sales/                           # Extração incremental do sales_agent
-app/prompt_compiler.py               # Compila instructions (persona + overlays)
-app/persona_repository.py            # CRUD versionado da persona
-tests/evals/                         # Offline eval honestos (`pytest -m offline_eval`)
+api/index.py                         # Entrypoint fino para Vercel
+app/http/                            # Factory FastAPI, webhooks, health, admin e crons
+app/channels/                        # Brevo, Meta, áudio e normalização de entrada
+app/agents/                          # Porta de entrada e orquestração por domínio
+app/sales/                           # Interpretação, contrato do turno e fluxo comercial
+app/catalog/                         # Índice, retrieval, ranking, mídia e visão
+app/commerce/                        # Carrinho, pedido, checkout e PIX
+app/llm/                             # Gateway OpenAI, compiler, routing e apresentação
+app/memory/                          # Memória de contato, resumo e retomada de contexto
+app/verify/                          # Autoridade factual, council, judge e compliance
+app/ingress/                         # Inbox/outbox, leases e workers
+app/ops/                             # Runtime, tracing, locks, KPIs e rollout
+tests/evals/                         # Replays e evals offline
+scripts/validate_project_config.py   # Valida Settings contra .env.example
 .env.example                         # Variáveis sem segredos reais
-vercel.json                          # Config Vercel
+vercel.json                          # Rotas e agendas Vercel
 ```
+
+O retrieval trabalha com pools internos maiores (20 candidatos por padrão e
+descoberta paginada), mas apresenta normalmente três opções ao cliente. Em busca
+sem marca travada, a seleção final prioriza marcas distintas. Quando só existe
+uma marca dentro do orçamento e disponibilidade atuais, a resposta declara esse
+limite e pede autorização antes de ampliar a faixa.
 
 Replay offline (agente real + fakes; score não copia `expected`):
 
@@ -145,6 +154,16 @@ https://SEU-DOMINIO.vercel.app/api/webhooks/brevo/whatsapp
 ```txt
 X-Webhook-Token: mesmo_valor_de_BREVO_WEBHOOK_SECRET
 ```
+
+Antes de promover produção, exija CI verde no SHA final e confira que
+`/api/health` apresenta o mesmo `deployment_sha`. Depois do deploy, valide uma
+mensagem canário e confirme `_agent_metadata`, `_agent_runtime`, compilação de
+prompt e recibo de envio no banco. O workflow `Attendance Learning` deve concluir
+com sucesso e avançar seu cursor.
+
+O agente envia `X-Request-ID` ao TRAYadaptor. Use o mesmo `trace_id` nos logs da
+Vercel e do Render; o `Rndr-Id` devolvido pelo Render é incorporado ao runtime do
+turno.
 
 ## Teste local
 

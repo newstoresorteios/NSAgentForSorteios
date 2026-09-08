@@ -86,6 +86,10 @@ def try_farewell(
     door = _door()
     if not door.is_farewell_message(message.text):
         return None
+    from app.sales.dialogue_phase import blocks_farewell_fast_path
+
+    if blocks_farewell_fast_path(commerce_state):
+        return None
     checkout_name = None
     try:
         draft = getattr(commerce_state, "checkout_draft", None)

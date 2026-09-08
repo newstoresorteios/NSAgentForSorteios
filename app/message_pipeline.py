@@ -121,7 +121,7 @@ _GATE_BLOCK_REASONS = {
 }
 
 
-def _persist_commerce_session(
+def _attach_commerce_metadata(
     incoming: IncomingMessage,
     commerce_state: CommerceConversationState,
     result: AgentResult,
@@ -133,6 +133,15 @@ def _persist_commerce_session(
     result.response_metadata = dict(result.response_metadata or {})
     result.response_metadata["commerce_state"] = commerce_state.model_dump(mode="json")
     result.response_metadata["working_memory"] = build_working_memory(commerce_state)
+    return result
+
+
+def _persist_commerce_session(
+    incoming: IncomingMessage,
+    commerce_state: CommerceConversationState,
+    result: AgentResult,
+) -> AgentResult:
+    result = _attach_commerce_metadata(incoming, commerce_state, result)
     upsert_customer_identity_links(incoming, commerce_state)
     persist_customer_commerce_session(
         person_keys=resolve_person_key_candidates(
@@ -348,7 +357,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             to_phase=commerce_state.dialogue_phase,
             channel=incoming.channel,
         )
-    result = _persist_commerce_session(incoming, commerce_state, result)
+    result = _attach_commerce_metadata(incoming, commerce_state, result)
     decision = build_agent_decision(
         incoming,
         result,
@@ -462,7 +471,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         trusted_domains=trusted_fact_domains,
         commerce_state=commerce_state.model_dump(mode="json"),
     )
-    result = _persist_commerce_session(incoming, commerce_state, result)
+    result = _attach_commerce_metadata(incoming, commerce_state, result)
     result = enrich_handoff_metadata(incoming, result)
     validation = result.response_metadata.get("factual_validation") or {}
     from app.ops.rollout import (
@@ -546,7 +555,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
                     trusted_domains=trusted_fact_domains,
                     commerce_state=commerce_state.model_dump(mode="json"),
                 )
-                result = _persist_commerce_session(incoming, commerce_state, result)
+                result = _attach_commerce_metadata(incoming, commerce_state, result)
                 validation = result.response_metadata.get("factual_validation") or {}
                 result.response_metadata["factual_validation_post_critique"] = True
                 factual_ok = bool(validation.get("valid", True))
@@ -778,8 +787,9 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
 
     with runtime_stage("enrich_result"):
         enriched = await enrich_agent_result(incoming, result)
-        return compose_outbound_reply(
+        result = compose_outbound_reply(
             incoming,
             enriched,
             max_reply_chars=max_reply_chars,
         )
+        return _persist_commerce_session(incoming, commerce_state, result)

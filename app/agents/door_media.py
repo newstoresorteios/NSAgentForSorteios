@@ -53,12 +53,20 @@ async def try_media_routes(
             "[instagram.story.route.error]",
             {"error_type": type(exc).__name__, "error": str(exc)[:240]},
         )
-        skip_generic_image = True
-        from app.stories.instagram_story_intent import (
-            should_route_story_question as _story_q,
-        )
+        story_turn = False
+        try:
+            from app.stories.instagram_story_intent import (
+                should_route_story_question as _story_q,
+            )
 
-        if _story_q(message):
+            story_turn = bool(_story_q(message))
+        except Exception:
+            story_turn = False
+        if not story_turn:
+            # Infra failure on the story import must not swallow a normal photo.
+            pass
+        else:
+            skip_generic_image = True
             return door._annotate_agent_result(
                 AgentResult(
                     reply_text=(

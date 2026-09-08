@@ -19,14 +19,24 @@ def normalize_phone(phone: str | None) -> str | None:
     return digits or None
 
 
+def canonicalize_br_phone(phone: str | None) -> str | None:
+    """Return 55 + DDD + subscriber, or None when the number is incomplete."""
+    digits = normalize_phone(phone)
+    if not digits:
+        return None
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("55") and len(digits) in {12, 13}:
+        return digits
+    if len(digits) in {10, 11}:
+        return f"55{digits}"
+    return None
+
+
 def phones_match(stored: str | None, incoming: str | None) -> bool:
-    stored_norm = normalize_phone(stored)
-    incoming_norm = normalize_phone(incoming)
-    if not stored_norm or not incoming_norm:
-        return False
-    if len(stored_norm) < 9 or len(incoming_norm) < 9:
-        return False
-    return stored_norm[-9:] == incoming_norm[-9:]
+    stored_norm = canonicalize_br_phone(stored)
+    incoming_norm = canonicalize_br_phone(incoming)
+    return bool(stored_norm and incoming_norm and stored_norm == incoming_norm)
 
 
 def extract_phone_candidates(text: str | None) -> list[str]:
@@ -237,7 +247,7 @@ def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
           END,
           length(regexp_replace(coalesce(phone, ''), '\\D', '', 'g')) DESC,
           id DESC
-        LIMIT 1
+        LIMIT 10
         """,
         """
         SELECT id, name, email, phone, coupon_value_cents
@@ -256,7 +266,7 @@ def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
           END,
           length(regexp_replace(coalesce(phone, ''), '\\D', '', 'g')) DESC,
           id DESC
-        LIMIT 1
+        LIMIT 10
         """,
     )
     params = {
@@ -267,9 +277,11 @@ def _lookup_user_by_phone(cur: Any, normalized: str) -> dict[str, Any] | None:
     for sql in queries:
         try:
             cur.execute(sql, params)
-            row = cur.fetchone()
-            if row:
-                return dict(row)
+            rows = cur.fetchall() or []
+            for row in rows:
+                data = dict(row)
+                if phones_match(data.get("phone"), normalized):
+                    return data
         except Exception as exc:
             log_swallowed("repository.lookup_user_by_phone", exc)
             continue

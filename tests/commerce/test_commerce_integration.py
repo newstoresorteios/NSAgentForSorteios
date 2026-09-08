@@ -206,7 +206,11 @@ async def test_purchase_intent_uses_product_entity_not_full_sentence(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
+@pytest.mark.parametrize("generated_text,uses_generated", [
+    ("Encontrei uma opção dentro da faixa informada.", False),
+    ("Separei o Relógio esportivo preto dentro da faixa informada.", True),
+])
+async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch, generated_text, uses_generated):
     import app.sales_agent as sales_agent
 
     settings = _settings(openai_api_key="test-key")
@@ -219,15 +223,25 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=selection))])
 
         async def create(self, **kwargs):
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Encontrei uma opção dentro da faixa informada."))])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=generated_text))])
 
     class FakeClient:
         def __init__(self, **kwargs):
             self.chat = SimpleNamespace(completions=FakeCompletions())
 
+    product = {
+        "id": "2",
+        "name": "Relógio esportivo preto",
+        "current_price": 4500,
+        "price": 4500,
+        "available": True,
+    }
+
     async def fake_execute(name, arguments):
         calls.append((name, arguments))
-        return {"products": [{"id": "2", "name": "Relógio esportivo preto", "current_price": 4500}]}
+        if name == "get_product":
+            return product
+        return {"products": [product]}
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     install_fake_openai_client(monkeypatch, FakeClient)
@@ -252,9 +266,21 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
     assert args["name"] == "relógio"
     assert args["available"] is True
     assert args["current_price_range"] == "0,5000"
+    listed = (result.commercial_data or {}).get("products") or []
+    assert listed and listed[0].get("id") == "2"
+    assert listed[0].get("name") == "Relógio esportivo preto"
     folded = (result.reply_text or "").casefold()
     assert "relógio esportivo preto" in folded
-    assert result.safety_reason != "recommendation_not_found"
+    assert result.response_metadata["used_openai_responder"] is uses_generated
+    if not uses_generated:
+        assert result.response_metadata["fallback_reason"] == "recommendation_missing_candidate_identity"
+    assert "não atendeu" not in folded
+    assert "não encontrei" not in folded
+    assert result.safety_reason not in {
+        "recommendation_not_found",
+        "recommendation_no_match",
+        "answer_council_blocked",
+    }
     assert result.response_metadata["used_tray"] is True
 
 
@@ -377,12 +403,36 @@ async def _async_result(intent):
 
 
 @pytest.mark.asyncio
-async def test_health_exposes_only_tray_flags(monkeypatch):
+async def test_public_health_is_slim(monkeypatch):
     import api.index as index
 
     settings = _settings()
     monkeypatch.setattr(index, "get_settings", lambda: settings)
     payload = await index.health()
+    assert payload["ok"] is True
+    assert payload["agent_version"]
+    assert payload["dry_run"] is True
+    assert "openai_key_length" not in payload
+    assert "tray_adaptor_probe" not in payload
+    assert "tray_adapter_configured" not in payload
+
+
+@pytest.mark.asyncio
+async def test_admin_health_exposes_only_tray_flags(monkeypatch):
+    import api.index as index
+
+    settings = _settings()
+    monkeypatch.setattr(index, "get_settings", lambda: settings)
+
+    async def _probe():
+        return {"ok": False, "reason": "skipped"}
+
+    monkeypatch.setattr("app.http.health.probe_tray_adaptor", _probe)
+    monkeypatch.setattr(
+        "app.channels.meta_instagram.probe_instagram_graph_subscriptions",
+        _probe,
+    )
+    payload = await index.admin_diagnostics_payload()
     assert payload["tray_adapter_configured"] is True
     assert payload["tray_tools_enabled"] is True
     assert settings.tray_adapter_token not in str(payload)
@@ -425,7 +475,11 @@ async def test_tray_diagnostic_uses_client_and_is_admin_protected(monkeypatch):
 async def test_brevo_duplicate_message_is_skipped_before_processing(monkeypatch):
     import api.index as index
 
-    monkeypatch.setattr(index, "inbound_message_exists", lambda provider, message_id: provider == "brevo" and message_id == "msg-1")
+    monkeypatch.setattr(
+        index,
+        "inbound_already_completed",
+        lambda provider, message_id: provider == "brevo" and message_id == "msg-1",
+    )
     monkeypatch.setattr(index, "insert_inbound_message", lambda *_: (_ for _ in ()).throw(AssertionError("duplicate must not be inserted")))
     monkeypatch.setattr(index, "process_incoming_message", lambda *_: (_ for _ in ()).throw(AssertionError("duplicate must not be processed")))
     index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
@@ -439,3 +493,50 @@ async def test_brevo_duplicate_message_is_skipped_before_processing(monkeypatch)
         index.app.dependency_overrides.pop(index.verify_brevo_webhook, None)
     assert response.status_code == 200
     assert response.json() == {"ok": True, "skipped": True, "reason": "duplicate_message"}
+
+
+@pytest.mark.asyncio
+async def test_brevo_incomplete_duplicate_is_reprocessed(monkeypatch):
+    import api.index as index
+
+    processed: list[str] = []
+
+    class FakeSend:
+        ok = True
+        dry_run = True
+        status_code = 200
+        error = None
+
+        def model_dump(self):
+            return {"ok": True, "dry_run": True}
+
+    monkeypatch.setattr(index, "inbound_already_completed", lambda *_a, **_k: False)
+    monkeypatch.setattr(index, "inbound_message_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(index, "claim_inbound_message", lambda *_a, **_k: (False, 77))
+    monkeypatch.setattr(index, "has_successful_agent_response", lambda *_a, **_k: False)
+    monkeypatch.setattr(index, "is_latest_inbound_message", lambda *_a, **_k: True)
+    monkeypatch.setattr(index, "find_customer_profile_by_phone", lambda _phone: {})
+    monkeypatch.setattr(
+        index,
+        "process_incoming_message",
+        lambda incoming, *_a, **_k: processed.append(incoming.text or "") or _async_result("commerce"),
+    )
+    async def fake_send(*_a, **_k):
+        return FakeSend()
+
+    monkeypatch.setattr(index, "send_brevo_reply", fake_send)
+    monkeypatch.setattr(index, "insert_agent_response", lambda *_a, **_k: 1)
+    index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=index.app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/webhooks/brevo/whatsapp",
+                json={"id": "msg-retry", "from": "5511999999999", "text": "olá de novo"},
+            )
+    finally:
+        index.app.dependency_overrides.pop(index.verify_brevo_webhook, None)
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("ok") is True
+    assert body.get("skipped") is not True
+    assert processed == ["olá de novo"]

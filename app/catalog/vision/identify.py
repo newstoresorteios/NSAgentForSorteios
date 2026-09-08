@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-import httpx
 from app.config import get_settings
 from app.models import IncomingMessage
 from app.catalog.vision.prompt import (
@@ -36,24 +35,14 @@ async def download_image_file(
     limit = max_bytes or int(
         getattr(settings, "agent_image_download_max_bytes", 8_000_000)
     )
-    headers = {
-        "User-Agent": "NewStoreAgent/1.0",
-        "Accept": "image/*,*/*",
-    }
-    async with httpx.AsyncClient(
-        timeout=30,
-        follow_redirects=True,
-        headers=headers,
-    ) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        content = response.content
-    if len(content) > limit:
-        raise ValueError("image_too_large")
-    content_type = (response.headers.get("content-type") or "image/jpeg").split(";")[0].strip()
-    if not content_type.startswith("image/"):
-        content_type = "image/jpeg"
-    return content, content_type
+    from app.core.remote_media import download_trusted_media
+
+    return await download_trusted_media(
+        url,
+        kind="image",
+        max_bytes=limit,
+        timeout_seconds=30,
+    )
 
 
 def _vision_model() -> str:

@@ -393,6 +393,8 @@ def compile_agent_prompt(
             }
         )
 
+    from app.memory.history_window import prefix_turn_sent_at
+
     recent_window = (recent_turns or [])[
         - resolve_model_history_limit(settings) :
     ]
@@ -402,7 +404,12 @@ def compile_agent_prompt(
         role = str(turn.get("role") or "").strip().lower()
         content = turn.get("content")
         if role in {"user", "assistant"} and content:
-            input_items.append({"role": role, "content": str(content)})
+            input_items.append(
+                {
+                    "role": role,
+                    "content": prefix_turn_sent_at(str(content), turn.get("created_at")),
+                }
+            )
 
     # Authority order places the current user message once at the end.
     current_text = (
@@ -418,7 +425,12 @@ def compile_agent_prompt(
             and str(last.get("content") or "").strip() == current_text
         )
         if not already_present:
-            input_items.append({"role": "user", "content": current_text})
+            input_items.append(
+                {
+                    "role": "user",
+                    "content": prefix_turn_sent_at(current_text, current=True),
+                }
+            )
 
     input_char_count = sum(len(str(item.get("content") or "")) for item in input_items)
     compiled = CompiledPrompt(

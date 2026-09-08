@@ -71,9 +71,14 @@ def evaluate_canaries(*, tenant_id: str) -> dict[str, int]:
         if activated_at is not None and activated_at.tzinfo is None:
             activated_at = activated_at.replace(tzinfo=timezone.utc)
         baseline = metadata.get("baseline_fail_rate")
+        baseline_known = False
+        baseline_rate = 0.0
         try:
-            baseline_rate = float(baseline) if baseline is not None else 0.0
+            if baseline is not None:
+                baseline_rate = float(baseline)
+                baseline_known = True
         except (TypeError, ValueError):
+            baseline_known = False
             baseline_rate = 0.0
         fail_rate, n_reviews = compute_fail_rate(
             tenant_id=tenant_id,
@@ -84,7 +89,11 @@ def evaluate_canaries(*, tenant_id: str) -> dict[str, int]:
         insight_id = metadata.get("insight_id")
         expires_at = row.get("expires_at")
         enough = n_reviews >= min_reviews
-        worse = enough and baseline_rate > 0 and fail_rate > baseline_rate * lift
+        abs_fail = float(getattr(settings, "agent_learning_rollback_abs_fail", 0.5) or 0.5)
+        worse = enough and (
+            (baseline_known and baseline_rate > 0 and fail_rate > baseline_rate * lift)
+            or fail_rate >= abs_fail
+        )
         if worse:
             try:
                 supersede_extension(
@@ -120,7 +129,7 @@ def evaluate_canaries(*, tenant_id: str) -> dict[str, int]:
                     "extension_id": extension_id,
                 })
             continue
-        if enough and not worse:
+        if enough and not worse and baseline_known and baseline_rate > 0:
             try:
                 clear_extension_expiry(extension_id, tenant_id=tenant_id)
                 confirmed += 1

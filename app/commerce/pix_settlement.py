@@ -8,6 +8,7 @@ Hard rules:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from typing import Any, Awaitable, Callable
 
@@ -25,7 +26,7 @@ def brl_to_cents(amount: Any) -> int | None:
         value = Decimal(str(amount))
     except (InvalidOperation, ValueError, TypeError):
         return None
-    if value < 0:
+    if not value.is_finite() or value < 0:
         return None
     return int((value * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
@@ -114,16 +115,56 @@ async def find_existing_tray_order(order_payload: dict[str, Any]) -> str | None:
     session_id = str(order_payload.get("session_id") or "").strip()
     if not session_id:
         return None
-    try:
-        listed = await TrayAdapterClient().list_orders(session_id=session_id)
-    except Exception:
-        return None
+    listed = await TrayAdapterClient().list_orders(session_id=session_id)
+    if not isinstance(listed, dict) or listed.get("error") or listed.get("success") is False:
+        raise TrayAdapterError("tray_reconciliation_unavailable")
+    if not isinstance(listed.get("orders"), list):
+        raise TrayAdapterError("tray_reconciliation_invalid_response")
+    if any(not isinstance(order, dict) for order in listed["orders"]):
+        raise TrayAdapterError("tray_reconciliation_invalid_response")
+    matches = []
     for order in _orders_from_list(listed):
-        if str(order.get("session_id") or "").strip() not in {"", session_id}:
-            continue
+        if str(order.get("session_id") or "").strip() != session_id:
+            raise TrayAdapterError("tray_reconciliation_session_unverified")
         order_id = order.get("order_id") or order.get("id")
-        if order_id is not None:
-            return str(order_id)
+        if not order_id:
+            raise TrayAdapterError("tray_reconciliation_order_id_missing")
+        expected = expected_amount_cents_from_snapshot({"order_payload": order_payload})
+        if not cents_equal(brl_to_cents(order.get("total")), expected):
+            raise TrayAdapterError("tray_reconciliation_amount_mismatch")
+        matches.append(str(order_id))
+    if len(matches) > 1:
+        raise TrayAdapterError("tray_reconciliation_multiple_orders")
+    return matches[0] if matches else None
+
+
+async def validate_existing_pix_order(row: dict[str, Any], order_result: dict[str, Any]) -> str | None:
+    """Shared financial gate for an order event; never overrides a rejected PIX."""
+    if row.get("settlement_status") == "failed" and not repo.is_retryable_settlement_error(row.get("settlement_error")):
+        return "pix_settlement_rejected"
+    snapshot = row.get("checkout_snapshot") or {}
+    expected_payload = snapshot.get("order_payload") or {}
+    order = order_result.get("order") if isinstance(order_result.get("order"), dict) else order_result
+    expected_session = str(expected_payload.get("session_id") or "").strip()
+    if not expected_session or str(order.get("session_id") or "").strip() != expected_session:
+        return "tray_order_session_mismatch"
+    pid = str(row.get("mp_payment_id") or "")
+    try:
+        payment = await get_payment(pid)
+    except MercadoPagoError:
+        return "mp_fetch_failed"
+    if str(payment.get("id") or "") != pid:
+        return "mp_payment_id_mismatch"
+    if payment.get("currency_id") != (row.get("currency") or "BRL"):
+        return "currency_mismatch"
+    expected = expected_amount_cents_from_snapshot(snapshot)
+    rejection = validate_pix_settlement_amounts(mp_status=payment.get("status"),
+        mp_amount_cents=brl_to_cents(payment.get("transaction_amount")),
+        stored_amount_cents=row.get("amount_cents"), expected_amount_cents=expected)
+    if rejection:
+        return rejection
+    if not cents_equal(brl_to_cents(order.get("total")), expected):
+        return "tray_order_amount_mismatch"
     return None
 
 
@@ -153,13 +194,21 @@ async def settle_approved_pix_payment(
             "settlement_status": "completed",
         }
     if current_settlement == "processing":
-        return {
-            "ok": True,
-            "action": "in_progress",
-            "reason": "settlement_in_progress",
-            "payment_id": pid,
-            "settlement_status": "processing",
-        }
+        updated = row.get("updated_at")
+        stale = False
+        if isinstance(updated, datetime):
+            stamp = updated if updated.tzinfo else updated.replace(tzinfo=timezone.utc)
+            stale = (datetime.now(timezone.utc) - stamp).total_seconds() > 600
+        if stale:
+            repo.requeue_pix_settlement(pid)
+        else:
+            return {
+                "ok": True,
+                "action": "in_progress",
+                "reason": "settlement_in_progress",
+                "payment_id": pid,
+                "settlement_status": "processing",
+            }
 
     if mp_payload is None:
         try:
@@ -255,7 +304,13 @@ async def settle_approved_pix_payment(
             "settlement_status": latest.get("settlement_status"),
         }
 
-    existing_order_id = await find_existing_tray_order(order_payload)
+    try:
+        existing_order_id = await find_existing_tray_order(order_payload)
+    except Exception as exc:
+        # Unknown is not absent: an ambiguous lookup must never trigger POST.
+        repo.mark_pix_settlement(pid, settlement_status="failed",
+            settlement_error=f"tray_reconciliation:{type(exc).__name__}")
+        return {"ok": False, "action": "failed", "reason": "tray_reconciliation_failed", "payment_id": pid}
     if existing_order_id:
         updated = repo.mark_pix_settlement(
             pid,

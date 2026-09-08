@@ -136,18 +136,17 @@ def extract_audio_attachment(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 async def download_audio_file(url: str) -> tuple[bytes, str]:
-    headers = {
-        "User-Agent": "NewStoreAgent/1.0",
-        "Accept": "audio/*,*/*",
-    }
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True, headers=headers) as client:
-        response = await client.get(url)
-        response.raise_for_status()
+    from app.core.remote_media import download_trusted_media
 
-    content_type = (response.headers.get("content-type") or "audio/ogg").split(";")[0].strip()
+    content, content_type = await download_trusted_media(
+        url,
+        kind="audio",
+        max_bytes=8_000_000,
+        timeout_seconds=60,
+    )
     if not content_type.startswith("audio/") and content_type not in AUDIO_MIME_TYPES:
         content_type = "audio/ogg"
-    return response.content, content_type
+    return content, content_type
 
 
 def _extension_for_content_type(content_type: str, fallback_name: str | None = None) -> str:

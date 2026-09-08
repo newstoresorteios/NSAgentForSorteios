@@ -116,7 +116,11 @@ def _fold(value: Any) -> str:
 
 
 def message_states_budget(text: str | None) -> bool:
-    return bool(_BUDGET_IN_MESSAGE_RE.search(str(text or "")))
+    if _BUDGET_IN_MESSAGE_RE.search(str(text or "")):
+        return True
+    from app.catalog.specs.preference_normalize import extract_bare_budget_amount
+
+    return extract_bare_budget_amount(text) is not None
 
 
 _OCCASION_IN_MESSAGE_RE = re.compile(

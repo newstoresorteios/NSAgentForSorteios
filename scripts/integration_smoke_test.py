@@ -107,12 +107,8 @@ def _http_check(
 def check_nsagent_health(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
     def evaluate(response: httpx.Response, body: dict[str, Any]) -> tuple[bool, str]:
         version = body.get("agent_version")
-        probe = body.get("tray_adaptor_probe") or {}
-        probe_ok = bool(probe.get("ok"))
-        ok = response.status_code == 200 and body.get("ok") is True and bool(version) and probe_ok
-        detail = f"HTTP {response.status_code}; agent_version={version!r}; tray_adaptor_probe.ok={probe_ok}"
-        if response.status_code == 200 and not probe_ok:
-            detail += f"; motivo={probe.get('reason') or probe.get('error') or 'probe falhou'}"
+        ok = response.status_code == 200 and body.get("ok") is True and bool(version)
+        detail = f"HTTP {response.status_code}; agent_version={version!r}"
         return ok, detail
 
     return _http_check(

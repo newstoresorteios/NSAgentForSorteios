@@ -44,7 +44,8 @@ def load_webhook_cursor() -> int:
             return 0
         return int(row.get("last_event_id") or 0)
     except Exception:
-        return 0
+        # An unavailable checkpoint is not a new consumer. Let the caller retry.
+        raise
 
 
 def save_webhook_cursor(event_id: int) -> None:
@@ -57,13 +58,14 @@ def save_webhook_cursor(event_id: int) -> None:
                     INSERT INTO public.ai_tray_sync_cursors (cursor_key, last_event_id, updated_at)
                     VALUES (%s, %s, now())
                     ON CONFLICT (cursor_key) DO UPDATE SET
-                        last_event_id = EXCLUDED.last_event_id,
+                        last_event_id = GREATEST(ai_tray_sync_cursors.last_event_id, EXCLUDED.last_event_id),
                         updated_at = now()
                     """,
                     (_CURSOR_KEY, int(event_id)),
                 )
     except Exception as exc:
         print("[tray.webhook.cursor.save_failed]", {"error_type": type(exc).__name__})
+        raise
 
 
 def _session_id_from_order(payload: Any) -> str | None:
@@ -118,6 +120,11 @@ async def confirm_pix_for_tray_order(
             "payment_id": row.get("mp_payment_id"),
             "tray_order_id": row.get("tray_order_id"),
         }
+    from app.commerce.pix_settlement import validate_existing_pix_order
+
+    rejection = await validate_existing_pix_order(row, order)
+    if rejection:
+        return {"ok": False, "reason": rejection, "tray_order_id": oid}
     updated = repo.mark_pix_settlement(
         str(row["mp_payment_id"]),
         settlement_status="completed",
@@ -180,7 +187,9 @@ async def consume_tray_webhook_events(
 ) -> dict[str, Any]:
     tray = client or TrayAdapterClient()
     cursor = load_webhook_cursor()
-    since_id = cursor if cursor > 0 else None
+    # Ask for the oldest unprocessed page, including bootstrap. A latest-page
+    # bootstrap can silently skip failed events as newer events arrive.
+    since_id = cursor
     try:
         payload = await tray.list_webhook_events(limit=limit, since_id=since_id)
     except TrayAdapterError as exc:
@@ -191,35 +200,11 @@ async def consume_tray_webhook_events(
             "cursor": cursor,
         }
     events = payload.get("events") if isinstance(payload, dict) else None
-    if not isinstance(events, list):
-        events = []
-    if since_id is None and events:
-        # First poll: take latest page only and advance cursor without backfill.
-        ids = [int(event.get("id") or 0) for event in events if isinstance(event, dict)]
-        newest = max(ids) if ids else cursor
-        if newest > cursor:
-            save_webhook_cursor(newest)
-        applied = []
-        budget = [0]
-        # Process newest-first page once so live stock/price still land.
-        for event in events:
-            if not isinstance(event, dict):
-                continue
-            try:
-                applied.append(
-                    await apply_tray_webhook_event(
-                        event, client=tray, refresh_budget=budget
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                applied.append({"ok": False, "error_type": type(exc).__name__})
-        return {
-            "ok": True,
-            "processed": len(applied),
-            "cursor": newest,
-            "bootstrap": True,
-            "results": applied,
-        }
+    if not isinstance(events, list) or payload.get("error") or payload.get("success") is False:
+        return {"ok": False, "reason": "invalid_event_page", "cursor": cursor}
+    if any(not isinstance(event, dict) or not str(event.get("id", "")).isdigit() for event in events):
+        return {"ok": False, "reason": "invalid_event_page", "cursor": cursor}
+    events.sort(key=lambda event: int(event["id"]))
     applied = []
     budget = [0]
     max_id = cursor
@@ -227,6 +212,8 @@ async def consume_tray_webhook_events(
         if not isinstance(event, dict):
             continue
         event_id = int(event.get("id") or 0)
+        if event_id <= cursor:
+            continue
         try:
             applied.append(
                 await apply_tray_webhook_event(
@@ -235,14 +222,18 @@ async def consume_tray_webhook_events(
             )
         except Exception as exc:  # noqa: BLE001
             applied.append({"ok": False, "error_type": type(exc).__name__})
+        if not applied[-1].get("ok"):
+            # Only acknowledge a contiguous successful prefix. Both exceptions
+            # and explicit failures must stay available on the next poll.
+            break
         if event_id > max_id:
             max_id = event_id
     if max_id > cursor:
         save_webhook_cursor(max_id)
     return {
-        "ok": True,
+        "ok": all(result.get("ok") for result in applied),
         "processed": len(applied),
         "cursor": max_id,
-        "bootstrap": False,
+        "bootstrap": cursor == 0,
         "results": applied,
     }

@@ -119,7 +119,7 @@ def format_institutional_knowledge_block(
     *,
     persona_metadata: dict[str, Any] | None = None,
 ) -> str:
-    """Prompt-ready institutional snippets for the current turn (no prices)."""
+    """Cue-matched institutional snippets (no vector RAG, no new retrieval agent)."""
     from app.persona.persona_knowledge_repository import format_relevant_knowledge_block
 
     package = fetch_institutional_knowledge(

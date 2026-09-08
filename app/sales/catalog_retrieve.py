@@ -5,7 +5,6 @@ Look up patched names on ``app.sales_agent`` at call time.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from app.commerce.commerce_context import CommerceConversationState
@@ -217,45 +216,46 @@ async def retrieve_catalog_or_clarify(
             ):
                 return _close_hold_result()
             tray_result = sales._session_product_facts_result(state, resolved_product)
+        elif action == "coupon_search":
+            query = str(plan.get("query") or "").strip()
+            print("[sales.agent] tray_request", {
+                "capability": action,
+                "attempt": 1,
+                "strategy": "coupon",
+            })
+            tray_result = await sales.handle_commerce_message(
+                message,
+                facts,
+                customer_context,
+                action=action,
+                query=query,
+            )
+        elif interpretation is not None:
+            print("[sales.agent] leftover_compiled", {"action": action})
+            tray_result = await sales._execute_compiled_product_retrieval(
+                interpretation,
+                message_text=message.text,
+                commerce_state=state,
+            )
         else:
-            queries = [str(plan.get("query") or "").strip()]
-            code_value = re.sub(r"^(?:ean|sku|ref(?:er[êe]ncia)?)\s+", "", queries[0], flags=re.IGNORECASE)
-            code_query = bool(re.fullmatch(r"[A-Za-z0-9._/-]+", code_value)) and any(char.isdigit() for char in code_value)
-            subject = plan.get("subject") or {}
-            if action == "product_search" and not code_query:
-                model = str(subject.get("model") or "").strip()
-                brand = str(subject.get("brand") or "").strip()
-                if model:
-                    queries.append(model)
-                if brand:
-                    queries.append(brand)
-            queries = list(dict.fromkeys(query for query in queries if query or action == "coupon_search"))
-            tray_result = None
-            last_raw_result = None
-            for attempt, query in enumerate(queries[:3], start=1):
-                attempt_plan = {**plan, "query": query, "subject": {**(plan.get("subject") or {}), "query": query}}
-                print("[sales.agent] tray_request", {"capability": action, "attempt": attempt, "strategy": "initial" if attempt == 1 else "progressive"})
-                raw_result = await sales.handle_commerce_message(
-                    message,
-                    facts,
-                    customer_context,
-                    action=action,
-                    query=query,
-                )
-                last_raw_result = raw_result
-                print("[sales.agent] tray_result", {"ok": raw_result is not None and raw_result.safety_reason != "tray_adapter_unavailable", "results_count": len((raw_result.commercial_data or {}).get("products", [])) if raw_result else 0})
-                tray_result = sales._ranked_result(raw_result, attempt_plan) if raw_result else None
-                if tray_result:
-                    print("[sales.agent] ranking", {"input_count": len((raw_result.commercial_data or {}).get("products", [])), "output_count": len((tray_result.commercial_data or {}).get("products", []))})
-                    break
-                if raw_result and raw_result.safety_reason == "tray_adapter_unavailable":
-                    tray_result = raw_result
-                    break
-                if raw_result and raw_result.safety_reason not in {"product_not_found", "ambiguous_product"}:
-                    tray_result = raw_result
-                    break
-            if tray_result is None:
-                tray_result = last_raw_result
+            print("[sales.agent] leftover_clarify", {"action": action})
+            return sales._mark_sales_result(
+                AgentResult(
+                    reply_text=(
+                        "Me diz em uma frase o que você busca — "
+                        "marca, modelo ou faixa de investimento."
+                    ),
+                    intent="commerce",
+                    handoff_required=False,
+                    safety_reason="commerce_clarification",
+                ),
+                interpretation=None,
+                goal=plan.get("goal"),
+                response_source="deterministic_fallback",
+                used_openai_responder=False,
+                used_tray=False,
+                fallback_reason="compiled_or_clarify",
+            )
     if tray_result is None:
         return None
     if interpretation is not None:

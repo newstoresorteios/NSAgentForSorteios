@@ -723,6 +723,8 @@ def _log_interpretation(
 def _normalize_interpreter_history(
     recent_turns: list[dict[str, Any]] | None,
 ) -> list[dict[str, str]]:
+    from app.memory.history_window import prefix_turn_sent_at
+
     normalized: list[dict[str, str]] = []
     for turn in recent_turns or []:
         if not isinstance(turn, dict):
@@ -734,6 +736,8 @@ def _normalize_interpreter_history(
         content = content.strip()
         if not content:
             continue
+        if role in {"user", "assistant"}:
+            content = prefix_turn_sent_at(content, turn.get("created_at"))
         normalized.append({"role": role, "content": content})
     return normalized
 
@@ -866,11 +870,14 @@ async def interpret_message(
         from app.sales import log_swallowed
 
         log_swallowed("interpreter.institutional_knowledge", exc)
+    from app.memory.history_window import HISTORY_TIME_POLICY, prefix_turn_sent_at
+
+    system_instructions = f"{system_instructions}\n\n{HISTORY_TIME_POLICY}"
     messages = [
         {"role": "system", "content": system_instructions},
         state_message,
         *normalized_history,
-        {"role": "user", "content": current_text},
+        {"role": "user", "content": prefix_turn_sent_at(current_text, current=True)},
     ]
     print("[sales.interpreter.request]", {
         "model": interpreter_model,

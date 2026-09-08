@@ -103,6 +103,11 @@ async def test_settle_skips_when_not_approved(monkeypatch):
 @pytest.mark.asyncio
 async def test_settle_creates_tray_order_when_amounts_match(monkeypatch):
     import app.commerce.pix_settlement as settlement
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(settlement, "TrayAdapterClient", lambda: SimpleNamespace(
+        list_orders=AsyncMock(return_value={"orders": []})))
 
     monkeypatch.setattr(settlement.repo, "get_pix_payment_by_mp_id", lambda _pid: _row())
     monkeypatch.setattr(settlement.repo, "claim_pix_settlement", lambda _pid: _row(settlement_status="processing"))
@@ -207,6 +212,55 @@ def test_amount_mismatch_is_not_retryable():
     assert is_retryable_settlement_error("amount_mismatch") is False
     assert is_retryable_settlement_error("tray_error:503") is True
     assert is_retryable_settlement_error("tray_order_id_missing") is True
+
+
+@pytest.mark.asyncio
+async def test_stale_processing_is_reclaimed(monkeypatch):
+    import app.commerce.pix_settlement as settlement
+    from datetime import datetime, timedelta, timezone
+
+    stale = datetime.now(timezone.utc) - timedelta(seconds=601)
+    requeued = {}
+
+    monkeypatch.setattr(
+        settlement.repo,
+        "get_pix_payment_by_mp_id",
+        lambda _pid: _row(settlement_status="processing", updated_at=stale),
+    )
+    monkeypatch.setattr(
+        settlement.repo,
+        "requeue_pix_settlement",
+        lambda pid: requeued.setdefault("pid", pid),
+    )
+    monkeypatch.setattr(
+        settlement.repo,
+        "claim_pix_settlement",
+        lambda _pid: _row(settlement_status="processing"),
+    )
+    monkeypatch.setattr(
+        settlement.repo,
+        "mark_pix_settlement",
+        lambda pid, **kwargs: {
+            "settlement_status": kwargs["settlement_status"],
+            "tray_order_id": kwargs.get("tray_order_id"),
+        },
+    )
+    async def _no_existing(_payload):
+        return None
+
+    monkeypatch.setattr(settlement, "find_existing_tray_order", _no_existing)
+
+    async def create(payload):
+        return {"order_id": "tray-reclaim", "success": True}
+
+    result = await settle_approved_pix_payment(
+        "mp-1",
+        mp_payload={"id": "mp-1", "status": "approved", "transaction_amount": 10.5},
+        create_order=create,
+    )
+    assert requeued["pid"] == "mp-1"
+    assert result["ok"] is True
+    assert result["action"] == "settled"
 
 
 @pytest.mark.asyncio

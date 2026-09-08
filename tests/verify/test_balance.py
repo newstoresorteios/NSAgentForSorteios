@@ -21,6 +21,8 @@ def test_phones_match():
     assert phones_match("+55 85 99949-8149", "5585999498149") is True
     assert phones_match("85999498149", "5585999498149") is True
     assert phones_match("11999999999", "85999498149") is False
+    assert phones_match("11999498149", "85999498149") is False
+    assert phones_match("999498149", "5585999498149") is False
 
 
 def test_detect_third_party_account_inquiry():

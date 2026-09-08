@@ -6,9 +6,53 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from app.models import IncomingMessage
+
 from app.config import get_settings
 from app.db import ensure_tables, get_conn, to_jsonb
 from app.ops.observability import log_event
+
+
+def build_outbound_envelope(incoming: Any, result: Any) -> dict[str, Any]:
+    incoming_payload: dict[str, Any] = {}
+    if incoming is not None and hasattr(incoming, "model_dump"):
+        incoming_payload = incoming.model_dump(mode="json")
+    elif isinstance(incoming, dict):
+        incoming_payload = dict(incoming)
+    return {
+        "incoming": incoming_payload,
+        "result": result.model_dump(mode="json") if hasattr(result, "model_dump") else {
+            "reply_text": getattr(result, "reply_text", None),
+            "intent": getattr(result, "intent", None),
+            "safety_reason": getattr(result, "safety_reason", None),
+        },
+        "provider": incoming_payload.get("provider"),
+        "channel": incoming_payload.get("channel"),
+    }
+
+
+def enqueue_accepted_outbound(
+    *,
+    incoming: Any,
+    result: Any,
+    inbox_id: int | None = None,
+    inbound_id: int | None = None,
+) -> int | None:
+    return enqueue_outbound(
+        provider=str(getattr(incoming, "provider", None) or "brevo"),
+        channel=str(getattr(incoming, "channel", None) or "unknown"),
+        reply_text=str(getattr(result, "reply_text", None) or ""),
+        inbox_id=inbox_id,
+        inbound_id=inbound_id,
+        conversation_key=(
+            getattr(incoming, "conversation_id", None)
+            or getattr(incoming, "sender_key", None)
+        ),
+        visitor_id=getattr(incoming, "visitor_id", None),
+        sender_key=getattr(incoming, "sender_key", None),
+        recipient_external_id=getattr(incoming, "sender_external_id", None),
+        reply_payload=build_outbound_envelope(incoming, result),
+    )
 
 
 def enqueue_outbound(
@@ -30,6 +74,37 @@ def enqueue_outbound(
     ensure_tables()
     with get_conn() as conn:
         with conn.cursor() as cur:
+            if inbound_id is not None:
+                # Serialize create/reuse even when no outbox row exists yet.
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", (-int(inbound_id),))
+                cur.execute(
+                    """
+                    SELECT id, status
+                    FROM public.ai_outbound_outbox
+                    WHERE inbound_id = %(inbound_id)s
+                    ORDER BY
+                      CASE status
+                        WHEN 'sent' THEN 0
+                        WHEN 'leased' THEN 1
+                        WHEN 'pending' THEN 2
+                        WHEN 'failed' THEN 3
+                        ELSE 4
+                      END,
+                      id DESC
+                    LIMIT 1
+                    """,
+                    {"inbound_id": inbound_id},
+                )
+                existing = cur.fetchone()
+                if existing:
+                    existing_id = int(
+                        existing["id"] if isinstance(existing, dict) else existing[0]
+                    )
+                    existing_status = str(
+                        existing["status"] if isinstance(existing, dict) else existing[1]
+                    )
+                    if existing_status in {"sent", "leased", "pending", "failed", "dead"}:
+                        return existing_id
             cur.execute(
                 """
                 INSERT INTO public.ai_outbound_outbox (
@@ -69,7 +144,7 @@ def enqueue_outbound(
 def claim_pending_outbox(
     *,
     limit: int = 10,
-    lease_seconds: int = 60,
+    lease_seconds: int = 120,
     owner: str | None = None,
 ) -> list[dict[str, Any]]:
     settings = get_settings()
@@ -110,7 +185,7 @@ def claim_pending_outbox(
                   outbox.id, outbox.inbox_id, outbox.inbound_id, outbox.provider,
                   outbox.channel, outbox.conversation_key, outbox.visitor_id,
                   outbox.sender_key, outbox.recipient_external_id,
-                  outbox.reply_text, outbox.reply_payload, outbox.attempts
+                  outbox.reply_text, outbox.reply_payload, outbox.attempts, outbox.lease_owner, outbox.max_attempts
                 """,
                 {
                     "limit": max(1, min(int(limit), 25)),
@@ -138,15 +213,54 @@ def claim_pending_outbox(
                     "reply_text": row[9],
                     "reply_payload": row[10],
                     "attempts": row[11],
+                    "lease_owner": row[12],
+                    "max_attempts": row[13],
                 }
             )
     return result
+
+
+def incoming_from_outbox_row(row: dict[str, Any]) -> IncomingMessage:
+    payload = row.get("reply_payload") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    incoming_data = payload.get("incoming")
+    if isinstance(incoming_data, dict) and incoming_data:
+        try:
+            return IncomingMessage.model_validate(incoming_data)
+        except Exception as exc:
+            from app.ingress import log_swallowed
+
+            log_swallowed("outbox.incoming_payload", exc)
+    return IncomingMessage(
+        text="",
+        channel=str(row.get("channel") or "whatsapp"),
+        provider=str(row.get("provider") or "brevo"),
+        conversation_id=row.get("conversation_key"),
+        sender_key=row.get("sender_key"),
+        visitor_id=row.get("visitor_id"),
+        sender_external_id=row.get("recipient_external_id"),
+        sender_phone=(
+            incoming_data.get("sender_phone")
+            if isinstance(incoming_data, dict)
+            else None
+        ),
+        raw=incoming_data.get("raw") if isinstance(incoming_data, dict) else {},
+        image_url=incoming_data.get("image_url") if isinstance(incoming_data, dict) else None,
+        audio_url=incoming_data.get("audio_url") if isinstance(incoming_data, dict) else None,
+        instagram_story=(
+            incoming_data.get("instagram_story")
+            if isinstance(incoming_data, dict)
+            else None
+        ),
+    )
 
 
 def mark_outbox_sent(
     outbox_id: int,
     *,
     provider_response: dict[str, Any] | None = None,
+    owner: str | None = None,
 ) -> None:
     settings = get_settings()
     if not settings.database_url:
@@ -164,16 +278,18 @@ def mark_outbox_sent(
                     lease_expires_at = NULL,
                     last_error = NULL
                 WHERE id = %(id)s
+                  AND (%(owner)s IS NULL OR (status = 'leased' AND lease_owner = %(owner)s))
                 """,
                 {
                     "id": outbox_id,
+                    "owner": owner,
                     "provider_response": to_jsonb(provider_response or {}),
                 },
             )
     log_event("outbox.sent", {"outbox_id": outbox_id})
 
 
-def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False) -> None:
+def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False, owner: str | None = None) -> None:
     settings = get_settings()
     if not settings.database_url:
         return
@@ -187,12 +303,107 @@ def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False) -> Non
                     updated_at = now(),
                     lease_owner = NULL,
                     lease_expires_at = NULL
-                WHERE id = %(id)s
+                WHERE id = %(id)s AND status <> 'sent'
+                  AND (%(owner)s IS NULL OR (status = 'leased' AND lease_owner = %(owner)s))
                 """,
                 {
                     "id": outbox_id,
+                    "owner": owner,
                     "status": "dead" if dead else "failed",
                     "error": (error or "")[:500],
                 },
             )
     log_event("outbox.failed", {"outbox_id": outbox_id, "dead": dead})
+
+
+def get_outbox_status(outbox_id: int) -> str | None:
+    if not get_settings().database_url:
+        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM public.ai_outbound_outbox WHERE id = %s", (outbox_id,))
+            row = cur.fetchone()
+    return str(row["status"] if isinstance(row, dict) else row[0]) if row else None
+
+
+def has_sent_outbound(inbound_id: int | None) -> bool:
+    if inbound_id is None or not get_settings().database_url:
+        return False
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM public.ai_outbound_outbox WHERE inbound_id = %s AND status = 'sent' LIMIT 1", (inbound_id,))
+            return cur.fetchone() is not None
+
+
+def get_accepted_outbound(inbound_id: int | None) -> dict[str, Any] | None:
+    """Recover a previously accepted turn before any model/tool regeneration."""
+    if inbound_id is None or not get_settings().database_url:
+        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, status, reply_text, reply_payload
+                   FROM public.ai_outbound_outbox WHERE inbound_id = %s
+                   ORDER BY CASE status WHEN 'sent' THEN 0 WHEN 'leased' THEN 1
+                     WHEN 'pending' THEN 2 WHEN 'failed' THEN 3 ELSE 4 END, id DESC
+                   LIMIT 1""", (inbound_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return dict(row) if isinstance(row, dict) else dict(zip(
+        ("id", "status", "reply_text", "reply_payload"), row))
+
+
+def claim_outbox_for_send(outbox_id: int, *, lease_seconds: int = 120) -> dict[str, Any] | None:
+    """Claim and return the immutable accepted envelope, never a regenerated reply."""
+    if not get_settings().database_url:
+        return None
+    owner = f"inline:{uuid4().hex}"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE public.ai_outbound_outbox
+                   SET status = 'leased', lease_owner = %s,
+                       lease_expires_at = now() + (%s * interval '1 second'),
+                       attempts = attempts + 1, updated_at = now()
+                   WHERE id = %s AND status IN ('pending', 'failed')
+                     AND attempts < max_attempts
+                   RETURNING id, inbound_id, provider, channel, reply_text, reply_payload, lease_owner, attempts, max_attempts""",
+                (owner, max(15, lease_seconds), outbox_id),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return dict(row) if isinstance(row, dict) else dict(zip(
+        ("id", "inbound_id", "provider", "channel", "reply_text", "reply_payload", "lease_owner", "attempts", "max_attempts"), row
+    ))
+
+
+def result_from_outbox_row(row: dict[str, Any]):
+    from app.models import AgentResult
+
+    payload = row.get("reply_payload") or {}
+    data = dict(payload.get("result") or {}) if isinstance(payload, dict) else {}
+    data["reply_text"] = str(row.get("reply_text") or data.get("reply_text") or "")
+    data["intent"] = data.get("intent") or "commerce"
+    return AgentResult.model_validate(data)
+
+
+async def dispatch_accepted_outbound(outbox_id: int, send) -> dict[str, Any]:
+    """Both immediate dispatch and retries acquire ownership before sending."""
+    row = claim_outbox_for_send(outbox_id)
+    if row is None:
+        status = get_outbox_status(outbox_id)
+        return {"ok": status == "sent", "queued": status in {"pending", "failed", "leased"},
+                "skipped": True, "status": status}
+    try:
+        info = await send(incoming_from_outbox_row(row), result_from_outbox_row(row))
+    except Exception as exc:
+        info = {"ok": False, "error": type(exc).__name__}
+    if info.get("ok"):
+        mark_outbox_sent(outbox_id, provider_response=info, owner=row["lease_owner"])
+    else:
+        mark_outbox_failed(outbox_id, error=str(info.get("error") or "send_failed"), owner=row["lease_owner"],
+            dead=int(row.get("attempts") or 1) >= int(row.get("max_attempts") or 5))
+    return info

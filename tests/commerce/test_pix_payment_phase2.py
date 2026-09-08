@@ -125,7 +125,10 @@ async def test_create_and_persist_pix_payment(monkeypatch):
         raw={"id": "mp-1"},
     )
 
-    async def fake_create(**_kwargs):
+    create_kwargs = {}
+
+    async def fake_create(**kwargs):
+        create_kwargs.update(kwargs)
         return created
 
     captured = {}
@@ -154,6 +157,8 @@ async def test_create_and_persist_pix_payment(monkeypatch):
     assert captured["qr_code"] == "PIXCODE"
     assert captured["conversation_id"] == "c1"
     assert isinstance(captured["expires_at"], datetime)
+    assert create_kwargs.get("idempotency_key")
+    assert len(str(create_kwargs["idempotency_key"])) == 64
 
 
 @pytest.mark.asyncio
@@ -173,6 +178,24 @@ async def test_webhook_http_always_200(monkeypatch):
         resp = await client.post("/api/payments/webhook", json={"type": "payment"})
     assert resp.status_code == 200
     assert resp.json()["reason"] == "missing_payment_id"
+
+
+@pytest.mark.asyncio
+async def test_webhook_http_503_on_mp_fetch_failed(monkeypatch):
+    import api.index as index
+    import app.commerce.pix_webhook_api as webhook_api
+
+    async def fake_handle(payload, query, *, settings=None):
+        return {"ok": True, "skipped": True, "reason": "mp_fetch_failed"}
+
+    monkeypatch.setattr(webhook_api, "handle_mercadopago_webhook", fake_handle)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=index.app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.post("/api/payments/webhook", json={"type": "payment"})
+    assert resp.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -198,14 +221,67 @@ async def test_status_endpoint_returns_mp_status(monkeypatch):
         }
 
     monkeypatch.setattr(webhook_api, "refresh_pix_payment_status", fake_refresh)
-    monkeypatch.setattr(webhook_api, "get_pix_payment_by_mp_id", lambda _pid: None)
 
     async with AsyncClient(
         transport=ASGITransport(app=index.app),
         base_url="http://test",
     ) as client:
-        resp = await client.get("/api/payments/123/status")
+        unbound = await client.get("/api/payments/123/status")
+        missing = await client.get("/api/payments/status")
+    assert unbound.status_code == 401
+    assert unbound.json()["error"] == "session_required"
+    assert missing.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_status_endpoint_session_bound(monkeypatch):
+    import api.index as index
+    import app.commerce.pix_webhook_api as webhook_api
+
+    monkeypatch.setattr(webhook_api, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        webhook_api,
+        "get_pix_payment_by_cart_session_id",
+        lambda sid: {"mp_payment_id": "123", "settlement_status": "none", "paid_at": None}
+        if sid == "sess-1"
+        else None,
+    )
+
+    async def fake_refresh(payment_id, *, settings=None):
+        return {
+            "payment_id": payment_id,
+            "status": "pending",
+            "row": {"settlement_status": "none", "paid_at": None},
+            "raw": {},
+        }
+
+    monkeypatch.setattr(webhook_api, "refresh_pix_payment_status", fake_refresh)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=index.app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.get("/api/payments/status?cart_session_id=sess-1")
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["paymentId"] == "123"
-    assert body["status"] == "pending"
+    assert resp.json()["paymentId"] == "123"
+    assert resp.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_invalid_signature(monkeypatch):
+    import api.index as index
+    import app.commerce.pix_webhook_api as webhook_api
+
+    monkeypatch.setattr(
+        webhook_api,
+        "get_settings",
+        lambda: _settings(mp_webhook_secret="whsec"),
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=index.app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.post("/api/payments/webhook", json={"type": "payment"})
+    assert resp.status_code == 401
+    assert resp.json()["error"] == "invalid_signature"

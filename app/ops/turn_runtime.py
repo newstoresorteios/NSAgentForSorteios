@@ -30,18 +30,29 @@ class LLMCallBudget(BaseModel):
     used_calls: int = Field(default=0, ge=0)
     enforce: bool = False
     allowed_call_types: set[str] = Field(default_factory=set)
+    reserved_call_types: set[str] = Field(
+        default_factory=lambda: {"response_composition"}
+    )
+    reserved_used: set[str] = Field(default_factory=set)
 
     def reserve(self, call_type: str) -> None:
         blocked_type = bool(
             self.allowed_call_types
             and call_type not in self.allowed_call_types
         )
-        exhausted = self.used_calls >= self.max_calls
+        reserved = set(self.reserved_call_types or ())
+        pending_reserved = reserved - set(self.reserved_used or ())
+        hold_for_reserved = 0
+        if pending_reserved and call_type not in reserved and self.max_calls >= 2:
+            hold_for_reserved = 1
+        exhausted = self.used_calls + hold_for_reserved >= self.max_calls
         if self.enforce and (blocked_type or exhausted):
             raise LLMCallBudgetExceeded(
                 f"llm_call_budget_exceeded:{call_type}"
             )
         self.used_calls += 1
+        if call_type in reserved:
+            self.reserved_used.add(call_type)
 
 
 class TurnRuntimeContext(BaseModel):
@@ -77,6 +88,7 @@ class TurnRuntimeContext(BaseModel):
     llm_calls_avoided: int = 0
     llm_avoided_reasons: list[dict[str, object]] = Field(default_factory=list)
     integration_failures: dict[str, int] = Field(default_factory=dict)
+    integration_request_ids: dict[str, list[str]] = Field(default_factory=dict)
     llm_budget: LLMCallBudget = Field(default_factory=LLMCallBudget)
     tray_calls: list[dict[str, object]] = Field(default_factory=list)
     openai_calls: list[dict[str, object]] = Field(default_factory=list)
@@ -223,6 +235,18 @@ class TurnRuntimeContext(BaseModel):
             self.integration_failures.get(provider, 0) + 1
         )
 
+    def register_integration_request_id(
+        self,
+        provider: str,
+        request_id: str | None,
+    ) -> None:
+        cleaned = str(request_id or "").strip()
+        if not cleaned or len(cleaned) > 128:
+            return
+        values = self.integration_request_ids.setdefault(provider, [])
+        if cleaned not in values:
+            values.append(cleaned)
+
     def register_fallback(self, reason: str | None) -> None:
         if reason and reason not in self.fallback_reasons:
             self.fallback_reasons.append(reason)
@@ -265,6 +289,10 @@ class TurnRuntimeContext(BaseModel):
                 "enforce": self.llm_budget.enforce,
             },
             "integration_failures": dict(self.integration_failures),
+            "integration_request_ids": {
+                provider: list(values[:10])
+                for provider, values in self.integration_request_ids.items()
+            },
             "tray_tools": [
                 {
                     "tool": item.get("tool"),

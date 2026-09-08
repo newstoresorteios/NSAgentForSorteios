@@ -33,6 +33,18 @@ def _mock_client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+def test_nsagent_health_passes_without_tray_probe():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"ok": True, "agent_version": "v98"},
+        )
+
+    with _mock_client(handler) as client:
+        result = check_nsagent_health(client, _cfg())
+    assert result.passed is True
+
+
 def test_nsagent_health_pass():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/health"
@@ -41,7 +53,6 @@ def test_nsagent_health_pass():
             json={
                 "ok": True,
                 "agent_version": "v61",
-                "tray_adaptor_probe": {"ok": True, "configured": True},
             },
         )
 
@@ -84,7 +95,6 @@ def test_run_smoke_tests_all_critical_pass():
         "/api/health": {
             "ok": True,
             "agent_version": "v61",
-            "tray_adaptor_probe": {"ok": True},
         },
         "/health/tray": {"access_valid": True, "store_id": "42"},
         "/health": {"status": "ok"},

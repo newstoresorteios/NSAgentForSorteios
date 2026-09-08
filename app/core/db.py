@@ -27,7 +27,10 @@ def get_returning_id(row: Any) -> int | None:
 
 @contextmanager
 def get_conn() -> Iterator[psycopg.Connection]:
-    """Agent-dedicated Postgres (ai_* tables and agent operational state)."""
+    """Agent-dedicated Postgres (ai_* tables and agent operational state).
+
+    No connection pool — do not add one until p95 latency is measured.
+    """
     settings = get_settings()
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
@@ -946,22 +949,18 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
             return get_returning_id(row)
 
 
-def inbound_message_exists(provider: str | None, message_id: str | None) -> bool:
-    """Return whether this provider message was already recorded.
-
-    Missing IDs are intentionally never deduplicated because two identical texts
-    can be legitimate separate messages.
-    """
+def get_inbound_message_id(provider: str | None, message_id: str | None) -> int | None:
+    """Return the inbound row id for this provider message, if it exists."""
     settings = get_settings()
     if not settings.database_url or not provider or not message_id:
-        return False
+        return None
 
     ensure_tables()
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT 1
+                SELECT id
                 FROM public.ai_inbound_messages
                 WHERE provider = %(provider)s
                   AND message_id = %(message_id)s
@@ -969,7 +968,25 @@ def inbound_message_exists(provider: str | None, message_id: str | None) -> bool
                 """,
                 {"provider": provider, "message_id": message_id},
             )
-            return cur.fetchone() is not None
+            row = cur.fetchone()
+            return get_returning_id(row) if row else None
+
+
+def inbound_message_exists(provider: str | None, message_id: str | None) -> bool:
+    """Return whether this provider message was already recorded.
+
+    Missing IDs are intentionally never deduplicated because two identical texts
+    can be legitimate separate messages.
+    """
+    return get_inbound_message_id(provider, message_id) is not None
+
+
+def inbound_already_completed(provider: str | None, message_id: str | None) -> bool:
+    """True only when the inbound exists and a successful outbound already went out."""
+    inbound_id = get_inbound_message_id(provider, message_id)
+    if inbound_id is None:
+        return False
+    return has_successful_agent_response(inbound_id)
 
 
 def claim_inbound_message(message: dict[str, Any]) -> tuple[bool, int | None]:
@@ -1154,10 +1171,13 @@ def load_recent_conversation_turns(
                     cur.execute(
                         f"""
                         SELECT inbound.id, inbound.text, inbound.conversation_id,
-                               delivered.reply_text, delivered.safety_reason
+                               inbound.created_at,
+                               delivered.reply_text, delivered.safety_reason,
+                               delivered.created_at AS reply_created_at
                         FROM public.ai_inbound_messages AS inbound
                         LEFT JOIN LATERAL (
-                            SELECT response.reply_text, response.safety_reason
+                            SELECT response.reply_text, response.safety_reason,
+                                   response.created_at
                             FROM public.ai_agent_responses AS response
                             WHERE response.inbound_id = inbound.id
                               AND response.provider_send_ok = true
@@ -1183,14 +1203,23 @@ def load_recent_conversation_turns(
 
     rows = [rows_by_id[key] for key in sorted(rows_by_id)][-safe_limit:]
     turns: list[dict[str, Any]] = []
+    from app.memory.history_window import coerce_turn_timestamp
+
     for row in rows:
         inbound_text = str(row.get("text") or "").strip()
         reply_text = str(row.get("reply_text") or "").strip()
         conversation_id = str(row.get("conversation_id") or "").strip()
+        inbound_id = row.get("id")
+        sent_at = coerce_turn_timestamp(row.get("created_at"))
+        reply_sent_at = coerce_turn_timestamp(row.get("reply_created_at"))
         if inbound_text:
             user_turn: dict[str, Any] = {"role": "user", "content": inbound_text}
             if conversation_id:
                 user_turn["conversation_id"] = conversation_id
+            if inbound_id is not None:
+                user_turn["inbound_id"] = int(inbound_id)
+            if sent_at:
+                user_turn["created_at"] = sent_at
             turns.append(user_turn)
         if reply_text:
             assistant_turn: dict[str, Any] = {"role": "assistant", "content": reply_text}
@@ -1198,6 +1227,10 @@ def load_recent_conversation_turns(
                 assistant_turn["metadata"] = {"safety_reason": str(row["safety_reason"])}
             if conversation_id:
                 assistant_turn["conversation_id"] = conversation_id
+            if inbound_id is not None:
+                assistant_turn["inbound_id"] = int(inbound_id)
+            if reply_sent_at:
+                assistant_turn["created_at"] = reply_sent_at
             turns.append(assistant_turn)
     return turns[-safe_limit:]
 
@@ -1538,7 +1571,10 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
     safe_data.setdefault("safety_reason", None)
     safe_data.setdefault("provider_send_ok", False)
 
-    safe_data["provider_response"] = to_jsonb(safe_data.get("provider_response") or {})
+    provider_response = dict(safe_data.get("provider_response") or {})
+    if isinstance(safe_data.get("response_metadata"), dict):
+        provider_response["_agent_metadata"] = safe_data["response_metadata"]
+    safe_data["provider_response"] = to_jsonb(provider_response)
 
     with get_conn() as conn:
         with conn.cursor() as cur:

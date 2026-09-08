@@ -101,7 +101,11 @@ async def try_commerce_checkout_routes(
 ) -> Any | None:
     sales = _sales()
     if interpretation is not None and interpretation.payment_action == "order_payment":
-        if state.pix_payment_id and not state.order_id:
+        if (
+            state.pix_payment_id
+            and not state.order_id
+            and sales.should_use_direct_pix(state)
+        ):
             payment_result = await sales.refresh_direct_pix_checkout(state=state)
         else:
             payment_result = await sales.inspect_order_payment(
@@ -235,6 +239,7 @@ async def try_commerce_checkout_routes(
             plan=plan,
             result=shipping_result,
             interpretation=interpretation,
+            state=sales.evolve_commerce_state(state, shipping_result),
         )
     if interpretation is not None and interpretation.shipping_action == "list_methods":
         shipping_result = await sales.list_shipping_methods(execute=sales.execute_tool)
@@ -243,6 +248,7 @@ async def try_commerce_checkout_routes(
             plan=plan,
             result=shipping_result,
             interpretation=interpretation,
+            state=sales.evolve_commerce_state(state, shipping_result),
         )
     if interpretation is not None and interpretation.shipping_action == "select":
         shipping_result = sales.select_shipping(
@@ -255,6 +261,7 @@ async def try_commerce_checkout_routes(
             plan=plan,
             result=shipping_result,
             interpretation=interpretation,
+            state=sales.evolve_commerce_state(state, shipping_result),
         )
     if (
         interpretation is not None
@@ -268,6 +275,7 @@ async def try_commerce_checkout_routes(
             plan=plan,
             result=shipping_result,
             interpretation=interpretation,
+            state=sales.evolve_commerce_state(state, shipping_result),
         )
     if interpretation is not None and interpretation.checkout_action == "prepare_order":
         order_result = await sales.prepare_order(state=state, execute=sales.execute_tool)
@@ -276,15 +284,33 @@ async def try_commerce_checkout_routes(
             plan=plan,
             result=order_result,
             interpretation=interpretation,
+            state=sales.evolve_commerce_state(state, order_result),
         )
-    if interpretation is not None and interpretation.checkout_action == "create_order":
-        order_result = await sales._fulfill_confirmed_order(state, message=message)
+    if (
+        interpretation is not None
+        and interpretation.checkout_action == "create_order"
+        and interpretation.confirmation == "confirm"
+        and state.pending_action == "awaiting_order_confirmation"
+        and interpretation.purchase_action not in {
+            "set_cart_item_quantity", "remove_cart_item",
+        }
+        and interpretation.checkout_data is None
+        and interpretation.shipping_action is None
+        and interpretation.payment_action is None
+        and interpretation.checkout_channel_preference is None
+        and not interpretation.domain_change_explicit
+    ):
+        confirmed = sales.confirm_prepared_order(state)
+        confirmed_state = sales.evolve_commerce_state(state, confirmed)
+        order_result = await sales._fulfill_confirmed_order(
+            confirmed_state, message=message,
+        )
         return await sales._respond_to_commerce_service(
             message=message,
             plan=plan,
             result=order_result,
             interpretation=interpretation,
-            state=sales.evolve_commerce_state(state, order_result),
+            state=sales.evolve_commerce_state(confirmed_state, order_result),
         )
     if (
         interpretation is not None

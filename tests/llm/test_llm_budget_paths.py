@@ -74,6 +74,15 @@ def test_budget_one_allows_single_call():
     assert context.llm_calls_avoided == 1
 
 
+def test_normal_budget_reserves_responder_instead_of_rerank():
+    budget = LLMCallBudget(max_calls=2, enforce=True)
+    budget.reserve("decision")
+    with pytest.raises(LLMCallBudgetExceeded):
+        budget.reserve("product_selection")
+    budget.reserve("response_composition")
+    assert budget.used_calls == 2
+
+
 def test_budget_two_allows_interpret_and_compose():
     context = _turn(max_calls=2)
     token = set_current_turn(context)

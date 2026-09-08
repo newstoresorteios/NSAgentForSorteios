@@ -4,12 +4,27 @@ import pytest
 
 from app.memory.history_window import (
     count_user_assistant_turns,
+    format_message_sent_at,
+    prefix_turn_sent_at,
     resolve_history_hard_cap,
     resolve_model_history_limit,
     select_model_history_turns,
     turns_for_conversation,
 )
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
+
+
+def test_prefix_turn_sent_at_marks_old_and_current():
+    stamped = prefix_turn_sent_at(
+        "quero um relogio",
+        "2026-09-07T03:14:00+00:00",
+    )
+    assert stamped.startswith("[enviada em 2026-09-07 00:14]")
+    assert "quero um relogio" in stamped
+    current = prefix_turn_sent_at("2600", current=True)
+    assert current.startswith("[enviada agora]")
+    assert prefix_turn_sent_at(stamped, "2026-09-07T03:14:00+00:00") == stamped
+    assert format_message_sent_at(None) is None
 
 
 def test_select_model_history_turns_keeps_newest_only():

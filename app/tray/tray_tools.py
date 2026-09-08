@@ -889,8 +889,20 @@ async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapter
             from app.sales.policies.tool_policy import apply_tool_policy
 
             blocked = apply_tool_policy(name, arguments)
-        except Exception:
-            blocked = None
+        except Exception as exc:
+            print(
+                "[tray.tool.policy]",
+                {
+                    "tool": name,
+                    "error_type": type(exc).__name__,
+                    "fail_closed": True,
+                },
+            )
+            return {
+                "error": "tool_policy_unavailable",
+                "error_type": "tool_policy_unavailable",
+                "tool": name,
+            }
         if blocked is not None:
             return blocked
         result = await _execute_tool(name, arguments, client)

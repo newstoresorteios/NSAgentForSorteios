@@ -210,6 +210,17 @@ _EXPLICIT_NO_BRAND_MEMORY_KEYS = frozenset(
     }
 )
 
+# Deterministic persist writes brand_preference; policy allowlist writes preferred_brands.
+BRAND_MEMORY_KEYS = ("brand_preference", "preferred_brands")
+
+
+def memory_keys_equivalent(key: str | None) -> tuple[str, ...]:
+    """Keys that name the same durable fact and must be read or forgotten together."""
+    cleaned = str(key or "").strip()
+    if cleaned in BRAND_MEMORY_KEYS:
+        return BRAND_MEMORY_KEYS
+    return (cleaned,) if cleaned else ()
+
 
 def _contact_has_explicit_no_brand(
     current_memories: list[ContactMemory] | None,
@@ -239,6 +250,34 @@ def _normalize_explicit_no_preference(key: str, value: Any) -> Any:
     if isinstance(value, str) and value.strip():
         preference = value.strip()[:64]
     return {"preference": preference, "state": "no_preference"}
+
+
+def current_turn_confirms_brand(brand: str | None, text: str | None) -> bool:
+    """Require current customer evidence, never just a sticky model subject."""
+    import unicodedata
+
+    def fold(value: str) -> str:
+        return "".join(c for c in unicodedata.normalize("NFKD", value.casefold())
+                       if not unicodedata.combining(c))
+
+    label, message = fold(str(brand or "").strip()), fold(str(text or ""))
+    if not label or not re.search(r"(?<!\w)" + re.escape(label) + r"(?!\w)", message):
+        return False
+    if re.search(r"\b(sem preferencia|qualquer marca|tanto faz|outras marcas)\b", message):
+        return False
+    if re.search(r"\b(?:nao|menos|exceto|sem)\b[^,;.!?]{0,45}\b" + re.escape(label) + r"\b", message):
+        return False
+    return True
+
+
+def proposal_confirms_current_brand(proposal: MemoryProposal, inbound: IncomingMessage | None) -> bool:
+    if inbound is None or proposal.reason_code not in {"explicit_user_preference", "explicit_user_correction"}:
+        return False
+    value = proposal.value
+    if isinstance(value, dict):
+        value = value.get("active") or value.get("brands") or value.get("value")
+    values = value if isinstance(value, list) else [value]
+    return bool(values) and all(current_turn_confirms_brand(str(item or ""), inbound.text) for item in values)
 
 
 def evaluate_memory_proposal(
@@ -274,14 +313,28 @@ def evaluate_memory_proposal(
         codes.append("sensitive")
 
     normalized_key = _normalize_key(proposal.key, proposal.kind)
+    if (
+        proposal.action == MemoryAction.upsert
+        and proposal.scope != MemoryScope.conversation
+        and (
+            proposal.kind == MemoryKind.recipient
+            or normalized_key == "recipient"
+        )
+    ):
+        # Recipient/name answers are scoped to the active conversation.  A
+        # durable preferred name requires ``preferred_name`` plus explicit
+        # identity evidence, which prevents cross-thread address leakage.
+        codes.append("conversation_scope_required")
     # Preferências de orçamento (kind/key) podem ter número; resto não guarda fato vivo.
     allow_budget_number = (
         proposal.kind == MemoryKind.price_preference
         or (normalized_key or "") in _PRICE_PREFERENCE_KEYS
     )
-    if not allow_budget_number and any(
-        re.search(pat, blob, flags=re.I) for pat in _COMMERCIAL_VOLATILE_PATTERNS
-    ):
+    commercial_patterns = (
+        _COMMERCIAL_VOLATILE_PATTERNS[1:]
+        if allow_budget_number else _COMMERCIAL_VOLATILE_PATTERNS
+    )
+    if any(re.search(pat, blob, flags=re.I) for pat in commercial_patterns):
         codes.append("commercial_volatile")
     if proposal.kind == MemoryKind.instruction_improvement:
         codes.append("use_instruction_extension_channel")
@@ -302,6 +355,7 @@ def evaluate_memory_proposal(
         proposal.action == MemoryAction.upsert
         and proposal.kind == MemoryKind.brand_preference
         and _contact_has_explicit_no_brand(current_memories)
+        and not proposal_confirms_current_brand(proposal, inbound)
     ):
         codes.append("superseded_by_explicit_no_brand")
 
@@ -337,7 +391,7 @@ def evaluate_memory_proposal(
 
     # Duplicate against current active memories.
     for item in current_memories or []:
-        if item.memory_key == normalized_key and item.status == "active":
+        if proposal.action == MemoryAction.upsert and item.memory_key == normalized_key and item.status == "active":
             if str(item.value) == str(
                 normalized_value
                 if isinstance(normalized_value, dict)

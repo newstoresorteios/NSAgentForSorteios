@@ -787,6 +787,50 @@ def test_rollback_confirms_when_kpis_hold(monkeypatch):
     assert cleared == [8]
 
 
+def test_rollback_does_not_confirm_unknown_baseline(monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(
+        "app.learning.rollback.get_settings",
+        lambda: SimpleNamespace(
+            agent_learning_rollback_min_reviews=20,
+            agent_learning_rollback_fail_lift=1.2,
+            agent_learning_canary_hours=6,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.learning.rollback.list_learning_auto_extensions",
+        lambda **_k: [
+            {
+                "id": 11,
+                "expires_at": now + timedelta(hours=3),
+                "approved_at": now - timedelta(hours=1),
+                "metadata": {
+                    "insight_id": 12,
+                    "activated_at": (now - timedelta(hours=1)).isoformat(),
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr("app.learning.rollback.compute_fail_rate", lambda **_k: (1.0, 20))
+    superseded: dict = {}
+    monkeypatch.setattr(
+        "app.learning.rollback.supersede_extension",
+        lambda ext_id, **kwargs: superseded.update({"id": ext_id, **kwargs}),
+    )
+    monkeypatch.setattr(
+        "app.learning.rollback.mark_insight_status",
+        lambda **kwargs: superseded.update({"insight": kwargs}),
+    )
+    monkeypatch.setattr(
+        "app.learning.rollback.clear_extension_expiry",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not confirm")),
+    )
+    result = evaluate_canaries(tenant_id="newstore")
+    assert result["confirmed"] == 0
+    assert result["rolled_back"] == 1
+    assert superseded["id"] == 11
+
+
 def test_format_learned_cases_block():
     block = format_learned_cases_block(
         [

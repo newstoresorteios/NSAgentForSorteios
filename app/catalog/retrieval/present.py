@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.catalog.retrieval.availability import (
     apply_persona_presentation_order,
     product_availability_state,
     select_diverse_brand_shortlist,
 )
-from app.catalog.retrieval.limits import customer_result_limit
+from app.catalog.retrieval.hard_filter import hard_filter_products
+from app.catalog.retrieval.limits import customer_result_limit, revalidate_top_n
 from app.catalog.retrieval.revalidate import revalidate_products
 from app.catalog.retrieval.scoring import prefer_dial_and_case_matches
 from app.catalog.retrieval.session import RetrievalSession
@@ -128,6 +131,14 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
         from app.catalog.retrieval.rerank import rerank_products
 
         ranked = await rerank_products(enriched, interpretation)
+        # A semantic top-N may contain only one brand. Retain eligible candidates
+        # for the final diversity pass instead of treating that top-N as the pool.
+        ranked_ids = {str(p.get("id")) for p in ranked if p.get("id") is not None}
+        ranked = ranked + [
+            p for p in rank_pool
+            if p.get("id") is not None and str(p["id"]) not in ranked_ids
+            and product_availability_state(p) != "unavailable"
+        ]
     else:
         ranked = hard_filtered
     ranked = apply_persona_presentation_order(ranked)
@@ -141,7 +152,56 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
         interpretation,
         session.execute_tool,
     )
-    if not refreshed and revalidation_failed:
+    # Live detail can invalidate the price, availability or attributes used to
+    # choose this shortlist. Keep successful confirmations separate from tool
+    # failures: a rejected live row must never fall back to its cached version.
+    live_confirmed = bool(refreshed)
+    if plan.mode == "recommendation" and refreshed:
+        confirmed = list(refreshed)
+        refreshed = _eligible_live_recommendations(confirmed, session)
+        attempted_ids = {str(product.get("id")) for product in selected}
+        remaining = [
+            product for product in ranked
+            if str(product.get("id")) not in attempted_ids
+        ]
+        # One bounded refill wave, only after a successful upstream batch.
+        # Never amplify a partial failure/rate limit by querying more SKUs.
+        missing = min(customer_result_limit() - len(refreshed), revalidate_top_n())
+        if missing > 0 and remaining and not revalidation_failed:
+            confirmed_ids = {str(product.get("id")) for product in refreshed}
+            diverse = select_diverse_brand_shortlist(
+                refreshed + remaining,
+                interpretation,
+                limit=len(refreshed) + missing,
+            )
+            reserves = [
+                product for product in diverse
+                if str(product.get("id")) not in confirmed_ids
+            ][:missing]
+            replacement_rows, refill_failed = await revalidate_products(
+                reserves, interpretation, session.execute_tool,
+            )
+            revalidation_failed = revalidation_failed or refill_failed
+            confirmed.extend(replacement_rows)
+            refreshed = _eligible_live_recommendations(confirmed, session)
+        if not refreshed:
+            return AgentResult(
+                reply_text=(
+                    "Na confirmação atual, as opções consultadas não atenderam "
+                    "a todos os critérios. Posso tentar outras opções mantendo "
+                    "o que você pediu."
+                ),
+                intent="commerce",
+                handoff_required=False,
+                safety_reason="recommendation_no_match",
+                response_metadata={
+                    "presented_products": False,
+                    "product_resolution_state": "live_constraints_changed",
+                    "clear_active_product": True,
+                    "revalidation_failed": revalidation_failed,
+                },
+            )
+    if not refreshed and revalidation_failed and not live_confirmed:
         index_backed = session.catalog_index_primary or any(
             bool(product.get("_from_catalog_index"))
             or str(product.get("_factual_source") or "").strip().lower()
@@ -292,3 +352,18 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
     elif not result.response_metadata.get("product_resolution_state"):
         result.response_metadata["product_resolution_state"] = "options_presented"
     return result
+
+
+def _eligible_live_recommendations(
+    products: list[dict[str, Any]], session: RetrievalSession,
+) -> list[dict[str, Any]]:
+    eligible = hard_filter_products(
+        products,
+        session.interpretation,
+        mode="recommendation",
+        message_text=session.message_text,
+    )
+    return [
+        product for product in eligible
+        if product_availability_state(product) != "unavailable"
+    ]

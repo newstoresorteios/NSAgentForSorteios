@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 from typing import Any
 
 from app.config import Settings, get_settings
@@ -13,7 +15,7 @@ from app.commerce.mercadopago_client import (
     get_payment,
 )
 from . import pix_payment_repository as repo
-from app.commerce.pix_settlement import settle_approved_pix_payment
+from app.commerce.pix_settlement import brl_to_cents, settle_approved_pix_payment
 
 
 def extract_mp_payment_id(
@@ -89,12 +91,24 @@ async def create_and_persist_pix_payment(
     settings: Settings | None = None,
 ) -> tuple[PixPaymentCreated, int | None]:
     cfg = settings or get_settings()
+    amount_cents_requested = brl_to_cents(transaction_amount)
+    if amount_cents_requested is None or amount_cents_requested <= 0:
+        raise MercadoPagoError("Invalid PIX amount", code="invalid_amount")
+    # The confirmed purchase is immutable; a same-price change is a new intent.
+    identity = {"cart_session_id": cart_session_id, "external_reference": external_reference,
+        "amount_cents": amount_cents_requested, "checkout_snapshot": checkout_snapshot or {},
+        "conversation_id": conversation_id, "sender_key": sender_key,
+        "payer_email": payer_email, "channel": channel,
+        "tenant_id": (metadata or {}).get("tenant_id")}
+    stable_key = hashlib.sha256(json.dumps(identity, sort_keys=True,
+        separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     created = await create_pix_payment(
         transaction_amount=transaction_amount,
         description=description,
         payer_email=payer_email,
         external_reference=external_reference,
         metadata=metadata,
+        idempotency_key=stable_key,
         settings=cfg,
     )
     expires_at = datetime.now(timezone.utc) + timedelta(

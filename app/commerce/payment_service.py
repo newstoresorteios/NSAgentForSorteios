@@ -729,8 +729,8 @@ async def inspect_order_payment(
         "status": status,
     })
     order_label = str(result.get("order_id") or target)
-    # Prefer hosted URL from Tray; fall back to state URL recovered from transcript.
-    effective_url = payment_url or state.order_payment_url
+    # Live inspect is the only source. A stored transcript URL may be stale.
+    effective_url = payment_url
     if status == "confirmed":
         reply_text = f"O pagamento do pedido {order_label} já está confirmado."
     elif effective_url:

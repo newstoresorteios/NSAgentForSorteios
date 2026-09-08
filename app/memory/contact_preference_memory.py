@@ -288,14 +288,11 @@ def build_preference_memory_items(
             summary=f"occasion={occasion}",
         )
 
-    recipient = _fold_label(prefs.recipient)
-    if recipient:
-        add(
-            memory_key="recipient",
-            memory_kind=MemoryKind.recipient.value,
-            value=recipient,
-            summary=f"recipient={recipient}",
-        )
+    # ``recipient`` is turn/conversation state.  It is also used by the sales
+    # flow for the customer's answer to "como posso te chamar?", so persisting
+    # it on the contact can address a later conversation with an unconfirmed
+    # word from an older thread.  Stable names use the dedicated
+    # ``preferred_name`` memory proposal after explicit identity evidence.
 
     if prefs.budget_min is not None or prefs.budget_max is not None:
         budget = {
@@ -441,15 +438,18 @@ def prior_catalog_theme_from_memories(memories: list[ContactMemory]) -> str | No
     """Active brand from durable memory, if any."""
     if _explicit_no_brand_active(memories):
         return None
+    from app.memory.memory_policy import BRAND_MEMORY_KEYS
+
+    chosen = None
     for item in memories:
         if getattr(item, "status", "active") != "active":
             continue
-        if item.memory_key != "brand_preference":
+        if item.memory_key not in BRAND_MEMORY_KEYS:
             continue
         brand = _active_brand_from_memory(item)
         if brand:
-            return brand
-    return None
+            chosen = brand
+    return chosen
 
 
 def prior_catalog_theme_resume_question(brand: str | None) -> str | None:
@@ -597,6 +597,11 @@ def rehydrate_interpretation_from_memories(
     if not memories:
         return interpretation, []
     skip_catalog = should_skip_catalog_memory_rehydrate(interpretation, message_text)
+    from app.memory.memory_policy import current_turn_confirms_brand
+
+    confirms_brand = current_turn_confirms_brand(interpretation.subject.brand, message_text)
+    if confirms_brand and "brand" not in list(interpretation.preferences.explicit_no_preferences or []):
+        memories = [item for item in memories if item.memory_key not in _EXPLICIT_NO_BRAND_KEYS]
     prior_brand = prior_catalog_theme_from_memories(memories)
     prefs = interpretation.preferences.model_copy(deep=True)
     subject = interpretation.subject.model_copy(deep=True)
@@ -611,8 +616,30 @@ def rehydrate_interpretation_from_memories(
         if str(item).lower().startswith("exclude_brand:")
     }
 
-    if not skip_catalog:
-        brand_mem = by_key.get("brand_preference")
+    budget_only = False
+    try:
+        from app.sales.discovery import message_states_budget
+        from app.catalog.specs.preference_normalize import (
+            message_states_color,
+            message_states_style,
+        )
+
+        budget_only = bool(
+            message_states_budget(message_text)
+            and not interpretation.references_previous_context
+            and not message_states_color(message_text)
+            and not message_states_style(message_text)
+        )
+    except Exception as exc:
+        _log_optional("budget_only_rehydrate", exc)
+
+    if not skip_catalog and not budget_only:
+        from app.memory.memory_policy import BRAND_MEMORY_KEYS
+
+        brand_mem = next(
+            (by_key[key] for key in BRAND_MEMORY_KEYS if key in by_key),
+            None,
+        )
         if brand_mem and not subject.brand and not explicit_no_brand:
             brand = _active_brand_from_memory(brand_mem)
             if brand and _fold_key(brand) not in excluded_from_attrs:
@@ -668,12 +695,9 @@ def rehydrate_interpretation_from_memories(
                 except (TypeError, ValueError):
                     pass
 
-    recipient_mem = by_key.get("recipient")
-    if recipient_mem and not prefs.recipient:
-        value = _fold_label(_unwrap_value(recipient_mem.value))
-        if value:
-            prefs.recipient = value
-            filled.append("recipient")
+    # Legacy contact-scoped ``recipient`` rows are intentionally ignored.
+    # Conversation summaries/qualification slots retain the current thread's
+    # recipient without allowing it to cross into another conversation.
 
     for memory in memories:
         if not str(memory.memory_key or "").startswith("explicit_no:"):
@@ -808,6 +832,23 @@ def persist_contact_preferences_from_interpretation(
         interpretation,
         existing_memories=existing,
     )
+    from app.memory.memory_policy import current_turn_confirms_brand
+
+    confirms_brand = current_turn_confirms_brand(interpretation.subject.brand, message_text)
+    if confirms_brand and "brand" not in list(interpretation.preferences.explicit_no_preferences or []):
+        from app.memory.contact_memory_repository import forget_contact_memory
+
+        # Forget both legacy key representations before persisting the new
+        # explicit preference. A name inherited from history cannot do this.
+        for item in existing:
+            if item.memory_key in _EXPLICIT_NO_BRAND_KEYS:
+                try:
+                    forget_contact_memory(tenant_id=tenant_id, sender_key=sender_key,
+                                          memory_key=item.memory_key)
+                except Exception as exc:
+                    _log_optional("brand_preference_correction", exc)
+                    return {"enabled": True, "upserted": 0, "skipped": "correction_persist_failed"}
+        existing = [item for item in existing if item.memory_key not in _EXPLICIT_NO_BRAND_KEYS]
     if getattr(interpretation, "_catalog_memory_rehydrate_skipped", False):
         stated = _stated_catalog_persist_keys(message_text)
         items = [
@@ -826,11 +867,15 @@ def persist_contact_preferences_from_interpretation(
         try:
             from app.memory.contact_memory_repository import forget_contact_memory
 
-            forgotten = forget_contact_memory(
-                tenant_id=tenant_id,
-                sender_key=sender_key,
-                memory_key="brand_preference",
-            )
+            from app.memory.memory_policy import BRAND_MEMORY_KEYS
+
+            forgotten = 0
+            for alias in BRAND_MEMORY_KEYS:
+                forgotten += forget_contact_memory(
+                    tenant_id=tenant_id,
+                    sender_key=sender_key,
+                    memory_key=alias,
+                )
             if forgotten:
                 print(
                     "[memory.contact_preference.brand_cleared]",

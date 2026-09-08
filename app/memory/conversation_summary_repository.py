@@ -9,6 +9,19 @@ from app.db import get_conn, to_jsonb
 from app.memory.memory_models import ConversationSummaryDelta
 
 
+def close_resolved_questions(
+    open_questions: list[str],
+    resolved_points: list[str],
+) -> list[str]:
+    resolved_keys = {str(item).strip().casefold() for item in resolved_points if str(item).strip()}
+    closed: list[str] = []
+    for item in open_questions:
+        text = str(item).strip()
+        if text and text.casefold() not in resolved_keys and text not in closed:
+            closed.append(text)
+    return closed
+
+
 def get_conversation_summary(
     *,
     tenant_id: str,
@@ -57,9 +70,12 @@ def apply_summary_delta(
         (existing or {}).get("resolved_points"),
         delta.resolved_points,
     )
-    open_q = _merge(
-        (existing or {}).get("open_questions"),
-        delta.open_questions,
+    open_q = close_resolved_questions(
+        _merge(
+            (existing or {}).get("open_questions"),
+            delta.open_questions,
+        ),
+        resolved,
     )
     corrections = _merge(
         (existing or {}).get("user_corrections"),
@@ -80,6 +96,7 @@ def apply_summary_delta(
     ]
     summary = "; ".join(part for part in summary_parts if part)[:max_chars]
     token_approx = max(1, len(summary) // 4) if summary else 0
+    expected_version = (existing or {}).get("version")
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -101,6 +118,7 @@ def apply_summary_delta(
                         updated_at = %s
                     WHERE tenant_id = %s
                       AND conversation_key = %s
+                      AND version = %s
                     RETURNING *
                     """,
                     (
@@ -117,6 +135,7 @@ def apply_summary_delta(
                         now,
                         tenant_id,
                         conversation_key,
+                        expected_version,
                     ),
                 )
             else:
@@ -147,4 +166,11 @@ def apply_summary_delta(
                     ),
                 )
             row = cur.fetchone()
+    if existing and not row:
+        current = get_conversation_summary(
+            tenant_id=tenant_id,
+            conversation_key=conversation_key,
+        ) or dict(existing)
+        current["cas_conflict"] = True
+        return current
     return dict(row or {})

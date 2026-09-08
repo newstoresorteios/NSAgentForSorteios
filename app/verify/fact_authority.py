@@ -210,7 +210,28 @@ def claim_from_product_field(
 ) -> CommercialClaim:
     factual = str(product.get("_factual_source") or "").strip().lower()
     revalidated = bool(product.get("_revalidated"))
-    if factual == "tray_live" or revalidated:
+    field_sources = (
+        product.get("_field_sources")
+        if isinstance(product.get("_field_sources"), dict)
+        else {}
+    )
+    field_source = str(field_sources.get(key) or "").strip().lower()
+    if field_source == "tray_live":
+        source = FactSource.TRAY_LIVE
+        status = RevalidationStatus.REVALIDATED
+        confidence = 0.95
+    elif field_sources and key in {
+        "price",
+        "current_price",
+        "promotional_price",
+        "stock",
+        "available",
+        "url",
+    }:
+        source = FactSource.CATALOG_SNAPSHOT
+        status = RevalidationStatus.STALE
+        confidence = 0.55
+    elif factual == "tray_live" or revalidated:
         source = FactSource.TRAY_LIVE
         status = RevalidationStatus.REVALIDATED
         confidence = 0.95
@@ -354,10 +375,7 @@ def grounded_evidence_from_product(
             claim.source,
         ):
             continue
-        # Stale index/cache may guide discovery but must not assert live price/stock
-        # — unless this turn explicitly fell back to the durable index after Tray
-        # revalidation failed (otherwise the persona reply is wiped by enforce).
-        allow_stale_commercial = bool(product.get("_revalidation_degraded"))
+        # Stale index/cache may guide discovery but must not assert live price/stock.
         if (
             claim.revalidation_status == RevalidationStatus.STALE
             and kind in {
@@ -366,7 +384,6 @@ def grounded_evidence_from_product(
                 "stock",
                 "availability",
             }
-            and not allow_stale_commercial
         ):
             continue
         rows.append(
@@ -391,11 +408,19 @@ def authorize_products_for_responder(
     *,
     tenant_id: str = "newstore",
 ) -> tuple[list[dict[str, Any]], list[GroundedCommerceEvidence]]:
-    """Return product dicts stripped to authorized commercial fields + evidence."""
+    """Return product dicts stripped to authorized commercial fields + evidence.
+
+    ``tenant_id`` is required. Cross-tenant products are dropped. Single-tenant
+    today — no RLS until a second tenant exists.
+    """
     authorized: list[dict[str, Any]] = []
     all_evidence: list[GroundedCommerceEvidence] = []
+    expected_tenant = str(tenant_id or "").strip()
     for product in products:
         if not isinstance(product, dict):
+            continue
+        product_tenant = str(product.get("tenant_id") or "").strip()
+        if product_tenant and expected_tenant and product_tenant != expected_tenant:
             continue
         evidence = grounded_evidence_from_product(
             product, tenant_id=tenant_id, expected_tenant_id=tenant_id
@@ -441,7 +466,7 @@ def authorize_products_for_responder(
                 if cleaned.get(alt) is not None:
                     cleaned["price"] = cleaned[alt]
                     break
-        cleaned["tenant_id"] = tenant_id
+        cleaned["tenant_id"] = product_tenant or expected_tenant or "newstore"
         cleaned["_grounded"] = True
         authorized.append(cleaned)
         all_evidence.extend(evidence)

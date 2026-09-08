@@ -1,3 +1,4 @@
+from app.memory.conversation_summary_repository import close_resolved_questions
 from app.memory.conversation_summary_policy import (
     evaluate_summary_delta,
     format_conversation_summary_block,
@@ -97,3 +98,11 @@ def test_format_summary_block_is_non_authoritative():
     assert "<conversation_summary>" in block
     assert "NÃO use como fonte de preço" in block
     assert "buscar Tissot" in block
+
+
+def test_resolved_questions_leave_open_list():
+    remaining = close_resolved_questions(
+        ["qual cor?", "faixa de investimento?"],
+        ["Qual cor?"],
+    )
+    assert remaining == ["faixa de investimento?"]

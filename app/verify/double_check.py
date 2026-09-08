@@ -1,9 +1,9 @@
 """Independent DoubleCheck — phase 0 deterministic, phase 1 cheap LLM.
 
 Rebuilds the turn contract from the customer text and listed IDs. Does not
-inherit SalesInterpretation. Enforce only swaps a known payment resume
-(PIX denied, greeting-in-checkout, phase-1 PIX veto). Other vetoes stay
-on the original copy. Phase 1 never invents SKU or price.
+inherit SalesInterpretation. Enforce swaps a known payment resume when
+available; otherwise a non-approved verdict becomes an insufficiency reply,
+not the original copy. Phase 1 never invents SKU or price.
 """
 
 from __future__ import annotations
@@ -132,18 +132,51 @@ def _payment_url(state: CommerceConversationState | None, result: AgentResult) -
     return ""
 
 
+_COMMERCIAL_RESUME_SOURCES = frozenset(
+    {
+        "context_resume_payment_url",
+        "context_resume_presented_catalog",
+    }
+)
+
+
+def _live_purchase_context(
+    commerce_state: CommerceConversationState | None,
+    result: AgentResult,
+) -> bool:
+    if commerce_state is None:
+        return False
+    pending = str(getattr(commerce_state, "pending_action", None) or "")
+    phase = str(getattr(commerce_state, "dialogue_phase", None) or "")
+    return bool(
+        _payment_url(commerce_state, result)
+        or pending in _PURCHASE_PENDING
+        or getattr(commerce_state, "order_id", None)
+        or getattr(commerce_state, "last_presented_products", None)
+        or phase in {"shortlist", "buy", "checkout"}
+    )
+
+
 def _should_skip(
     incoming: IncomingMessage,
     result: AgentResult,
+    commerce_state: CommerceConversationState | None = None,
 ) -> str | None:
     if result.handoff_required:
         return "human_handoff"
     source = str((result.response_metadata or {}).get("response_source") or "")
+    if source in _COMMERCIAL_RESUME_SOURCES:
+        return None
+    live_purchase = _live_purchase_context(commerce_state, result)
+    if source == "farewell" and live_purchase:
+        return None
     if source in _LOW_RISK_SOURCES:
         return f"deterministic:{source}"
     intent = str(result.intent or "").strip().casefold()
     domain = str((result.response_metadata or {}).get("domain") or "").strip().casefold()
     if intent in _SKIP_INTENTS or domain in {"greeting", "raffle", "guardrail"}:
+        if source == "farewell" and live_purchase:
+            return None
         if not (result.commercial_data or {}):
             return f"non_commercial:{intent or domain or 'intent'}"
     text = (incoming.text or "").strip()
@@ -283,6 +316,29 @@ def _payment_resume_result(
         return None
 
 
+_INSUFFICIENCY_DEFAULT = (
+    "Não consigo confirmar isso com segurança agora. "
+    "Posso verificar de novo ou te passar para um atendente."
+)
+
+
+def _enforce_insufficiency(
+    result: AgentResult,
+    report: DoubleCheckReport,
+) -> AgentResult:
+    fallback = str(
+        (result.response_metadata or {}).get("factual_fallback_text") or ""
+    ).strip() or _INSUFFICIENCY_DEFAULT
+    updated = result.model_copy(deep=True)
+    updated.reply_text = fallback
+    updated.safety_reason = "double_check_insufficient"
+    report.applied = True
+    report.applied_code = report.applied_code or "insufficiency"
+    updated.response_metadata = dict(updated.response_metadata or {})
+    updated.response_metadata["double_check"] = report.model_dump(mode="json")
+    return updated
+
+
 def _apply_payment_resume(
     *,
     report: DoubleCheckReport,
@@ -316,7 +372,7 @@ def apply_double_check(
         report.skipped = True
         report.skip_reason = "configured_off"
         return result, report
-    skip = _should_skip(incoming, result)
+    skip = _should_skip(incoming, result, commerce_state)
     if skip:
         report.skipped = True
         report.skip_reason = skip
@@ -350,6 +406,7 @@ def apply_double_check(
                     },
                 )
                 return resume, report
+        return _enforce_insufficiency(result, report), report
 
     result.response_metadata["double_check"] = report.model_dump(mode="json")
     if not report.approved:
@@ -613,6 +670,8 @@ async def apply_double_check_async(
             )
             if resume is not None:
                 return resume, report
+            if report.mode == "enforce":
+                return _enforce_insufficiency(result, report), report
 
     result.response_metadata = dict(result.response_metadata or {})
     result.response_metadata["double_check"] = report.model_dump(mode="json")

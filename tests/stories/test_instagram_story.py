@@ -701,7 +701,7 @@ def test_package_release_classifies_placeholders():
     assert empty.classification == "placeholder"
     assert empty.blocking is False
     fixture = classify_secret_value(
-        variable="MP_ACCESS_TOKEN", value="tok-a", path="tests/commerce/test_mercadopago_client.py"
+        variable="MP_ACCESS_TOKEN", value="sk-test-key", path="tests/commerce/test_mercadopago_client.py"
     )
     assert fixture.classification == "test_fixture"
     assert fixture.blocking is False
@@ -712,6 +712,12 @@ def test_package_release_classifies_placeholders():
     )
     assert real.classification == "real"
     assert real.blocking is True
+    leaked_in_tests = classify_secret_value(
+        variable="OPENAI_API_KEY",
+        value="sk-proj-abcdefghijklmnopqrstuvwxyz",
+        path="tests/leaked.py",
+    )
+    assert leaked_in_tests.blocking is True
 
 
 @pytest.mark.offline_eval

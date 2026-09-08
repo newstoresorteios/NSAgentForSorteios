@@ -3,6 +3,10 @@
 
 name: Attendance Learning
 
+concurrency:
+  group: attendance-learning-production
+  cancel-in-progress: false
+
 on:
   schedule:
     # Every 15 minutes — incremental cursor, bounded batch.
@@ -25,15 +29,38 @@ jobs:
             exit 1
           fi
           BASE="${AGENT_BASE_URL%/}"
-          curl -fsS -X POST \
+          BODY="$(mktemp)"
+          trap 'rm -f "$BODY"' EXIT
+          set +e
+          STATUS="$(curl -sS \
+            --connect-timeout 10 \
+            --max-time 120 \
+            -o "$BODY" \
+            -w '%{http_code}' \
+            -X POST \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "Content-Type: application/json" \
-            "${BASE}/api/cron/attendance-learning" \
-            | tee /tmp/learning.json
-          python3 - <<'PY'
-          import json, sys
-          data = json.load(open("/tmp/learning.json"))
-          print("summary:", json.dumps(data, ensure_ascii=False))
-          if not data.get("ok", True):
+            "${BASE}/api/cron/attendance-learning")"
+          CURL_EXIT=$?
+          set -e
+          echo "attendance-learning http_status=${STATUS:-none} curl_exit=${CURL_EXIT}"
+          python3 - "$BODY" "${STATUS:-0}" "$CURL_EXIT" <<'PY'
+          import json, pathlib, sys
+
+          body_path, status_text, curl_exit_text = sys.argv[1:]
+          status = int(status_text or 0)
+          curl_exit = int(curl_exit_text)
+          raw = pathlib.Path(body_path).read_text(encoding="utf-8", errors="replace")
+          try:
+              data = json.loads(raw) if raw.strip() else {}
+          except json.JSONDecodeError:
+              data = {"error": "non_json_response", "body_chars": len(raw)}
+          safe_keys = (
+              "ok", "error", "detail", "rows_scanned", "reviews_created",
+              "insights_created", "cases_created", "cursor_advanced",
+          )
+          summary = {key: data.get(key) for key in safe_keys if key in data}
+          print("attendance-learning summary:", json.dumps(summary, ensure_ascii=False))
+          if curl_exit or not 200 <= status < 300 or not data.get("ok", False):
               sys.exit(1)
           PY

@@ -745,6 +745,7 @@ class Settings(BaseSettings):
     # Mercado Pago PIX direto no chat (fase 1+: create; webhook depois).
     # Default off até o fluxo de venda ligar o canal.
     pix_direct_enabled: bool = Field(default=False, alias="PIX_DIRECT_ENABLED")
+    mp_webhook_secret: str = Field(default="", alias="MP_WEBHOOK_SECRET")
     mp_access_token: str = Field(default="", alias="MP_ACCESS_TOKEN")
     mercadopago_access_token: str = Field(
         default="",

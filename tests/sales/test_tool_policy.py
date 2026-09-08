@@ -1,3 +1,5 @@
+import asyncio
+
 from app.sales.policies.tool_policy import apply_tool_policy, evaluate_tool_policy
 
 
@@ -56,3 +58,29 @@ def test_enforce_blocks_empty_create_order(monkeypatch):
     assert blocked is not None
     assert blocked["error"] == "tool_policy_blocked"
     assert "create_order_empty_payload" in blocked["policy_reasons"]
+
+
+def test_apply_tool_policy_settings_error_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "app.sales.policies.tool_policy.get_settings",
+        lambda: (_ for _ in ()).throw(RuntimeError("settings down")),
+    )
+    blocked = apply_tool_policy("create_cart", {"product_id": "1"})
+    assert blocked is not None
+    assert blocked["error"] == "tool_policy_unavailable"
+
+
+def test_execute_tool_policy_exception_is_fail_closed(monkeypatch):
+    from app.tray import tray_tools
+
+    monkeypatch.setattr(
+        "app.sales.policies.tool_policy.apply_tool_policy",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("policy down")),
+    )
+
+    async def should_not_run(*_a, **_k):
+        raise AssertionError("Tray must not run when policy is unavailable")
+
+    monkeypatch.setattr(tray_tools, "_execute_tool", should_not_run)
+    result = asyncio.run(tray_tools.execute_tool("create_cart", {"product_id": "1"}))
+    assert result["error"] == "tool_policy_unavailable"

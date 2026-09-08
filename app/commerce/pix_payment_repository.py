@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.db import get_conn, get_returning_id, to_jsonb
@@ -62,7 +62,7 @@ def upsert_pix_payment_created(
                     %s, %s
                 )
                 ON CONFLICT (mp_payment_id) DO UPDATE SET
-                    status = EXCLUDED.status,
+                    status = public.ai_pix_payments.status,
                     qr_code = COALESCE(EXCLUDED.qr_code, public.ai_pix_payments.qr_code),
                     qr_code_base64 = COALESCE(
                         EXCLUDED.qr_code_base64,
@@ -105,11 +105,7 @@ def upsert_pix_payment_created(
                         EXCLUDED.cart_session_id,
                         public.ai_pix_payments.cart_session_id
                     ),
-                    checkout_snapshot = CASE
-                        WHEN EXCLUDED.checkout_snapshot = '{}'::jsonb
-                        THEN public.ai_pix_payments.checkout_snapshot
-                        ELSE EXCLUDED.checkout_snapshot
-                    END,
+                    checkout_snapshot = public.ai_pix_payments.checkout_snapshot,
                     metadata = CASE
                         WHEN EXCLUDED.metadata = '{}'::jsonb
                         THEN public.ai_pix_payments.metadata
@@ -120,7 +116,14 @@ def upsert_pix_payment_created(
                         THEN public.ai_pix_payments.raw_create
                         ELSE EXCLUDED.raw_create
                     END,
-                    updated_at = EXCLUDED.updated_at
+                    updated_at = CASE WHEN public.ai_pix_payments.settlement_status = 'processing'
+                        THEN public.ai_pix_payments.updated_at ELSE EXCLUDED.updated_at END
+                WHERE public.ai_pix_payments.checkout_snapshot = EXCLUDED.checkout_snapshot
+                  AND public.ai_pix_payments.amount_cents = EXCLUDED.amount_cents
+                  AND public.ai_pix_payments.currency = EXCLUDED.currency
+                  AND public.ai_pix_payments.cart_session_id IS NOT DISTINCT FROM EXCLUDED.cart_session_id
+                  AND public.ai_pix_payments.sender_key IS NOT DISTINCT FROM EXCLUDED.sender_key
+                  AND public.ai_pix_payments.conversation_id IS NOT DISTINCT FROM EXCLUDED.conversation_id
                 RETURNING id
                 """,
                 (
@@ -147,7 +150,10 @@ def upsert_pix_payment_created(
                     now,
                 ),
             )
-            return get_returning_id(cur.fetchone())
+            saved = cur.fetchone()
+            if not saved:
+                raise ValueError("pix_payment_identity_conflict")
+            return get_returning_id(saved)
 
 
 def get_pix_payment_by_mp_id(mp_payment_id: str) -> dict[str, Any] | None:
@@ -200,7 +206,7 @@ def apply_mp_status_update(
                     END,
                     last_webhook_at = %s,
                     raw_last_status = %s,
-                    updated_at = %s
+                    updated_at = CASE WHEN settlement_status = 'processing' THEN updated_at ELSE %s END
                 WHERE mp_payment_id = %s
                 RETURNING *
                 """,
@@ -336,7 +342,7 @@ def get_pix_payment_by_cart_session_id(cart_session_id: str) -> dict[str, Any] |
 
 def list_retryable_pix_settlements(*, limit: int = 10) -> list[dict[str, Any]]:
     capped = min(max(int(limit), 1), 50)
-    stale_before = _now().timestamp() - 600
+    stale_before = _now() - timedelta(seconds=600)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -345,11 +351,16 @@ def list_retryable_pix_settlements(*, limit: int = 10) -> list[dict[str, Any]]:
                 FROM public.ai_pix_payments
                 WHERE lower(status) = 'approved'
                   AND tray_order_id IS NULL
-                  AND settlement_status IN ('failed', 'pending', 'processing')
+                  AND (
+                    settlement_status = 'pending'
+                    OR (settlement_status = 'processing' AND updated_at <= %s)
+                    OR (settlement_status = 'failed' AND
+                        (COALESCE(settlement_error, '') = '' OR left(settlement_error, 5) = 'tray_'))
+                  )
                 ORDER BY updated_at ASC
                 LIMIT %s
                 """,
-                (capped,),
+                (stale_before, capped),
             )
             rows = cur.fetchall() or []
     result: list[dict[str, Any]] = []
@@ -365,7 +376,7 @@ def list_retryable_pix_settlements(*, limit: int = 10) -> list[dict[str, Any]]:
         if status == "processing":
             updated = item.get("updated_at")
             stamp = updated.timestamp() if hasattr(updated, "timestamp") else 0
-            if stamp > stale_before:
+            if stamp > stale_before.timestamp():
                 continue
         result.append(item)
     return result
@@ -385,9 +396,13 @@ def requeue_pix_settlement(mp_payment_id: str) -> dict[str, Any] | None:
                 WHERE mp_payment_id = %s
                   AND lower(status) = 'approved'
                   AND tray_order_id IS NULL
-                  AND settlement_status IN ('failed', 'processing')
+                  AND (
+                    (settlement_status = 'processing' AND updated_at <= %s)
+                    OR (settlement_status = 'failed' AND
+                        (COALESCE(settlement_error, '') = '' OR left(settlement_error, 5) = 'tray_'))
+                  )
                 RETURNING *
                 """,
-                (now, str(mp_payment_id)),
+                (now, str(mp_payment_id), now - timedelta(seconds=600)),
             )
             return _row_to_dict(cur.fetchone())

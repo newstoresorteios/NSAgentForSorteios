@@ -6,7 +6,23 @@ IQ-09: one canonical model window (``agent_history_limit``).
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+try:
+    from zoneinfo import ZoneInfo
+
+    _LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
+except Exception:
+    _LOCAL_TZ = timezone(timedelta(hours=-3))
+_SENT_PREFIX = "[enviada "
+
+HISTORY_TIME_POLICY = """
+Cada turno do histórico pode começar com [enviada em AAAA-MM-DD HH:MM] (horário de Brasília) ou [enviada agora].
+Use o horário para ver o que é atendimento antigo no meio do fio.
+Não carregue cor, estilo, orçamento, produto ou pedido de turnos antigos como restrição do turno atual, a menos que a mensagem atual reafirme.
+A mensagem atual está marcada como [enviada agora].
+""".strip()
 
 
 def resolve_history_hard_cap(settings: Any | None = None) -> int:
@@ -102,3 +118,47 @@ def turns_for_conversation(
         if not cid or cid == wanted:
             scoped.append(turn)
     return scoped
+
+
+def coerce_turn_timestamp(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    text = str(value).strip()
+    return text or None
+
+
+def format_message_sent_at(value: Any) -> str | None:
+    """Compact Brasília time for GPT history, or None when unknown."""
+    if value is None:
+        return None
+    parsed: datetime | None = None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return text[:16]
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    local = parsed.astimezone(_LOCAL_TZ)
+    return local.strftime("%Y-%m-%d %H:%M")
+
+
+def prefix_turn_sent_at(content: str, sent_at: Any = None, *, current: bool = False) -> str:
+    text = str(content or "").strip()
+    if not text or text.startswith(_SENT_PREFIX):
+        return text
+    if current:
+        return f"[enviada agora]\n{text}"
+    stamp = format_message_sent_at(sent_at)
+    if not stamp:
+        return text
+    return f"[enviada em {stamp}]\n{text}"

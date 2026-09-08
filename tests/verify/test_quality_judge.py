@@ -66,6 +66,34 @@ def test_low_risk_paths_skip_judge():
     )[0] is False
 
 
+def test_payment_resume_with_url_does_not_skip_judge():
+    skip, _reason = is_low_risk_judge_skip(
+        IncomingMessage(text="manda o pix"),
+        AgentResult(
+            reply_text="Segue o link: https://pay.example/1",
+            intent="commerce",
+            commercial_data={
+                "payment": {"payment_url": "https://pay.example/1"},
+            },
+            response_metadata={"response_source": "context_resume_payment_url"},
+        ),
+    )
+    assert skip is False
+
+
+def test_presented_catalog_resume_does_not_skip_judge():
+    skip, _reason = is_low_risk_judge_skip(
+        IncomingMessage(text="qual relógio?"),
+        AgentResult(
+            reply_text="1. Seiko 5",
+            intent="commerce",
+            commercial_data={"products": [{"id": "1", "name": "Seiko 5"}]},
+            response_metadata={"response_source": "context_resume_presented_catalog"},
+        ),
+    )
+    assert skip is False
+
+
 def test_commercial_signals_trigger_judge():
     priced = AgentResult(
         reply_text="O modelo custa R$ 199,90.",

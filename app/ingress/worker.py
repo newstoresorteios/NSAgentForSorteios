@@ -19,7 +19,7 @@ from app.ingress.inbox import (
     mark_inbox_failed,
     mark_inbox_processed,
 )
-from app.ingress.outbox import enqueue_outbound
+from app.ingress.outbox import enqueue_accepted_outbound, mark_outbox_failed, mark_outbox_sent
 from app.ingress.reconstruct import incoming_from_inbox_payload
 from app.models import AgentResult, IncomingMessage
 from app.ops.observability import log_event, log_exception
@@ -40,7 +40,7 @@ async def _customer_context_for(incoming: IncomingMessage) -> dict[str, Any]:
 
 async def _send_reply(incoming: IncomingMessage, result: AgentResult) -> dict[str, Any]:
     provider = (incoming.provider or "").lower()
-    if provider == "meta" or (
+    if provider == "meta" or (not provider and
         (incoming.channel or "").lower() == "instagram"
         and str(getattr(get_settings(), "instagram_ingress_provider", "meta")).lower()
         in {"meta", "dual"}
@@ -60,7 +60,34 @@ async def _send_reply(incoming: IncomingMessage, result: AgentResult) -> dict[st
     }
 
 
-async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
+async def process_inbox_row(row: dict[str, Any], *, lock_held: bool = False) -> dict[str, Any]:
+    """Serialize every worker entrance, including cron and Meta delivery."""
+    from app.ops.conversation_lock import (
+        acquire_conversation_lock, release_conversation_lock, conversation_lock_key,
+    )
+    incoming = incoming_from_inbox_payload(row.get("payload_json"))
+    if incoming is None or lock_held:
+        return await _process_inbox_row_locked(row)
+    key = conversation_lock_key(
+        conversation_id=incoming.conversation_id or row.get("conversation_key"),
+        sender_key=incoming.sender_key, sender_phone=incoming.sender_phone,
+        visitor_id=incoming.visitor_id,
+    )
+    if not key:
+        mark_inbox_failed(int(row["id"]), error="missing_conversation_identity", dead=True)
+        return {"ok": False, "error": "missing_conversation_identity"}
+    settings = get_settings()
+    handle = await acquire_conversation_lock(
+        key, database_url=str(getattr(settings, "database_url", "") or ""),
+        timeout_seconds=float(getattr(settings, "agent_conversation_lock_timeout_seconds", 15) or 15),
+    )
+    try:
+        return await _process_inbox_row_locked(row)
+    finally:
+        await release_conversation_lock(handle)
+
+
+async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
     inbox_id = int(row["id"])
     incoming = incoming_from_inbox_payload(row.get("payload_json"))
     if incoming is None:
@@ -91,8 +118,16 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "inbox_id": inbox_id, "error": "claim_failed"}
 
     if not claimed:
-        mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
-        return {"ok": True, "inbox_id": inbox_id, "skipped": "duplicate_message"}
+        if inbound_id and has_successful_agent_response(inbound_id):
+            mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
+            return {"ok": True, "inbox_id": inbox_id, "skipped": "duplicate_message"}
+        if not inbound_id:
+            mark_inbox_failed(inbox_id, error="duplicate_without_inbound_id")
+            return {
+                "ok": False,
+                "inbox_id": inbox_id,
+                "error": "duplicate_without_inbound_id",
+            }
 
     if isinstance(incoming.raw, dict):
         incoming.raw["inbound_id"] = inbound_id
@@ -120,7 +155,8 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
             {"inbox_id": inbox_id},
         )
 
-    if has_successful_agent_response(inbound_id):
+    from app.ingress.outbox import has_sent_outbound
+    if has_successful_agent_response(inbound_id) or has_sent_outbound(inbound_id):
         mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
         return {"ok": True, "inbox_id": inbox_id, "skipped": "already_sent"}
 
@@ -129,7 +165,9 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
     from app.ops.runtime_context import reset_current_turn, set_current_turn
     from app.ops.turn_runtime import LLMCallBudget, TurnRuntimeContext
 
-    customer_context = await _customer_context_for(incoming)
+    from app.ingress.outbox import get_accepted_outbound, result_from_outbox_row
+    accepted = get_accepted_outbound(inbound_id)
+    customer_context = await _customer_context_for(incoming) if accepted is None else {}
     budget_cfg = build_llm_call_budget(execution_path="normal")
     turn = TurnRuntimeContext(
         trace_id=f"inbox-{inbox_id}",
@@ -141,11 +179,25 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
     turn.execution_path = str(budget_cfg.get("execution_path") or "normal")
     token = set_current_turn(turn)
     try:
-        result = await process_incoming_message(incoming, customer_context)
+        result = (result_from_outbox_row(accepted) if accepted is not None
+                  else await process_incoming_message(incoming, customer_context))
     finally:
         reset_current_turn(token)
-    send_info = await _send_reply(incoming, result)
+    outbox_id = enqueue_accepted_outbound(
+        incoming=incoming,
+        result=result,
+        inbox_id=inbox_id,
+        inbound_id=inbound_id,
+    )
+    from app.ingress.outbox import dispatch_accepted_outbound
+    if outbox_id is not None:
+        send_info = await dispatch_accepted_outbound(outbox_id, _send_reply)
+    else:
+        send_info = await _send_reply(incoming, result)
     send_ok = bool(send_info.get("ok"))
+    if send_info.get("queued"):
+        mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
+        return {"ok": True, "inbox_id": inbox_id, "inbound_id": inbound_id, "queued": True}
 
     try:
         response_id = insert_agent_response(
@@ -158,6 +210,7 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
                 "intent": result.intent,
                 "handoff_required": result.handoff_required,
                 "safety_reason": result.safety_reason,
+                "response_metadata": result.response_metadata,
                 "provider_send_ok": send_ok,
                 "provider_response": send_info,
             }
@@ -185,18 +238,6 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
         )
 
     if not send_ok:
-        enqueue_outbound(
-            provider=incoming.provider or "meta",
-            channel=incoming.channel,
-            reply_text=result.reply_text or "",
-            inbox_id=inbox_id,
-            inbound_id=inbound_id,
-            conversation_key=incoming.conversation_id or incoming.sender_key,
-            visitor_id=incoming.visitor_id,
-            sender_key=incoming.sender_key,
-            recipient_external_id=incoming.sender_external_id,
-            reply_payload={"send_error": send_info},
-        )
         mark_inbox_failed(
             inbox_id,
             error=str(send_info.get("error") or "send_failed"),

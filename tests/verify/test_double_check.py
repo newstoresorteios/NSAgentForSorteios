@@ -398,7 +398,7 @@ def test_phase0_greeting_in_checkout_enforce_resumes_pix():
     assert "https://pay.example/x" in result.reply_text
 
 
-def test_phase0_budget_over_enforce_does_not_rewrite():
+def test_phase0_budget_over_enforce_uses_insufficiency():
     listed = AgentResult(
         reply_text="Encontrei o Tissot PRX por R$ 8.000.",
         intent="commerce",
@@ -416,8 +416,10 @@ def test_phase0_budget_over_enforce_does_not_rewrite():
     )
     assert report.approved is False
     assert any(issue.code == "budget_over" for issue in report.issues)
-    assert report.applied is False
-    assert result.reply_text == listed.reply_text
+    assert report.applied is True
+    assert result.reply_text != listed.reply_text
+    assert result.safety_reason == "double_check_insufficient"
+    assert "8.000" not in result.reply_text
 
 
 @pytest.mark.asyncio
@@ -476,3 +478,71 @@ async def test_phase1_enforce_pix_resumes_link(monkeypatch):
     assert report.applied is True
     assert report.applied_code == "pix"
     assert "https://pay.example/pix" in updated.reply_text
+
+
+def test_payment_url_resume_is_not_skipped():
+    _, report = apply_double_check(
+        incoming=IncomingMessage(text="manda o pix"),
+        result=AgentResult(
+            reply_text="Segue o link: https://pay.example/pix",
+            intent="commerce",
+            commercial_data={
+                "payment": {"payment_url": "https://pay.example/pix"},
+            },
+            response_metadata={
+                "domain": "commerce",
+                "response_source": "context_resume_payment_url",
+            },
+        ),
+        commerce_state=CommerceConversationState(
+            order_id="25400",
+            order_payment_url="https://pay.example/pix",
+            pending_action="awaiting_payment",
+        ),
+        mode="shadow",
+    )
+    assert report.skipped is False
+
+
+def test_presented_catalog_resume_is_not_skipped():
+    _, report = apply_double_check(
+        incoming=IncomingMessage(text="qual relógio?"),
+        result=AgentResult(
+            reply_text="1. Seiko 5",
+            intent="commerce",
+            commercial_data={"products": [{"id": "1", "name": "Seiko 5"}]},
+            response_metadata={
+                "domain": "commerce",
+                "response_source": "context_resume_presented_catalog",
+            },
+        ),
+        commerce_state=CommerceConversationState(
+            last_presented_products=[
+                {"position": 1, "product_id": "1", "name": "Seiko 5"},
+            ]
+        ),
+        mode="shadow",
+    )
+    assert report.skipped is False
+
+
+def test_farewell_during_checkout_is_not_skipped():
+    _, report = apply_double_check(
+        incoming=IncomingMessage(text="tchau"),
+        result=AgentResult(
+            reply_text="Até! Qualquer coisa, é só chamar.",
+            intent="general",
+            response_metadata={
+                "domain": "greeting",
+                "response_source": "farewell",
+            },
+        ),
+        commerce_state=CommerceConversationState(
+            order_id="25400",
+            order_payment_url="https://pay.example/pix",
+            pending_action="awaiting_payment",
+            dialogue_phase="checkout",
+        ),
+        mode="shadow",
+    )
+    assert report.skipped is False

@@ -47,6 +47,13 @@ def select_diverse_brand_shortlist(
     subject = getattr(interpretation, "subject", None)
     if _fold(getattr(subject, "brand", None)):
         return products[:limit]
+    previous = {
+        _fold(brand) for brand in getattr(interpretation, "_previously_presented_brands", [])
+        if brand
+    }
+    if previous:
+        # Prefer new brands without falsely treating prior suggestions as rejected.
+        products = sorted(products, key=lambda p: _fold(p.get("brand")) in previous)
     picked: list[dict[str, Any]] = []
     seen: set[str] = set()
     overflow: list[dict[str, Any]] = []

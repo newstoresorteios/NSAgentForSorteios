@@ -998,6 +998,98 @@ def _order_facts_result(
     )
 
 
+def _order_customer_mismatch_result(target: str) -> AgentResult:
+    return AgentResult(
+        reply_text=(
+            "Não consegui confirmar que esse pedido pertence ao cadastro desta conversa. "
+            "Informe o CPF ou o e-mail do comprador para eu localizar o pedido certo."
+        ),
+        intent="commerce",
+        safety_reason="order_customer_mismatch",
+        commercial_data={"success": False, "stage": "order_status"},
+        response_metadata={
+            "domain": "commerce",
+            "used_tray": True,
+            "pending_action": "awaiting_order_customer_document",
+            "order_state": {"order_lookup_id": target},
+        },
+    )
+
+
+def _bound_order_tokens(state: CommerceConversationState) -> set[str]:
+    tokens: set[str] = set()
+    for raw in (state.order_id, state.order_lookup_id):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        tokens.add(text)
+        tokens.update(order_reference_candidates(text))
+    return tokens
+
+
+def _order_customer_matches_state(
+    order: dict[str, Any],
+    state: CommerceConversationState,
+) -> bool:
+    customer = state.checkout_draft.customer
+    order_customer = order.get("customer") if isinstance(order.get("customer"), dict) else {}
+
+    state_cpf = re.sub(r"\D+", "", str(customer.cpf or ""))
+    order_cpfs = {
+        re.sub(r"\D+", "", str(order_customer.get("cpf") or "")),
+        re.sub(r"\D+", "", str(order_customer.get("document") or "")),
+        re.sub(r"\D+", "", str(order.get("cpf") or "")),
+        re.sub(r"\D+", "", str(order.get("customer_cpf") or "")),
+    }
+    order_cpfs.discard("")
+    if state_cpf and state_cpf in order_cpfs:
+        return True
+
+    state_email = str(customer.email or "").strip().casefold()
+    order_emails = {
+        str(order_customer.get("email") or "").strip().casefold(),
+        str(order.get("email") or "").strip().casefold(),
+        str(order.get("customer_email") or "").strip().casefold(),
+    }
+    order_emails.discard("")
+    if state_email and state_email in order_emails:
+        return True
+
+    from app.identity.repository import phones_match
+
+    state_phone = customer.phone
+    for candidate in (
+        order_customer.get("phone"),
+        order_customer.get("cellphone"),
+        order.get("phone"),
+        order.get("customer_phone"),
+    ):
+        if phones_match(state_phone, candidate):
+            return True
+    return False
+
+
+def _order_access_allowed(
+    *,
+    result: dict[str, Any],
+    target: str,
+    state: CommerceConversationState,
+    bound_tokens: set[str],
+    authorized_targets: set[str],
+) -> bool:
+    tokens = {str(target or "").strip()}
+    tokens.update(order_reference_candidates(target))
+    for field in ("order_id", "id", "code"):
+        value = str(result.get(field) or "").strip()
+        if value:
+            tokens.add(value)
+            tokens.update(order_reference_candidates(value))
+    tokens.discard("")
+    if tokens & bound_tokens or tokens & authorized_targets:
+        return True
+    return _order_customer_matches_state(result, state)
+
+
 async def resolve_order_id_via_customer_state(
     *,
     state: CommerceConversationState,
@@ -1036,6 +1128,8 @@ async def get_order_facts(
 ) -> AgentResult:
     seed = str(order_id or state.order_id or state.order_lookup_id or "").strip()
     targets = order_reference_candidates(seed)
+    bound_tokens = _bound_order_tokens(state)
+    authorized_targets: set[str] = set()
     if not targets and (state.order_session_id or state.cart_session_id):
         session_id = state.order_session_id or state.cart_session_id
         try:
@@ -1047,6 +1141,7 @@ async def get_order_facts(
         if existing is not None:
             recovered = str(existing.get("order_id") or existing.get("id") or "").strip()
             targets = order_reference_candidates(recovered)
+            authorized_targets.update(targets)
         print("[sales.order.reconcile]", {
             "session": _session_tag(session_id),
             "found": bool(targets),
@@ -1067,6 +1162,8 @@ async def get_order_facts(
             for token in order_reference_candidates(resolved):
                 if token not in targets:
                     targets.insert(0, token)
+                authorized_targets.add(token)
+            authorized_targets.add(resolved)
 
     if not targets:
         return AgentResult(
@@ -1109,6 +1206,8 @@ async def get_order_facts(
                         "status_code": status_code,
                     })
                     targets.append(resolved)
+                    authorized_targets.add(resolved)
+                    authorized_targets.update(order_reference_candidates(resolved))
                     continue
             if allow_customer_recovery and status_code == "404":
                 return _order_not_found_result(target)
@@ -1124,6 +1223,14 @@ async def get_order_facts(
                 },
             )
         if _order_payload_exists(result):
+            if not _order_access_allowed(
+                result=result,
+                target=target,
+                state=state,
+                bound_tokens=bound_tokens,
+                authorized_targets=authorized_targets,
+            ):
+                return _order_customer_mismatch_result(target)
             if target != seed:
                 print("[sales.order.lookup.normalized]", {
                     "requested": seed,

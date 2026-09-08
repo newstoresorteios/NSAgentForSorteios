@@ -103,6 +103,16 @@ async def rerank_products(
     selection_limit = rerank_selection_limit()
     pool_limit = candidate_pool_limit()
     fallback = deterministic_semantic_order(available_products, interpretation)
+    from app.ops.runtime_context import get_current_turn, register_avoided_llm_call
+
+    runtime = get_current_turn()
+    if runtime is not None and runtime.llm_budget.enforce:
+        remaining = runtime.llm_budget.max_calls - runtime.llm_budget.used_calls
+        if remaining <= 1:
+            # A semantic reorder is optional; keep the final call for the
+            # grounded generative answer instead of forcing a template reply.
+            register_avoided_llm_call("rerank_reserve_response", intended_call_type="product_selection")
+            return fallback
     if not available_products or not settings.openai_api_key:
         print("[sales.reranker]", {
             "source": "deterministic_fallback",

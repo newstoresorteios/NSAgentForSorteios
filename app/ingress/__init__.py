@@ -17,6 +17,7 @@ from app.ingress.inbox import (
 )
 from app.ingress.outbox import (
     claim_pending_outbox,
+    enqueue_accepted_outbound,
     enqueue_outbound,
     mark_outbox_failed,
     mark_outbox_sent,
@@ -28,6 +29,7 @@ __all__ = [
     "claim_pending_inbox",
     "claim_pending_outbox",
     "enqueue_inbound",
+    "enqueue_accepted_outbound",
     "enqueue_outbound",
     "mark_inbox_failed",
     "mark_inbox_processed",

@@ -35,6 +35,24 @@ def test_cross_tenant_product_rejected():
     assert grounded_evidence_from_product(product, expected_tenant_id="newstore") == []
 
 
+def test_authorize_drops_cross_tenant_product():
+    products = [
+        {
+            "id": "1",
+            "tenant_id": "other",
+            "price": 100,
+            "name": "Watch",
+            "_factual_source": "tray_live",
+            "_revalidated": True,
+        }
+    ]
+    authorized, evidence = authorize_products_for_responder(
+        products, tenant_id="newstore"
+    )
+    assert authorized == []
+    assert evidence == []
+
+
 def test_stale_index_price_omitted_from_grounded():
     product = {
         "id": "1",

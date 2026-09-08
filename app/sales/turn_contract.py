@@ -403,7 +403,7 @@ def inbound_from_memory(
         budget = interpretation.preferences.budget_max
     if budget is None:
         packed = prefs.get("budget") if isinstance(prefs.get("budget"), dict) else {}
-        raw = packed.get("max") if isinstance(packed, dict) else prefs.get("budget_max")
+        raw = packed.get("max") if packed.get("max") is not None else prefs.get("budget_max")
         try:
             budget = float(raw) if raw is not None else None
         except (TypeError, ValueError):
@@ -416,7 +416,7 @@ def inbound_from_memory(
     locked_brand, locked_model = locked_identity_from_state(commerce_state)
     if not brand and not _explicit_no_brand(interpretation, commerce_state):
         brand = locked_brand
-    if not model:
+    if not model and not _explicit_no_brand(interpretation, commerce_state):
         model = locked_model
     occasion = None
     if interpretation is not None:
@@ -476,10 +476,15 @@ def merge_inbound_views(
     """Message wins. Memory-only occasion/style on a fresh browse is stale."""
     stale: list[str] = []
     budget = message_view.budget_max
+    from app.catalog.specs.catalog_specs import message_requests_other_brands
+
+    brand_unlock = message_requests_other_brands(message_text)
     budget_from_message = message_view.budget_max is not None or message_view.asks_price_range
+    if brand_unlock and budget is None:
+        budget = memory_view.budget_max
     if budget is None and (budget_from_message or not message_view.commerce_browse):
         budget = memory_view.budget_max
-    elif message_view.commerce_browse and not budget_from_message:
+    elif message_view.commerce_browse and not budget_from_message and not brand_unlock:
         if memory_view.budget_max is not None:
             stale.append("budget")
         budget = None
@@ -490,8 +495,17 @@ def merge_inbound_views(
     occasion_from_message = bool(message_view.occasion) or message_states_occasion(
         message_text
     )
+    open_budget_answer = (
+        budget_from_message
+        and not message_view.brand
+        and not memory_view.live_shortlist
+    )
     if memory_view.occasion and not occasion_from_message:
-        if message_view.commerce_browse or message_view.asks_price_range:
+        if (
+            message_view.commerce_browse
+            or message_view.asks_price_range
+            or open_budget_answer
+        ):
             stale.append("occasion")
 
     def _merge_pref(
@@ -503,13 +517,8 @@ def merge_inbound_views(
     ) -> str | None:
         if stated:
             return message_value
-        # Open discovery budget ("2500 reais") must not AND leftover color/style.
+        # Open discovery budget ("2700" / "2500 reais") must not AND leftover color/style.
         # Keep them on a named-brand refine ("tem algum Seiko nessa faixa").
-        open_budget_answer = (
-            budget_from_message
-            and not message_view.brand
-            and not memory_view.live_shortlist
-        )
         if message_view.commerce_browse or open_budget_answer:
             if memory_value:
                 stale.append(field)
@@ -560,6 +569,10 @@ def merge_inbound_views(
         model = message_view.model
     else:
         model = message_view.model or memory_view.model
+    if brand_unlock:
+        model = message_view.model
+        if model and _fold_identity(model) not in _fold_identity(message_text):
+            model = None
     codes = ["dual_inbound_merged"]
     if stale:
         codes.append("stale_memory")

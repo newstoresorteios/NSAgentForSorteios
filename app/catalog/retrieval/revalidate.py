@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from app.models import SalesInterpretation
@@ -38,13 +39,40 @@ async def revalidate_products(
                 )
                 break
             continue
-        # Revalidation is factual authority: overlay live Tray fields but never
-        # invent price/stock when the live payload omits them.
-        current = {**product, **result}
-        # Drop retrieval-only metadata from customer-facing payload later.
+        # Overlay only live-present fields. Omitted price/stock must not inherit cache.
+        live_commercial = frozenset(
+            {
+                "price",
+                "current_price",
+                "promotional_price",
+                "stock",
+                "available",
+                "url",
+            }
+        )
+        current = dict(product)
+        live_confirmed: set[str] = set()
+        for key, value in result.items():
+            if str(key).startswith("_"):
+                continue
+            if value not in (None, ""):
+                current[key] = value
+                live_confirmed.add(str(key))
+        for key in live_commercial:
+            if key in current and key not in live_confirmed:
+                current.pop(key, None)
+        now = datetime.now(timezone.utc).isoformat()
+        current["_field_sources"] = {
+            key: "tray_live" for key in live_confirmed & live_commercial
+        }
+        current["_freshness_at"] = now
+        current["_revalidated"] = bool(live_confirmed & live_commercial)
+        current["_factual_source"] = (
+            "tray_live"
+            if current["_revalidated"]
+            else str(product.get("_factual_source") or "catalog_index")
+        )
         current["commercial_availability"] = commercial_availability_facts(current)
-        current["_revalidated"] = True
-        current["_factual_source"] = "tray_live"
         print("[sales.availability.fact]", {
             "has_stock": current["commercial_availability"]["has_stock"],
             "has_lead_time": current["commercial_availability"]["has_lead_time"],

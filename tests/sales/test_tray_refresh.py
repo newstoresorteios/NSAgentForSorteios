@@ -4,7 +4,11 @@ import pytest
 
 from app.commerce.commerce_context import CommerceConversationState, PresentedCommerceProduct
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
-from app.sales.dialogue_phase import blocks_greeting_fast_path, is_open_sale_state
+from app.sales.dialogue_phase import (
+    blocks_farewell_fast_path,
+    blocks_greeting_fast_path,
+    is_open_sale_state,
+)
 from app.sales.tray_refresh import (
     constraint_requires_tray_refresh,
     excluded_product_ids_for_turn,
@@ -133,6 +137,9 @@ def test_open_sale_and_greeting_block():
     assert is_open_sale_state(shortlist) is True
     assert blocks_greeting_fast_path(shortlist) is True
     assert blocks_greeting_fast_path(checkout) is False
+    assert blocks_farewell_fast_path(shortlist) is True
+    assert blocks_farewell_fast_path(checkout) is True
+    assert blocks_farewell_fast_path(CommerceConversationState()) is False
 
 
 @pytest.mark.asyncio

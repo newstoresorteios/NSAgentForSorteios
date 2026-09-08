@@ -19,10 +19,12 @@ from app.memory.memory_models import (
     MemoryAction,
     MemoryProcessingResult,
     MemoryProposal,
+    MemoryScope,
 )
 from app.memory.memory_policy import (
     evaluate_instruction_extension_proposal,
     evaluate_memory_proposal,
+    memory_keys_equivalent,
 )
 from app.memory.memory_proposal_repository import (
     insert_memory_proposal,
@@ -172,14 +174,27 @@ def process_agent_memory_proposals(
               result.rejection_codes.extend(decision.rejection_codes)
               continue
 
+          if (
+              decision.auto_apply
+              and proposal.scope == MemoryScope.conversation
+          ):
+              # Conversation facts must not become sender-wide contact memory.
+              print("[memory.conversation_scope.isolated]", {
+                  "memory_key": decision.normalized_key,
+                  "action": proposal.action.value,
+              })
+              continue
+
           if decision.auto_apply and sender_key and decision.normalized_key:
               try:
                   if proposal.action == MemoryAction.forget:
-                      forgotten = forget_contact_memory(
-                          tenant_id=tenant_id,
-                          sender_key=sender_key,
-                          memory_key=decision.normalized_key,
-                      )
+                      forgotten = 0
+                      for alias in memory_keys_equivalent(decision.normalized_key):
+                          forgotten += forget_contact_memory(
+                              tenant_id=tenant_id,
+                              sender_key=sender_key,
+                              memory_key=alias,
+                          )
                       mark_proposal_applied(proposal_id)
                       result.proposals_applied += 1
                       print("[memory.auto_apply.forget]", {
@@ -218,6 +233,24 @@ def process_agent_memory_proposals(
                           source_response_id=response_id,
                           expires_at=decision.expires_at,
                       )
+                      if proposal.kind.value == "brand_preference":
+                          from app.memory.memory_policy import (
+                              BRAND_MEMORY_KEYS,
+                              proposal_confirms_current_brand,
+                          )
+
+                          for alias in BRAND_MEMORY_KEYS:
+                              if alias != decision.normalized_key:
+                                  forget_contact_memory(
+                                      tenant_id=tenant_id,
+                                      sender_key=sender_key,
+                                      memory_key=alias,
+                                  )
+                          if proposal_confirms_current_brand(proposal, inbound):
+                              for old in current:
+                                  if old.memory_key in {"explicit_no:brand", "explicit_no_preference_brand"}:
+                                      forget_contact_memory(tenant_id=tenant_id, sender_key=sender_key,
+                                                            memory_key=old.memory_key)
                       mark_proposal_applied(
                           proposal_id,
                           applied_memory_id=memory.id,
@@ -428,7 +461,7 @@ def process_agent_memory_proposals(
                         )
                         # Shadow: do not mutate conversation summary / memory / persona.
                     else:
-                        apply_summary_delta(
+                        applied_summary = apply_summary_delta(
                             tenant_id=tenant_id,
                             conversation_key=conversation_key,
                             delta=cleaned_delta,
@@ -442,8 +475,31 @@ def process_agent_memory_proposals(
                                 )
                             ),
                         )
-                        mark_proposal_applied(proposal_id)
-                        result.proposals_applied += 1
+                        if applied_summary.get("cas_conflict"):
+                            applied_summary = apply_summary_delta(
+                                tenant_id=tenant_id,
+                                conversation_key=conversation_key,
+                                delta=cleaned_delta,
+                                inbound_id=inbound_id,
+                                response_id=response_id,
+                                max_chars=int(
+                                    getattr(
+                                        settings,
+                                        "agent_max_conversation_summary_chars",
+                                        2500,
+                                    )
+                                ),
+                            )
+                        if applied_summary.get("cas_conflict"):
+                            mark_proposal_rejected(
+                                proposal_id,
+                                rejection_codes=["cas_conflict"],
+                            )
+                            result.proposals_rejected += 1
+                            result.rejection_codes.append("cas_conflict")
+                        else:
+                            mark_proposal_applied(proposal_id)
+                            result.proposals_applied += 1
                     if summary_codes:
                         print("[memory.service.summary_scrubbed]", {
                             "codes": summary_codes[:6],

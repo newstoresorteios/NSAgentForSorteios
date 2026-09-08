@@ -327,6 +327,27 @@ def blocks_greeting_fast_path(state: CommerceConversationState | None) -> bool:
     return bool(isinstance(prefs, dict) and prefs.get("locked_identity"))
 
 
+def blocks_farewell_fast_path(state: CommerceConversationState | None) -> bool:
+    """Do not close the turn with goodbye while checkout, PIX, or shortlist is live."""
+    if state is None:
+        return False
+    if session_in_checkout_phase(state) or state.dialogue_phase == "checkout":
+        return True
+    # A leftover URL after a paid/cleared order must not block goodbye.
+    url = str(getattr(state, "order_payment_url", None) or "").strip()
+    if url:
+        from app.memory.context_resume import session_has_unpaid_order
+
+        if session_has_unpaid_order(state) or state.pending_action == "awaiting_payment":
+            return True
+    if state.dialogue_phase in {"shortlist", "buy"}:
+        return True
+    if state.last_presented_products:
+        return True
+    prefs = state.active_preferences or {}
+    return bool(isinstance(prefs, dict) and prefs.get("locked_identity"))
+
+
 def message_resets_dialogue_to_discovery(
     message_text: str | None,
     interpretation: SalesInterpretation | None,
