@@ -614,6 +614,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             "intent": agent_result.intent,
             "handoff_required": agent_result.handoff_required,
             "safety_reason": agent_result.safety_reason,
+                "response_metadata": agent_result.response_metadata,
             "reply_length": len(agent_result.reply_text or ""),
             "reply_preview": redact_text(agent_result.reply_text, max_chars=200),
             "channel": incoming.channel,
@@ -742,6 +743,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                 "intent": agent_result.intent,
                 "handoff_required": agent_result.handoff_required,
                 "safety_reason": agent_result.safety_reason,
+                "response_metadata": agent_result.response_metadata,
                 "provider_send_ok": provider_send_ok,
                 "provider_response": provider_response,
             }

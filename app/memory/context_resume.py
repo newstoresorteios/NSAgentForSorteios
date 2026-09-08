@@ -173,29 +173,18 @@ def merge_commerce_states(
     donor = dict(fallback or {})
     if not donor:
         return base
+    if not base:
+        return donor
+    latest_order = str(base.get("order_id") or base.get("order_lookup_id") or "")
+    donor_order = str(donor.get("order_id") or donor.get("order_lookup_id") or "")
+    if latest_order and donor_order and latest_order != donor_order:
+        return _strip_browse_memory(base) if base.get("forget_shortlist") else base
     if base.get("forget_shortlist"):
         recovered = _copy_missing_fields(base, donor, _ORDER_RECOVERY_KEYS)
         return _strip_browse_memory(recovered)
-    if commerce_state_resumable_score(base) >= commerce_state_resumable_score(donor):
-        # Still recover order fields if a later greeting/cart turn wiped them.
-        if not base.get("order_id") and donor.get("order_id"):
-            _copy_missing_fields(
-                base,
-                donor,
-                _ORDER_RECOVERY_KEYS + ("active_product",),
-            )
-        return base
-    # Richer cart/order donor wins, but never discard the latest product shortlist.
-    merged = _prefer_latest_presentation(dict(donor), base)
-    if base.get("closed_by_farewell"):
-        merged["closed_by_farewell"] = True
-    if base.get("last_conversation_id"):
-        merged["last_conversation_id"] = base["last_conversation_id"]
-    if base.get("last_browse_at"):
-        merged["last_browse_at"] = base["last_browse_at"]
-    if base.get("history_cut_inbound_id"):
-        merged["history_cut_inbound_id"] = base["history_cut_inbound_id"]
-    return merged
+    # Order richness is not recency: a previous checkout must never replace
+    # the latest budget, brand, phase, or an explicitly cleared shortlist.
+    return _copy_missing_fields(base, donor, _ORDER_RECOVERY_KEYS)
 
 
 def is_short_affirmation(text: str | None) -> bool:

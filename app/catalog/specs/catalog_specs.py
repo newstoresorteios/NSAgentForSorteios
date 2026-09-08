@@ -463,6 +463,9 @@ def apply_brand_unlock_to_interpretation(
         if "brand" not in explicit:
             prefs.explicit_no_preferences = explicit + ["brand"]
     prefs.attributes = attrs
+    # Cached hard constraints must not resurrect the brand just removed.
+    if hasattr(interpretation, "_turn_understanding"):
+        interpretation._turn_understanding = None
     return rejected
 
 

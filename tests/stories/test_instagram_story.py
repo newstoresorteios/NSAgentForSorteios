@@ -701,7 +701,7 @@ def test_package_release_classifies_placeholders():
     assert empty.classification == "placeholder"
     assert empty.blocking is False
     fixture = classify_secret_value(
-        variable="MP_ACCESS_TOKEN", value="tok-a", path="tests/commerce/test_mercadopago_client.py"
+        variable="MP_ACCESS_TOKEN", value="sk-test-key", path="tests/commerce/test_mercadopago_client.py"
     )
     assert fixture.classification == "test_fixture"
     assert fixture.blocking is False

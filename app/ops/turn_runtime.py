@@ -30,18 +30,29 @@ class LLMCallBudget(BaseModel):
     used_calls: int = Field(default=0, ge=0)
     enforce: bool = False
     allowed_call_types: set[str] = Field(default_factory=set)
+    reserved_call_types: set[str] = Field(
+        default_factory=lambda: {"response_composition"}
+    )
+    reserved_used: set[str] = Field(default_factory=set)
 
     def reserve(self, call_type: str) -> None:
         blocked_type = bool(
             self.allowed_call_types
             and call_type not in self.allowed_call_types
         )
-        exhausted = self.used_calls >= self.max_calls
+        reserved = set(self.reserved_call_types or ())
+        pending_reserved = reserved - set(self.reserved_used or ())
+        hold_for_reserved = 0
+        if pending_reserved and call_type not in reserved and self.max_calls >= 2:
+            hold_for_reserved = 1
+        exhausted = self.used_calls + hold_for_reserved >= self.max_calls
         if self.enforce and (blocked_type or exhausted):
             raise LLMCallBudgetExceeded(
                 f"llm_call_budget_exceeded:{call_type}"
             )
         self.used_calls += 1
+        if call_type in reserved:
+            self.reserved_used.add(call_type)
 
 
 class TurnRuntimeContext(BaseModel):

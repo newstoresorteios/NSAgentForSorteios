@@ -157,7 +157,7 @@ def iter_release_files(root: Path) -> list[Path]:
 
 
 def _strip_quotes(value: str) -> str:
-    text = value.strip()
+    text = value.strip().rstrip(",").strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
         return text[1:-1].strip()
     return text

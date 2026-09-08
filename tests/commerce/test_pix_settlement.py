@@ -103,6 +103,11 @@ async def test_settle_skips_when_not_approved(monkeypatch):
 @pytest.mark.asyncio
 async def test_settle_creates_tray_order_when_amounts_match(monkeypatch):
     import app.commerce.pix_settlement as settlement
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(settlement, "TrayAdapterClient", lambda: SimpleNamespace(
+        list_orders=AsyncMock(return_value={"orders": []})))
 
     monkeypatch.setattr(settlement.repo, "get_pix_payment_by_mp_id", lambda _pid: _row())
     monkeypatch.setattr(settlement.repo, "claim_pix_settlement", lambda _pid: _row(settlement_status="processing"))

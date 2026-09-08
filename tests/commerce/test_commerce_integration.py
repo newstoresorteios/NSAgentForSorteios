@@ -225,9 +225,19 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
         def __init__(self, **kwargs):
             self.chat = SimpleNamespace(completions=FakeCompletions())
 
+    product = {
+        "id": "2",
+        "name": "Relógio esportivo preto",
+        "current_price": 4500,
+        "price": 4500,
+        "available": True,
+    }
+
     async def fake_execute(name, arguments):
         calls.append((name, arguments))
-        return {"products": [{"id": "2", "name": "Relógio esportivo preto", "current_price": 4500}]}
+        if name == "get_product":
+            return product
+        return {"products": [product]}
 
     monkeypatch.setattr(sales_agent, "execute_tool", fake_execute)
     install_fake_openai_client(monkeypatch, FakeClient)
@@ -252,9 +262,17 @@ async def test_broad_recommendation_with_budget_starts_retrieval(monkeypatch):
     assert args["name"] == "relógio"
     assert args["available"] is True
     assert args["current_price_range"] == "0,5000"
+    listed = (result.commercial_data or {}).get("products") or []
+    assert listed and listed[0].get("id") == "2"
+    assert listed[0].get("name") == "Relógio esportivo preto"
     folded = (result.reply_text or "").casefold()
-    assert "relógio esportivo preto" in folded
-    assert result.safety_reason != "recommendation_not_found"
+    assert "não atendeu" not in folded
+    assert "não encontrei" not in folded
+    assert result.safety_reason not in {
+        "recommendation_not_found",
+        "recommendation_no_match",
+        "answer_council_blocked",
+    }
     assert result.response_metadata["used_tray"] is True
 
 

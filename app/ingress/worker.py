@@ -60,7 +60,34 @@ async def _send_reply(incoming: IncomingMessage, result: AgentResult) -> dict[st
     }
 
 
-async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
+async def process_inbox_row(row: dict[str, Any], *, lock_held: bool = False) -> dict[str, Any]:
+    """Serialize every worker entrance, including cron and Meta delivery."""
+    from app.ops.conversation_lock import (
+        acquire_conversation_lock, release_conversation_lock, conversation_lock_key,
+    )
+    incoming = incoming_from_inbox_payload(row.get("payload_json"))
+    if incoming is None or lock_held:
+        return await _process_inbox_row_locked(row)
+    key = conversation_lock_key(
+        conversation_id=incoming.conversation_id or row.get("conversation_key"),
+        sender_key=incoming.sender_key, sender_phone=incoming.sender_phone,
+        visitor_id=incoming.visitor_id,
+    )
+    if not key:
+        mark_inbox_failed(int(row["id"]), error="missing_conversation_identity", dead=True)
+        return {"ok": False, "error": "missing_conversation_identity"}
+    settings = get_settings()
+    handle = await acquire_conversation_lock(
+        key, database_url=str(getattr(settings, "database_url", "") or ""),
+        timeout_seconds=float(getattr(settings, "agent_conversation_lock_timeout_seconds", 15) or 15),
+    )
+    try:
+        return await _process_inbox_row_locked(row)
+    finally:
+        await release_conversation_lock(handle)
+
+
+async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
     inbox_id = int(row["id"])
     incoming = incoming_from_inbox_payload(row.get("payload_json"))
     if incoming is None:
@@ -128,7 +155,8 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
             {"inbox_id": inbox_id},
         )
 
-    if has_successful_agent_response(inbound_id):
+    from app.ingress.outbox import has_sent_outbound
+    if has_successful_agent_response(inbound_id) or has_sent_outbound(inbound_id):
         mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
         return {"ok": True, "inbox_id": inbox_id, "skipped": "already_sent"}
 
@@ -158,6 +186,12 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
         inbox_id=inbox_id,
         inbound_id=inbound_id,
     )
+    from app.ingress.outbox import claim_outbox_for_send, get_outbox_status
+    if outbox_id is not None and not claim_outbox_for_send(outbox_id):
+        status = get_outbox_status(outbox_id)
+        mark_inbox_processed(inbox_id, processed_inbound_id=inbound_id)
+        return {"ok": True, "inbox_id": inbox_id, "inbound_id": inbound_id,
+                "skipped": "already_sent" if status == "sent" else "outbox_owned"}
     send_info = await _send_reply(incoming, result)
     send_ok = bool(send_info.get("ok"))
     if outbox_id is not None:
@@ -180,6 +214,7 @@ async def process_inbox_row(row: dict[str, Any]) -> dict[str, Any]:
                 "intent": result.intent,
                 "handoff_required": result.handoff_required,
                 "safety_reason": result.safety_reason,
+                "response_metadata": result.response_metadata,
                 "provider_send_ok": send_ok,
                 "provider_response": send_info,
             }

@@ -834,63 +834,33 @@ def _honest_constraint_reply(
 ) -> AgentResult:
     from .tray_query_authority import budget_hard_miss_result
 
-    if contract.budget_max is not None and interpretation is not None:
-        miss = budget_hard_miss_result(
-            interpretation.model_copy(
-                update={
-                    "preferences": interpretation.preferences.model_copy(
-                        update={"budget_max": contract.budget_max}
-                    )
-                }
-            ),
-            _presented(result),
-        )
-        if miss is not None:
-            return miss
+    # A rejected sentence is not evidence that the catalogue is empty.
+    # Rebuild only from the same candidates and re-run both deterministic checks.
+    products = _presented(result)
+    if products and result.safety_reason != "factual_validation_failed":
+        from app.commerce.commerce_router import _product_result
+
+        repaired = _product_result("product_search", products)
+        if check_pedido(repaired, contract).pass_check and check_fatos(repaired, contract).pass_check:
+            metadata = dict(result.response_metadata or {})
+            metadata.update(repaired.response_metadata or {})
+            metadata.update({"answer_council_recomposed": True, "presented_products": True})
+            repaired.response_metadata = metadata
+            return repaired
     fixed = result.model_copy(deep=True)
     commercial = dict(fixed.commercial_data or {})
     commercial["products"] = []
     fixed.commercial_data = commercial
-    if contract.budget_max is not None and contract.brand:
-        ceiling = f"R$ {contract.budget_max:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        fixed.reply_text = (
-            f"Não encontrei {contract.brand} até {ceiling}. "
-            "Prefere outra marca nessa faixa, ou subir o orçamento?"
-        )
-    elif contract.budget_max is not None:
-        ceiling = f"R$ {contract.budget_max:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        fixed.reply_text = (
-            f"Não encontrei relógios até {ceiling}. "
-            "Quer ajustar a faixa ou outro critério?"
-        )
-    elif contract.color:
-        label = contract.brand or "relógio"
-        fixed.reply_text = (
-            f"Não encontrei {label} na cor {contract.color} com o que você pediu. "
-            "Prefere outra cor, ou outra marca?"
-        )
-    elif contract.gender:
-        label = contract.brand or "relógio"
-        fixed.reply_text = (
-            f"Não encontrei {label} {contract.gender} com o que você pediu. "
-            "Quer ajustar gênero, marca ou faixa?"
-        )
-    elif contract.style:
-        label = contract.brand or "relógio"
-        fixed.reply_text = (
-            f"Não encontrei {label} no estilo {contract.style} com o que você pediu. "
-            "Prefere outro estilo, ou outra marca?"
-        )
-    else:
-        fixed.reply_text = (
-            "Não fechei uma opção que atenda o que você pediu agora. "
-            "Quer ajustar marca ou faixa de investimento?"
-        )
+    fixed.reply_text = (
+        "N?o consegui confirmar uma sugest?o que atenda a todos os crit?rios nesta consulta. "
+        "Vou manter o que voc? pediu para continuarmos a busca."
+    )
     fixed.safety_reason = "answer_council_blocked"
     metadata = dict(fixed.response_metadata or {})
-    metadata["presented_products"] = False
-    metadata["guided_near_match"] = False
-    metadata["hard_budget_max"] = contract.budget_max
+    metadata.update({"presented_products": False, "guided_near_match": False,
+                     "hard_budget_max": contract.budget_max,
+                     "catalog_outcome": "validation_blocked",
+                     "preserve_catalog_context": True})
     fixed.response_metadata = metadata
     return fixed
 
@@ -933,6 +903,8 @@ def _finish_council(
     contract: TurnContract,
     commerce_state: CommerceConversationState | None,
 ) -> tuple[AgentResult, CouncilDecision, SalesInterpretation | None]:
+    if (result.response_metadata or {}).get("answer_council_recomposed"):
+        decision.approved = check_pedido(result, contract).pass_check and check_fatos(result, contract).pass_check
     attached = _stamp_stale_checkout_clear(
         _attach_decision(result, decision),
         contract,

@@ -218,6 +218,14 @@ def process_agent_memory_proposals(
                           source_response_id=response_id,
                           expires_at=decision.expires_at,
                       )
+                      if proposal.kind.value == "brand_preference":
+                          from app.memory.memory_policy import proposal_confirms_current_brand
+
+                          if proposal_confirms_current_brand(proposal, inbound):
+                              for old in current:
+                                  if old.memory_key in {"explicit_no:brand", "explicit_no_preference_brand"}:
+                                      forget_contact_memory(tenant_id=tenant_id, sender_key=sender_key,
+                                                            memory_key=old.memory_key)
                       mark_proposal_applied(
                           proposal_id,
                           applied_memory_id=memory.id,

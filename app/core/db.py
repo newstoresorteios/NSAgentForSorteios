@@ -1555,7 +1555,10 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
     safe_data.setdefault("safety_reason", None)
     safe_data.setdefault("provider_send_ok", False)
 
-    safe_data["provider_response"] = to_jsonb(safe_data.get("provider_response") or {})
+    provider_response = dict(safe_data.get("provider_response") or {})
+    if isinstance(safe_data.get("response_metadata"), dict):
+        provider_response["_agent_metadata"] = safe_data["response_metadata"]
+    safe_data["provider_response"] = to_jsonb(provider_response)
 
     with get_conn() as conn:
         with conn.cursor() as cur:

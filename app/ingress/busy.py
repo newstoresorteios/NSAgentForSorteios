@@ -102,7 +102,7 @@ async def drain_lock_deferred_inbound(
         )
         for row in rows:
             try:
-                item = await process_inbox_row(row)
+                item = await process_inbox_row(row, lock_held=True)
                 if item.get("ok"):
                     processed += 1
                 else:

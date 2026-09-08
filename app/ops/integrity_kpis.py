@@ -63,6 +63,12 @@ def _classify(reason: str | None) -> str | None:
     if reason is None or reason == "":
         return "ok"
     key = str(reason).strip()
+    if key == "answer_council_blocked":
+        return "council_blocked"
+    if key == "recommendation_budget_miss":
+        return "constraint_miss"
+    if key == "product_context_missing":
+        return "context_missing"
     if key in _NOT_FOUND:
         return "not_found"
     if key in _AMBIGUOUS:
@@ -159,6 +165,9 @@ def build_integrity_kpi_report(*, days: int = 7) -> dict[str, Any]:
         "compliance_applied": 0,
         "order_ops": 0,
         "other": 0,
+        "council_blocked": 0,
+        "constraint_miss": 0,
+        "context_missing": 0,
     }
     for item in counts:
         family = _classify(item.get("safety_reason"))
@@ -167,6 +176,7 @@ def build_integrity_kpi_report(*, days: int = 7) -> dict[str, Any]:
         buckets[family] = buckets.get(family, 0) + int(item["n"])
 
     rates = {
+        **{f"{key}_pct": _pct(buckets[key], total) for key in ("council_blocked", "constraint_miss", "context_missing")},
         "not_found_pct": _pct(buckets["not_found"], total),
         "ambiguous_pct": _pct(buckets["ambiguous"], total),
         "factual_fail_pct": _pct(buckets["factual_fail"], total),

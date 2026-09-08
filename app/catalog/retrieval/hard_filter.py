@@ -148,7 +148,7 @@ def hard_filter_products(
                             "dropped_false": len(selected) - len(filtered),
                         },
                     )
-                    return filtered
+                    selected = filtered
     except Exception as exc:
         log_swallowed("hard_filter.diver", exc)
 
@@ -182,13 +182,13 @@ def hard_filter_products(
                         "max_mm": max_mm,
                     },
                 )
-                return in_range
+                selected = in_range
             sized = [
                 product
                 for product in selected
                 if product.get("case_size") or extract_case_size_mm(product)
             ]
-            if sized:
+            if not in_range and sized:
                 print(
                     "[sales.hard_filter.case_size]",
                     {
@@ -232,7 +232,7 @@ def hard_filter_products(
                     "[sales.hard_filter.chronograph]",
                     {"before": len(selected), "after": len(chrono_hits)},
                 )
-                return chrono_hits
+                selected = chrono_hits
     except Exception as exc:
         log_swallowed("hard_filter.chronograph", exc)
     return selected

@@ -75,6 +75,8 @@ def enqueue_outbound(
     with get_conn() as conn:
         with conn.cursor() as cur:
             if inbound_id is not None:
+                # Serialize create/reuse even when no outbox row exists yet.
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", (-int(inbound_id),))
                 cur.execute(
                     """
                     SELECT id, status
@@ -101,49 +103,8 @@ def enqueue_outbound(
                     existing_status = str(
                         existing["status"] if isinstance(existing, dict) else existing[1]
                     )
-                    if existing_status == "sent":
+                    if existing_status in {"sent", "leased", "pending", "failed", "dead"}:
                         return existing_id
-                    cur.execute(
-                        """
-                        UPDATE public.ai_outbound_outbox
-                        SET reply_text = %(reply_text)s,
-                            reply_payload = %(reply_payload)s,
-                            provider = %(provider)s,
-                            channel = %(channel)s,
-                            conversation_key = %(conversation_key)s,
-                            visitor_id = %(visitor_id)s,
-                            sender_key = %(sender_key)s,
-                            recipient_external_id = %(recipient_external_id)s,
-                            status = 'pending',
-                            last_error = NULL,
-                            updated_at = now()
-                        WHERE id = %(id)s
-                          AND status <> 'sent'
-                        """,
-                        {
-                            "id": existing_id,
-                            "inbox_id": inbox_id,
-                            "inbound_id": inbound_id,
-                            "provider": provider,
-                            "channel": (channel or "unknown").lower(),
-                            "conversation_key": conversation_key,
-                            "visitor_id": visitor_id,
-                            "sender_key": sender_key,
-                            "recipient_external_id": recipient_external_id,
-                            "reply_text": reply_text or "",
-                            "reply_payload": to_jsonb(reply_payload or {}),
-                        },
-                    )
-                    log_event(
-                        "outbox.enqueued",
-                        {
-                            "outbox_id": existing_id,
-                            "provider": provider,
-                            "channel": channel,
-                            "reused": True,
-                        },
-                    )
-                    return existing_id
             cur.execute(
                 """
                 INSERT INTO public.ai_outbound_outbox (
@@ -346,3 +307,41 @@ def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False) -> Non
                 },
             )
     log_event("outbox.failed", {"outbox_id": outbox_id, "dead": dead})
+
+
+def get_outbox_status(outbox_id: int) -> str | None:
+    if not get_settings().database_url:
+        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM public.ai_outbound_outbox WHERE id = %s", (outbox_id,))
+            row = cur.fetchone()
+    return str(row["status"] if isinstance(row, dict) else row[0]) if row else None
+
+
+def has_sent_outbound(inbound_id: int | None) -> bool:
+    if inbound_id is None or not get_settings().database_url:
+        return False
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM public.ai_outbound_outbox WHERE inbound_id = %s AND status = 'sent' LIMIT 1", (inbound_id,))
+            return cur.fetchone() is not None
+
+
+def claim_outbox_for_send(outbox_id: int, *, lease_seconds: int = 120) -> bool:
+    """Acquire ownership before the inline sender; cron uses the same state CAS."""
+    if not get_settings().database_url:
+        return False
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE public.ai_outbound_outbox
+                   SET status = 'leased', lease_owner = %s,
+                       lease_expires_at = now() + (%s * interval '1 second'),
+                       attempts = attempts + 1, updated_at = now()
+                   WHERE id = %s AND status IN ('pending', 'failed')
+                     AND attempts < max_attempts
+                   RETURNING id""",
+                (f"inline:{uuid4().hex}", max(15, lease_seconds), outbox_id),
+            )
+            return cur.fetchone() is not None

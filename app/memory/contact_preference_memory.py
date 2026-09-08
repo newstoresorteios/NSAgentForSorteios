@@ -597,6 +597,11 @@ def rehydrate_interpretation_from_memories(
     if not memories:
         return interpretation, []
     skip_catalog = should_skip_catalog_memory_rehydrate(interpretation, message_text)
+    from app.memory.memory_policy import current_turn_confirms_brand
+
+    confirms_brand = current_turn_confirms_brand(interpretation.subject.brand, message_text)
+    if confirms_brand and "brand" not in list(interpretation.preferences.explicit_no_preferences or []):
+        memories = [item for item in memories if item.memory_key not in _EXPLICIT_NO_BRAND_KEYS]
     prior_brand = prior_catalog_theme_from_memories(memories)
     prefs = interpretation.preferences.model_copy(deep=True)
     subject = interpretation.subject.model_copy(deep=True)
@@ -808,6 +813,23 @@ def persist_contact_preferences_from_interpretation(
         interpretation,
         existing_memories=existing,
     )
+    from app.memory.memory_policy import current_turn_confirms_brand
+
+    confirms_brand = current_turn_confirms_brand(interpretation.subject.brand, message_text)
+    if confirms_brand and "brand" not in list(interpretation.preferences.explicit_no_preferences or []):
+        from app.memory.contact_memory_repository import forget_contact_memory
+
+        # Forget both legacy key representations before persisting the new
+        # explicit preference. A name inherited from history cannot do this.
+        for item in existing:
+            if item.memory_key in _EXPLICIT_NO_BRAND_KEYS:
+                try:
+                    forget_contact_memory(tenant_id=tenant_id, sender_key=sender_key,
+                                          memory_key=item.memory_key)
+                except Exception as exc:
+                    _log_optional("brand_preference_correction", exc)
+                    return {"enabled": True, "upserted": 0, "skipped": "correction_persist_failed"}
+        existing = [item for item in existing if item.memory_key not in _EXPLICIT_NO_BRAND_KEYS]
     if getattr(interpretation, "_catalog_memory_rehydrate_skipped", False):
         stated = _stated_catalog_persist_keys(message_text)
         items = [

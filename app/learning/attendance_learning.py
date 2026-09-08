@@ -361,6 +361,7 @@ async def run_attendance_learning_batch(
         })
 
     cursor = {}
+    errors: list[str] = []
     try:
         cursor = load_cursor(tenant_id=tenant_id) or {}
     except Exception as exc:
@@ -368,6 +369,7 @@ async def run_attendance_learning_batch(
             "error_type": type(exc).__name__,
             "error": str(exc)[:160],
         })
+        return {"ok": False, "error": "cursor_load_failed", "rows_scanned": 0}
     cursor_from = cursor.get("last_response_id")
     try:
         rows = fetch_attendances_since(
@@ -381,7 +383,7 @@ async def run_attendance_learning_batch(
             "error_type": type(exc).__name__,
             "error": str(exc)[:160],
         })
-        rows = []
+        return {"ok": False, "error": "attendance_fetch_failed", "rows_scanned": 0}
 
     reviews: list[dict[str, Any]] = []
     last_response_id = cursor_from
@@ -390,10 +392,6 @@ async def run_attendance_learning_batch(
         classification = classify_attendance(row)
         response_id = row.get("response_id")
         created_at = row.get("response_created_at")
-        if response_id is not None:
-            last_response_id = int(response_id)
-        if created_at is not None:
-            last_response_at = created_at
         try:
             persisted = persist_attendance_review(
                 tenant_id=tenant_id,
@@ -409,8 +407,16 @@ async def run_attendance_learning_batch(
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:160],
             })
-            continue
-        if review_id is None or not created:
+            errors.append("review_persist_failed")
+            break
+        if review_id is None:
+            errors.append("review_persist_missing_id")
+            break
+        if response_id is not None:
+            last_response_id = int(response_id)
+        if created_at is not None:
+            last_response_at = created_at
+        if not created:
             continue
         reviews.append({
             "id": review_id,
@@ -449,6 +455,7 @@ async def run_attendance_learning_batch(
                 metadata={"rows_scanned": len(rows)},
             )
         except Exception as exc:
+            errors.append("cursor_save_failed")
             print("[attendance.learning.cursor_error]", {
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:160],
@@ -462,7 +469,7 @@ async def run_attendance_learning_batch(
                 metadata={"rows_scanned": 0},
             )
         except Exception:
-            pass
+            errors.append("cursor_save_failed")
 
     conversations = group_by_conversation(rows)
     buckets = aggregate_failures(reviews)
@@ -566,7 +573,8 @@ async def run_attendance_learning_batch(
                 })
 
     summary = {
-        "ok": True,
+        "ok": not errors,
+        "errors": errors,
         "tenant_id": tenant_id,
         "lookback_hours": bootstrap_hours,
         "rows_scanned": len(rows),
