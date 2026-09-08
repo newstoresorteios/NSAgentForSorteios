@@ -97,8 +97,8 @@ def test_compile_recomputes_each_call_without_openai_state(monkeypatch):
         audit=False,
     )
     assert a.instructions_hash == b.instructions_hash
-    assert a.input_items[-1]["content"] == "a"
-    assert b.input_items[-1]["content"] == "b"
+    assert a.input_items[-1]["content"] == "[enviada agora]\na"
+    assert b.input_items[-1]["content"] == "[enviada agora]\nb"
 
 
 def test_main_contract_not_duplicated_when_compat_off(monkeypatch):

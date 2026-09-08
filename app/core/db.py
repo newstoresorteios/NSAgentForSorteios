@@ -1171,10 +1171,13 @@ def load_recent_conversation_turns(
                     cur.execute(
                         f"""
                         SELECT inbound.id, inbound.text, inbound.conversation_id,
-                               delivered.reply_text, delivered.safety_reason
+                               inbound.created_at,
+                               delivered.reply_text, delivered.safety_reason,
+                               delivered.created_at AS reply_created_at
                         FROM public.ai_inbound_messages AS inbound
                         LEFT JOIN LATERAL (
-                            SELECT response.reply_text, response.safety_reason
+                            SELECT response.reply_text, response.safety_reason,
+                                   response.created_at
                             FROM public.ai_agent_responses AS response
                             WHERE response.inbound_id = inbound.id
                               AND response.provider_send_ok = true
@@ -1200,14 +1203,23 @@ def load_recent_conversation_turns(
 
     rows = [rows_by_id[key] for key in sorted(rows_by_id)][-safe_limit:]
     turns: list[dict[str, Any]] = []
+    from app.memory.history_window import coerce_turn_timestamp
+
     for row in rows:
         inbound_text = str(row.get("text") or "").strip()
         reply_text = str(row.get("reply_text") or "").strip()
         conversation_id = str(row.get("conversation_id") or "").strip()
+        inbound_id = row.get("id")
+        sent_at = coerce_turn_timestamp(row.get("created_at"))
+        reply_sent_at = coerce_turn_timestamp(row.get("reply_created_at"))
         if inbound_text:
             user_turn: dict[str, Any] = {"role": "user", "content": inbound_text}
             if conversation_id:
                 user_turn["conversation_id"] = conversation_id
+            if inbound_id is not None:
+                user_turn["inbound_id"] = int(inbound_id)
+            if sent_at:
+                user_turn["created_at"] = sent_at
             turns.append(user_turn)
         if reply_text:
             assistant_turn: dict[str, Any] = {"role": "assistant", "content": reply_text}
@@ -1215,6 +1227,10 @@ def load_recent_conversation_turns(
                 assistant_turn["metadata"] = {"safety_reason": str(row["safety_reason"])}
             if conversation_id:
                 assistant_turn["conversation_id"] = conversation_id
+            if inbound_id is not None:
+                assistant_turn["inbound_id"] = int(inbound_id)
+            if reply_sent_at:
+                assistant_turn["created_at"] = reply_sent_at
             turns.append(assistant_turn)
     return turns[-safe_limit:]
 

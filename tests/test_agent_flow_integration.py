@@ -85,7 +85,9 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
     class FakeCompletions:
         async def parse(self, **kwargs):
             interpreter_requests.append(kwargs["messages"])
-            current_text = kwargs["messages"][-1]["content"]
+            current_text = str(kwargs["messages"][-1]["content"] or "")
+            if current_text.startswith("[enviada agora]\n"):
+                current_text = current_text.split("\n", 1)[1]
             if current_text == "quero comprar um relógio":
                 interpretation = SalesInterpretation(
                     domain="commerce",
@@ -178,7 +180,7 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
     assert second_messages[2:] == [
         {"role": "user", "content": "quero comprar um relógio"},
         {"role": "assistant", "content": "Você prefere um estilo mais esportivo, social ou casual?"},
-        {"role": "user", "content": "esportivo"},
+        {"role": "user", "content": "[enviada agora]\nesportivo"},
     ]
     assert second_messages[1]["role"] == "system"
     assert second_messages[1]["content"].startswith("INTERPRETER_CONTRACT:")

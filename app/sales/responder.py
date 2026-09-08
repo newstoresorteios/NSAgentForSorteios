@@ -403,6 +403,9 @@ async def sales_response_with_openai(
             or getattr(settings, "agent_instruction_extension_proposals_enabled", False)
             or getattr(settings, "agent_conversation_summary_enabled", False)
         )
+        from app.memory.history_window import HISTORY_TIME_POLICY
+
+        responder_instructions = f"{responder_instructions}\n\n{HISTORY_TIME_POLICY}"
         if memory_sidechannel:
             from app.memory.memory_policy import MEMORY_POLICY_PROMPT
 
@@ -422,6 +425,7 @@ async def sales_response_with_openai(
                 "content": json.dumps(
                     {
                         "original_message": message.text,
+                        "message_sent_at": "agora",
                         "plan": plan,
                         "dialogue_phase": (
                             state.prompt_contract_payload().get("dialogue_phase")
