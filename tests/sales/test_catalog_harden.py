@@ -143,6 +143,33 @@ async def test_refine_color_still_runs_compiled_retrieval(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_product_search_without_interpretation_does_not_fanout(monkeypatch):
+    import app.sales_agent as sales_agent
+    from app.sales.catalog_retrieve import retrieve_catalog_or_clarify
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("leftover must not call handle_commerce_message")
+
+    monkeypatch.setattr(sales_agent, "handle_commerce_message", boom)
+    monkeypatch.setattr(sales_agent, "get_settings", _settings)
+
+    result = await retrieve_catalog_or_clarify(
+        message=IncomingMessage(text="tem seiko?"),
+        facts={},
+        customer_context={},
+        interpretation=None,
+        plan={"intent": "product_search", "query": "Seiko", "goal": "find"},
+        state=CommerceConversationState(),
+        recent_turns=None,
+        resolved_product=None,
+    )
+
+    assert result is not None
+    assert result.safety_reason == "commerce_clarification"
+    assert "marca" in result.reply_text.casefold()
+
+
+@pytest.mark.asyncio
 async def test_image_request_skips_openai_when_official_url_in_facts(monkeypatch):
     import app.sales_agent as sales_agent
 

@@ -41,6 +41,10 @@ _LOW_RISK_SOURCES = {
     "out_of_scope",
     "local_raffle",
 }
+_COMMERCIAL_RESUME_SOURCES = {
+    "context_resume_payment_url",
+    "context_resume_presented_catalog",
+}
 
 
 class JudgeVerdict(BaseModel):
@@ -83,6 +87,15 @@ def is_low_risk_judge_skip(
     if result.handoff_required:
         return True, "human_handoff"
     source = _response_source(result)
+    if source in _COMMERCIAL_RESUME_SOURCES:
+        reply = result.reply_text or ""
+        has_commercial_signal = bool(
+            _MONEY_RE.search(reply)
+            or _URL_RE.search(reply)
+            or (result.commercial_data or {})
+        )
+        if has_commercial_signal:
+            return False, None
     if source in _LOW_RISK_SOURCES:
         return True, f"deterministic:{source}"
     text = ((incoming.text if incoming else "") or "").strip()

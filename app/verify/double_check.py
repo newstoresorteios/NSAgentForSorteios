@@ -132,18 +132,51 @@ def _payment_url(state: CommerceConversationState | None, result: AgentResult) -
     return ""
 
 
+_COMMERCIAL_RESUME_SOURCES = frozenset(
+    {
+        "context_resume_payment_url",
+        "context_resume_presented_catalog",
+    }
+)
+
+
+def _live_purchase_context(
+    commerce_state: CommerceConversationState | None,
+    result: AgentResult,
+) -> bool:
+    if commerce_state is None:
+        return False
+    pending = str(getattr(commerce_state, "pending_action", None) or "")
+    phase = str(getattr(commerce_state, "dialogue_phase", None) or "")
+    return bool(
+        _payment_url(commerce_state, result)
+        or pending in _PURCHASE_PENDING
+        or getattr(commerce_state, "order_id", None)
+        or getattr(commerce_state, "last_presented_products", None)
+        or phase in {"shortlist", "buy", "checkout"}
+    )
+
+
 def _should_skip(
     incoming: IncomingMessage,
     result: AgentResult,
+    commerce_state: CommerceConversationState | None = None,
 ) -> str | None:
     if result.handoff_required:
         return "human_handoff"
     source = str((result.response_metadata or {}).get("response_source") or "")
+    if source in _COMMERCIAL_RESUME_SOURCES:
+        return None
+    live_purchase = _live_purchase_context(commerce_state, result)
+    if source == "farewell" and live_purchase:
+        return None
     if source in _LOW_RISK_SOURCES:
         return f"deterministic:{source}"
     intent = str(result.intent or "").strip().casefold()
     domain = str((result.response_metadata or {}).get("domain") or "").strip().casefold()
     if intent in _SKIP_INTENTS or domain in {"greeting", "raffle", "guardrail"}:
+        if source == "farewell" and live_purchase:
+            return None
         if not (result.commercial_data or {}):
             return f"non_commercial:{intent or domain or 'intent'}"
     text = (incoming.text or "").strip()
@@ -339,7 +372,7 @@ def apply_double_check(
         report.skipped = True
         report.skip_reason = "configured_off"
         return result, report
-    skip = _should_skip(incoming, result)
+    skip = _should_skip(incoming, result, commerce_state)
     if skip:
         report.skipped = True
         report.skip_reason = skip

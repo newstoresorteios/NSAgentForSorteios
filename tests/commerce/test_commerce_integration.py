@@ -377,12 +377,36 @@ async def _async_result(intent):
 
 
 @pytest.mark.asyncio
-async def test_health_exposes_only_tray_flags(monkeypatch):
+async def test_public_health_is_slim(monkeypatch):
     import api.index as index
 
     settings = _settings()
     monkeypatch.setattr(index, "get_settings", lambda: settings)
     payload = await index.health()
+    assert payload["ok"] is True
+    assert payload["agent_version"]
+    assert payload["dry_run"] is True
+    assert "openai_key_length" not in payload
+    assert "tray_adaptor_probe" not in payload
+    assert "tray_adapter_configured" not in payload
+
+
+@pytest.mark.asyncio
+async def test_admin_health_exposes_only_tray_flags(monkeypatch):
+    import api.index as index
+
+    settings = _settings()
+    monkeypatch.setattr(index, "get_settings", lambda: settings)
+
+    async def _probe():
+        return {"ok": False, "reason": "skipped"}
+
+    monkeypatch.setattr("app.http.health.probe_tray_adaptor", _probe)
+    monkeypatch.setattr(
+        "app.channels.meta_instagram.probe_instagram_graph_subscriptions",
+        _probe,
+    )
+    payload = await index.admin_diagnostics_payload()
     assert payload["tray_adapter_configured"] is True
     assert payload["tray_tools_enabled"] is True
     assert settings.tray_adapter_token not in str(payload)

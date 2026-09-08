@@ -124,6 +124,32 @@ async def test_confirmed_payment_keeps_order_status_independent():
 
 
 @pytest.mark.asyncio
+async def test_pending_without_url_does_not_recite_stale_state_url():
+    stale = "https://pay.example/stale-transcript"
+
+    async def execute(_tool, _arguments):
+        return {
+            "success": True,
+            "order_id": "123",
+            "payment": {
+                "method": "Pix - Vindi",
+                "type": "pix",
+                "has_payment": False,
+                "payment_url": None,
+            },
+        }
+
+    result = await inspect_order_payment(
+        state=_state(order_payment_url=stale),
+        execute=execute,
+    )
+    payment = result.commercial_data["payment"]
+    assert payment["payment_url"] is None
+    assert payment["payment_url_available"] is False
+    assert stale not in result.reply_text
+
+
+@pytest.mark.asyncio
 async def test_pending_without_url_does_not_invent_checkout():
     async def execute(_tool, _arguments):
         return {

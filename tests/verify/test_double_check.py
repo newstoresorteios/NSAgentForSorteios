@@ -478,3 +478,71 @@ async def test_phase1_enforce_pix_resumes_link(monkeypatch):
     assert report.applied is True
     assert report.applied_code == "pix"
     assert "https://pay.example/pix" in updated.reply_text
+
+
+def test_payment_url_resume_is_not_skipped():
+    _, report = apply_double_check(
+        incoming=IncomingMessage(text="manda o pix"),
+        result=AgentResult(
+            reply_text="Segue o link: https://pay.example/pix",
+            intent="commerce",
+            commercial_data={
+                "payment": {"payment_url": "https://pay.example/pix"},
+            },
+            response_metadata={
+                "domain": "commerce",
+                "response_source": "context_resume_payment_url",
+            },
+        ),
+        commerce_state=CommerceConversationState(
+            order_id="25400",
+            order_payment_url="https://pay.example/pix",
+            pending_action="awaiting_payment",
+        ),
+        mode="shadow",
+    )
+    assert report.skipped is False
+
+
+def test_presented_catalog_resume_is_not_skipped():
+    _, report = apply_double_check(
+        incoming=IncomingMessage(text="qual relógio?"),
+        result=AgentResult(
+            reply_text="1. Seiko 5",
+            intent="commerce",
+            commercial_data={"products": [{"id": "1", "name": "Seiko 5"}]},
+            response_metadata={
+                "domain": "commerce",
+                "response_source": "context_resume_presented_catalog",
+            },
+        ),
+        commerce_state=CommerceConversationState(
+            last_presented_products=[
+                {"position": 1, "product_id": "1", "name": "Seiko 5"},
+            ]
+        ),
+        mode="shadow",
+    )
+    assert report.skipped is False
+
+
+def test_farewell_during_checkout_is_not_skipped():
+    _, report = apply_double_check(
+        incoming=IncomingMessage(text="tchau"),
+        result=AgentResult(
+            reply_text="Até! Qualquer coisa, é só chamar.",
+            intent="general",
+            response_metadata={
+                "domain": "greeting",
+                "response_source": "farewell",
+            },
+        ),
+        commerce_state=CommerceConversationState(
+            order_id="25400",
+            order_payment_url="https://pay.example/pix",
+            pending_action="awaiting_payment",
+            dialogue_phase="checkout",
+        ),
+        mode="shadow",
+    )
+    assert report.skipped is False

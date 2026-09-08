@@ -65,7 +65,7 @@ from app.commerce.payment_service import inspect_order_payment
 from app.identity.repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
 from app.persona.site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
 from app.identity.user_preferences import detect_preferred_name_update
-from app.tray.tray_tools import TOOL_SCHEMAS, execute_tool
+from app.tray.tray_tools import execute_tool
 from app.sales_agent import (
     OUT_OF_SCOPE_REPLY,
     deterministic_scope,
@@ -379,76 +379,41 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
 
     from app.llm.prompt_compiler import legacy_contract_extra_blocks, resolve_system_instructions
 
+    # Non-commerce door path is text-only. Commerce must go through handle_sales_message
+    # / ProductRetrievalCompiler — never open TOOL_SCHEMAS here.
     system_instructions = resolve_system_instructions(
         fallback_instructions=SYSTEM_INSTRUCTIONS,
         incoming=message,
-        extra_system_blocks=legacy_contract_extra_blocks(
-            SYSTEM_INSTRUCTIONS,
-            tag="legacy_agent_contract",
-        ),
+        extra_system_blocks=[
+            *legacy_contract_extra_blocks(
+                SYSTEM_INSTRUCTIONS,
+                tag="legacy_agent_contract",
+            ),
+            (
+                "<legacy_path_no_tools>\n"
+                "Neste caminho não há ferramentas Tray. "
+                "Não invente preço, estoque, pedido, cupom ou link. "
+                "Se a pergunta for comercial e faltar dado oficial, peça um detalhe.\n"
+                "</legacy_path_no_tools>"
+            ),
+        ],
     )
     messages: list[dict] = [
         {"role": "system", "content": system_instructions},
         {"role": "user", "content": build_agent_input(message, customer_context, facts)},
     ]
-    tools = (
-        TOOL_SCHEMAS
-        if facts.get("primary_intent") == "commerce"
-        and settings.tray_adapter_url
-        and settings.tray_adapter_token
-        else None
-    )
     try:
         from app.llm.openai_errors import OpenAIGatewayError
-        from app.llm.openai_gateway import generate_text_output, run_tool_loop_output
+        from app.llm.openai_gateway import generate_text_output
 
-        if not tools:
-            text_result = await generate_text_output(
-                model=settings.openai_model,
-                messages=messages,
-                temperature=0.3,
-                call_type="response_composition",
-            )
-            reply = _truncate(
-                text_result.text or _non_handoff_fallback(message, facts),
-                settings.max_reply_chars,
-            )
-            return AgentResult(
-                reply_text=reply,
-                intent=str(facts.get("primary_intent") or "general_support"),
-            )
-
-        async def _execute_allowed(name: str, arguments: dict) -> dict:
-            result = await execute_tool(name, arguments)
-            return result
-
-        loop_result = await run_tool_loop_output(
+        text_result = await generate_text_output(
             model=settings.openai_model,
-            tools=tools,
-            execute_tool=_execute_allowed,
             messages=messages,
             temperature=0.3,
-            parallel_tool_calls=True,
-            max_rounds=3,
-            call_type="tool_loop",
+            call_type="response_composition",
         )
-        for item in loop_result.tool_results:
-            if isinstance(item.get("result"), dict) and "error" in item["result"]:
-                return AgentResult(
-                    reply_text=_non_handoff_fallback(message, facts),
-                    intent=str(facts.get("primary_intent") or "store_lookup"),
-                    handoff_required=False,
-                    safety_reason="tray_adapter_unavailable",
-                )
-        if loop_result.limit_reached and not loop_result.text:
-            return AgentResult(
-                reply_text=_non_handoff_fallback(message, facts),
-                intent=str(facts.get("primary_intent") or "store_lookup"),
-                handoff_required=False,
-                safety_reason="tool_loop_limit",
-            )
         reply = _truncate(
-            loop_result.text or _non_handoff_fallback(message, facts),
+            text_result.text or _non_handoff_fallback(message, facts),
             settings.max_reply_chars,
         )
         return AgentResult(
@@ -462,7 +427,7 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
         json.JSONDecodeError,
         ValueError,
     ) as exc:
-        print("[openai.agent] tools_request_failed", {"error_type": type(exc).__name__, "message": _sanitize_log_message(str(exc))})
+        print("[openai.agent] text_request_failed", {"error_type": type(exc).__name__, "message": _sanitize_log_message(str(exc))})
         return AgentResult(reply_text=_non_handoff_fallback(message, facts), intent=str(facts.get("primary_intent") or "store_lookup"), handoff_required=False, safety_reason="tools_request_failed")
 
 
@@ -985,7 +950,7 @@ async def _route_after_interpret(
             fallback_reason="commerce_handle_empty",
             interpretation_confidence=interpretation.confidence,
         )
-    print("[openai.agent] routing", {"mode": "openai_with_db_context_and_tools", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": bool(get_settings().tray_adapter_url and get_settings().tray_adapter_token)})
+    print("[openai.agent] routing", {"mode": "openai_text_only", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": False})
     result = await generate_openai_reply_async(message, customer_context, facts)
     return _annotate_agent_result(
         result,

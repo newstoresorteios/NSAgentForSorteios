@@ -8,10 +8,9 @@ def _secure_equals(a: str, b: str) -> bool:
 
 
 async def verify_brevo_webhook(request: Request, x_webhook_token: str | None = Header(default=None)) -> None:
-    """Validate a simple shared-secret header for Brevo webhook calls.
+    """Validate the shared secret on header X-Webhook-Token only.
 
-    Configure Brevo to send header: X-Webhook-Token: <BREVO_WEBHOOK_SECRET>
-    or URL query param ?token=<BREVO_WEBHOOK_SECRET>
+    Query-string ?token= is ignored so the secret is not written to access logs.
     """
     settings = get_settings()
     if not settings.brevo_webhook_secret:
@@ -20,8 +19,7 @@ async def verify_brevo_webhook(request: Request, x_webhook_token: str | None = H
             raise HTTPException(status_code=500, detail="webhook_secret_not_configured")
         return
 
-    query_token = request.query_params.get("token")
-    provided_token = x_webhook_token or query_token
+    provided_token = x_webhook_token
 
     if not provided_token:
         print("[brevo.webhook.auth] missing_webhook_token")

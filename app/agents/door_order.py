@@ -93,52 +93,6 @@ async def try_order_resume_route(
                 used_openai_responder=False,
                 used_tray=False,
             )
-    if door.is_payment_link_request(message.text) and commerce_state.order_payment_url:
-        order_label = commerce_state.order_id or commerce_state.order_lookup_id
-        reply = (
-            f"Seu pedido {order_label} ainda está aguardando pagamento. "
-            f"Segue o link: {commerce_state.order_payment_url}"
-            if order_label
-            else (
-                "Seu pedido ainda está aguardando pagamento. "
-                f"Segue o link: {commerce_state.order_payment_url}"
-            )
-        )
-        print("[sales.order.route]", {
-            "route": "transcript_payment_url",
-            "order_id_present": bool(order_label),
-            "payment_url_present": True,
-        })
-        return door._annotate_agent_result(
-            AgentResult(
-                reply_text=reply,
-                intent="commerce",
-                commercial_data={
-                    "order_id": order_label,
-                    "payment": {
-                        "payment_url": commerce_state.order_payment_url,
-                        "status": commerce_state.order_payment_status or "awaiting_payment",
-                    },
-                },
-                response_metadata={
-                    "domain": "commerce",
-                    "pending_action": "awaiting_payment",
-                    "order_state": {"order_id": order_label} if order_label else {},
-                    "payment_state": {
-                        "order_payment_url": commerce_state.order_payment_url,
-                        "order_payment_status": (
-                            commerce_state.order_payment_status or "awaiting_payment"
-                        ),
-                    },
-                    "used_tray": False,
-                },
-            ),
-            domain="commerce",
-            response_source="context_resume_payment_url",
-            used_openai_interpreter=False,
-            used_openai_responder=False,
-            used_tray=False,
-        )
     if door.is_order_notes_request(message.text, commerce_state=commerce_state):
         result = door.order_notes_unavailable_result(commerce_state)
         return door._annotate_agent_result(
@@ -252,33 +206,6 @@ async def try_order_resume_route(
                 execute=door.execute_tool,
                 order_id=commerce_state.order_id,
             )
-            if not (result.commercial_data or {}).get("payment", {}).get("payment_url"):
-                if commerce_state.order_payment_url:
-                    result = AgentResult(
-                        reply_text=(
-                            f"Seu pedido {commerce_state.order_id} ainda está aguardando "
-                            f"pagamento. Segue o link: {commerce_state.order_payment_url}"
-                        ),
-                        intent="commerce",
-                        commercial_data={
-                            "order_id": commerce_state.order_id,
-                            "payment": {
-                                "payment_url": commerce_state.order_payment_url,
-                                "status": commerce_state.order_payment_status,
-                            },
-                        },
-                        response_metadata={
-                            "domain": "commerce",
-                            "pending_action": "awaiting_payment",
-                            "order_state": {"order_id": commerce_state.order_id},
-                            "payment_state": {
-                                "order_payment_url": commerce_state.order_payment_url,
-                                "order_payment_status": (
-                                    commerce_state.order_payment_status
-                                ),
-                            },
-                        },
-                    )
         else:
             result = await door.get_order_facts(
                 state=commerce_state,
