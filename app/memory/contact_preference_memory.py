@@ -441,15 +441,18 @@ def prior_catalog_theme_from_memories(memories: list[ContactMemory]) -> str | No
     """Active brand from durable memory, if any."""
     if _explicit_no_brand_active(memories):
         return None
+    from app.memory.memory_policy import BRAND_MEMORY_KEYS
+
+    chosen = None
     for item in memories:
         if getattr(item, "status", "active") != "active":
             continue
-        if item.memory_key != "brand_preference":
+        if item.memory_key not in BRAND_MEMORY_KEYS:
             continue
         brand = _active_brand_from_memory(item)
         if brand:
-            return brand
-    return None
+            chosen = brand
+    return chosen
 
 
 def prior_catalog_theme_resume_question(brand: str | None) -> str | None:
@@ -617,7 +620,12 @@ def rehydrate_interpretation_from_memories(
     }
 
     if not skip_catalog:
-        brand_mem = by_key.get("brand_preference")
+        from app.memory.memory_policy import BRAND_MEMORY_KEYS
+
+        brand_mem = next(
+            (by_key[key] for key in BRAND_MEMORY_KEYS if key in by_key),
+            None,
+        )
         if brand_mem and not subject.brand and not explicit_no_brand:
             brand = _active_brand_from_memory(brand_mem)
             if brand and _fold_key(brand) not in excluded_from_attrs:
@@ -848,11 +856,15 @@ def persist_contact_preferences_from_interpretation(
         try:
             from app.memory.contact_memory_repository import forget_contact_memory
 
-            forgotten = forget_contact_memory(
-                tenant_id=tenant_id,
-                sender_key=sender_key,
-                memory_key="brand_preference",
-            )
+            from app.memory.memory_policy import BRAND_MEMORY_KEYS
+
+            forgotten = 0
+            for alias in BRAND_MEMORY_KEYS:
+                forgotten += forget_contact_memory(
+                    tenant_id=tenant_id,
+                    sender_key=sender_key,
+                    memory_key=alias,
+                )
             if forgotten:
                 print(
                     "[memory.contact_preference.brand_cleared]",

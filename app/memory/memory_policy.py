@@ -210,6 +210,17 @@ _EXPLICIT_NO_BRAND_MEMORY_KEYS = frozenset(
     }
 )
 
+# Deterministic persist writes brand_preference; policy allowlist writes preferred_brands.
+BRAND_MEMORY_KEYS = ("brand_preference", "preferred_brands")
+
+
+def memory_keys_equivalent(key: str | None) -> tuple[str, ...]:
+    """Keys that name the same durable fact and must be read or forgotten together."""
+    cleaned = str(key or "").strip()
+    if cleaned in BRAND_MEMORY_KEYS:
+        return BRAND_MEMORY_KEYS
+    return (cleaned,) if cleaned else ()
+
 
 def _contact_has_explicit_no_brand(
     current_memories: list[ContactMemory] | None,

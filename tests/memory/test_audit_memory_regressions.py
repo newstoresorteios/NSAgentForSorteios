@@ -127,3 +127,125 @@ def test_price_preference_still_accepts_currency_budget():
     proposal = MemoryProposal(action="upsert", kind="price_preference",
         key="preferred_price_max", value="até R$ 2500")
     assert evaluate_memory_proposal(proposal=proposal).accepted
+
+
+def test_preferred_brands_alias_rehydrates_as_brand():
+    memories = [memory("preferred_brands", {"value": "Seiko"})]
+    incoming = SalesInterpretation(domain="commerce", goal="find", confidence=0.9,
+        needs_clarification=False, subject={}, references_previous_context=True)
+    hydrated, filled = rehydrate_interpretation_from_memories(
+        incoming, memories, message_text="pode continuar nessa linha"
+    )
+    assert hydrated.subject.brand == "Seiko"
+    assert "brand" in filled
+
+
+def test_cas_conflict_is_not_marked_applied(monkeypatch):
+    from app.memory.memory_models import AgentTurnEnvelope, ConversationSummaryDelta
+    from app.memory.memory_service import process_agent_memory_proposals
+
+    calls = {"applied": 0, "rejected": []}
+
+    def conflict(**_kwargs):
+        return {"cas_conflict": True, "summary": "stale"}
+
+    monkeypatch.setattr(
+        "app.memory.memory_service.get_settings",
+        lambda: SimpleNamespace(
+            agent_memory_proposals_enabled=False,
+            agent_instruction_extension_proposals_enabled=False,
+            agent_conversation_summary_mode="enforce",
+            agent_conversation_summary_enabled=True,
+            agent_max_conversation_summary_chars=2500,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.memory.conversation_summary_repository.get_conversation_summary",
+        lambda **_k: {"version": 3, "current_goal": "old"},
+    )
+    monkeypatch.setattr("app.memory.memory_service.apply_summary_delta", conflict)
+    monkeypatch.setattr(
+        "app.memory.memory_service.insert_memory_proposal",
+        lambda **_k: 41,
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_service.mark_proposal_applied",
+        lambda *_a, **_k: calls.__setitem__("applied", calls["applied"] + 1),
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_service.mark_proposal_rejected",
+        lambda _id, rejection_codes=None: calls["rejected"].extend(rejection_codes or []),
+    )
+
+    result = process_agent_memory_proposals(
+        envelope=AgentTurnEnvelope(
+            reply="ok",
+            conversation_summary_delta=ConversationSummaryDelta(
+                current_goal="escolher relógio",
+                commitments=["avisar quando chegar"],
+            ),
+        ),
+        tenant_id="audit",
+        sender_key="audit",
+        conversation_key="conv-1",
+    )
+    assert calls["applied"] == 0
+    assert result.proposals_applied == 0
+    assert "cas_conflict" in result.rejection_codes
+
+
+def test_conversation_scope_does_not_write_contact_memory(monkeypatch):
+    from app.memory.memory_models import AgentTurnEnvelope
+    from app.memory.memory_service import process_agent_memory_proposals
+
+    writes = []
+    monkeypatch.setattr("app.memory.memory_policy.get_settings", settings)
+    monkeypatch.setattr(
+        "app.memory.memory_service.get_settings",
+        lambda: SimpleNamespace(
+            **vars(settings()),
+            agent_memory_proposals_enabled=True,
+            agent_conversation_summary_mode="off",
+            agent_instruction_extension_proposals_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_service.get_active_contact_memories",
+        lambda **_k: [],
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_service.insert_memory_proposal",
+        lambda **_k: 7,
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_service.upsert_contact_memory",
+        lambda **kwargs: writes.append(kwargs) or memory("x", {}),
+    )
+    monkeypatch.setattr(
+        "app.memory.memory_service.mark_proposal_applied",
+        lambda *_a, **_k: None,
+    )
+
+    result = process_agent_memory_proposals(
+        envelope=AgentTurnEnvelope(
+            reply="ok",
+            memory_proposals=[
+                MemoryProposal(
+                    action="upsert",
+                    scope="conversation",
+                    kind="conversation_goal",
+                    key="current_goal",
+                    value="fechar o Seiko",
+                    reason_code="explicit_user_preference",
+                    confidence=0.99,
+                    importance=0.99,
+                )
+            ],
+        ),
+        tenant_id="audit",
+        sender_key="audit",
+        conversation_key="conv-a",
+        inbound=IncomingMessage(channel="whatsapp", text="quero fechar o Seiko"),
+    )
+    assert writes == []
+    assert result.proposals_applied == 0
