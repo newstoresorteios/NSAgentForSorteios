@@ -680,6 +680,10 @@ class Settings(BaseSettings):
     audio_inbound_enabled: bool = Field(default=True, alias="AUDIO_INBOUND_ENABLED")
     audio_outbound_enabled: bool = Field(default=True, alias="AUDIO_OUTBOUND_ENABLED")
     brevo_send_audio_as_attachment: bool = Field(default=True, alias="BREVO_SEND_AUDIO_AS_ATTACHMENT")
+    brevo_send_images_as_attachment: bool = Field(
+        default=True,
+        alias="BREVO_SEND_IMAGES_AS_ATTACHMENT",
+    )
     audio_public_base_url: str = Field(default="", alias="AUDIO_PUBLIC_BASE_URL")
     # Vision → catalog search when customer sends a product photo.
     agent_image_search_enabled: bool = Field(

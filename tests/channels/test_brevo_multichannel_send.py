@@ -16,6 +16,7 @@ def _settings(**overrides):
         "brevo_send_url": "",
         "brevo_reply_mode": "auto",
         "brevo_send_audio_as_attachment": True,
+        "brevo_send_images_as_attachment": True,
         "dry_run": False,
     }
     values.update(overrides)
@@ -116,6 +117,201 @@ async def test_auto_whatsapp_keeps_transactional_number_route(monkeypatch):
 
     assert sent.ok is True
     assert calls == [("+55 11 99999-9999", "Resposta")]
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_image_is_sent_as_pushed_conversations_attachment(monkeypatch):
+    import app.channels.brevo_client as brevo
+
+    calls = []
+    monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
+
+    async def conversations(incoming, text, audio_file=None, image_file=None):
+        calls.append((incoming.visitor_id, text, audio_file, image_file))
+        return BrevoSendResult(
+            ok=True,
+            dry_run=False,
+            status_code=200,
+            provider_response={"id": "media-1", "isPushed": True},
+        )
+
+    async def whatsapp(*_args):
+        raise AssertionError("text fallback must not run when media was pushed")
+
+    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
+    monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
+    result = AgentResult(
+        reply_text="Esta é a imagem oficial do relógio:\nhttps://cdn.example/relogio.png",
+        response_metadata={"outbound_image_url": "https://cdn.example/relogio.png"},
+    )
+
+    sent = await brevo.send_brevo_reply(
+        IncomingMessage(
+            channel="whatsapp",
+            sender_phone="5511999999999",
+            visitor_id="visitor-wa",
+        ),
+        result,
+    )
+
+    assert sent.ok is True
+    assert sent.provider_response["route"] == "brevo_conversations_media"
+    assert calls[0][1] == "Esta é a imagem oficial do relógio:"
+    assert calls[0][2] is None
+    assert calls[0][3] == {
+        "name": "relogio.png",
+        "link": "https://cdn.example/relogio.png",
+        "mimeType": "image/png",
+        "size": 1,
+        "isImage": True,
+    }
+    assert result.response_metadata["native_media_sent"] is True
+    assert result.response_metadata["native_media_count"] == 1
+    assert result.response_metadata["fallback_link_sent"] is False
+
+
+@pytest.mark.asyncio
+async def test_conversations_image_attachment_is_included_in_provider_payload(monkeypatch):
+    import app.channels.brevo_client as brevo
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"id": "media-1", "isPushed": True}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, *, json, headers):
+            captured.update({"url": url, "json": json, "headers": headers})
+            return Response()
+
+    monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
+    monkeypatch.setattr(brevo.httpx, "AsyncClient", Client)
+    image_file = {
+        "name": "produto.jpg",
+        "link": "https://cdn.example/produto.jpg",
+        "mimeType": "image/jpeg",
+        "size": 1,
+        "isImage": True,
+    }
+
+    result = await brevo._send_conversations_reply(
+        IncomingMessage(channel="whatsapp", visitor_id="visitor-wa"),
+        "Segue a foto oficial.",
+        image_file=image_file,
+    )
+
+    assert result.ok is True
+    assert captured["url"] == brevo.BREVO_CONVERSATIONS_SEND_URL
+    assert captured["json"]["file"] == image_file
+    assert captured["json"]["text"] == "Segue a foto oficial."
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_image_falls_back_to_link_when_attachment_is_not_pushed(monkeypatch):
+    import app.channels.brevo_client as brevo
+
+    fallback = {}
+    monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
+
+    async def conversations(_incoming, _text, audio_file=None, image_file=None):
+        assert audio_file is None
+        assert image_file is not None
+        return BrevoSendResult(
+            ok=True,
+            dry_run=False,
+            status_code=200,
+            provider_response={"id": "inbox-only", "isPushed": False},
+        )
+
+    async def whatsapp(_incoming, text):
+        fallback["text"] = text
+        return BrevoSendResult(
+            ok=True,
+            dry_run=False,
+            status_code=201,
+            provider_response={"messageId": "text-1"},
+        )
+
+    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
+    monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
+    result = AgentResult(
+        reply_text="Foto oficial:\nhttps://cdn.example/relogio.jpg",
+        response_metadata={"outbound_image_url": "https://cdn.example/relogio.jpg"},
+    )
+
+    sent = await brevo.send_brevo_reply(
+        IncomingMessage(
+            channel="whatsapp",
+            sender_phone="5511999999999",
+            visitor_id="visitor-wa",
+        ),
+        result,
+    )
+
+    assert sent.ok is True
+    assert sent.provider_response["route"] == "whatsapp_transactional"
+    assert fallback["text"].endswith("https://cdn.example/relogio.jpg")
+    assert result.response_metadata["native_media_sent"] is False
+    assert result.response_metadata["media_send_failed"] is True
+    assert result.response_metadata["fallback_link_sent"] is True
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_sends_each_requested_product_image(monkeypatch):
+    import app.channels.brevo_client as brevo
+
+    captions = []
+    monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
+
+    async def conversations(_incoming, text, audio_file=None, image_file=None):
+        captions.append((text, image_file["link"]))
+        return BrevoSendResult(
+            ok=True,
+            dry_run=False,
+            status_code=200,
+            provider_response={"id": f"media-{len(captions)}", "isPushed": True},
+        )
+
+    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
+    result = AgentResult(
+        reply_text="Fotos oficiais:\nhttps://cdn.example/1.jpg\nhttps://cdn.example/2.jpg",
+        response_metadata={
+            "outbound_image_url": "https://cdn.example/1.jpg",
+            "outbound_image_urls": [
+                "https://cdn.example/1.jpg",
+                "https://cdn.example/2.jpg",
+            ],
+        },
+    )
+
+    sent = await brevo.send_brevo_reply(
+        IncomingMessage(
+            channel="whatsapp",
+            sender_phone="5511999999999",
+            visitor_id="visitor-wa",
+        ),
+        result,
+    )
+
+    assert sent.ok is True
+    assert captions == [
+        ("Foto 1 de 2.", "https://cdn.example/1.jpg"),
+        ("Foto 2 de 2.", "https://cdn.example/2.jpg"),
+    ]
+    assert result.response_metadata["native_media_count"] == 2
 
 
 @pytest.mark.asyncio
