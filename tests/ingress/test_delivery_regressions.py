@@ -156,3 +156,36 @@ def test_inbox_claim_only_selects_first_unfinished_turn_per_conversation(monkeyp
     db.execute("UPDATE queue SET status='processed' WHERE id=1")
     assert db.execute(selection).fetchall() == [(2,),(3,)]
     db.close()
+
+
+@pytest.mark.parametrize(
+    ("mark", "kwargs"),
+    [
+        (outbox.mark_outbox_sent, {"provider_response": {"ok": True}}),
+        (outbox.mark_outbox_failed, {"error": "send_failed"}),
+    ],
+)
+def test_outbox_receipt_owner_has_unambiguous_sql(monkeypatch, mark, kwargs):
+    cursor = MagicMock()
+    cursor.__enter__.return_value = cursor
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+
+    @contextmanager
+    def connection():
+        yield conn
+
+    monkeypatch.setattr(outbox, "get_settings", lambda: SimpleNamespace(database_url="fake"))
+    monkeypatch.setattr(outbox, "get_conn", connection)
+
+    mark(7, owner="inline:owner-7", **kwargs)
+    sql, params = cursor.execute.call_args.args
+    assert "%(owner)s IS NULL" not in sql
+    assert "status = 'leased' AND lease_owner = %(owner)s" in sql
+    assert params["owner"] == "inline:owner-7"
+
+    cursor.execute.reset_mock()
+    mark(7, owner=None, **kwargs)
+    sql, params = cursor.execute.call_args.args
+    assert "%(owner)s" not in sql
+    assert "owner" not in params
