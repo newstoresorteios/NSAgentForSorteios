@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,6 +14,106 @@ from app.persona.persona_models import PersonaVersion
 ATTACHMENT_READY_STATUSES = ("processed", "ready")
 
 _EMPTY_BLOCK = "<persona_knowledge>\n</persona_knowledge>"
+_ATTACHMENT_HEADING_RE = re.compile(
+    r"(?im)^\s*#{2,4}\s+[^\n]+\.(?:txt|md|pdf|docx?|rtf|csv)\s*$"
+)
+
+_RETRIEVAL_STOPWORDS = frozenset(
+    {
+        "a", "ao", "aos", "as", "com", "como", "da", "das", "de", "do",
+        "dos", "e", "em", "essa", "esse", "esta", "este", "eu", "me",
+        "na", "nas", "no", "nos", "o", "os", "ou", "para", "por", "que",
+        "qual", "quero", "se", "tem", "uma", "um", "voce", "voces", "produto",
+        "produtos", "relogio", "relogios", "loja", "cliente",
+    }
+)
+
+
+def retrieval_tokens(text: str | None) -> set[str]:
+    folded = unicodedata.normalize("NFKD", str(text or "").casefold())
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]{3,}", folded)
+        if token not in _RETRIEVAL_STOPWORDS
+    }
+
+
+def strip_embedded_attachment_appendix(instructions: str | None) -> str:
+    """Remove attachment bodies appended to the persisted persona contract.
+
+    ChatBo stores these bodies separately in ``agent_persona_attachments``.
+    Keeping the same document in the persona text defeats turn-scoped
+    retrieval, so the compiler retains the authored contract before the first
+    file heading and retrieves the attachment independently.
+    """
+    text = str(instructions or "").strip()
+    match = _ATTACHMENT_HEADING_RE.search(text)
+    if match is None:
+        return text
+    core = text[: match.start()].rstrip()
+    appendix = text[match.start() :].strip()
+    if len(core) < 200 or len(appendix) < 100:
+        return text
+    return core
+
+
+def _attachment_chunks(text: str, *, chunk_chars: int = 1400) -> list[str]:
+    """Create bounded, paragraph-aware chunks without adding a dependency."""
+    paragraphs = [piece.strip() for piece in re.split(r"\n\s*\n", text) if piece.strip()]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in paragraphs or [text.strip()]:
+        pieces = (
+            [paragraph]
+            if len(paragraph) <= chunk_chars
+            else [paragraph[i : i + chunk_chars] for i in range(0, len(paragraph), chunk_chars)]
+        )
+        for piece in pieces:
+            candidate = f"{current}\n\n{piece}".strip() if current else piece
+            if current and len(candidate) > chunk_chars:
+                chunks.append(current)
+                current = piece
+            else:
+                current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def retrieve_attachment_sections(
+    attachments: list[PersonaKnowledgeAttachment],
+    query_text: str | None,
+    *,
+    max_chunks: int = 3,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Select source-labelled attachment chunks with evidence for this turn."""
+    query_tokens = retrieval_tokens(query_text)
+    if not query_tokens:
+        return [], []
+    ranked: list[tuple[int, int, str, str, str]] = []
+    for attachment in attachments:
+        filename_tokens = retrieval_tokens(attachment.filename)
+        for index, chunk in enumerate(_attachment_chunks(attachment.extracted_text), start=1):
+            chunk_tokens = retrieval_tokens(chunk)
+            overlap = query_tokens & (chunk_tokens | filename_tokens)
+            if not overlap:
+                continue
+            score = len(overlap) * 10 + len(query_tokens & filename_tokens) * 3
+            ranked.append((score, -index, attachment.id, attachment.filename, chunk))
+    ranked.sort(reverse=True)
+    if not ranked:
+        return [], []
+    relative_floor = max(10, math.ceil(ranked[0][0] * 0.8))
+    selected = [item for item in ranked if item[0] >= relative_floor][
+        : max(1, max_chunks)
+    ]
+    ids = list(dict.fromkeys(item[2] for item in selected))
+    sections = [
+        (f"{filename} [source:{attachment_id}#chunk-{abs(negative_index)}]", chunk)
+        for _, negative_index, attachment_id, filename, chunk in selected
+    ]
+    return ids, sections
 
 # Full ChatBo agent_personas surface used by the attendance UI.
 CHATBO_PROFILE_COLUMNS = (
@@ -307,19 +410,31 @@ def load_persona_knowledge_for_prompt(
     limit: int = 10,
     max_chars: int = 12000,
     relevant_knowledge: list[Any] | None = None,
+    query_text: str | None = None,
 ) -> tuple[list[str], str]:
     """Return attachment ids used and the XML block for the compiled prompt."""
     persona_id = chatbo_persona_id(persona.metadata)
-    instructions = persona.instructions or ""
+    instructions = strip_embedded_attachment_appendix(persona.instructions)
     attachment_sections: list[tuple[str, str]] = []
     attachment_ids: list[str] = []
 
     if persona_id:
+        available_attachments: list[PersonaKnowledgeAttachment] = []
         for attachment in list_persona_attachments(persona_id, limit=limit):
             if text_already_embedded(attachment.extracted_text, instructions):
                 continue
-            attachment_sections.append((attachment.filename, attachment.extracted_text))
-            attachment_ids.append(attachment.id)
+            available_attachments.append(attachment)
+        if query_text is None:
+            attachment_sections = [
+                (attachment.filename, attachment.extracted_text)
+                for attachment in available_attachments
+            ]
+            attachment_ids = [attachment.id for attachment in available_attachments]
+        else:
+            attachment_ids, attachment_sections = retrieve_attachment_sections(
+                available_attachments,
+                query_text,
+            )
 
         profile = get_chatbo_persona_profile(persona_id) or {}
         # Always prefer ChatBo structured fields; skip only sections already

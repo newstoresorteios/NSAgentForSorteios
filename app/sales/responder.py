@@ -27,6 +27,37 @@ from app.sales.discovery import (
 from app.sales.result_utils import mark_sales_result as _mark_sales_result
 
 
+def _responder_contract_for_turn(
+    plan: dict[str, Any],
+    state: CommerceConversationState | None,
+) -> str:
+    """Keep the expensive checkout contract out of ordinary catalog turns."""
+    from app.sales.dialogue_phase import session_in_checkout_phase
+    from app.sales_agent import (
+        BASE_SALES_RESPONDER_INSTRUCTIONS,
+        SALES_RESPONDER_INSTRUCTIONS,
+    )
+
+    purchase_turn = bool(
+        plan.get("goal") == "buy"
+        or plan.get("action")
+        in {
+            "purchase_intent",
+            "create_cart",
+            "inspect_cart",
+            "show_cart_link",
+            "checkout_question",
+            "payment_action",
+        }
+        or (state is not None and session_in_checkout_phase(state))
+    )
+    return (
+        SALES_RESPONDER_INSTRUCTIONS
+        if purchase_turn
+        else BASE_SALES_RESPONDER_INSTRUCTIONS
+    )
+
+
 def recommendation_identifies_candidate(text: str, products: list[dict[str, Any]]) -> bool:
     """Minimum presentation contract, separate from validation of factual claims.
 
@@ -344,7 +375,6 @@ async def sales_response_with_openai(
         format_capability_catalog_for_prompt,
     )
     from app.sales_agent import (
-        SALES_RESPONDER_INSTRUCTIONS,
         _normalize_interpreter_history,
         _sales_recent_turns,
         get_settings,
@@ -399,8 +429,9 @@ async def sales_response_with_openai(
             resolve_system_instructions,
         )
 
+        turn_contract = _responder_contract_for_turn(plan, state)
         responder_prompt = (
-            f"{SALES_RESPONDER_INSTRUCTIONS}\n\n"
+            f"{turn_contract}\n\n"
             f"{channel_system_hint(message.channel)}\n\n"
             f"{format_capability_catalog_for_prompt()}"
         )

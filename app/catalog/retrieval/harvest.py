@@ -76,9 +76,17 @@ async def harvest_family_and_color(session: RetrievalSession) -> None:
         enrich_names.append(f"{core} {color_hue}".strip())
     enrich_names = list(dict.fromkeys(n for n in enrich_names if n))[:6]
     brand = (interpretation.subject.brand or "").strip()
+    remaining_budget = max(
+        0,
+        int(session.search_call_limit or 1) - session.search_call_count,
+    )
+    # Keep room for the broad color-only query. Family probes are useful, but
+    # they must not consume the calls needed to find a color variant that sits
+    # on a later Tray page.
+    direct_color_reserve = min(3, remaining_budget) if brand and color_labels else 0
     enrich_calls: list[dict] = [
         {"name": name, "limit": 20, "page": 1}
-        for name in enrich_names
+        for name in enrich_names[: max(0, remaining_budget - direct_color_reserve)]
     ]
     if enrich_calls:
         print("[sales.retrieval.family_enrich]", {
@@ -105,6 +113,9 @@ async def harvest_family_and_color(session: RetrievalSession) -> None:
         color_pages_hits = 0
         for label in color_labels[:4]:
             for page in range(1, 4):
+                if session.search_call_count >= int(session.search_call_limit or 1):
+                    session.search_budget_exhausted = True
+                    break
                 print("[sales.retrieval.color_harvest]", {
                     "color": label,
                     "page": page,
@@ -151,11 +162,14 @@ async def merge_brand_cache(session: RetrievalSession) -> None:
         return
     from app.catalog.index.cache import ensure_brand_pool_in_candidates
 
+    async def _budgeted_execute_tool(_name: str, arguments: dict) -> dict:
+        return await session.search_products(arguments)
+
     session.candidates = await ensure_brand_pool_in_candidates(
         brand=interpretation.subject.brand,
         candidates=session.candidates,
         seen_ids=session.seen_ids,
-        execute_tool=session.execute_tool,
+        execute_tool=_budgeted_execute_tool,
         limit=max(session.retrieval_plan.candidate_limit, 120),
     )
     session.refresh_hard_filtered()

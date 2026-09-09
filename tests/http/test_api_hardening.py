@@ -5,8 +5,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException, Request
 from httpx import ASGITransport, AsyncClient
 
+from app.http.payload import MAX_REQUEST_BODY_BYTES, read_limited_request_body
 from app.models import AgentResult, BrevoSendResult
 
 
@@ -99,6 +101,93 @@ async def test_invalid_json_has_no_raw_preview(monkeypatch):
     dumped = response.text
     assert "raw_preview" not in dumped
     assert "{not-json" not in dumped
+
+
+@pytest.mark.asyncio
+async def test_brevo_rejects_oversized_body_without_parsing(monkeypatch):
+    import api.index as index
+
+    index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
+    try:
+        response = await _post_brevo(
+            index.app,
+            None,
+            content=b"x" * (MAX_REQUEST_BODY_BYTES + 1),
+            headers={"content-type": "application/json"},
+        )
+    finally:
+        index.app.dependency_overrides.pop(index.verify_brevo_webhook, None)
+    assert response.status_code == 413
+    assert response.json()["detail"] == {
+        "error": "request_body_too_large",
+        "max_bytes": MAX_REQUEST_BODY_BYTES,
+    }
+
+
+@pytest.mark.asyncio
+async def test_chunked_body_without_content_length_still_honors_limit():
+    chunks = iter((b"1234", b"56"))
+
+    async def receive():
+        try:
+            chunk = next(chunks)
+        except StopIteration:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.request", "body": chunk, "more_body": True}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/webhook",
+            "headers": [],
+        },
+        receive,
+    )
+    with pytest.raises(HTTPException) as raised:
+        await read_limited_request_body(request, max_bytes=5)
+    assert raised.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_declared_oversized_body_is_rejected_before_receive():
+    async def receive():
+        raise AssertionError("body stream must not be read")
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/webhook",
+            "headers": [(b"content-length", b"6")],
+        },
+        receive,
+    )
+    with pytest.raises(HTTPException) as raised:
+        await read_limited_request_body(request, max_bytes=5)
+    assert raised.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_form_payload_remains_parseable_after_bounded_read(monkeypatch):
+    import api.index as index
+
+    index.app.dependency_overrides[index.verify_brevo_webhook] = lambda: None
+    try:
+        response = await _post_brevo(
+            index.app,
+            None,
+            content=b"eventName=conversationTranscript",
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+    finally:
+        index.app.dependency_overrides.pop(index.verify_brevo_webhook, None)
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "skipped": True,
+        "reason": "non_inbound_event",
+    }
 
 
 @pytest.mark.asyncio
@@ -236,6 +325,57 @@ async def test_meta_webhook_enqueues_without_inline_worker(monkeypatch):
     assert body["messages"] == 1
     assert queued
     assert "worker" not in body
+
+
+@pytest.mark.asyncio
+async def test_meta_webhook_rejects_oversized_body_before_signature(monkeypatch):
+    import api.index as index
+    from app.channels import meta_instagram
+
+    monkeypatch.setattr(meta_instagram, "meta_webhook_enabled", lambda: True)
+
+    def must_not_verify(**_kwargs):
+        raise AssertionError("oversized body must be rejected before signature verification")
+
+    monkeypatch.setattr(meta_instagram, "verify_meta_signatures", must_not_verify)
+    async with AsyncClient(
+        transport=ASGITransport(app=index.app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/webhooks/meta",
+            content=b"x" * (MAX_REQUEST_BODY_BYTES + 1),
+            headers={"content-type": "application/json"},
+        )
+    assert response.status_code == 413
+    assert response.json()["detail"]["error"] == "request_body_too_large"
+
+
+@pytest.mark.asyncio
+async def test_meta_webhook_signature_receives_exact_raw_bytes(monkeypatch):
+    import api.index as index
+    from app.channels import meta_instagram
+
+    monkeypatch.setattr(meta_instagram, "meta_webhook_enabled", lambda: True)
+    raw_body = b'{"object":"instagram","entry":[] }\n'
+    captured: dict[str, bytes] = {}
+
+    def capture_signature_input(**kwargs):
+        captured["body"] = kwargs["body"]
+        return True
+
+    monkeypatch.setattr(meta_instagram, "verify_meta_signatures", capture_signature_input)
+    async with AsyncClient(
+        transport=ASGITransport(app=index.app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/webhooks/meta",
+            content=raw_body,
+            headers={"content-type": "application/json"},
+        )
+    assert response.status_code == 200
+    assert captured["body"] == raw_body
 
 
 @pytest.mark.asyncio

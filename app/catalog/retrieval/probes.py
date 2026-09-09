@@ -108,6 +108,27 @@ async def run_probes(
             },
         )
 
+    priority = {
+        "exact_ean": 0,
+        "exact_reference": 0,
+        "exact_model_code": 0,
+        "exact_model_with_brand": 1,
+        "exact_model": 1,
+        "exact_color_family_code": 1,
+        "exact_color_core": 2,
+        "exact_color_automatic": 2,
+        "exact_catalog_title": 2,
+        "exact_query_reference_context": 3,
+        "exact_query_full": 3,
+        "token_and_search": 4,
+        "token_and_search_no_color": 5,
+        "token_and_search_short": 5,
+    }
+    ordered_requests = sorted(
+        enumerate(probe_requests),
+        key=lambda item: (priority.get(item[1].strategy, 10), item[0]),
+    )
+
     async def _run_probe(request: Any) -> tuple[Any, dict[str, Any]]:
         arguments = {
             **session.list_query_extras(session.interpretation),
@@ -127,33 +148,78 @@ async def run_probes(
         result = await session.search_products(arguments)
         return request, result
 
-    probe_results = await asyncio.gather(
-        *[_run_probe(request) for request in probe_requests]
+    attempted = 0
+    # Exact lookups are cheapest when the highest-confidence request runs
+    # alone: a reference/EAN hit should not dispatch a speculative sibling
+    # request. Recommendation probes use pairs to retain reasonable latency.
+    batch_size = 1 if session.retrieval_plan.mode == "exact" else 2
+    probe_call_limit = (
+        min(2, int(session.search_call_limit or 1))
+        if session.retrieval_plan.mode == "exact"
+        else int(session.search_call_limit or 1)
     )
-    for request, result in probe_results:
-        if "error" in result:
-            session.product_lookup_failed = True
-            continue
-        session.catalog_probe_ok = True
-        raw_products = (
-            result.get("products")
-            if isinstance(result.get("products"), list)
-            else []
+    for offset in range(0, len(ordered_requests), batch_size):
+        remaining = min(
+            int(session.search_call_limit or 1) - session.search_call_count,
+            probe_call_limit - attempted,
         )
-        session.absorb_products(raw_products)
-        print("[sales.retrieval.result]", {
-            "strategy": request.strategy,
-            "raw_candidate_count": len(raw_products),
-            "hard_filtered_count": None,
-        })
-    session.refresh_hard_filtered()
+        if remaining <= 0:
+            if session.search_call_count >= int(session.search_call_limit or 1):
+                session.search_budget_exhausted = True
+            break
+        batch = [request for _, request in ordered_requests[offset : offset + min(batch_size, remaining)]]
+        probe_results = await asyncio.gather(*[_run_probe(request) for request in batch])
+        attempted += len(batch)
+        for request, result in probe_results:
+            if "error" in result:
+                if not result.get("budget_exhausted"):
+                    session.product_lookup_failed = True
+                continue
+            session.catalog_probe_ok = True
+            raw_products = (
+                result.get("products")
+                if isinstance(result.get("products"), list)
+                else []
+            )
+            session.absorb_products(raw_products)
+            print("[sales.retrieval.result]", {
+                "strategy": request.strategy,
+                "raw_candidate_count": len(raw_products),
+                "hard_filtered_count": None,
+            })
+        session.refresh_hard_filtered()
+        if session.hard_filtered:
+            if session.retrieval_plan.mode == "exact":
+                break
+            target = min(
+                session.retrieval_plan.candidate_limit,
+                3,
+            )
+            from app.catalog.specs.catalog_specs import message_requests_other_brands
+
+            distinct_brands = {
+                str(product.get("brand") or "").strip().casefold()
+                for product in session.hard_filtered
+                if str(product.get("brand") or "").strip()
+            }
+            diversity_satisfied = (
+                len(distinct_brands) >= target
+                if message_requests_other_brands(session.message_text)
+                else True
+            )
+            if len(session.hard_filtered) >= target and diversity_satisfied:
+                break
     print("[sales.product.resolve]", {
         "strategy": "parallel_probes",
         "has_brand": bool(session.interpretation.subject.brand),
         "has_model": bool(session.interpretation.subject.model),
         "candidate_count": len(session.candidates),
         "matched_count": len(session.hard_filtered),
-        "probe_count": len(probe_requests),
+        "probe_count": attempted,
+        "probe_planned_count": len(probe_requests),
+        "early_stop": attempted < len(probe_requests),
+        "search_call_count": session.search_call_count,
+        "search_call_limit": session.search_call_limit,
     })
 
 

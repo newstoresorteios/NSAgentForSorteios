@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import Any
 
@@ -80,6 +79,7 @@ class CompiledPrompt(BaseModel):
     instruction_char_count: int = 0
     input_char_count: int = 0
     approximate_input_tokens: int = 0
+    layer_char_counts: dict[str, int] = Field(default_factory=dict)
 
     used_db_persona: bool = False
     fallback_reason: str | None = None
@@ -142,6 +142,14 @@ def compile_agent_prompt(
                 fallback_reason = f"persona_load_failed:{type(exc).__name__}"
         if active is not None:
             persona_text = active.instructions
+            try:
+                from app.persona.persona_knowledge_repository import (
+                    strip_embedded_attachment_appendix,
+                )
+
+                persona_text = strip_embedded_attachment_appendix(persona_text)
+            except Exception as exc:
+                log_swallowed("compiler.persona_attachment_appendix", exc)
             persona_version_id = active.id
             used_db_persona = True
             active_persona = active
@@ -179,6 +187,7 @@ def compile_agent_prompt(
                 limit=int(getattr(settings, "agent_max_persona_attachments", 10)),
                 max_chars=int(getattr(settings, "agent_max_persona_knowledge_chars", 12000)),
                 relevant_knowledge=relevant_knowledge,
+                query_text=getattr(incoming, "text", None) if incoming is not None else None,
             )
         except Exception as exc:
             print("[prompt.compiler.persona_knowledge.error]", {
@@ -317,6 +326,19 @@ def compile_agent_prompt(
         log_swallowed("compiler.runtime_policy", exc)
         runtime_policy_block = ""
 
+    layer_char_counts: dict[str, int] = {
+        "fixed_safety": len(FIXED_SAFETY_POLICY.strip()),
+        "persona": len(persona_text.strip()),
+        "knowledge": len(knowledge_block.strip()),
+        "runtime_policy": len(runtime_policy_block.strip()),
+        "extensions": len(extensions_block.strip()),
+        "learned_cases": len(learned_cases_block.strip()),
+        "channel": len(channel_overlay_block(channel)),
+        "memory": len(memory_block.strip()),
+        "summary": len(summary_block.strip()),
+        "operational_contract": 0,
+        "extra_system": 0,
+    }
     blocks = [
         FIXED_SAFETY_POLICY.strip(),
         f"<user_managed_persona>\n{persona_text.strip()}\n</user_managed_persona>",
@@ -347,6 +369,7 @@ def compile_agent_prompt(
                 f"{operational}\n"
                 "</operational_contract>"
             )
+            layer_char_counts["operational_contract"] += len(operational)
     if extra_system_blocks:
         compat = bool(getattr(settings, "agent_legacy_prompt_compat_enabled", False))
         for block in extra_system_blocks:
@@ -368,6 +391,7 @@ def compile_agent_prompt(
                 })
                 continue
             blocks.append(cleaned)
+            layer_char_counts["extra_system"] += len(cleaned)
 
     instructions = "\n\n".join(blocks)
     input_items: list[dict[str, Any]] = []
@@ -446,6 +470,7 @@ def compile_agent_prompt(
         approximate_input_tokens=_approx_tokens(instructions) + _approx_tokens(
             " ".join(str(i.get("content") or "") for i in input_items)
         ),
+        layer_char_counts=layer_char_counts,
         used_db_persona=used_db_persona,
         fallback_reason=fallback_reason,
     )
@@ -463,6 +488,7 @@ def compile_agent_prompt(
                 "input_char_count": compiled.input_char_count,
                 "approximate_input_tokens": compiled.approximate_input_tokens,
                 "input_item_count": len(input_items),
+                "layer_char_counts": layer_char_counts,
             }
             if bool(getattr(settings, "agent_debug_store_compiled_prompt", False)):
                 meta["compiled_instructions_preview"] = instructions[:2000]
@@ -477,6 +503,7 @@ def compile_agent_prompt(
                 "persona_attachment_ids_count": len(persona_attachment_ids),
                 "used_db_persona": used_db_persona,
                 "fallback_reason": fallback_reason,
+                "layer_char_counts": layer_char_counts,
             })
             insert_prompt_compilation(
                 tenant_id=tenant_id,
@@ -663,21 +690,31 @@ def resolve_system_instructions(
         getattr(settings, "agent_persona_tenant_id", DEFAULT_TENANT_ID)
     )
     resolved_knowledge = relevant_knowledge
+    resolved_active_persona = None
     if resolved_knowledge is None and incoming is not None:
         try:
             from app.persona.store_knowledge import fetch_institutional_knowledge
 
             persona_metadata = None
             if bool(getattr(settings, "agent_db_persona_enabled", False)):
-                active_persona = get_active_persona(
-                    resolved_tenant,
-                    persona_key
-                    or str(
-                        getattr(settings, "agent_persona_key", DEFAULT_PERSONA_KEY)
-                    ),
-                )
-                if active_persona is not None:
-                    persona_metadata = active_persona.metadata
+                try:
+                    from app.persona.persona_runtime import get_persona_runtime
+
+                    runtime = get_persona_runtime()
+                    if runtime is not None:
+                        resolved_active_persona = runtime.active_persona
+                except Exception as exc:
+                    log_swallowed("compiler.resolve_persona_runtime", exc)
+                if resolved_active_persona is None:
+                    resolved_active_persona = get_active_persona(
+                        resolved_tenant,
+                        persona_key
+                        or str(
+                            getattr(settings, "agent_persona_key", DEFAULT_PERSONA_KEY)
+                        ),
+                    )
+                if resolved_active_persona is not None:
+                    persona_metadata = resolved_active_persona.metadata
             package = fetch_institutional_knowledge(
                 incoming.text,
                 persona_metadata=persona_metadata,
@@ -718,6 +755,7 @@ def resolve_system_instructions(
         recent_turns=recent_turns,
         extra_system_blocks=extra_system_blocks,
         relevant_knowledge=resolved_knowledge,
+        active_persona=resolved_active_persona,
         audit=True,
         inbound_id=(
             int(incoming.raw["inbound_id"])

@@ -77,21 +77,48 @@ async def test_existing_review_is_successful_prefix_without_relearning(isolated_
 
 
 @pytest.mark.parametrize("last_id", [None, 10])
-def test_fetch_projection_works_without_response_metadata_column(monkeypatch, last_id):
-    # SQLite executes the actual SELECT and JOIN against the older physical
-    # columns. Only DBAPI placeholders and PostgreSQL's JSONB cast are adapted.
-    # This does not claim PostgreSQL/RLS validation.
+def test_fetch_returns_only_latest_unreviewed_delivery_per_inbound(monkeypatch, last_id):
+    # SQLite executes the actual selection contract. Only DBAPI placeholders
+    # and PostgreSQL's JSONB cast are adapted.
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     db.execute("ATTACH DATABASE ':memory:' AS public")
     db.execute("CREATE TABLE public.ai_inbound_messages (id integer, text text, channel text, conversation_id text, sender_phone text)")
-    db.execute("CREATE TABLE public.ai_agent_responses (id integer, inbound_id integer, reply_text text, intent text, handoff_required boolean, safety_reason text, provider_response text, created_at text, sender_key text)")
-    db.execute("INSERT INTO public.ai_inbound_messages VALUES (1, 'Olá', 'whatsapp', 'audit', 'audit')")
-    for response_id, provider in [(11, {"_agent_context": {"source": "legacy"}}),
-                                  (12, {"_agent_metadata": {"source": "current"}, "_agent_context": {"source": "legacy"}}),
-                                  (13, {})]:
-        db.execute("INSERT INTO public.ai_agent_responses VALUES (?, 1, 'Olá', 'general', 0, NULL, ?, ?, 'audit')",
-                   (response_id, json.dumps(provider), datetime.now(timezone.utc).isoformat()))
+    db.execute("CREATE TABLE public.ai_agent_responses (id integer, inbound_id integer, reply_text text, intent text, handoff_required boolean, safety_reason text, provider_send_ok boolean, provider_response text, created_at text, sender_key text)")
+    db.execute("CREATE TABLE public.ai_attendance_reviews (tenant_id text, response_id integer)")
+    for inbound_id in range(1, 9):
+        db.execute(
+            "INSERT INTO public.ai_inbound_messages VALUES (?, ?, 'whatsapp', 'audit', 'audit')",
+            (inbound_id, f"Mensagem {inbound_id}"),
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    def add_response(response_id, inbound_id, *, delivered, reply="Olá", provider=None):
+        db.execute(
+            "INSERT INTO public.ai_agent_responses VALUES (?, ?, ?, 'general', 0, NULL, ?, ?, ?, 'audit')",
+            (response_id, inbound_id, reply, delivered, json.dumps(provider or {}), now),
+        )
+
+    # Regression: two failed attempts followed by the actual delivered reply.
+    add_response(11, 1, delivered=False)
+    add_response(12, 1, delivered=False)
+    add_response(13, 1, delivered=True, provider={"_agent_context": {"source": "delivered"}})
+    # When duplicate successful rows exist, only the latest is canonical.
+    add_response(14, 2, delivered=True, provider={"_agent_metadata": {"source": "older"}})
+    add_response(15, 2, delivered=True, provider={"_agent_metadata": {"source": "latest"}})
+    add_response(16, 3, delivered=False)
+    add_response(17, 4, delivered=True, reply="   ")
+    # A valid delivery already reviewed for this tenant is never learned twice.
+    add_response(18, 5, delivered=True)
+    db.execute("INSERT INTO public.ai_attendance_reviews VALUES ('audit', 18)")
+    # A historical review of a failed attempt cannot hide a later valid send.
+    add_response(19, 6, delivered=False)
+    db.execute("INSERT INTO public.ai_attendance_reviews VALUES ('audit', 19)")
+    add_response(20, 6, delivered=True, provider={"_agent_metadata": {"source": "recovered"}})
+    # Idempotency shortcuts and dry runs report ok but are not deliveries.
+    add_response(21, 7, delivered=True, provider={"skipped": True, "reason": "already_sent"})
+    add_response(22, 8, delivered=True, provider={"dry_run": True})
 
     class Cursor:
         def __enter__(self): return self
@@ -116,8 +143,14 @@ def test_fetch_projection_works_without_response_metadata_column(monkeypatch, la
     monkeypatch.setattr(cursor, "get_conn", Conn)
     try:
         rows = cursor.fetch_attendances_since(tenant_id="audit", last_response_id=last_id, limit=10, bootstrap_hours=24)
-        assert [row["response_id"] for row in rows] == [11, 12, 13]
-        assert [row["response_metadata"] for row in rows] == [{"source": "legacy"}, {"source": "current"}, {}]
-        assert all(row["customer_text"] == "Olá" for row in rows)
+        assert [row["response_id"] for row in rows] == [13, 15, 20]
+        assert [row["response_metadata"] for row in rows] == [
+            {"source": "delivered"},
+            {"source": "latest"},
+            {"source": "recovered"},
+        ]
+        assert [row["customer_text"] for row in rows] == [
+            "Mensagem 1", "Mensagem 2", "Mensagem 6"
+        ]
     finally:
         db.close()

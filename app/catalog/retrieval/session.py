@@ -20,6 +20,7 @@ from app.catalog.retrieval.tokens import (
     preference_color_tokens,
     product_matches_color_tokens,
 )
+import app.catalog.retrieval.runtime as _runtime
 from app.models import SalesInterpretation
 
 
@@ -47,6 +48,28 @@ class RetrievalSession:
     list_query_extras: ListQueryExtras = default_list_query_extras
     requires_tray_refresh: RequiresTrayRefresh = default_requires_tray_refresh
     budget_hard_miss: BudgetHardMiss = default_budget_hard_miss
+    search_call_count: int = 0
+    search_call_limit: int | None = None
+    search_budget_exhausted: bool = False
+
+    def __post_init__(self) -> None:
+        if self.search_call_limit is not None:
+            self.search_call_limit = max(1, int(self.search_call_limit))
+            return
+        settings = _runtime.get_settings()
+        setting_name = (
+            "agent_catalog_exact_search_call_limit"
+            if self.retrieval_plan.mode == "exact"
+            else "agent_catalog_recommendation_search_call_limit"
+        )
+        default = 6
+        try:
+            self.search_call_limit = max(
+                1,
+                min(20, int(getattr(settings, setting_name, default) or default)),
+            )
+        except (TypeError, ValueError):
+            self.search_call_limit = default
 
     def accumulation_limit(self) -> int:
         if self.retrieval_plan.mode == "exact":
@@ -106,4 +129,20 @@ class RetrievalSession:
             )
 
     async def search_products(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        limit = int(self.search_call_limit or 1)
+        if self.search_call_count >= limit:
+            self.search_budget_exhausted = True
+            print(
+                "[sales.retrieval.budget_exhausted]",
+                {
+                    "mode": self.retrieval_plan.mode,
+                    "search_call_count": self.search_call_count,
+                    "search_call_limit": limit,
+                },
+            )
+            return {
+                "error": "retrieval_call_budget_exceeded",
+                "budget_exhausted": True,
+            }
+        self.search_call_count += 1
         return await self.execute_tool("search_products", arguments)

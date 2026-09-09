@@ -135,14 +135,16 @@ async def test_brand_candidates_resolve_partial_specific_model(monkeypatch):
     )
 
     search_calls = [arguments for tool, arguments in calls if tool == "search_products"]
-    assert any(arguments.get("tokens") for arguments in search_calls)
     assert {
         "name": "Zulu",
         "brand": "Longines",
         "limit": 20,
         "page": 1,
     } in search_calls
-    assert {"query": "Longines Zulu", "limit": 20, "page": 1} in search_calls
+    # High-confidence exact probes run first; once the bounded brand fallback
+    # resolves the model, lower-value token/query probes are intentionally not
+    # dispatched.
+    assert len(search_calls) <= 3
     assert result.safety_reason != "product_not_found"
     assert [product["id"] for product in result.commercial_data["products"]] == ["2"]
 

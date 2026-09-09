@@ -20,7 +20,7 @@ def test_fetch_institutional_knowledge_matches_trade_in_cues():
 
 def test_fetch_institutional_knowledge_includes_persona_metadata():
     package = fetch_institutional_knowledge(
-        "oi",
+        "Como funciona a revisão técnica dos seminovos?",
         persona_metadata={
             "institutionalKnowledge": [
                 {
@@ -32,6 +32,22 @@ def test_fetch_institutional_knowledge_includes_persona_metadata():
     )
     bodies = [item["body"] for item in package.as_relevant_knowledge()]
     assert any("revisão técnica" in body for body in bodies)
+
+
+def test_fetch_institutional_knowledge_omits_unrelated_persona_metadata():
+    package = fetch_institutional_knowledge(
+        "oi",
+        persona_metadata={
+            "institutionalKnowledge": [
+                {
+                    "title": "Política loja",
+                    "body": "Seminovos passam por revisão técnica antes da venda.",
+                }
+            ]
+        },
+    )
+
+    assert package.as_relevant_knowledge() == []
 
 
 @pytest.mark.offline_eval

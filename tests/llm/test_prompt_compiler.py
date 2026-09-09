@@ -77,7 +77,13 @@ def test_compile_includes_active_persona_and_safety(monkeypatch):
     assert "<fixed_safety_policy>" in compiled.instructions
     assert "<channel_overlay>" in compiled.instructions
     assert "instagram" in compiled.instructions
+    assert compiled.layer_char_counts["fixed_safety"] > 0
+    assert compiled.layer_char_counts["persona"] == len("PERSONA_ATIVA_NEWSTORE")
+    assert compiled.layer_char_counts["knowledge"] > 0
     assert len(store.compilations) == 1
+    assert store.compilations[0]["metadata"]["layer_char_counts"] == (
+        compiled.layer_char_counts
+    )
 
 
 def test_resolve_audit_links_compilation_to_current_inbound(monkeypatch):

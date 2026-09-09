@@ -11,6 +11,53 @@ from fastapi.responses import JSONResponse
 from app.ops.observability import log_event
 
 
+# Webhook payloads carry message metadata and remote-media URLs, not media bytes.
+# Keep a single application-level ceiling so chunked requests cannot bypass a
+# provider or platform Content-Length limit.
+MAX_REQUEST_BODY_BYTES = 1024 * 1024
+
+
+def _payload_too_large(*, max_bytes: int) -> HTTPException:
+    return HTTPException(
+        status_code=413,
+        detail={
+            "error": "request_body_too_large",
+            "max_bytes": max_bytes,
+        },
+    )
+
+
+async def read_limited_request_body(
+    request: Request,
+    *,
+    max_bytes: int = MAX_REQUEST_BODY_BYTES,
+) -> bytes:
+    """Read and cache the exact request bytes while enforcing a hard ceiling."""
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared_bytes = int(content_length)
+        except (TypeError, ValueError):
+            declared_bytes = None
+        if declared_bytes is not None and declared_bytes > max_bytes:
+            raise _payload_too_large(max_bytes=max_bytes)
+
+    chunks = bytearray()
+    async for chunk in request.stream():
+        if len(chunks) + len(chunk) > max_bytes:
+            raise _payload_too_large(max_bytes=max_bytes)
+        chunks.extend(chunk)
+
+    body = bytes(chunks)
+    # Request.body() uses this same cache. Restoring it keeps request.form()
+    # functional after the bounded read without changing the original bytes.
+    request._body = body  # type: ignore[attr-defined]  # noqa: SLF001
+    return body
+
+
 def webhook_event_name(payload: dict | None) -> str | None:
     if not isinstance(payload, dict):
         return None
@@ -42,7 +89,7 @@ def skip_webhook_event(
 
 async def read_request_payload(request: Request) -> dict:
     """Read request body defensively. Never echo the raw body to the client."""
-    raw_body = await request.body()
+    raw_body = await read_limited_request_body(request)
     if not raw_body:
         return {}
 

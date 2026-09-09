@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.config import get_settings as _get_settings
 from app.http.bindings import resolve
+from app.http.payload import read_limited_request_body
 from app.ops.observability import log_event
 
 router = APIRouter(tags=["webhooks-meta"])
@@ -63,7 +64,9 @@ async def meta_instagram_webhook(request: Request):
     if not meta_webhook_enabled():
         raise HTTPException(status_code=404, detail={"error": "meta_webhook_disabled"})
 
-    body = await request.body()
+    # Limit the raw body before signature work or JSON parsing. The helper
+    # returns the unmodified bytes required by Meta's HMAC verification.
+    body = await read_limited_request_body(request)
     signature_sha256 = (
         request.headers.get("x-hub-signature-256")
         or request.headers.get("X-Hub-Signature-256")

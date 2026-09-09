@@ -144,3 +144,75 @@ def test_format_persona_knowledge_block_truncates():
         max_chars=120,
     )
     assert "[truncado]" in block
+
+
+def test_attachment_retrieval_injects_only_relevant_source_chunks():
+    from app.persona.persona_knowledge_repository import (
+        PersonaKnowledgeAttachment,
+        retrieve_attachment_sections,
+    )
+
+    attachments = [
+        PersonaKnowledgeAttachment(
+            id="shipping",
+            filename="frete.txt",
+            extracted_text="O prazo de entrega depende do CEP e aparece no checkout.",
+        ),
+        PersonaKnowledgeAttachment(
+            id="warranty",
+            filename="garantia.txt",
+            extracted_text="A garantia dos relógios é de dois anos contra defeitos de fabricação.",
+        ),
+    ]
+
+    ids, sections = retrieve_attachment_sections(
+        attachments,
+        "Qual é o prazo da garantia?",
+    )
+
+    assert ids == ["warranty"]
+    assert len(sections) == 1
+    assert "source:warranty#chunk-1" in sections[0][0]
+    assert "dois anos" in sections[0][1]
+
+
+def test_attachment_retrieval_omits_unrelated_catalog_turn():
+    from app.persona.persona_knowledge_repository import (
+        PersonaKnowledgeAttachment,
+        retrieve_attachment_sections,
+    )
+
+    ids, sections = retrieve_attachment_sections(
+        [
+            PersonaKnowledgeAttachment(
+                id="warranty",
+                filename="garantia.txt",
+                extracted_text="A garantia é de dois anos.",
+            )
+        ],
+        "Quero um relógio Citizen azul",
+    )
+
+    assert ids == []
+    assert sections == []
+
+
+def test_strip_embedded_attachment_appendix_keeps_persona_contract():
+    from app.persona.persona_knowledge_repository import (
+        strip_embedded_attachment_appendix,
+    )
+
+    core = "Identidade e regras principais. " * 20
+    appendix = "Documento institucional de garantia. " * 20
+    merged = f"{core}\n\n### garantia.pdf\n{appendix}"
+
+    assert strip_embedded_attachment_appendix(merged) == core.strip()
+
+
+def test_strip_embedded_attachment_appendix_ignores_short_incidental_heading():
+    from app.persona.persona_knowledge_repository import (
+        strip_embedded_attachment_appendix,
+    )
+
+    instructions = "Persona curta\n### exemplo.txt\ntexto curto"
+    assert strip_embedded_attachment_appendix(instructions) == instructions

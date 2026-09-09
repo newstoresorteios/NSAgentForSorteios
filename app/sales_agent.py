@@ -179,6 +179,10 @@ contradicir fatos já confirmados ao cliente (pedido, link, produto). AVAILABLE_
 lista o que o agente pode fazer; não afirme incapacidade se a capacidade existir.
 """.strip()
 
+# Keep the common sales contract available separately. Checkout instructions
+# are large and only belong in turns that can actually advance a purchase.
+BASE_SALES_RESPONDER_INSTRUCTIONS = SALES_RESPONDER_INSTRUCTIONS
+
 SALES_CLARIFICATION_INSTRUCTIONS = """
 Você está em modo de qualificação comercial (contenção antes do catálogo).
 
@@ -461,7 +465,7 @@ SALES_INTERPRETER_INSTRUCTIONS = (
     f"{SALES_INTERPRETER_INSTRUCTIONS}\n\n{CHECKOUT_FLOW_INSTRUCTIONS}"
 )
 SALES_RESPONDER_INSTRUCTIONS = (
-    f"{SALES_RESPONDER_INSTRUCTIONS}\n\n{CHECKOUT_FLOW_INSTRUCTIONS}"
+    f"{BASE_SALES_RESPONDER_INSTRUCTIONS}\n\n{CHECKOUT_FLOW_INSTRUCTIONS}"
 )
 
 _ACTION_TO_PLAN = {

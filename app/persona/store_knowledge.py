@@ -129,13 +129,22 @@ def format_institutional_knowledge_block(
     return format_relevant_knowledge_block(package.as_relevant_knowledge()).strip()
 
 
-def _persona_institutional_items(metadata: dict[str, Any] | None) -> list[dict[str, str]]:
+def _persona_institutional_items(
+    metadata: dict[str, Any] | None,
+    *,
+    message_text: str | None = None,
+) -> list[dict[str, str]]:
     if not isinstance(metadata, dict):
         return []
     raw = metadata.get("institutionalKnowledge") or metadata.get(
         "institutional_knowledge"
     )
     if not isinstance(raw, list):
+        return []
+    from app.persona.persona_knowledge_repository import retrieval_tokens
+
+    query_tokens = retrieval_tokens(message_text)
+    if not query_tokens:
         return []
     items: list[dict[str, str]] = []
     for entry in raw:
@@ -145,6 +154,8 @@ def _persona_institutional_items(metadata: dict[str, Any] | None) -> list[dict[s
         if not body:
             continue
         title = str(entry.get("title") or entry.get("slug") or "institucional").strip()
+        if not (query_tokens & retrieval_tokens(f"{title} {body}")):
+            continue
         items.append({"title": title, "body": body})
     return items
 
@@ -170,7 +181,10 @@ def fetch_institutional_knowledge(
         seen_titles.add(title.casefold())
         items.append({"title": title, "body": body})
 
-    for entry in _persona_institutional_items(persona_metadata):
+    for entry in _persona_institutional_items(
+        persona_metadata,
+        message_text=message_text,
+    ):
         title_key = entry["title"].casefold()
         if title_key in seen_titles:
             continue

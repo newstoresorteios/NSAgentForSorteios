@@ -693,7 +693,10 @@ def test_fetch_attendances_since_uses_response_id_cursor(monkeypatch):
     )
     assert "response.id >" in captured["sql"]
     assert captured["params"][0] == 42
-    assert captured["params"][1] == 10
+    assert captured["params"][1] == "newstore"
+    assert captured["params"][2] == 10
+    assert "response.provider_send_ok = true" in captured["sql"]
+    assert "canonical_rank = 1" in captured["sql"]
 
     fetch_attendances_since(
         tenant_id="newstore",
@@ -702,6 +705,7 @@ def test_fetch_attendances_since_uses_response_id_cursor(monkeypatch):
         bootstrap_hours=24,
     )
     assert "response.created_at >=" in captured["sql"]
+    assert captured["params"][1] == "newstore"
 
 
 def test_rollback_supersedes_when_fail_rate_lifts(monkeypatch):

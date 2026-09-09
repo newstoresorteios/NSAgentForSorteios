@@ -506,7 +506,8 @@ def claim_due_remarketing_attempts(limit: int) -> list[dict[str, Any]]:
                         contact.conversation_id,
                         contact.source_conversation_ref,
                         contact.sender_phone,
-                        contact.sender_name
+                        contact.sender_name,
+                        %(now)s AS claimed_at
                     FROM public.ai_remarketing_attempts AS attempt
                     JOIN public.ai_conversation_statuses AS conversation
                       ON conversation.id = attempt.conversation_status_id
@@ -547,6 +548,53 @@ def claim_due_remarketing_attempts(limit: int) -> list[dict[str, Any]]:
                 {"now": now, "limit": safe_limit},
             )
             return list(cur.fetchall() or [])
+
+
+def remarketing_attempt_is_sendable(
+    attempt_id: int,
+    *,
+    claimed_at: datetime | None = None,
+) -> bool:
+    """Revalidate a claimed touch immediately before external side effects.
+
+    A customer can reply while a cron worker is checking an order in Tray. The
+    inbound transaction cancels the active inactivity cycle, but the worker
+    still holds an old in-memory copy of the claimed row. Requiring the same
+    processing lease and an unchanged customer timestamp prevents that stale
+    copy from being sent.
+    """
+    settings = get_settings()
+    if not settings.database_url:
+        return False
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM public.ai_remarketing_attempts AS attempt
+                JOIN public.ai_conversation_statuses AS conversation
+                  ON conversation.id = attempt.conversation_status_id
+                JOIN public.ai_remarketing_contacts AS contact
+                  ON contact.id = conversation.contact_id
+                WHERE attempt.id = %(attempt_id)s
+                  AND attempt.status = 'processing'
+                  AND conversation.status = 'active'
+                  AND contact.marketing_status = 'eligible'
+                  AND contact.messaging_window_expires_at > %(now)s
+                  AND contact.last_customer_message_at <= attempt.claimed_at
+                  AND (
+                    %(claimed_at)s IS NULL
+                    OR attempt.claimed_at = %(claimed_at)s
+                  )
+                LIMIT 1
+                """,
+                {
+                    "attempt_id": attempt_id,
+                    "claimed_at": claimed_at,
+                    "now": datetime.now(timezone.utc),
+                },
+            )
+            return cur.fetchone() is not None
 
 
 def complete_paid_remarketing(
@@ -669,12 +717,21 @@ async def run_remarketing_batch(limit: int | None = None) -> dict[str, int]:
     sent = 0
     failed = 0
     for item in items:
+        attempt_id = int(item["id"])
+        claimed_at = item.get("claimed_at")
+        if not remarketing_attempt_is_sendable(
+            attempt_id,
+            claimed_at=claimed_at if isinstance(claimed_at, datetime) else None,
+        ):
+            continue
         message_text = ""
         order_id = str(item.get("order_id") or "").strip()
         cart_session_id = str(item.get("cart_session_id") or "").strip()
+        checked_tray = False
         if order_id or cart_session_id:
             try:
                 tray = TrayAdapterClient()
+                checked_tray = True
                 if not order_id:
                     order_lookup = await tray.list_orders(session_id=cart_session_id)
                     if (
@@ -712,7 +769,7 @@ async def run_remarketing_batch(limit: int | None = None) -> dict[str, int]:
                 if isinstance(payment, dict) and payment.get("has_payment") is True:
                     complete_paid_remarketing(
                         int(item["conversation_status_id"]),
-                        int(item["id"]),
+                        attempt_id,
                     )
                     continue
                 if (
@@ -729,13 +786,23 @@ async def run_remarketing_batch(limit: int | None = None) -> dict[str, int]:
                 pass
             except Exception:
                 finish_remarketing_attempt(
-                    int(item["id"]),
+                    attempt_id,
                     message_text=message_text,
                     send_ok=False,
                     provider_response={"verification": "failed"},
                     error="order_payment_verification_failed",
                 )
                 failed += 1
+                continue
+
+        # Tray verification can take long enough for the customer to answer.
+        # Recheck after it so a cancelled inactivity cycle cannot emit a stale
+        # reminder from the item claimed at the beginning of the batch.
+        if checked_tray:
+            if not remarketing_attempt_is_sendable(
+                attempt_id,
+                claimed_at=claimed_at if isinstance(claimed_at, datetime) else None,
+            ):
                 continue
 
         message_text = _build_remarketing_message(item)
@@ -762,7 +829,7 @@ async def run_remarketing_batch(limit: int | None = None) -> dict[str, int]:
             error = "unexpected_send_error"
 
         finish_remarketing_attempt(
-            int(item["id"]),
+            attempt_id,
             message_text=message_text,
             send_ok=send_ok,
             provider_response=provider_response,

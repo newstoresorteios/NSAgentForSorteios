@@ -628,6 +628,22 @@ class Settings(BaseSettings):
         ge=1,
         le=100,
     )
+    # Hard ceiling for live Tray list searches made by one catalog retrieval.
+    # Product revalidation is accounted separately because it only touches the
+    # final shortlist.  The ceiling prevents speculative probes and cache fills
+    # from consuming the entire webhook deadline.
+    agent_catalog_exact_search_call_limit: int = Field(
+        default=6,
+        alias="AGENT_CATALOG_EXACT_SEARCH_CALL_LIMIT",
+        ge=1,
+        le=20,
+    )
+    agent_catalog_recommendation_search_call_limit: int = Field(
+        default=6,
+        alias="AGENT_CATALOG_RECOMMENDATION_SEARCH_CALL_LIMIT",
+        ge=1,
+        le=20,
+    )
     agent_image_cache_ttl_seconds: float = Field(
         default=300.0,
         alias="AGENT_IMAGE_CACHE_TTL_SECONDS",
