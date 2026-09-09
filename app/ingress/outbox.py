@@ -265,10 +265,18 @@ def mark_outbox_sent(
     settings = get_settings()
     if not settings.database_url:
         return
+    owner_guard = ""
+    params: dict[str, Any] = {
+        "id": outbox_id,
+        "provider_response": to_jsonb(provider_response or {}),
+    }
+    if owner:
+        owner_guard = "AND status = 'leased' AND lease_owner = %(owner)s"
+        params["owner"] = owner
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 UPDATE public.ai_outbound_outbox
                 SET status = 'sent',
                     sent_at = now(),
@@ -278,13 +286,9 @@ def mark_outbox_sent(
                     lease_expires_at = NULL,
                     last_error = NULL
                 WHERE id = %(id)s
-                  AND (%(owner)s IS NULL OR (status = 'leased' AND lease_owner = %(owner)s))
+                  {owner_guard}
                 """,
-                {
-                    "id": outbox_id,
-                    "owner": owner,
-                    "provider_response": to_jsonb(provider_response or {}),
-                },
+                params,
             )
     log_event("outbox.sent", {"outbox_id": outbox_id})
 
@@ -293,10 +297,19 @@ def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False, owner:
     settings = get_settings()
     if not settings.database_url:
         return
+    owner_guard = ""
+    params: dict[str, Any] = {
+        "id": outbox_id,
+        "status": "dead" if dead else "failed",
+        "error": (error or "")[:500],
+    }
+    if owner:
+        owner_guard = "AND status = 'leased' AND lease_owner = %(owner)s"
+        params["owner"] = owner
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 UPDATE public.ai_outbound_outbox
                 SET status = %(status)s,
                     last_error = %(error)s,
@@ -304,14 +317,9 @@ def mark_outbox_failed(outbox_id: int, *, error: str, dead: bool = False, owner:
                     lease_owner = NULL,
                     lease_expires_at = NULL
                 WHERE id = %(id)s AND status <> 'sent'
-                  AND (%(owner)s IS NULL OR (status = 'leased' AND lease_owner = %(owner)s))
+                  {owner_guard}
                 """,
-                {
-                    "id": outbox_id,
-                    "owner": owner,
-                    "status": "dead" if dead else "failed",
-                    "error": (error or "")[:500],
-                },
+                params,
             )
     log_event("outbox.failed", {"outbox_id": outbox_id, "dead": dead})
 
