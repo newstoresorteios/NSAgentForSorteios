@@ -8,6 +8,7 @@ from app.catalog.retrieval.availability import (
     apply_persona_presentation_order,
     product_availability_state,
     select_diverse_brand_shortlist,
+    unavailable_product_reply,
 )
 from app.catalog.retrieval.hard_filter import hard_filter_products
 from app.catalog.retrieval.limits import customer_result_limit, revalidate_top_n
@@ -313,10 +314,7 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
             return result
         if availability_state == "unavailable":
             return AgentResult(
-                reply_text=(
-                    "Encontrei esse modelo no catálogo, mas ele está indisponível no momento. "
-                    "Posso procurar outras versões dele ou modelos semelhantes."
-                ),
+                reply_text=unavailable_product_reply(final_products),
                 intent="commerce",
                 handoff_required=False,
                 safety_reason="product_unavailable",

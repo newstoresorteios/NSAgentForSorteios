@@ -155,6 +155,59 @@ def claim_pending_outbox(
     expires = datetime.now(timezone.utc) + timedelta(seconds=max(15, lease_seconds))
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # An old reply is harmful once the customer has continued the
+            # conversation. It also gives us positive evidence that an
+            # ambiguous provider send was probably delivered. Dead-letter
+            # these envelopes before the retry worker can replay a stale
+            # sequence hours later.
+            cur.execute(
+                """
+                UPDATE public.ai_outbound_outbox AS outbox
+                SET status = 'dead',
+                    last_error = CASE
+                      WHEN EXISTS (
+                        SELECT 1
+                        FROM public.ai_inbound_messages AS later
+                        WHERE later.created_at > outbox.created_at
+                          AND (
+                            (outbox.sender_key IS NOT NULL
+                             AND later.sender_key = outbox.sender_key)
+                            OR
+                            (outbox.conversation_key IS NOT NULL
+                             AND later.conversation_id = outbox.conversation_key)
+                          )
+                      ) THEN 'superseded_by_later_inbound'
+                      ELSE 'outbox_retry_window_expired'
+                    END,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = now()
+                WHERE outbox.attempts < outbox.max_attempts
+                  AND (
+                    outbox.status IN ('pending', 'failed')
+                    OR (
+                      outbox.status = 'leased'
+                      AND outbox.lease_expires_at IS NOT NULL
+                      AND outbox.lease_expires_at < now()
+                    )
+                  )
+                  AND (
+                    outbox.created_at < now() - interval '15 minutes'
+                    OR EXISTS (
+                      SELECT 1
+                      FROM public.ai_inbound_messages AS later
+                      WHERE later.created_at > outbox.created_at
+                        AND (
+                          (outbox.sender_key IS NOT NULL
+                           AND later.sender_key = outbox.sender_key)
+                          OR
+                          (outbox.conversation_key IS NOT NULL
+                           AND later.conversation_id = outbox.conversation_key)
+                        )
+                    )
+                  )
+                """
+            )
             cur.execute(
                 """
                 WITH next_rows AS (

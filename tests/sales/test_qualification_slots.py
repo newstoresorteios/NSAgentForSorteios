@@ -284,6 +284,31 @@ def test_rehydrate_name_without_clarification_metadata():
     assert CUSTOMER_NAME in covered_qualification_dims(updated)
 
 
+def test_rehydrate_does_not_apply_stale_city_question_after_new_assistant_turn():
+    interpretation = SalesInterpretation(
+        domain="commerce",
+        goal="buy",
+        subject={"brand": "Orient", "model": "Open Heart"},
+        preferences={},
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.98,
+    )
+    turns = [
+        _clarification_turn("Para qual cidade seria a entrega?"),
+        {
+            "role": "assistant",
+            "content": "Qual opção da lista você quer comprar (1, 2 ou 3)?",
+        },
+    ]
+    updated = rehydrate_qualification_slots_from_turns(
+        interpretation,
+        turns,
+        message_text="o orient open heart preto",
+    )
+    assert SHIPPING_CITY not in covered_qualification_dims(updated)
+
+
 def test_continue_commerce_when_name_answer_misread_as_greeting():
     from app.sales.qualification_slots import continue_commerce_from_qualification_answer
 
@@ -572,6 +597,8 @@ def test_city_uf_suffixes_are_plausible_slot_answers():
     assert _is_plausible_city("Curitiba, PR") is True
     assert _is_plausible_city("Londrina/PR") is True
     assert is_qualification_slot_answer(turns, "Conselheiro mairinck - pR") is True
+    assert _is_plausible_city("o orient open heart preto") is False
+    assert is_qualification_slot_answer(turns, "o orient open heart preto") is False
 
 
 def test_city_slot_answer_holds_retrieval_without_tray():

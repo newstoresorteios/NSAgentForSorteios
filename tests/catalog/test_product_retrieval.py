@@ -10,6 +10,7 @@ from app.catalog.product_retrieval import (
     product_availability_state,
     rerank_products,
 )
+from app.catalog.retrieval.availability import unavailable_product_reply
 from tests.llm.openai_test_utils import install_fake_openai_client
 
 
@@ -933,6 +934,21 @@ def test_product_upon_request_in_settings_is_unavailable():
     state = product_availability_state(product)
 
     assert state == "unavailable"
+
+
+def test_upon_request_reply_states_lead_time_and_no_immediate_dispatch():
+    reply = unavailable_product_reply([
+        {
+            "id": "4871",
+            "name": "Relógio Orient Open Heart Preto FAG03002B0",
+            "ProductSettings": {"upon_request": True},
+            "availability_days": 30,
+        }
+    ])
+
+    assert "sob encomenda" in reply
+    assert "30 dias úteis" in reply
+    assert "envio imediato" in reply
 
 
 @pytest.mark.parametrize("upon_request_value", ["0", 0, False, None])

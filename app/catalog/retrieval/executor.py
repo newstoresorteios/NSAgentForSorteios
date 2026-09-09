@@ -8,6 +8,7 @@ from app.catalog.category.resolver import CategoryResolver
 from app.catalog.retrieval.availability import (
     commercial_availability_facts,
     product_availability_state,
+    unavailable_product_reply,
 )
 from app.catalog.retrieval.compiler import ProductRetrievalCompiler
 from app.catalog.retrieval.harvest import harvest_family_and_color, merge_brand_cache
@@ -124,10 +125,7 @@ async def execute_contextual_product_lookup(
     })
     if availability_state == "unavailable":
         return AgentResult(
-            reply_text=(
-                "Encontrei esse modelo no catálogo, mas ele está indisponível no momento. "
-                "Posso procurar outras versões dele ou modelos semelhantes."
-            ),
+            reply_text=unavailable_product_reply(enriched),
             intent="commerce",
             handoff_required=False,
             safety_reason="product_unavailable",

@@ -80,6 +80,25 @@ def test_compile_includes_active_persona_and_safety(monkeypatch):
     assert len(store.compilations) == 1
 
 
+def test_resolve_audit_links_compilation_to_current_inbound(monkeypatch):
+    store = InMemoryPersonaStore().install(monkeypatch)
+    _enable_persona(monkeypatch, enabled=True)
+    created = repo.create_persona_version(instructions="PERSONA", name="NS")
+    repo.activate_persona_version(created.id)
+
+    compiler.resolve_system_instructions(
+        fallback_instructions="contrato operacional",
+        incoming=IncomingMessage(
+            channel="whatsapp",
+            text="quero um relógio",
+            sender_key="whatsapp:55",
+            raw={"inbound_id": 755},
+        ),
+    )
+
+    assert store.compilations[-1]["inbound_id"] == 755
+
+
 def test_compile_recomputes_each_call_without_openai_state(monkeypatch):
     InMemoryPersonaStore().install(monkeypatch)
     _enable_persona(monkeypatch, enabled=True)

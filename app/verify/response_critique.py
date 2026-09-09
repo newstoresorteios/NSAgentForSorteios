@@ -4,7 +4,7 @@ import json
 from typing import Any, Awaitable, Callable, Literal
 
 from openai import APIError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.llm.capability_catalog import (
     RETRYABLE_API_NAMES,
@@ -60,13 +60,63 @@ CRITIQUE_JUDGE_SYSTEM_PROMPT = (
 )
 
 
+class ShippingQuoteProductArgument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str | None = None
+    variant_id: str | None = None
+    quantity: int | None = None
+    price: str | None = None
+
+
+class RecommendedApiArguments(BaseModel):
+    """Closed union of arguments accepted by read-only critique tools."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str | None = None
+    name: str | None = None
+    reference: str | None = None
+    ean: str | None = None
+    brand: str | None = None
+    tokens: list[str] | None = None
+    category_id: str | None = None
+    available: bool | None = None
+    available_in_store: bool | None = None
+    current_price_range: str | None = None
+    property_name: str | None = None
+    property_value: str | None = None
+    model: str | None = None
+    brand_id: str | None = None
+    limit: int | None = None
+    page: int | None = None
+    product_id: str | None = None
+    session_id: str | None = None
+    cart_session_id: str | None = None
+    order_id: str | None = None
+    email: str | None = None
+    cpf: str | None = None
+    cnpj: str | None = None
+    customer_id: str | None = None
+    code: str | None = None
+    coupon_id: str | None = None
+    zipcode: str | None = None
+    products: list[ShippingQuoteProductArgument] | None = None
+
+
 class RecommendedApiCall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: RecommendedApiArguments = Field(
+        default_factory=RecommendedApiArguments
+    )
     reason: str = ""
 
 
 class CritiqueVerdict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     score: int = Field(default=100, ge=0, le=100)
     pass_check: bool = True
     issues: list[str] = Field(default_factory=list)
@@ -75,6 +125,14 @@ class CritiqueVerdict(BaseModel):
     recommended_apis: list[RecommendedApiCall] = Field(default_factory=list)
     retry_instruction: str = ""
     better_reply_hint: str = ""
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        """Produce the closed schema required by OpenAI structured output."""
+        from app.llm.openai_strict_schema import apply_openai_strict_schema
+
+        schema = handler(core_schema)
+        return apply_openai_strict_schema(schema)
 
 
 class CritiqueLoopReport(BaseModel):
@@ -277,7 +335,7 @@ def _fill_api_arguments(
     name = str(call.name or "").strip()
     if name not in RETRYABLE_API_NAMES:
         return None
-    args = dict(call.arguments or {})
+    args = call.arguments.model_dump(exclude_none=True)
     defaults: dict[str, dict[str, Any]] = {
         "get_order_complete": {"order_id": seeds.get("order_id")},
         "get_order": {"order_id": seeds.get("order_id")},
@@ -344,7 +402,7 @@ async def run_critique_judge(
             score=50,
             pass_check=True,
             issues=["openai_unavailable"],
-            summary="Critique skipped; OpenAI unavailable.",
+            summary="Critique skipped; OpenAI is not configured for this runtime.",
         )
     payload = {
         "customer_message": incoming.text,
@@ -397,10 +455,10 @@ async def run_critique_judge(
         AttributeError,
     ) as exc:
         return CritiqueVerdict(
-            score=50,
-            pass_check=True,
+            score=0,
+            pass_check=False,
             issues=[f"critique_failed:{type(exc).__name__}"],
-            summary="Critique failed open; keep original reply.",
+            summary="Critique failed; the draft was not approved.",
         )
 
 

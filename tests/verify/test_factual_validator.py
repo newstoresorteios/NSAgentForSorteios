@@ -119,6 +119,39 @@ def test_price_not_present_in_tool_facts_is_rejected():
     assert report.violations[0].claim == "299.90"
 
 
+def test_thousands_price_before_numbered_item_is_not_read_as_three_reais():
+    result = AgentResult(
+        reply_text=(
+            "2. Relógio Beta\nA prazo: R$ 2.699,99\n\n"
+            "3. Relógio Gama\nA prazo: R$ 3.000,00"
+        ),
+        intent="commerce",
+        commercial_data={
+            "products": [
+                {"id": "2", "current_price": "2699.99"},
+                {"id": "3", "current_price": "3000.00"},
+            ]
+        },
+        response_metadata={
+            "domain": "commerce",
+            "response_source": "openai",
+            "used_tray": True,
+        },
+    )
+
+    report = validate_factual_response(
+        result,
+        decision=_decision(result),
+        mode="shadow",
+    )
+
+    assert report.valid is True
+    assert {claim.claim for claim in report.supported_claims if claim.kind == "money"} == {
+        "2699.99",
+        "3000.00",
+    }
+
+
 def test_order_identifier_must_match_verified_order():
     result = AgentResult(
         reply_text="O pedido XYZ999 foi criado.",

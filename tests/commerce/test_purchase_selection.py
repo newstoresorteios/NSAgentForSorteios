@@ -299,6 +299,70 @@ def test_repair_active_only_without_shortlist_still_closes():
     assert repaired.needs_clarification is False
 
 
+def test_repair_esse_mesmo_honors_semantic_position_for_single_product():
+    state = _seiko_shortlist_state(
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "3917",
+                "name": "Seiko Prospex Land Tortoise SRPG15K1",
+                "brand": "Seiko",
+                "reference": "SRPG15K1",
+            }
+        ],
+        active_product={
+            "product_id": "3917",
+            "name": "Seiko Prospex Land Tortoise SRPG15K1",
+            "brand": "Seiko",
+            "reference": "SRPG15K1",
+        },
+    )
+    repaired = repair_presented_purchase_selection(
+        _interp(
+            goal="buy",
+            purchase_stage="selection",
+            reference_type="list_position",
+            reference_position=1,
+        ),
+        message_text="esse mesmo!!",
+        state=state,
+    )
+    assert repaired is not None
+    assert repaired.purchase_action == "create_cart"
+    assert repaired.reference_type == "list_position"
+    assert repaired.reference_position == 1
+    assert repaired.needs_clarification is False
+
+
+def test_repair_exact_product_name_in_selection_binds_without_close_verb():
+    state = _seiko_shortlist_state(
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "orient-open-heart",
+                "name": "Orient Open Heart Preto FAG03002B0",
+                "brand": "Orient",
+                "reference": "FAG03002B0",
+            }
+        ],
+        active_product={
+            "product_id": "orient-open-heart",
+            "name": "Orient Open Heart Preto FAG03002B0",
+            "brand": "Orient",
+            "reference": "FAG03002B0",
+        },
+    )
+    repaired = repair_presented_purchase_selection(
+        _interp(goal="buy", purchase_stage="selection"),
+        message_text="o orient open heart preto",
+        state=state,
+    )
+    assert repaired is not None
+    assert repaired.purchase_action == "create_cart"
+    assert repaired.reference_position == 1
+    assert repaired.needs_clarification is False
+
+
 def test_repair_open_browse_does_not_bind_previous_shortlist():
     original = _interp(goal="discover", subject={"brand": "Seiko"})
     repaired = repair_presented_purchase_selection(

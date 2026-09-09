@@ -25,7 +25,16 @@ from app.persona.site_knowledge import STORE_PRONTA_ENTREGA_URL
 
 _URL_RE = re.compile(r"https?://[^\s<>()]+", flags=re.IGNORECASE)
 _MONEY_RE = re.compile(
-    r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{1,2})|[0-9]+(?:[.,][0-9]{1,2})?)",
+    # Prefer Brazilian thousands before decimal forms.  The previous pattern
+    # read ``R$ 3.000`` as ``R$ 3.00`` and left the last zero unmatched.
+    # Horizontal whitespace also prevents a dangling ``R$`` from consuming a
+    # numbered item on the following line (``3. Produto``).
+    r"R\$[ \t]*("
+    r"[0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]{1,2})?"
+    r"|[0-9]+,[0-9]{1,2}"
+    r"|[0-9]+\.[0-9]{1,2}(?![0-9])"
+    r"|[0-9]+"
+    r")(?![0-9])",
     flags=re.IGNORECASE,
 )
 _ORDER_RE = re.compile(

@@ -273,6 +273,35 @@ def sync_remarketing_interaction(
             if stop_reason:
                 return
 
+            if active_id:
+                # Any customer reply ends the previous inactivity cycle. A
+                # new eligible cycle is created below from the latest state,
+                # so old touch numbers and product context cannot leak into
+                # the conversation that has just resumed.
+                cur.execute(
+                    """
+                    UPDATE public.ai_conversation_statuses
+                    SET status = 'cancelled',
+                        completed_at = %(now)s,
+                        completion_reason = 'customer_reengaged',
+                        next_scheduled_at = NULL,
+                        updated_at = %(now)s
+                    WHERE id = %(active_id)s
+                      AND status = 'active'
+                    """,
+                    {"active_id": active_id, "now": now},
+                )
+                cur.execute(
+                    """
+                    UPDATE public.ai_remarketing_attempts
+                    SET status = 'cancelled', updated_at = %(now)s
+                    WHERE conversation_status_id = %(active_id)s
+                      AND status IN ('pending', 'processing', 'failed')
+                    """,
+                    {"active_id": active_id, "now": now},
+                )
+                active_id = None
+
             if marketing_status != "eligible" or not eligible or not touch_hours:
                 return
 

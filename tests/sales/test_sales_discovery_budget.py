@@ -781,3 +781,37 @@ async def test_recommendation_no_match_skips_openai_name_question(monkeypatch):
         _interpretation(product_type="relógio", goal="recommend", needs_clarification=False),
     )
     assert rewritten is None
+
+
+@pytest.mark.asyncio
+async def test_unavailable_product_skips_openai_availability_rewrite(monkeypatch):
+    import app.sales_agent as sales_agent
+
+    monkeypatch.setattr(
+        sales_agent,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="sk-test", openai_model="gpt-4.1-mini"),
+    )
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("OpenAI must not turn an unavailable item into 'tem sim'")
+
+    monkeypatch.setattr("app.llm.openai_gateway.generate_text_output", boom)
+    tray_result = AgentResult(
+        reply_text=(
+            "Encontrei esse modelo no catálogo, mas ele está disponível somente "
+            "sob encomenda, com prazo estimado de 30 dias úteis."
+        ),
+        intent="commerce",
+        safety_reason="product_unavailable",
+        commercial_data={"products": [{"id": "4871"}]},
+    )
+
+    rewritten = await sales_agent._sales_response_with_openai(
+        IncomingMessage(text="tem Orient Open Heart preto?"),
+        {"goal": "find", "intent": "product_search"},
+        tray_result,
+        _interpretation(product_type="relógio", goal="find", needs_clarification=False),
+    )
+
+    assert rewritten is None

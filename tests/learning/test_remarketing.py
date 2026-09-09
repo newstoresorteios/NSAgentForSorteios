@@ -51,6 +51,16 @@ def test_message_is_stage_specific_and_always_contains_opt_out():
     assert "responda SAIR" in text
 
 
+def test_customer_reply_closes_previous_inactivity_cycle_in_source():
+    from pathlib import Path
+
+    source = Path("app/learning/remarketing.py").read_text(encoding="utf-8")
+
+    assert "completion_reason = 'customer_reengaged'" in source
+    assert "active_id = None" in source
+    assert "status IN ('pending', 'processing', 'failed')" in source
+
+
 @pytest.mark.asyncio
 async def test_batch_replies_only_through_the_origin_channel(monkeypatch):
     import app.learning.remarketing as remarketing

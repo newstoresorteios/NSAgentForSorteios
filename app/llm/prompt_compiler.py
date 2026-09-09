@@ -719,5 +719,12 @@ def resolve_system_instructions(
         extra_system_blocks=extra_system_blocks,
         relevant_knowledge=resolved_knowledge,
         audit=True,
+        inbound_id=(
+            int(incoming.raw["inbound_id"])
+            if incoming is not None
+            and isinstance(incoming.raw, dict)
+            and str(incoming.raw.get("inbound_id") or "").isdigit()
+            else None
+        ),
     )
     return compiled.instructions

@@ -39,6 +39,20 @@ _BUDGET_ANSWER_RE = re.compile(
     re.IGNORECASE,
 )
 _GENDER_LABELS = frozenset({"feminino", "masculino", "unissex", "unisex"})
+_CITY_PRODUCT_TOKENS = frozenset(
+    {
+        "relogio",
+        "produto",
+        "modelo",
+        "seiko",
+        "orient",
+        "citizen",
+        "tissot",
+        "casio",
+        "omega",
+        "open heart",
+    }
+)
 
 
 def _fold(value: Any) -> str:
@@ -370,6 +384,11 @@ def _is_plausible_city(text: str) -> bool:
         return False
     if _BUDGET_ANSWER_RE.search(cleaned) and "mil" in folded:
         return False
+    if any(
+        re.search(rf"\b{re.escape(token)}\b", folded)
+        for token in _CITY_PRODUCT_TOKENS
+    ):
+        return False
     return bool(_CITY_RE.match(cleaned))
 
 
@@ -460,6 +479,9 @@ def rehydrate_qualification_slots_from_turns(
             content = str(turn.get("content") or "").strip() or None
             if _is_clarification_turn(turn) or classify_qualification_question(content):
                 pending_question = content
+            else:
+                # A later assistant response closes the old Q→A adjacency.
+                pending_question = None
             continue
         if turn.get("role") != "user":
             continue
@@ -482,7 +504,9 @@ def rehydrate_qualification_slots_from_turns(
         content = str(turn.get("content") or "").strip() or None
         if _is_clarification_turn(turn) or classify_qualification_question(content):
             last_q = content
-            break
+        # Only the latest assistant message can be answered by the current
+        # user turn; do not revive a qualification question from earlier.
+        break
     if last_q and message_text:
         slot = classify_qualification_question(last_q)
         if slot:

@@ -228,3 +228,32 @@ def commercial_availability_facts(product: dict[str, Any]) -> dict[str, Any]:
         "immediate_delivery_supported": immediate_delivery_supported,
         "in_ready_to_ship_category": ready_to_ship,
     }
+
+
+def unavailable_product_reply(products: list[dict[str, Any]]) -> str:
+    """Describe a catalog hit without implying that it is ready for dispatch."""
+    product = products[0] if products else {}
+    facts = product.get("commercial_availability")
+    if not isinstance(facts, dict):
+        facts = commercial_availability_facts(product)
+    settings = product.get("ProductSettings")
+    settings = settings if isinstance(settings, dict) else {}
+    upon_request = any(
+        _truth_state(source.get("upon_request")) is True
+        for source in (product, settings)
+    )
+    lead_time_days = facts.get("lead_time_days")
+    if upon_request or facts.get("has_lead_time"):
+        lead_time = (
+            f", com prazo estimado de {lead_time_days} dias úteis"
+            if isinstance(lead_time_days, int) and lead_time_days > 0
+            else ""
+        )
+        return (
+            "Encontrei esse modelo no catálogo, mas ele está disponível somente "
+            f"sob encomenda{lead_time}; não é uma peça para envio imediato."
+        )
+    return (
+        "Encontrei esse modelo no catálogo, mas ele está indisponível no momento. "
+        "Posso procurar outras versões dele ou modelos semelhantes."
+    )

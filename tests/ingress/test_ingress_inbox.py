@@ -44,6 +44,15 @@ def test_claim_sql_reclaims_expired_leased_rows():
     assert "conversation_key = ANY(%(conversation_keys)s)" in inbox_sql
 
 
+def test_outbox_dead_letters_stale_or_superseded_replies_before_retry():
+    outbox_sql = Path("app/ingress/outbox.py").read_text(encoding="utf-8")
+
+    assert "outbox_retry_window_expired" in outbox_sql
+    assert "superseded_by_later_inbound" in outbox_sql
+    assert "outbox.created_at < now() - interval '15 minutes'" in outbox_sql
+    assert "later.created_at > outbox.created_at" in outbox_sql
+
+
 def test_reconstruct_fills_conversation_id_from_payload_top_level():
     incoming = incoming_from_inbox_payload(
         {

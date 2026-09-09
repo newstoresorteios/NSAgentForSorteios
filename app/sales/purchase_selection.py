@@ -46,6 +46,7 @@ _BARE_PURCHASE_RE = re.compile(
     r"pode\s+fechar|fechamos|fechar\s+pedido|fechar\s+a\s+compra|"
     r"comprar|"
     r"quero\s+esse|quero\s+este|quero\s+essa|quero\s+esta|"
+    r"esse\s+mesmo|este\s+mesmo|essa\s+mesma|esta\s+mesma|"
     r"pode\s+ser|fechado|bora\s+fechar"
     r")\s*[!.?]*\s*$",
     re.IGNORECASE,
@@ -406,6 +407,14 @@ def repair_presented_purchase_selection(
         message_text
     )
     browsing = bool(_NEW_BROWSE_RE.search(_fold(message_text)))
+    selection_intent = bool(
+        not browsing
+        and interpretation.goal == "buy"
+        and (
+            interpretation.purchase_stage == "selection"
+            or state.purchase_stage == "selection"
+        )
+    )
     wants_listed = bool(
         _SHORTLIST_WANT_RE.search(_fold(message_text)) and not browsing
     )
@@ -413,7 +422,10 @@ def repair_presented_purchase_selection(
         kind = _match_kind(message_text, named)
         bind_named = not browsing and (
             kind == "ref"
-            or (kind in {"name", "brand"} and (closing or wants_listed))
+            or (
+                kind in {"name", "brand"}
+                and (closing or wants_listed or selection_intent)
+            )
         )
         if bind_named:
             return _create_cart_repair(
@@ -429,6 +441,18 @@ def repair_presented_purchase_selection(
             )
 
     position = parse_list_position_selection(message_text)
+    if (
+        position is None
+        and interpretation.reference_position is not None
+        and not browsing
+        and (
+            interpretation.goal == "buy"
+            or interpretation.purchase_action == "create_cart"
+        )
+    ):
+        # The semantic interpreter may resolve deictic confirmations such as
+        # "esse mesmo" even though there is no literal number in the message.
+        position = interpretation.reference_position
     mentions_listed = _mentions_presented_catalog(message_text, presented)
     if position is None and (closing or (wants_listed and mentions_listed)):
         position = _position_from_recent_turns(recent_turns)
