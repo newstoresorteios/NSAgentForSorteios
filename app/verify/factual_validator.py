@@ -161,6 +161,9 @@ def _money_decimal(value: Any) -> Decimal | None:
         return None
     if "," in text:
         text = text.replace(".", "").replace(",", ".")
+    elif re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{3})+", text):
+        # Brazilian copy commonly omits cents (``R$ 2.200``).
+        text = text.replace(".", "")
     try:
         return Decimal(text).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError):

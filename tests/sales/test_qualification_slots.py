@@ -419,6 +419,27 @@ def test_persona_question_never_reasks_city_or_name_after_answered():
         reset_persona_runtime(token)
 
 
+def test_legacy_product_phrase_is_removed_from_persisted_shipping_city():
+    from app.sales.qualification_slots import merge_persisted_qualification_slots
+
+    merged = merge_persisted_qualification_slots(
+        {"material": "dourado"},
+        {
+            "qualification_slots": {
+                "customer_name": "Tironi",
+                "shipping_city": "o orient open heart preto",
+            },
+            "attributes": [
+                "qual:name:Tironi",
+                "qual:city:o orient open heart preto",
+            ],
+        },
+    )
+
+    assert merged["qualification_slots"] == {"customer_name": "Tironi"}
+    assert "qual:city:o orient open heart preto" not in merged["attributes"]
+
+
 def test_baltic_mk2_37mm_skips_budget_and_forces_retrieval():
     from tests.evals.test_sales_golden_backtests import _crono_chatbo_profile, _persona
 

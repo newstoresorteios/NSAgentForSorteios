@@ -388,6 +388,41 @@ def test_repair_image_request_does_not_create_cart():
     assert repaired is original
 
 
+def test_explicit_model_correction_does_not_buy_brand_only_near_match():
+    state = CommerceConversationState(
+        active_domain="commerce",
+        purchase_stage="selection",
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "4917",
+                "name": "Relógio Orient Kanno Preto RA-AA0010B19B",
+                "brand": "Orient",
+                "reference": "RA-AA0010B19B",
+            }
+        ],
+    )
+    repaired = repair_presented_purchase_selection(
+        _interp(
+            goal="buy",
+            subject={"product_type": "relógio", "brand": "Orient"},
+            preferences={"color": "preto", "style": "Open Heart"},
+            purchase_action="create_cart",
+            purchase_stage="selection",
+            reference_type="list_position",
+            reference_position=1,
+        ),
+        message_text="não, eu quero agora o orient open heart preto",
+        state=state,
+    )
+
+    assert repaired is not None
+    assert repaired.goal == "find"
+    assert repaired.purchase_action is None
+    assert repaired.reference_position is None
+    assert repaired.ready_for_retrieval is True
+
+
 def test_repair_baltic_brand_only_asks_which_not_marca():
     repaired = repair_presented_purchase_selection(
         _interp(),

@@ -221,7 +221,10 @@ def is_deictic_product_price_request(text: str | None) -> bool:
         "este relógio",
         "este produto",
     )
-    return any(marker in normalized for marker in photo_markers + this_markers)
+    return any(
+        re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", normalized)
+        for marker in photo_markers + this_markers
+    )
 
 
 def resolve_commerce_action(text: str | None) -> str | None:

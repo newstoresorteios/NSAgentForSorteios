@@ -570,6 +570,8 @@ def _slots_from_preferences(prefs: dict[str, Any] | None) -> dict[str, str]:
     if isinstance(stored, dict):
         for key, value in stored.items():
             text = str(value or "").strip()
+            if key == SHIPPING_CITY and not _is_plausible_city(text):
+                continue
             if text:
                 slots[str(key)] = text
     attrs = prefs.get("attributes") if isinstance(prefs.get("attributes"), list) else []
@@ -577,6 +579,8 @@ def _slots_from_preferences(prefs: dict[str, Any] | None) -> dict[str, str]:
         if slot in slots:
             continue
         value = _get_qual_value([str(item) for item in attrs], slot)
+        if slot == SHIPPING_CITY and value and not _is_plausible_city(value):
+            continue
         if value:
             slots[slot] = value
     if CUSTOMER_NAME not in slots:
@@ -606,7 +610,14 @@ def merge_persisted_qualification_slots(
         return merged
     merged["qualification_slots"] = slots
     attrs = merged.get("attributes") if isinstance(merged.get("attributes"), list) else []
-    attrs = [str(item) for item in attrs]
+    attrs = [
+        str(item)
+        for item in attrs
+        if not (
+            str(item).startswith(_qual_attr_key(SHIPPING_CITY))
+            and not _is_plausible_city(str(item).split(":", 2)[-1])
+        )
+    ]
     for slot, value in slots.items():
         attrs = _set_qual_value(attrs, slot, value)
     merged["attributes"] = attrs

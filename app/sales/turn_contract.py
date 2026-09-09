@@ -480,11 +480,30 @@ def merge_inbound_views(
 
     brand_unlock = message_requests_other_brands(message_text)
     budget_from_message = message_view.budget_max is not None or message_view.asks_price_range
-    if brand_unlock and budget is None:
+    continuing_shortlist_refinement = bool(
+        memory_view.live_shortlist
+        and (
+            message_view.brand
+            or message_view.model
+            or message_view.color
+            or message_view.gender
+            or message_view.style
+        )
+    )
+    if (brand_unlock or continuing_shortlist_refinement) and budget is None:
         budget = memory_view.budget_max
-    if budget is None and (budget_from_message or not message_view.commerce_browse):
+    if budget is None and (
+        budget_from_message
+        or not message_view.commerce_browse
+        or continuing_shortlist_refinement
+    ):
         budget = memory_view.budget_max
-    elif message_view.commerce_browse and not budget_from_message and not brand_unlock:
+    elif (
+        message_view.commerce_browse
+        and not budget_from_message
+        and not brand_unlock
+        and not continuing_shortlist_refinement
+    ):
         if memory_view.budget_max is not None:
             stale.append("budget")
         budget = None

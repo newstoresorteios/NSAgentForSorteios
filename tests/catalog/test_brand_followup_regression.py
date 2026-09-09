@@ -124,3 +124,22 @@ def test_correction_turn_does_not_relock_previous_suggestions():
     assert bound.preferences.budget_max == 2500
     assert bound.subject.brand is None
     assert bound.subject.model is None
+
+
+def test_named_brand_refinement_keeps_recent_shortlist_budget():
+    state = SimpleNamespace(
+        active_preferences={"budget_max": 2500},
+        last_presented_products=[
+            {"id": "1", "brand": "Orient", "name": "Orient Kanno"}
+        ],
+    )
+    bound = apply_turn_contract_for_search(
+        interpretation(
+            subject={"product_type": "relogio", "brand": "Orient"},
+            preferences={"style": "automatico", "attributes": ["safira"]},
+        ),
+        message_text="pode ser orient, mas quero um automatico e com cristal de safira",
+        commerce_state=state,
+    )
+
+    assert bound.preferences.budget_max == 2500

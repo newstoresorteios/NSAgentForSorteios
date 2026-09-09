@@ -114,6 +114,11 @@ _SHORTLIST_WANT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_EXPLICIT_CORRECTION_RE = re.compile(
+    r"^\s*(?:nao|não)\b|\b(?:na verdade|em vez|ao inves|ao invés)\b",
+    re.IGNORECASE,
+)
+
 
 def _fold(value: Any) -> str:
     text = str(value or "").strip().lower()
@@ -407,6 +412,7 @@ def repair_presented_purchase_selection(
         message_text
     )
     browsing = bool(_NEW_BROWSE_RE.search(_fold(message_text)))
+    correcting = bool(_EXPLICIT_CORRECTION_RE.search(str(message_text or "")))
     selection_intent = bool(
         not browsing
         and interpretation.goal == "buy"
@@ -423,9 +429,10 @@ def repair_presented_purchase_selection(
         bind_named = not browsing and (
             kind == "ref"
             or (
-                kind in {"name", "brand"}
+                kind == "name"
                 and (closing or wants_listed or selection_intent)
             )
+            or (kind == "brand" and (closing or wants_listed) and not correcting)
         )
         if bind_named:
             return _create_cart_repair(
@@ -439,6 +446,22 @@ def repair_presented_purchase_selection(
                     "kind": kind,
                 },
             )
+
+    if correcting and named is not None and _match_kind(message_text, named) == "brand":
+        # The customer rejected the listed model and named a different one of
+        # the same brand. Do not let a semantic list position override that.
+        return interpretation.model_copy(
+            update={
+                "goal": "find",
+                "purchase_action": None,
+                "reference_type": "explicit_product",
+                "reference_position": None,
+                "confirmation": "none",
+                "needs_clarification": False,
+                "ready_for_retrieval": True,
+                "stop_clarification": False,
+            }
+        )
 
     position = parse_list_position_selection(message_text)
     if (

@@ -117,3 +117,40 @@ def test_extract_stated_color_style_gender_from_message():
     assert extract_stated_style("quero um relogio esportivo") == "esportivo"
     assert extract_stated_gender("quero um relogio feminino") == "feminino"
     assert extract_stated_color("quero um relogio") is None
+
+
+def test_open_heart_named_in_message_becomes_exact_product_model():
+    interpretation = _base(
+        subject={"product_type": "relogio", "brand": "Orient"},
+        preferences={"style": "Open Heart", "color": "preto"},
+        needs_clarification=False,
+    )
+    normalized = normalize_sales_interpretation(
+        interpretation,
+        message_text="eu quero agora o orient open heart preto",
+    )
+
+    assert normalized.subject.model == "Open Heart"
+    assert normalized.goal == "find"
+    assert normalized.ready_for_retrieval is True
+    assert ProductRetrievalCompiler.compile(normalized).mode == "exact"
+
+
+def test_current_open_heart_replaces_stale_kanno_model():
+    interpretation = _base(
+        subject={
+            "product_type": "relogio",
+            "brand": "Orient",
+            "model": "Kanno",
+        },
+        preferences={"color": "preto"},
+        needs_clarification=False,
+    )
+
+    normalized = normalize_sales_interpretation(
+        interpretation,
+        message_text="nao, eu quero o Orient Open Heart preto",
+        context_text="antes eu vi o Orient Kanno",
+    )
+
+    assert normalized.subject.model == "Open Heart"

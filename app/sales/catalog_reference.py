@@ -235,6 +235,7 @@ async def resolve_catalog_reference(
     # without image_url and would price the previous SKU (CW Rosa → Beaubleu).
     if (
         not has_inbound_image
+        and not interpretation.image_request
         and is_deictic_product_price_request(message.text)
         and interpretation.reference_type in vague_refs
         and interpretation.goal in {"inspect", "find"}

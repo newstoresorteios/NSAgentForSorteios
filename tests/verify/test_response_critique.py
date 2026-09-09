@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.commerce.commerce_context import CommerceConversationState, CommerceProductReference
@@ -10,6 +12,7 @@ from app.verify.response_critique import (
     apply_response_critique_loop,
     apply_search_products_to_result,
     _fill_api_arguments,
+    _regenerate_reply,
     _seed_args_from_context,
 )
 from app.llm.capability_catalog import build_capability_catalog, RETRYABLE_API_NAMES
@@ -53,6 +56,55 @@ def test_seed_args_from_active_product_reference():
     )
     assert seeds["product_id"] == "9991"
     assert "Sealander" in (seeds["query"] or "")
+
+
+@pytest.mark.asyncio
+async def test_regenerate_reads_typed_search_arguments(monkeypatch):
+    monkeypatch.setattr(
+        "app.verify.response_critique.get_settings",
+        lambda: SimpleNamespace(openai_api_key="key", openai_model="model"),
+    )
+
+    async def fake_generate(**_kwargs):
+        return SimpleNamespace(text="Encontrei o Orient Open Heart solicitado.")
+
+    monkeypatch.setattr(
+        "app.llm.openai_gateway.generate_text_output",
+        fake_generate,
+    )
+    verdict = CritiqueVerdict(
+        score=20,
+        pass_check=False,
+        issues=["catalog_fit_mismatch"],
+        summary="Kanno nao e Open Heart",
+        recommended_apis=[
+            RecommendedApiCall(
+                name="search_products",
+                arguments={"query": "Orient Open Heart", "limit": 5},
+            )
+        ],
+        retry_instruction="Use o resultado exato.",
+    )
+
+    regenerated = await _regenerate_reply(
+        incoming=IncomingMessage(
+            channel="whatsapp",
+            text="quero o Orient Open Heart preto",
+        ),
+        result=AgentResult(reply_text="Orient Kanno", intent="commerce"),
+        verdict=verdict,
+        api_facts={
+            "search_products": {
+                "products": [{"id": "4871", "name": "Orient Open Heart Preto"}]
+            }
+        },
+        recent_turns=None,
+        commerce_state=None,
+    )
+
+    assert regenerated is not None
+    assert regenerated.commercial_data["query"] == "Orient Open Heart"
+    assert regenerated.commercial_data["products"][0]["id"] == "4871"
 
 
 @pytest.mark.asyncio

@@ -329,7 +329,7 @@ async def test_product_and_position_images_use_real_tray_urls(monkeypatch):
         ],
     )
     current = await sales_agent.handle_sales_message(
-        IncomingMessage(text="imagem atual"),
+        IncomingMessage(text="me manda foto"),
         {},
         {},
         _interpretation(

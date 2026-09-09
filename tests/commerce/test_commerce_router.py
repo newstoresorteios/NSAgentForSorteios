@@ -33,6 +33,7 @@ def test_outbound_catalog_image_request_is_not_inbound_photo_price():
     assert is_outbound_catalog_image_request("cadê a foto") is True
     assert is_outbound_catalog_image_request("qual o preço do relógio da foto?") is False
     assert is_deictic_product_price_request("qual o preço desse?") is True
+    assert is_deictic_product_price_request("me manda foto") is False
 
 
 def test_listed_catalog_follow_up_detects_pronta_entrega():

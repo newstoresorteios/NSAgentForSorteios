@@ -416,7 +416,7 @@ def repair_dial_and_case_preferences(
 
 
 _MODEL_LINE_RE = re.compile(
-    r"\b(mk\s*2|mk2|mr\s*0?1|aquascaphe|speedtimer|king\s+turtle|samurai)\b",
+    r"\b(mk\s*2|mk2|mr\s*0?1|aquascaphe|speedtimer|king\s+turtle|samurai|open\s*heart)\b",
     flags=re.IGNORECASE,
 )
 _SINGLE_MM_RE = re.compile(r"\b(3[0-9]|4[0-5])\s*mm\b", re.IGNORECASE)
@@ -443,12 +443,23 @@ def repair_specific_model_tokens(
         brand_fold = "baltic"
 
     model_fold = _fold(subject.model)
-    line_match = _MODEL_LINE_RE.search(combined)
+    current_line_match = _MODEL_LINE_RE.search(message_text or "")
+    line_match = current_line_match or _MODEL_LINE_RE.search(combined)
     if line_match:
         token = _fold(line_match.group(1)).replace(" ", "")
         if token in {"mk2", "mk02"}:
             token = "mk2"
-        if not model_fold or model_fold in {brand_fold, "relogio", "watch"}:
+        elif token == "openheart":
+            token = "Open Heart"
+        if (
+            current_line_match
+            and model_fold
+            and token.casefold() not in model_fold
+        ):
+            # A model family named in the current turn replaces a stale model
+            # carried from the previous shortlist (Kanno -> Open Heart).
+            subject.model = "Aquascaphe mk2" if token == "mk2" else token
+        elif not model_fold or model_fold in {brand_fold, "relogio", "watch"}:
             subject.model = "Aquascaphe mk2" if token == "mk2" else token
         elif token not in model_fold:
             subject.model = f"{subject.model} {token}".strip()

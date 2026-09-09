@@ -669,7 +669,7 @@ async def _regenerate_reply(
         search_query = None
         for item in verdict.recommended_apis:
             if item.name == "search_products":
-                query = (item.arguments or {}).get("query")
+                query = item.arguments.query
                 if query:
                     search_query = str(query)
                     break

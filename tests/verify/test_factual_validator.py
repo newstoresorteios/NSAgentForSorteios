@@ -320,6 +320,24 @@ def test_empty_catalog_customer_budget_is_not_a_sku_price():
     )
 
 
+def test_brazilian_thousands_price_without_cents_is_grounded():
+    result = AgentResult(
+        reply_text="O valor a prazo e R$ 2.200.",
+        intent="commerce",
+        commercial_data={"products": [{"id": "1", "price": 2200}]},
+        response_metadata={"domain": "commerce", "used_tray": True},
+    )
+
+    report = validate_factual_response(
+        result,
+        decision=_decision(result),
+        mode="enforce",
+    )
+
+    assert report.valid is True
+    assert not report.unsupported_claims
+
+
 def test_honest_budget_miss_is_not_overwritten_in_enforce():
     result = AgentResult(
         reply_text="Não encontrei relógios até R$ 2.500,00.",
