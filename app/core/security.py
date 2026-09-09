@@ -8,9 +8,11 @@ def _secure_equals(a: str, b: str) -> bool:
 
 
 async def verify_brevo_webhook(request: Request, x_webhook_token: str | None = Header(default=None)) -> None:
-    """Validate the shared secret on header X-Webhook-Token only.
+    """Validate the Brevo secret, preferring ``X-Webhook-Token``.
 
-    Query-string ?token= is ignored so the secret is not written to access logs.
+    Brevo Conversations calls the configured webhook URL without support for a
+    custom authentication header, so existing integrations carry the secret in
+    ``?token=``.  Request observability must keep query values redacted.
     """
     settings = get_settings()
     if not settings.brevo_webhook_secret:
@@ -19,7 +21,15 @@ async def verify_brevo_webhook(request: Request, x_webhook_token: str | None = H
             raise HTTPException(status_code=500, detail="webhook_secret_not_configured")
         return
 
-    provided_token = x_webhook_token
+    header_token = str(x_webhook_token or "").strip()
+    query_tokens = [
+        str(value or "").strip()
+        for value in request.query_params.getlist("token")
+        if str(value or "").strip()
+    ]
+    # A supplied header is authoritative.  Do not let a valid query parameter
+    # rescue an invalid header, which would make authentication ambiguous.
+    provided_token = header_token or (query_tokens[0] if len(query_tokens) == 1 else "")
 
     if not provided_token:
         print("[brevo.webhook.auth] missing_webhook_token")
@@ -32,6 +42,9 @@ async def verify_brevo_webhook(request: Request, x_webhook_token: str | None = H
     if not _secure_equals(provided_token, settings.brevo_webhook_secret):
         print("[brevo.webhook.auth] invalid_webhook_token")
         raise HTTPException(status_code=401, detail="invalid_webhook_token")
+
+    if not header_token:
+        print("[brevo.webhook.auth] authenticated_via_query_token")
 
 
 async def verify_admin_token(authorization: str | None = Header(default=None)) -> None:

@@ -102,7 +102,7 @@ async def test_invalid_json_has_no_raw_preview(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_brevo_query_token_is_rejected(monkeypatch):
+async def test_brevo_query_token_compatibility_and_header_precedence(monkeypatch):
     import api.index as index
     import app.security as security
 
@@ -112,18 +112,35 @@ async def test_brevo_query_token_is_rejected(monkeypatch):
         transport=ASGITransport(app=index.app),
         base_url="http://test",
     ) as client:
-        rejected = await client.post(
+        query_accepted = await client.post(
             "/api/webhooks/brevo/whatsapp?token=s3cret",
-            json={"id": "1", "from": "5511999999999", "text": "oi"},
+            json={"eventName": "conversationTranscript"},
         )
-        accepted = await client.post(
+        header_accepted = await client.post(
             "/api/webhooks/brevo/whatsapp",
             json={"eventName": "conversationTranscript"},
             headers={"X-Webhook-Token": "s3cret"},
         )
-    assert rejected.status_code == 401
-    assert accepted.status_code == 200
-    assert accepted.json()["skipped"] is True
+        invalid_query = await client.post(
+            "/api/webhooks/brevo/whatsapp?token=wrong",
+            json={"eventName": "conversationTranscript"},
+        )
+        invalid_header_wins = await client.post(
+            "/api/webhooks/brevo/whatsapp?token=s3cret",
+            json={"eventName": "conversationTranscript"},
+            headers={"X-Webhook-Token": "wrong"},
+        )
+        duplicate_query = await client.post(
+            "/api/webhooks/brevo/whatsapp?token=s3cret&token=s3cret",
+            json={"eventName": "conversationTranscript"},
+        )
+    assert query_accepted.status_code == 200
+    assert query_accepted.json()["skipped"] is True
+    assert header_accepted.status_code == 200
+    assert header_accepted.json()["skipped"] is True
+    assert invalid_query.status_code == 401
+    assert invalid_header_wins.status_code == 401
+    assert duplicate_query.status_code == 401
 
 
 @pytest.mark.asyncio
