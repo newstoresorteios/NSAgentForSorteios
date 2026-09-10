@@ -144,6 +144,7 @@ class CritiqueLoopReport(BaseModel):
     verdicts: list[dict[str, Any]] = Field(default_factory=list)
     regenerated: bool = False
     applied_handoff: bool = False
+    applied_factual_fallback: bool = False
 
 
 def _last_assistant_reply(recent_turns: list[dict[str, Any]] | None) -> str | None:
@@ -585,6 +586,34 @@ def apply_search_products_to_result(
     metadata = dict(updated.response_metadata or {})
     metadata["presented_products"] = bool(products)
     metadata["critique_products_replaced"] = True
+    for stale_key in (
+        "grounded_commerce_evidence",
+        "grounded_commerce_count",
+        "fact_evidence",
+        "factual_validation",
+        "factual_validation_post_critique",
+    ):
+        metadata.pop(stale_key, None)
+    # Product replacement is an atomic factual-authority transition.  Keeping
+    # the previous shortlist's IDs or fallback lets a later validator restore
+    # stale products even after the critique found the correct ones.
+    if products:
+        from app.catalog.index.catalog_index import build_allowed_id_sets
+        from app.commerce.commerce_router import _product_result
+
+        allowed = build_allowed_id_sets(products)
+        metadata["allowed_id_sets"] = {
+            key: sorted(values) for key, values in allowed.items()
+        }
+        metadata["factual_fallback_text"] = _product_result(
+            "product_search", products
+        ).reply_text
+    else:
+        metadata.pop("allowed_id_sets", None)
+        metadata["factual_fallback_text"] = (
+            "Não encontrei opções que atendam a esses critérios agora. "
+            "Quer ajustar a faixa de investimento ou outro detalhe?"
+        )
     if not products:
         metadata["product_resolution_state"] = "not_found"
         metadata["clear_active_product"] = True
@@ -796,6 +825,10 @@ async def apply_response_critique_loop(
         if max_retries is not None
         else int(getattr(settings, "agent_critique_max_retries", 2))
     )
+    # One repair cycle is enough: repeated judge/search/regenerate loops caused
+    # minute-long turns and provider retries. A grounded deterministic fallback
+    # below handles a repaired shortlist that the second judge still rejects.
+    retries = max(0, min(int(retries), 1))
     report = CritiqueLoopReport(mode=critique_mode, max_retries=retries)
     if critique_mode == "off":
         return result, report
@@ -961,13 +994,24 @@ async def _run_response_critique_loop(
         if critique_mode == "shadow" or attempt > retries:
             report.approved = False
             if critique_mode == "enforce" and attempt > retries:
-                current.reply_text = (
-                    "Prefiro confirmar esses dados com a equipe antes de te responder "
-                    "com segurança. Um atendente humano pode te ajudar agora."
-                )
-                current.handoff_required = True
-                current.safety_reason = "response_critique_failed"
-                report.applied_handoff = True
+                metadata = current.response_metadata or {}
+                grounded_fallback = str(
+                    metadata.get("factual_fallback_text") or ""
+                ).strip()
+                products_replaced = bool(metadata.get("critique_products_replaced"))
+                if products_replaced and grounded_fallback:
+                    current.reply_text = grounded_fallback
+                    current.handoff_required = False
+                    current.safety_reason = "response_critique_factual_fallback"
+                    report.applied_factual_fallback = True
+                else:
+                    current.reply_text = (
+                        "Prefiro confirmar esses dados com a equipe antes de te responder "
+                        "com segurança. Um atendente humano pode te ajudar agora."
+                    )
+                    current.handoff_required = True
+                    current.safety_reason = "response_critique_failed"
+                    report.applied_handoff = True
             break
 
         api_calls, api_facts = await _execute_recommended_apis(

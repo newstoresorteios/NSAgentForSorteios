@@ -4,6 +4,7 @@ from app.commerce.commerce_context import CommerceConversationState
 from app.models import SalesInterpretation
 from app.sales.dialogue_phase import (
     BROWSE_IDLE_SECONDS,
+    blocks_greeting_fast_path,
     is_fresh_commerce_start,
     is_generic_catalog_ask,
     message_resets_dialogue_to_discovery,
@@ -132,6 +133,27 @@ def test_greeting_opens_new_session_without_volunteering_shortlist():
         conversation_id="thread-old",
         state=state,
     ) is False
+
+
+def test_greeting_during_active_discovery_keeps_pending_request():
+    state = CommerceConversationState(
+        active_domain="commerce",
+        active_topic="Longines Heritage preto",
+        dialogue_phase="discovery",
+        active_preferences={
+            "subject_brand": "Longines",
+            "subject_model": "Heritage",
+            "color": "preto",
+        },
+        last_conversation_id="thread-old",
+        last_browse_at=datetime.now(timezone.utc),
+    )
+    assert should_reset_browse_memory(
+        "Bom dia!",
+        conversation_id="thread-old",
+        state=state,
+    ) is False
+    assert blocks_greeting_fast_path(state) is True
     assert should_reset_browse_memory(
         "quais eram os relogios",
         conversation_id="thread-old",

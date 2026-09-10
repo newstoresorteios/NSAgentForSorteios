@@ -15,6 +15,8 @@ BROWSE_IDLE_SECONDS = 12 * 60 * 60
 
 _CATALOG_PREF_KEYS = (
     "locked_identity",
+    "subject_brand",
+    "subject_model",
     "budget",
     "budget_max",
     "color",
@@ -117,7 +119,10 @@ def has_browse_memory(state: CommerceConversationState | None) -> bool:
     if state.active_topic:
         return True
     prefs = state.active_preferences or {}
-    return bool(isinstance(prefs, dict) and prefs.get("locked_identity"))
+    return bool(
+        isinstance(prefs, dict)
+        and any(prefs.get(key) not in (None, "", [], {}) for key in _CATALOG_PREF_KEYS)
+    )
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -226,8 +231,12 @@ def should_reset_browse_memory(
         log_swallowed("dialogue_phase.other_brands_reset", exc)
     if _FRESH_CATALOG_ASK_RE.search(_fold(message_text)):
         return True
-    if is_session_opener_greeting(message_text):
-        return True
+    if is_session_opener_greeting(message_text) and state is not None:
+        # A bare greeting after an already presented shortlist starts a clean
+        # browse session. During active qualification/discovery it is ordinary
+        # small-talk and must keep the customer's pending request.
+        if state.dialogue_phase in {"shortlist", "buy"} or state.last_presented_products:
+            return True
     if getattr(state, "closed_by_farewell", False):
         return True
     if is_new_commerce_thread(conversation_id, state):
@@ -323,8 +332,13 @@ def blocks_greeting_fast_path(state: CommerceConversationState | None) -> bool:
         return True
     if state.last_presented_products:
         return True
+    if str(state.active_topic or "").strip():
+        return True
     prefs = state.active_preferences or {}
-    return bool(isinstance(prefs, dict) and prefs.get("locked_identity"))
+    return bool(
+        isinstance(prefs, dict)
+        and any(prefs.get(key) not in (None, "", [], {}) for key in _CATALOG_PREF_KEYS)
+    )
 
 
 def blocks_farewell_fast_path(state: CommerceConversationState | None) -> bool:

@@ -352,6 +352,26 @@ async def test_meta_webhook_rejects_oversized_body_before_signature(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_disabled_meta_webhook_acknowledges_without_queueing(monkeypatch):
+    import api.index as index
+    from app.channels import meta_instagram
+
+    monkeypatch.setattr(meta_instagram, "meta_webhook_enabled", lambda: False)
+    async with AsyncClient(
+        transport=ASGITransport(app=index.app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post("/api/webhooks/meta", json={"entry": []})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "provider": "meta",
+        "ignored": "webhook_disabled",
+    }
+
+
+@pytest.mark.asyncio
 async def test_meta_webhook_signature_receives_exact_raw_bytes(monkeypatch):
     import api.index as index
     from app.channels import meta_instagram

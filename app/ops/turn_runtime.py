@@ -152,6 +152,19 @@ class TurnRuntimeContext(BaseModel):
         reason: str | None = None,
         transport: str | None = None,
     ) -> None:
+        transport_ceiling = max(1, int(self.llm_budget.max_calls) * 2)
+        if (
+            self.llm_budget.enforce
+            and self.openai_transport_attempts >= transport_ceiling
+        ):
+            self.register_avoided_llm_call(
+                reason or "transport_budget_exceeded",
+                intended_call_type=call_type,
+            )
+            self.register_fallback("openai_transport_budget_exceeded")
+            raise LLMCallBudgetExceeded(
+                f"openai_transport_budget_exceeded:{call_type}"
+            )
         try:
             self.llm_budget.reserve(call_type)
         except LLMCallBudgetExceeded:

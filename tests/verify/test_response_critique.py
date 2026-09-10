@@ -284,7 +284,47 @@ def test_apply_search_products_replaces_classic_list():
     assert "Chronograph" in products[0]["name"]
     assert updated.commercial_data["query"] == "cronógrafo"
     assert updated.response_metadata["critique_products_replaced"] is True
+    assert "9001" in str(updated.response_metadata["allowed_id_sets"])
+    assert "Chronograph" in updated.response_metadata["factual_fallback_text"]
     assert state.last_presented_products[0].product_id == "9001"
+
+
+def test_critique_product_swap_cannot_retain_stale_factual_fallback():
+    result = AgentResult(
+        reply_text="Hydroconquest antigo",
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "4025", "name": "Longines Hydroconquest"}]
+        },
+        response_metadata={
+            "allowed_id_sets": {"product_ids": ["4025"]},
+            "factual_fallback_text": "Hydroconquest antigo",
+            "grounded_commerce_evidence": [
+                {"entity_id": "4025", "entity_type": "product"}
+            ],
+            "factual_validation": {"valid": True},
+        },
+    )
+    updated = apply_search_products_to_result(
+        result=result,
+        api_facts={
+            "search_products": {
+                "products": [
+                    {"id": "8237", "name": "Longines Heritage Preto"},
+                    {"id": "8337", "name": "Longines Heritage Classic Preto"},
+                ]
+            }
+        },
+        search_query="Longines Heritage preto",
+    )
+
+    metadata = updated.response_metadata
+    assert "4025" not in str(metadata["allowed_id_sets"])
+    assert "8237" in str(metadata["allowed_id_sets"])
+    assert "Hydroconquest" not in metadata["factual_fallback_text"]
+    assert "Heritage" in metadata["factual_fallback_text"]
+    assert "grounded_commerce_evidence" not in metadata
+    assert "factual_validation" not in metadata
 
 
 def test_apply_search_products_drops_over_budget_hits():
@@ -418,6 +458,67 @@ async def test_critique_catalog_mismatch_retries_search_and_swaps_products(monke
     assert "Chronograph" in final.reply_text
     assert "Classic" not in final.commercial_data["products"][0]["name"]
     assert state.last_presented_products[0].product_id == "9001"
+
+
+@pytest.mark.asyncio
+async def test_failed_rejudge_uses_new_grounded_shortlist_without_more_retries(monkeypatch):
+    _allow_critique_llm_without_risk(monkeypatch)
+    incoming = IncomingMessage(channel="whatsapp", text="Longines Heritage preto")
+    original = AgentResult(
+        reply_text="Longines Hydroconquest",
+        intent="commerce",
+        commercial_data={"products": [{"id": "4025", "name": "Hydroconquest"}]},
+        response_metadata={"factual_fallback_text": "Hydroconquest"},
+    )
+
+    async def always_fail(**_kwargs):
+        return CritiqueVerdict(
+            score=30,
+            pass_check=False,
+            issues=["catalog_fit_mismatch"],
+            recommended_apis=[
+                RecommendedApiCall(
+                    name="search_products",
+                    arguments={"query": "Longines Heritage preto", "limit": 3},
+                )
+            ],
+        )
+
+    async def execute(_name, _args):
+        return {
+            "products": [
+                {"id": "8237", "name": "Longines Heritage Preto", "brand": "Longines"}
+            ]
+        }
+
+    async def regenerate(**kwargs):
+        swapped = apply_search_products_to_result(
+            result=kwargs["result"],
+            api_facts=kwargs["api_facts"],
+            search_query="Longines Heritage preto",
+        )
+        swapped.reply_text = "Resposta gerada ainda rejeitada"
+        swapped.response_metadata["critique_regenerated"] = True
+        return swapped
+
+    monkeypatch.setattr("app.verify.response_critique.run_critique_judge", always_fail)
+    monkeypatch.setattr("app.verify.response_critique._regenerate_reply", regenerate)
+
+    final, report = await apply_response_critique_loop(
+        incoming=incoming,
+        result=original,
+        mode="enforce",
+        max_retries=3,
+        execute=execute,
+    )
+
+    assert report.max_retries == 1
+    assert report.attempts == 2
+    assert report.applied_factual_fallback is True
+    assert report.applied_handoff is False
+    assert final.handoff_required is False
+    assert "Heritage" in final.reply_text
+    assert "Hydroconquest" not in final.reply_text
 
 
 @pytest.mark.asyncio

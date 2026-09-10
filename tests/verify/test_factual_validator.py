@@ -152,6 +152,51 @@ def test_thousands_price_before_numbered_item_is_not_read_as_three_reais():
     }
 
 
+def test_budget_in_mil_is_supported_alongside_grounded_products():
+    result = AgentResult(
+        reply_text=(
+            "Dentro do seu teto de R$ 20 mil, esta opção custa R$ 19.000,00."
+        ),
+        intent="commerce",
+        commercial_data={
+            "products": [{"id": "8237", "current_price": "19000.00"}],
+        },
+        response_metadata={
+            "domain": "commerce",
+            "used_tray": True,
+            "hard_budget_max": 20000,
+        },
+    )
+
+    report = validate_factual_response(
+        result,
+        decision=_decision(result),
+        mode="enforce",
+    )
+
+    assert report.valid is True
+    money = {claim.claim for claim in report.supported_claims if claim.kind == "money"}
+    assert {"20000.00", "19000.00"}.issubset(money)
+
+
+def test_bare_twenty_reais_is_not_mistaken_for_twenty_thousand_budget():
+    result = AgentResult(
+        reply_text="O teto informado foi R$ 20.",
+        intent="commerce",
+        commercial_data={"products": []},
+        response_metadata={"domain": "commerce", "hard_budget_max": 20000},
+    )
+
+    report = validate_factual_response(
+        result,
+        decision=_decision(result),
+        mode="enforce",
+    )
+
+    assert report.valid is False
+    assert any(claim.claim == "20.00" for claim in report.unsupported_claims)
+
+
 def test_order_identifier_must_match_verified_order():
     result = AgentResult(
         reply_text="O pedido XYZ999 foi criado.",

@@ -62,7 +62,11 @@ async def meta_instagram_webhook(request: Request):
 
     settings = resolve("get_settings", _get_settings)()
     if not meta_webhook_enabled():
-        raise HTTPException(status_code=404, detail={"error": "meta_webhook_disabled"})
+        # Meta retries non-2xx deliveries aggressively. Acknowledge and discard
+        # while disabled so obsolete subscriptions cannot create a 404 storm.
+        return JSONResponse(
+            {"ok": True, "provider": "meta", "ignored": "webhook_disabled"}
+        )
 
     # Limit the raw body before signature work or JSON parsing. The helper
     # returns the unmodified bytes required by Meta's HMAC verification.

@@ -975,6 +975,7 @@ async def interpret_message(
             current_text,
             conversation_id=message.conversation_id,
             include_other_threads=_open_sale_history(commerce_state),
+            commerce_state=commerce_state,
         )
         interpretation = _rehydrate_contact_preferences(interpretation, message)
         # Re-sync TurnUnderstanding after preference normalization when present.
@@ -1447,6 +1448,7 @@ def _hydrate_sales_interpretation(
         message.text,
         conversation_id=message.conversation_id,
         include_other_threads=open_sale,
+        commerce_state=commerce_state,
     )
     interpretation = _rehydrate_contact_preferences(interpretation, message)
     if is_outbound_catalog_image_request(message.text):

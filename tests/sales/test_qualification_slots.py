@@ -715,6 +715,45 @@ def test_name_without_brand_holds_and_named_brand_still_searches():
     assert joao._slot_answer_hold is False
 
 
+def test_name_answer_restores_pending_catalog_request_from_state():
+    from app.commerce.commerce_context import CommerceConversationState
+    from app.sales.qualification_slots import continue_commerce_from_qualification_answer
+
+    state = CommerceConversationState(
+        active_domain="commerce",
+        active_topic="Longines Heritage preto",
+        active_preferences={
+            "subject_brand": "Longines",
+            "subject_model": "Heritage",
+            "color": "preto",
+        },
+        dialogue_phase="discovery",
+    )
+    interpreted_name = SalesInterpretation(
+        domain="greeting",
+        subject={"product_type": "relógio"},
+        preferences={},
+        references_previous_context=True,
+        needs_clarification=False,
+        confidence=0.9,
+    )
+
+    updated = continue_commerce_from_qualification_answer(
+        interpreted_name,
+        [{"role": "assistant", "content": "Como posso te chamar?"}],
+        "Sou o João",
+        commerce_state=state,
+    )
+
+    assert updated.domain == "commerce"
+    assert updated.subject.brand == "Longines"
+    assert updated.subject.model == "Heritage"
+    assert updated.preferences.color == "preto"
+    assert updated.preferences.recipient == "João"
+    assert updated.ready_for_retrieval is True
+    assert updated._slot_answer_hold is False
+
+
 def test_brand_plus_budget_unlocks_without_persona_slots():
     from app.sales.discovery import build_qualification_snapshot
     from app.sales.qualification_slots import fulfillment_slots_ready

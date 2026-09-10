@@ -806,6 +806,7 @@ async def _route_after_interpret(
         recovery_turns or recent_turns,
         message.text,
         conversation_id=message.conversation_id,
+        commerce_state=commerce_state,
     )
     used_openai_interpreter = interpretation._source == "openai"
     interpreted_domain = interpretation.domain

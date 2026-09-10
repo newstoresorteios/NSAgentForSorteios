@@ -109,6 +109,23 @@ def test_llm_budget_blocks_before_external_call_when_enforced():
     assert context.integration_failures == {}
 
 
+def test_transport_budget_stops_repeated_primary_fallback_attempts():
+    context = TurnRuntimeContext(
+        trace_id="trace-transport-cap",
+        llm_budget=LLMCallBudget(max_calls=2, enforce=True),
+    )
+    # Simulate four failed HTTP transports whose logical reservations were
+    # refunded before a fallback/retry.
+    for _ in range(4):
+        context.register_transport_attempt("responses")
+
+    with pytest.raises(LLMCallBudgetExceeded, match="transport_budget_exceeded"):
+        context.register_openai_call("judge")
+
+    assert context.openai_transport_attempts == 4
+    assert "openai_transport_budget_exceeded" in context.fallback_reasons
+
+
 @pytest.mark.asyncio
 async def test_runtime_context_is_isolated_between_concurrent_turns():
     async def run_turn(trace_id: str, input_tokens: int):

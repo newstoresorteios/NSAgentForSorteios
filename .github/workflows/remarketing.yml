@@ -1,0 +1,34 @@
+name: Remarketing
+
+concurrency:
+  group: remarketing-production
+  cancel-in-progress: false
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run due remarketing touches
+        env:
+          AGENT_BASE_URL: ${{ secrets.AGENT_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AGENT_BASE_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "Missing AGENT_BASE_URL or CRON_SECRET secrets"
+            exit 1
+          fi
+          BASE="${AGENT_BASE_URL%/}"
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 \
+            --max-time 180 \
+            -X POST \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            "${BASE}/api/cron/remarketing"

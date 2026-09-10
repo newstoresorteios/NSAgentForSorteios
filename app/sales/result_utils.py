@@ -39,6 +39,10 @@ def mark_sales_result(
             if isinstance(existing_prefs, dict)
             else interpretation.preferences.model_dump(mode="json", exclude_none=True)
         )
+        if interpretation.subject.brand:
+            prefs["subject_brand"] = interpretation.subject.brand
+        if interpretation.subject.model:
+            prefs["subject_model"] = interpretation.subject.model
         try:
             from .qualification_slots import attach_qualification_slots
 

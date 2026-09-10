@@ -34,7 +34,7 @@ _MONEY_RE = re.compile(
     r"|[0-9]+,[0-9]{1,2}"
     r"|[0-9]+\.[0-9]{1,2}(?![0-9])"
     r"|[0-9]+"
-    r")(?![0-9])",
+    r")(?:[ \t]*(?:mil|k))?(?![0-9A-Za-z])",
     flags=re.IGNORECASE,
 )
 _ORDER_RE = re.compile(
@@ -137,11 +137,7 @@ def _clean_url(value: str) -> str:
 def _is_customer_budget_amount(amount: Decimal, budget: Decimal) -> bool:
     """True when the reply restates the customer's teto, including 'R$ 2.500'."""
     quantized = budget.quantize(Decimal("0.01"))
-    if amount == quantized:
-        return True
-    if quantized >= 1000 and (amount * Decimal(1000)).quantize(Decimal("0.01")) == quantized:
-        return True
-    return False
+    return amount == quantized
 
 
 def _money_decimal(value: Any) -> Decimal | None:
@@ -156,16 +152,22 @@ def _money_decimal(value: Any) -> Decimal | None:
         # Avoid binary float noise (5184.989999…) breaking Pix grounding.
         text = f"{value:.2f}"
     else:
-        text = str(value).strip().replace("R$", "").strip()
+        text = re.sub(r"^R\$", "", str(value).strip(), flags=re.IGNORECASE).strip()
     if not text:
         return None
+    multiplier = Decimal(1)
+    compact = text.casefold().strip()
+    suffix = re.search(r"(?:\s*)(mil|k)$", compact, flags=re.IGNORECASE)
+    if suffix:
+        multiplier = Decimal(1000)
+        text = text[: suffix.start()].strip()
     if "," in text:
         text = text.replace(".", "").replace(",", ".")
     elif re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{3})+", text):
         # Brazilian copy commonly omits cents (``R$ 2.200``).
         text = text.replace(".", "")
     try:
-        return Decimal(text).quantize(Decimal("0.01"))
+        return (Decimal(text) * multiplier).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError):
         return None
 
@@ -781,17 +783,13 @@ def validate_factual_response(
         customer_budget_amount = (
             _money_decimal(customer_budget) if customer_budget is not None else None
         )
-        products = (result.commercial_data or {}).get("products") or []
-        has_products = isinstance(products, list) and any(
-            isinstance(item, dict) for item in products
-        )
-        for amount_text in _MONEY_RE.findall(text):
+        for money_match in _MONEY_RE.finditer(text):
+            amount_text = money_match.group(0)
             amount = _money_decimal(amount_text)
             if amount is None:
                 continue
             if (
-                not has_products
-                and customer_budget_amount is not None
+                customer_budget_amount is not None
                 and _is_customer_budget_amount(amount, customer_budget_amount)
             ):
                 report.checked_claims += 1

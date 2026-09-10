@@ -530,6 +530,11 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             )
             if critique_report.applied_handoff and runtime is not None:
                 runtime.register_fallback("response_critique_failed")
+            if (
+                getattr(critique_report, "applied_factual_fallback", False)
+                and runtime is not None
+            ):
+                runtime.register_fallback("response_critique_factual_fallback")
             critique_meta = (result.response_metadata or {}).get("response_critique") or {}
             critique_changed = bool(
                 getattr(critique_report, "regenerated", False)

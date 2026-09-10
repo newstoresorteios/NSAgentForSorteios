@@ -137,6 +137,7 @@ def continue_commerce_from_qualification_answer(
     *,
     conversation_id: str | None = None,
     include_other_threads: bool = False,
+    commerce_state: Any | None = None,
 ) -> SalesInterpretation:
     """Keep discovery open when a name/city/urgency answer is misread as greeting."""
     introduced = extract_introduced_name(message_text)
@@ -157,6 +158,7 @@ def continue_commerce_from_qualification_answer(
                     "needs_clarification": False,
                 }
             )
+        updated = _restore_catalog_context_from_state(updated, commerce_state)
         return _stamp_slot_answer_hold(updated, CUSTOMER_NAME)
     if not is_qualification_slot_answer(
         recent_turns,
@@ -184,7 +186,47 @@ def continue_commerce_from_qualification_answer(
                 "needs_clarification": False,
             }
         )
+    updated = _restore_catalog_context_from_state(updated, commerce_state)
     return _stamp_slot_answer_hold(updated, slot)
+
+
+def _restore_catalog_context_from_state(
+    interpretation: SalesInterpretation,
+    commerce_state: Any | None,
+) -> SalesInterpretation:
+    """Restore the pending catalog ask after a persona slot answer."""
+    if commerce_state is None:
+        return interpretation
+    stored = getattr(commerce_state, "active_preferences", None)
+    stored = stored if isinstance(stored, dict) else {}
+    subject = interpretation.subject.model_copy(deep=True)
+    if not str(subject.brand or "").strip() and stored.get("subject_brand"):
+        subject.brand = str(stored["subject_brand"]).strip()
+    if not str(subject.model or "").strip() and stored.get("subject_model"):
+        subject.model = str(stored["subject_model"]).strip()
+
+    prefs = interpretation.preferences.model_copy(deep=True)
+    for key in ("budget_max", "color", "style", "occasion", "gender"):
+        current = getattr(prefs, key, None)
+        prior = stored.get(key)
+        if current in (None, "", [], {}) and prior not in (None, "", [], {}):
+            setattr(prefs, key, prior)
+    active_topic = str(getattr(commerce_state, "active_topic", None) or "").strip()
+    updates: dict[str, Any] = {"subject": subject, "preferences": prefs}
+    if active_topic and not str(interpretation.active_topic or "").strip():
+        updates["active_topic"] = active_topic
+    if any((subject.brand, subject.model, prefs.budget_max, prefs.color, prefs.style)):
+        updates.update(
+            {
+                "domain": "commerce",
+                "goal": interpretation.goal or "discover",
+                "references_previous_context": True,
+                "needs_clarification": False,
+                "ready_for_retrieval": True,
+                "enough_information_to_search": True,
+            }
+        )
+    return interpretation.model_copy(update=updates)
 
 
 def is_shipping_city_prompt(text: str | None) -> bool:
