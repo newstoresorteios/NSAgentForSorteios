@@ -13,7 +13,7 @@ from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 
 TOOL_SCHEMAS = [
-    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "tokens": {"type": "array", "items": {"type": "string"}, "description": "AND search tokens (ILIKE %token% each)"}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "current_price_range": {"type": "string", "description": "Tray current_price_range, e.g. 0,5000"}, "property_name": {"type": "string"}, "property_value": {"type": "string"}, "model": {"type": "string"}, "brand_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "tokens": {"type": "array", "items": {"type": "string"}, "description": "Catalog search tokens"}, "match_mode": {"type": "string", "enum": ["all", "any"], "description": "all for exact filtering; any for ranked similar items"}, "exclude_product_ids": {"type": "array", "items": {"type": "string"}}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "current_price_range": {"type": "string", "description": "Tray current_price_range, e.g. 0,5000"}, "property_name": {"type": "string"}, "property_value": {"type": "string"}, "model": {"type": "string"}, "brand_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product", "description": "Consultar detalhes atuais de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product_link", "description": "Obter o link oficial de um produto real já identificado.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_inventory", "description": "Confirmar estoque e regras de disponibilidade de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
@@ -361,6 +361,8 @@ async def search_products_by_tokens(
     brand: str | None = None,
     limit: int = 20,
     page: int = 1,
+    match_mode: str = "all",
+    exclude_product_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     safe_limit = min(max(int(limit), 1), 50)
     if not tokens:
@@ -371,14 +373,17 @@ async def search_products_by_tokens(
             brand=brand,
             limit=safe_limit,
             page=page,
+            match_mode=match_mode,
+            exclude_product_ids=exclude_product_ids,
         )
         result = _reduce_products(payload, safe_limit)
-        # Adaptor may return a loose set — enforce AND locally.
-        result["products"] = [
-            product
-            for product in result["products"]
-            if _product_matches_search_tokens(product, tokens)
-        ]
+        if match_mode == "all":
+            # Adaptor may return a loose set — enforce AND locally.
+            result["products"] = [
+                product
+                for product in result["products"]
+                if _product_matches_search_tokens(product, tokens)
+            ]
         print("[tray.search.tokens]", {
             "source": "adaptor",
             "token_count": len(tokens),
@@ -441,6 +446,8 @@ async def _search_products_payload(
 async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, Any]:
     tokens = _parse_search_tokens(args.pop("tokens", None))
     brand = args.get("brand")
+    match_mode = str(args.pop("match_mode", "all") or "all").strip().lower()
+    exclude_product_ids = args.pop("exclude_product_ids", None)
     page = int(args.get("page") or 1)
     if tokens:
         limit = min(max(int(args.get("limit", 20)), 1), 50)
@@ -450,6 +457,12 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
             brand=str(brand).strip() if brand else None,
             limit=limit,
             page=page,
+            match_mode=match_mode if match_mode in {"all", "any"} else "all",
+            exclude_product_ids=(
+                [str(item) for item in exclude_product_ids]
+                if isinstance(exclude_product_ids, list)
+                else None
+            ),
         )
     limit = min(max(int(args.get("limit", 5)), 1), 50)
 

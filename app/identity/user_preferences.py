@@ -41,6 +41,7 @@ def detect_preferred_name_update(text: str | None) -> str | None:
     patterns = (
         r"(?:me chame|me cham|pode me chamar|quero ser chamad[oa]|prefiro ser chamad[oa]) de\s+(.+?)[!.?\s]*$",
         r"(?:prefiro o nome|pode usar o nome)\s+(.+?)[!.?\s]*$",
+        r"(?:me chamo|meu nome (?:e|é))\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*){0,2})[!.?\s]*$",
     )
     normalized = text.strip()
     for pattern in patterns:

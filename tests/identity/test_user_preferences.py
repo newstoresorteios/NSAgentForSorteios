@@ -15,6 +15,12 @@ def test_extract_first_name():
 
 def test_detect_preferred_name_update():
     assert detect_preferred_name_update("Pode me chamar de Tito") == "Tito"
+    assert (
+        detect_preferred_name_update(
+            "A faixa de preço é até 5 mil reais e me chamo Natalia"
+        )
+        == "Natalia"
+    )
     assert detect_preferred_name_update("Qual meu saldo?") is None
 
 

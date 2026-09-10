@@ -294,7 +294,20 @@ def session_in_checkout_phase(
     if state is None:
         return False
     if state.cart_session_id:
-        return True
+        active_id = (
+            str(state.active_product.product_id)
+            if state.active_product and state.active_product.product_id
+            else ""
+        )
+        cart_id = str(state.cart_product_id or "")
+        browsing_different_product = bool(
+            active_id
+            and cart_id
+            and active_id != cart_id
+            and state.dialogue_phase != "checkout"
+        )
+        if not browsing_different_product:
+            return True
     pending = state.pending_action
     if pending in _CHECKOUT_PENDING_ACTIONS:
         return True

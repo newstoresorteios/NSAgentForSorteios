@@ -954,4 +954,40 @@ def evolve_commerce_state(
         state.product_resolution_state = (
             state.product_resolution_state or "plausible_matches"
         )
+    active_id = (
+        str(state.active_product.product_id)
+        if state.active_product and state.active_product.product_id
+        else ""
+    )
+    cart_product_id = str(state.cart_product_id or "")
+    browse_evidence_changed = bool(
+        "cart_state" not in metadata
+        and any(
+            key in metadata
+            for key in (
+                "active_product",
+                "clear_active_product",
+                "presented_products",
+                "product_resolution_state",
+            )
+        )
+    )
+    if (
+        browse_evidence_changed
+        and active_id
+        and cart_product_id
+        and active_id != cart_product_id
+    ):
+        # A customer can inspect another watch while an older cart still exists.
+        # Keep the cart recoverable, but do not let it force the new browse back
+        # into checkout or make a deictic confirmation target the old SKU.
+        state.dialogue_phase = (
+            "discovery"
+            if state.product_resolution_state in {"not_found", "found_unavailable"}
+            else "shortlist"
+        )
+        state.purchase_stage = "selection"
+        if state.pending_action != "awaiting_payment":
+            state.pending_action = None
+            state.pending_action_product_ids = []
     return state

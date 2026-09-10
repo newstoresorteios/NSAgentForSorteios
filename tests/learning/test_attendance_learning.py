@@ -504,6 +504,42 @@ def test_classify_attendance_from_safety_reason_clarification():
     assert "commerce_clarification" in result["failure_codes"]
 
 
+def test_classify_reversed_catalog_image_request_as_failure():
+    result = classify_attendance(
+        {
+            "customer_text": "não, quero a foto do Orient",
+            "agent_reply": "Pode me enviar a foto do relógio?",
+            "handoff_required": False,
+            "intent": "commerce",
+            "safety_reason": "product_context_missing",
+            "response_metadata": {},
+        }
+    )
+
+    assert result["outcome"] == "failure"
+    assert "image_request_direction_reversed" in result["failure_codes"]
+
+
+def test_classify_guardrail_terminal_failures():
+    for reason in (
+        "factual_validation_failed",
+        "response_critique_failed",
+        "double_check_insufficient",
+    ):
+        result = classify_attendance(
+            {
+                "customer_text": "me passe opções",
+                "agent_reply": "Não consigo confirmar agora.",
+                "handoff_required": False,
+                "intent": "commerce",
+                "safety_reason": reason,
+                "response_metadata": {},
+            }
+        )
+        assert result["outcome"] == "failure"
+        assert reason in result["failure_codes"]
+
+
 def test_record_pipeline_block_review_persists(monkeypatch):
     captured: dict = {}
 

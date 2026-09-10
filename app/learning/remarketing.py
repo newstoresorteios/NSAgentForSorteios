@@ -369,7 +369,11 @@ def sync_remarketing_interaction(
                         %(now)s + make_interval(hours => %(hour)s)
                     )
                     ON CONFLICT (conversation_status_id, touch_number) DO UPDATE SET
-                        scheduled_at = EXCLUDED.scheduled_at,
+                        scheduled_at = CASE
+                            WHEN ai_remarketing_attempts.status IN ('sent', 'processing')
+                            THEN ai_remarketing_attempts.scheduled_at
+                            ELSE EXCLUDED.scheduled_at
+                        END,
                         status = CASE
                             WHEN ai_remarketing_attempts.status IN ('sent', 'processing')
                             THEN ai_remarketing_attempts.status

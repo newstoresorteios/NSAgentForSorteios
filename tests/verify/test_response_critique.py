@@ -11,6 +11,7 @@ from app.verify.response_critique import (
     RecommendedApiCall,
     apply_response_critique_loop,
     apply_search_products_to_result,
+    _execute_recommended_apis,
     _fill_api_arguments,
     _regenerate_reply,
     _seed_args_from_context,
@@ -42,6 +43,79 @@ def test_fill_api_arguments_uses_order_seed():
         seeds,
     )
     assert args == {"order_id": "25400"}
+
+
+@pytest.mark.asyncio
+async def test_similar_search_relaxes_strict_tokens_once_and_keeps_budget():
+    verdict = CritiqueVerdict(
+        score=20,
+        pass_check=False,
+        issues=["missing similar options"],
+        summary="retry",
+        recommended_apis=[
+            RecommendedApiCall(
+                name="search_products",
+                reason="find alternatives",
+                arguments={
+                    "query": "relógio Orient open heart preto similar ao FAG03002B0",
+                    "tokens": ["open", "heart", "preto"],
+                    "brand": "Orient",
+                    "available": True,
+                    "limit": 5,
+                },
+            )
+        ],
+    )
+    calls = []
+
+    async def execute(name, args):
+        calls.append((name, args))
+        if len(calls) == 1:
+            return {"products": []}
+        return {
+            "products": [
+                {
+                    "id": "4871",
+                    "reference": "FAG03002B0",
+                    "name": "Orient Open Heart Preto",
+                    "current_price": 2200,
+                },
+                {
+                    "id": "2",
+                    "reference": "ALT-PRETO",
+                    "name": "Orient Automático Preto",
+                    "current_price": 2400,
+                },
+                {
+                    "id": "3",
+                    "reference": "OVER",
+                    "name": "Orient Automático Preto",
+                    "current_price": 3000,
+                },
+            ]
+        }
+
+    recorded, gathered = await _execute_recommended_apis(
+        verdict=verdict,
+        seeds={
+            "query": "Orient Open Heart Preto",
+            "product_id": "4871",
+            "product_reference": "FAG03002B0",
+            "budget_max": 2500,
+        },
+        execute=execute,
+    )
+
+    assert len(calls) == 2
+    assert calls[1][1] == {
+        "available": True,
+        "limit": 20,
+        "page": 1,
+        "brand": "Orient",
+        "current_price_range": "0,2500",
+    }
+    assert [p["id"] for p in gathered["search_products"]["products"]] == ["2"]
+    assert recorded[-1]["relaxed_similar_search"] is True
 
 
 def test_seed_args_from_active_product_reference():
@@ -544,6 +618,35 @@ async def test_critique_skips_greeting(monkeypatch):
         "soft_greeting",
         "greeting_intent",
     }
+
+
+@pytest.mark.asyncio
+async def test_critique_semantically_dedupes_consecutive_greetings():
+    incoming = IncomingMessage(channel="whatsapp", text="Tudo bem?")
+    result = AgentResult(
+        reply_text="Oi! Sou o Crono da New Store Relógios. Em que posso te ajudar?",
+        intent="greeting",
+    )
+
+    final, report = await apply_response_critique_loop(
+        incoming=incoming,
+        result=result,
+        recent_turns=[
+            {
+                "role": "assistant",
+                "content": (
+                    "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. "
+                    "Como posso te ajudar hoje?"
+                ),
+            }
+        ],
+        mode="enforce",
+        max_retries=1,
+    )
+
+    assert "Sou o Crono" not in final.reply_text
+    assert report.approved is True
+    assert final.response_metadata["fast_critique"] == "deduped_greeting"
 
 
 @pytest.mark.asyncio

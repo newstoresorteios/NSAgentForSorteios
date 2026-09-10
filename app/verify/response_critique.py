@@ -209,16 +209,11 @@ def apply_fast_deterministic_critique(
     if (
         reply
         and previous
-        and _fold_reply(reply) == _fold_reply(previous)
         and is_generic_greeting_reply(reply)
+        and is_generic_greeting_reply(previous)
     ):
-        from app.identity.greeting_policy import choose_greeting_reply
-
-        alt = choose_greeting_reply(recent_turns)
-        if _fold_reply(alt) == _fold_reply(reply):
-            alt = "Pode me dizer o que você precisa?"
         fixed = result.model_copy(deep=True)
-        fixed.reply_text = alt
+        fixed.reply_text = "Tudo bem! Pode me dizer o que você precisa?"
         fixed.response_metadata = dict(fixed.response_metadata or {})
         fixed.response_metadata["fast_critique"] = "deduped_greeting"
         verdict = CritiqueVerdict(
@@ -314,6 +309,10 @@ def _seed_args_from_context(
     else:
         product_id = None
         product_name = None
+    active_preferences = state.active_preferences if state else {}
+    active_preferences = (
+        active_preferences if isinstance(active_preferences, dict) else {}
+    )
     return {
         "order_id": str(order_id).strip() if order_id else None,
         "session_id": str(session_id).strip() if session_id else None,
@@ -325,6 +324,17 @@ def _seed_args_from_context(
         "cpf": (customer.cpf if customer else None),
         "email": (customer.email if customer else None),
         "product_id": commerce.get("product_id") or product_id,
+        "product_reference": (
+            getattr(product, "reference", None)
+            if product is not None and not isinstance(product, dict)
+            else (product or {}).get("reference")
+        ),
+        "budget_max": active_preferences.get("budget_max")
+        or (
+            (active_preferences.get("budget") or {}).get("max")
+            if isinstance(active_preferences.get("budget"), dict)
+            else None
+        ),
         "query": commerce.get("query") or product_name,
     }
 
@@ -494,6 +504,35 @@ async def _execute_recommended_apis(
             }
         )
         gathered[item.name] = payload
+        if item.name == "search_products" and _should_relax_similar_search(
+            args=args,
+            payload=payload,
+            seeds=seeds,
+        ):
+            relaxed_args = _relaxed_similar_search_args(args=args, seeds=seeds)
+            try:
+                relaxed_payload = await execute("search_products", relaxed_args)
+            except Exception as exc:
+                relaxed_payload = {
+                    "error": "critique_relaxed_search_failed",
+                    "error_type": type(exc).__name__,
+                }
+            if "error" not in relaxed_payload:
+                relaxed_payload = _rank_relaxed_similar_products(
+                    relaxed_payload,
+                    original_args=args,
+                    seeds=seeds,
+                )
+                gathered[item.name] = relaxed_payload
+                payload = relaxed_payload
+            calls.append(
+                {
+                    "name": "search_products",
+                    "arguments_keys": sorted(relaxed_args.keys()),
+                    "ok": "error" not in relaxed_payload,
+                    "relaxed_similar_search": True,
+                }
+            )
         # Refresh seeds from successful order lookups.
         if item.name in {"get_order_complete", "get_order"} and "error" not in payload:
             order_id = payload.get("order_id") or payload.get("id")
@@ -510,6 +549,112 @@ async def _execute_recommended_apis(
             if args.get("query"):
                 seeds["query"] = args.get("query")
     return calls, gathered
+
+
+def _payload_products(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    products = payload.get("products")
+    if not isinstance(products, list):
+        return []
+    return [item for item in products if isinstance(item, dict)]
+
+
+def _should_relax_similar_search(
+    *,
+    args: dict[str, Any],
+    payload: Any,
+    seeds: dict[str, Any],
+) -> bool:
+    if not isinstance(payload, dict) or "error" in payload or _payload_products(payload):
+        return False
+    query = " ".join(
+        str(value or "")
+        for value in (args.get("query"), seeds.get("query"))
+    ).casefold()
+    return any(token in query for token in ("similar", "parecid", "alternativ"))
+
+
+def _relaxed_similar_search_args(
+    *,
+    args: dict[str, Any],
+    seeds: dict[str, Any],
+) -> dict[str, Any]:
+    relaxed: dict[str, Any] = {
+        "available": True,
+        "limit": 20,
+        "page": 1,
+    }
+    brand = str(args.get("brand") or "").strip()
+    if brand:
+        relaxed["brand"] = brand
+    budget = seeds.get("budget_max")
+    try:
+        if budget is not None and float(budget) > 0:
+            relaxed["current_price_range"] = f"0,{float(budget):g}"
+    except (TypeError, ValueError):
+        pass
+    return relaxed
+
+
+def _rank_relaxed_similar_products(
+    payload: dict[str, Any],
+    *,
+    original_args: dict[str, Any],
+    seeds: dict[str, Any],
+) -> dict[str, Any]:
+    import re
+    import unicodedata
+
+    def fold(value: Any) -> str:
+        raw = unicodedata.normalize("NFKD", str(value or "").casefold())
+        return "".join(char for char in raw if not unicodedata.combining(char))
+
+    raw_terms = list(original_args.get("tokens") or [])
+    raw_terms.extend(re.findall(r"[a-z0-9]+", fold(original_args.get("query"))))
+    ignored = {
+        "relogio", "relogios", "similar", "similares", "parecido", "parecidos",
+        "ao", "a", "o", "do", "da", "de", "modelo", "disponivel", "estoque",
+    }
+    terms = []
+    for term in raw_terms:
+        normalized = fold(term).strip()
+        if len(normalized) >= 3 and normalized not in ignored and normalized not in terms:
+            terms.append(normalized)
+    excluded_id = str(seeds.get("product_id") or "").strip()
+    excluded_ref = fold(seeds.get("product_reference"))
+    budget = seeds.get("budget_max")
+    try:
+        budget_max = float(budget) if budget is not None else None
+    except (TypeError, ValueError):
+        budget_max = None
+
+    ranked: list[tuple[int, dict[str, Any]]] = []
+    from app.catalog.product_retrieval import effective_price
+
+    for product in _payload_products(payload):
+        product_id = str(product.get("id") or product.get("product_id") or "").strip()
+        reference = fold(product.get("reference"))
+        if (excluded_id and product_id == excluded_id) or (
+            excluded_ref and reference == excluded_ref
+        ):
+            continue
+        price = effective_price(product)
+        if budget_max is not None and (price is None or float(price) > budget_max):
+            continue
+        blob = fold(
+            " ".join(
+                str(product.get(key) or "")
+                for key in ("name", "brand", "model", "reference", "description")
+            )
+        )
+        score = sum(1 for term in terms if term in blob)
+        ranked.append((score, product))
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    updated = dict(payload)
+    updated["products"] = [product for _, product in ranked[:5]]
+    updated["search_relaxed"] = True
+    return updated
 
 
 def _products_from_search_payload(payload: dict[str, Any] | None) -> list[dict[str, Any]] | None:
@@ -833,20 +978,9 @@ async def apply_response_critique_loop(
     if critique_mode == "off":
         return result, report
 
-    skip, skip_reason = is_low_risk_judge_skip(incoming, result)
-    if skip:
-        result.response_metadata = dict(result.response_metadata or {})
-        result.response_metadata["response_critique"] = {
-            **report.model_dump(mode="json"),
-            "skipped": True,
-            "skip_reason": skip_reason,
-            "mode_reason": mode_reason,
-            "configured_mode": configured_mode,
-        }
-        print("[agent.critique.skip]", {"reason": skip_reason, "mode_reason": mode_reason})
-        return result, report
-
-    # Instant deterministic checks (no LLM) — keeps latency low for clear gaffes.
+    # Instant deterministic checks run before the generic low-risk gate. Greeting
+    # turns are normally skipped by that gate, which used to make the semantic
+    # greeting deduper unreachable.
     fast_result, fast_verdict, fast_skip = apply_fast_deterministic_critique(
         incoming=incoming,
         result=result,
@@ -868,6 +1002,19 @@ async def apply_response_critique_loop(
         }
         print("[agent.critique.fast]", {"reason": fast_skip, "mode_reason": mode_reason})
         return fast_result, report
+
+    skip, skip_reason = is_low_risk_judge_skip(incoming, result)
+    if skip:
+        result.response_metadata = dict(result.response_metadata or {})
+        result.response_metadata["response_critique"] = {
+            **report.model_dump(mode="json"),
+            "skipped": True,
+            "skip_reason": skip_reason,
+            "mode_reason": mode_reason,
+            "configured_mode": configured_mode,
+        }
+        print("[agent.critique.skip]", {"reason": skip_reason, "mode_reason": mode_reason})
+        return result, report
 
     seeded_fail = bool(fast_verdict is not None and not fast_verdict.pass_check)
     if seeded_fail:

@@ -371,6 +371,11 @@ def test_new_inbound_cancels_old_cycle_and_schedules_only_a_fresh_cycle(monkeypa
     assert len(touch_inserts) == 3
     assert {call.args[1]["active_id"] for call in touch_inserts} == {41}
     assert [call.args[1]["touch_number"] for call in touch_inserts] == [1, 2, 3]
+    normalized_touch_sql = " ".join(touch_inserts[0].args[0].split())
+    assert (
+        "WHEN ai_remarketing_attempts.status IN ('sent', 'processing') "
+        "THEN ai_remarketing_attempts.scheduled_at"
+    ) in normalized_touch_sql
 
 
 def test_opt_out_cancels_processing_touch_without_starting_new_cycle(monkeypatch):

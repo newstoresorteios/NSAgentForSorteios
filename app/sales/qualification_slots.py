@@ -375,6 +375,13 @@ _INTRO_CHAMO_RE = re.compile(
     r"^\s*(?:me\s+chamo|meu\s+nome\s+(?:[eé]\s+)?)\s*(.+?)\s*$",
     re.IGNORECASE,
 )
+_INTRO_CHAMO_INLINE_RE = re.compile(
+    r"\b(?:me\s+chamo|meu\s+nome\s+(?:[eé]\s+)?)\s+"
+    r"([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*"
+    r"(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*){0,2})"
+    r"(?=\s*(?:[,;.!?]|$))",
+    re.IGNORECASE,
+)
 
 
 def extract_introduced_name(text: str | None) -> str | None:
@@ -382,7 +389,11 @@ def extract_introduced_name(text: str | None) -> str | None:
     raw = " ".join(str(text or "").strip().split())
     if not raw:
         return None
-    match = _INTRO_SOU_RE.match(raw) or _INTRO_CHAMO_RE.match(raw)
+    match = (
+        _INTRO_SOU_RE.match(raw)
+        or _INTRO_CHAMO_RE.match(raw)
+        or _INTRO_CHAMO_INLINE_RE.search(raw)
+    )
     if not match:
         return None
     captured = " ".join(str(match.group(1) or "").split())

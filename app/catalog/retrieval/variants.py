@@ -4,7 +4,11 @@ from typing import Any
 
 from app.models import SalesInterpretation
 from app.catalog.retrieval.availability import _truth_state
-from app.catalog.retrieval.limits import MAX_VARIANT_PRODUCT_QUERIES, ToolExecutor
+from app.catalog.retrieval.limits import (
+    MAX_VARIANT_PRODUCT_QUERIES,
+    ToolExecutor,
+    customer_result_limit,
+)
 from app.catalog.retrieval.text import _fold
 
 def _needs_variant_evidence(interpretation: SalesInterpretation) -> bool:
@@ -25,9 +29,10 @@ async def enrich_product_variants(
     needs_evidence = _needs_variant_evidence(interpretation)
     from app.catalog.retrieval.rerank import deterministic_semantic_order
     candidates = deterministic_semantic_order(products, interpretation)
+    variant_query_limit = min(MAX_VARIANT_PRODUCT_QUERIES, customer_result_limit())
     candidate_ids = {
         str(product["id"])
-        for product in candidates[:MAX_VARIANT_PRODUCT_QUERIES]
+        for product in candidates[:variant_query_limit]
         if product.get("id") is not None
     }
     enriched: list[dict[str, Any]] = []

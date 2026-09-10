@@ -534,6 +534,8 @@ class TrayAdapterClient:
         brand: str | None = None,
         limit: int = 20,
         page: int | None = 1,
+        match_mode: str = "all",
+        exclude_product_ids: list[str] | tuple[str, ...] | None = None,
     ) -> Any:
         """Token AND search (adaptor: ILIKE %token% for each significant token).
 
@@ -553,6 +555,12 @@ class TrayAdapterClient:
                 "brand": brand,
                 "limit": min(max(limit, 1), 50),
                 "page": page,
+                "match_mode": match_mode,
+                "exclude_product_ids": ",".join(
+                    str(item).strip()
+                    for item in (exclude_product_ids or [])
+                    if str(item).strip()
+                ) or None,
             },
         )
 

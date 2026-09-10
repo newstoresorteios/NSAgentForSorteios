@@ -795,3 +795,14 @@ def test_brand_plus_budget_unlocks_without_persona_slots():
         assert snap["fulfillment_ready"] is True
     finally:
         reset_persona_runtime(token)
+
+
+def test_extracts_name_inside_budget_answer():
+    from app.sales.qualification_slots import extract_introduced_name
+
+    assert (
+        extract_introduced_name(
+            "A faixa de preço é até 5mil reais e me chamo Natalia"
+        )
+        == "Natalia"
+    )

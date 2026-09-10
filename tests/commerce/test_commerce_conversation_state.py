@@ -11,6 +11,46 @@ from app.commerce.commerce_context import (
     resolve_commerce_reference,
 )
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
+from app.sales.dialogue_phase import session_in_checkout_phase
+
+
+def test_browsing_new_product_does_not_reuse_older_cart_as_checkout_context():
+    previous = CommerceConversationState(
+        active_domain="commerce",
+        dialogue_phase="checkout",
+        purchase_stage="checkout",
+        cart_id="705308",
+        cart_session_id="705308",
+        cart_product_id="4917",
+        active_product={
+            "product_id": "4917",
+            "name": "Orient Kanno Preto",
+            "brand": "Orient",
+        },
+    )
+    result = AgentResult(
+        reply_text="Encontrei o Orient Open Heart.",
+        intent="commerce",
+        response_metadata={
+            "domain": "commerce",
+            "active_product": {
+                "product_id": "4871",
+                "name": "Orient Open Heart Preto FAG03002B0",
+                "brand": "Orient",
+                "reference": "FAG03002B0",
+            },
+            "product_resolution_state": "found_unavailable",
+            "presented_products": True,
+        },
+    )
+
+    updated = evolve_commerce_state(previous, result)
+
+    assert updated.cart_product_id == "4917"
+    assert updated.active_product.product_id == "4871"
+    assert updated.dialogue_phase == "discovery"
+    assert updated.purchase_stage == "selection"
+    assert session_in_checkout_phase(updated) is False
 
 
 def _interpretation(**overrides) -> SalesInterpretation:

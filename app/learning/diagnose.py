@@ -140,6 +140,24 @@ def classify_attendance(row: dict[str, Any]) -> dict[str, Any]:
     elif safety_reason == "recommendation_budget_miss":
         failure_codes.append("recommendation_budget_miss")
         outcome = "failure"
+    elif safety_reason in {
+        "factual_validation_failed",
+        "response_critique_failed",
+        "double_check_insufficient",
+    }:
+        failure_codes.append(safety_reason)
+        outcome = "failure"
+    elif safety_reason == "product_context_missing":
+        asks_for_catalog_image = bool(
+            re.search(r"\b(foto|imagem|manda|envia|mostrar|mostra)\b", customer, re.IGNORECASE)
+        )
+        reverses_image_direction = bool(
+            re.search(r"\b(me\s+)?envia(r)?\b.{0,50}\b(foto|imagem)\b", reply, re.IGNORECASE)
+            or re.search(r"\bpode\s+me\s+enviar\b", reply, re.IGNORECASE)
+        )
+        if asks_for_catalog_image and reverses_image_direction:
+            failure_codes.append("image_request_direction_reversed")
+            outcome = "failure"
     # Dedupe while preserving order.
     seen: set[str] = set()
     unique_codes: list[str] = []
