@@ -252,7 +252,10 @@ def build_agent_input(message: IncomingMessage, customer_context: dict, facts: d
         ),
         whatsapp_profile_name=message.sender_name,
     )
-    display_label = display_name or "não informado"
+    display_label = display_name or (
+        'não informado; fale sem vocativo ou use "cliente" de forma cordial, '
+        "nunca use o nome bruto do perfil"
+    )
     modality_note = ""
     if message.input_modality == "audio":
         modality_note = "\n- Origem: áudio transcrito para texto"

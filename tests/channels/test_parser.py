@@ -37,6 +37,14 @@ def test_parse_conversations_fragment_payload():
     assert msg.sender_name is None
 
 
+def test_parse_rejects_single_word_brevo_nick_as_customer_name():
+    for nickname in ("Corn", "Razor", "Dark"):
+        msg = parse_brevo_whatsapp_payload(
+            {"from": "5548999999999", "text": "Olá", "name": nickname}
+        )
+        assert msg.sender_name is None
+
+
 def test_should_skip_when_last_message_is_agent():
     payload = {
         "messages": [

@@ -410,7 +410,10 @@ def sync_remarketing_interaction(
 
 
 def _build_remarketing_message(item: dict[str, Any]) -> str:
-    name = str(item.get("sender_name") or "").strip().split(" ")[0]
+    from app.identity.identity_names import resolve_address_name
+
+    resolved_name = resolve_address_name(account_name=item.get("sender_name"))
+    name = str(resolved_name or "").strip().split(" ")[0]
     greeting = f"Oi, {name}!" if name else "Oi!"
     stage = item.get("stage")
     touch = int(item.get("touch_number") or 1)

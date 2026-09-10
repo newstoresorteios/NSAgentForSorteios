@@ -24,6 +24,7 @@ _NICK_DESCRIPTOR_WORDS = frozenset({
     "razor", "wolf", "dragon", "shadow", "killer", "master", "king", "queen",
     "devil", "ghost", "ninja", "storm", "fire", "ice", "star", "moon", "sun",
     "sky", "rock", "steel", "blade", "hunter", "player", "gamer", "bot",
+    "corn", "cornflower",
 })
 _COMMON_FIRST_NAMES = frozenset({
     "joao", "maria", "jose", "ana", "pedro", "paulo", "carlos", "luis", "marcos",
@@ -51,7 +52,12 @@ def looks_like_whatsapp_nick(name: str | None) -> bool:
         return False
     if len(words) == 1:
         word = words[0]
-        return len(word) <= 2 or (word not in _COMMON_FIRST_NAMES and len(word) > 12)
+        nick_markers = _NICK_COLOR_WORDS | _NICK_DESCRIPTOR_WORDS
+        return (
+            len(word) <= 2
+            or word in nick_markers
+            or (word not in _COMMON_FIRST_NAMES and len(word) > 12)
+        )
     if words[0] in _COMMON_FIRST_NAMES:
         return False
     nick_markers = _NICK_COLOR_WORDS | _NICK_DESCRIPTOR_WORDS
@@ -68,19 +74,16 @@ def resolve_address_name(
     whatsapp_profile_name: str | None = None,
 ) -> str | None:
     """Prefer durable/legal identity over WhatsApp nick for addressivity."""
-    for candidate in (
-        preferred_name,
-        checkout_name,
-        account_name,
-        whatsapp_profile_name,
+    for candidate, profile_derived in (
+        (preferred_name, False),
+        (checkout_name, False),
+        (account_name, True),
+        (whatsapp_profile_name, True),
     ):
         text = str(candidate or "").strip()
         if not text:
             continue
-        if (
-            candidate is whatsapp_profile_name
-            and looks_like_whatsapp_nick(text)
-        ):
+        if profile_derived and looks_like_whatsapp_nick(text):
             continue
         return text
     return None

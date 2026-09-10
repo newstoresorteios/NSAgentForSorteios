@@ -54,6 +54,20 @@ def test_message_is_stage_specific_and_always_contains_opt_out():
     assert "responda SAIR" in text
 
 
+@pytest.mark.parametrize("nickname", ["Corn", "Razor", "Dark", "Razor Blue", "Dark Orange"])
+def test_remarketing_never_addresses_customer_by_brevo_nickname(nickname):
+    text = _build_remarketing_message(
+        {
+            "sender_name": nickname,
+            "stage": "cart",
+            "touch_number": 1,
+        }
+    )
+
+    assert text.startswith("Oi!")
+    assert nickname.split()[0] not in text
+
+
 def test_customer_reply_closes_previous_inactivity_cycle_in_source():
     from pathlib import Path
 
