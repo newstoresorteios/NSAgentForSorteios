@@ -26,6 +26,8 @@ from app.catalog.retrieval.tokens import (
     product_matches_case_finish_tokens,
     product_matches_color_tokens,
     product_matches_feature_tokens,
+    product_matches_required_feature_groups,
+    required_feature_groups,
     required_model_tokens,
     _rejects_as_accessory,
 )
@@ -73,6 +75,7 @@ def score_catalog_candidates(
     """Rank catalog rows by brand/model/color keyword overlap in the title."""
     color_tokens = preference_color_tokens(interpretation)
     feature_tokens = preference_feature_tokens(interpretation)
+    mandatory_feature_groups = required_feature_groups(interpretation)
     case_tokens = preference_case_finish_tokens(interpretation)
     identity_tokens = identity_core_tokens(
         interpretation.subject.model,
@@ -98,6 +101,10 @@ def score_catalog_candidates(
             continue
         if feature_tokens and not product_matches_feature_tokens(product, feature_tokens):
             continue
+        if mandatory_feature_groups and not product_matches_required_feature_groups(
+            product, mandatory_feature_groups
+        ):
+            continue
         movement_ok = product_compatible_with_requested_movement(
             product,
             interpretation.subject.model,
@@ -119,6 +126,8 @@ def score_catalog_candidates(
             score += 30
         if feature_tokens and product_matches_feature_tokens(product, feature_tokens):
             score += 40
+        if mandatory_feature_groups:
+            score += 40 * len(mandatory_feature_groups)
         if "pulseira_integrada" in feature_tokens:
             if "prx" in text or "integrad" in text:
                 score += 55

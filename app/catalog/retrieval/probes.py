@@ -123,6 +123,7 @@ async def run_probes(
         "token_and_search": 4,
         "token_and_search_no_color": 5,
         "token_and_search_short": 5,
+        "feature_alternative": 3,
     }
     ordered_requests = sorted(
         enumerate(probe_requests),

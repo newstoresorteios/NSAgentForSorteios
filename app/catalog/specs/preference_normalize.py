@@ -159,6 +159,11 @@ _STYLE_IN_MESSAGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_OPEN_HEART_RE = re.compile(r"\bopen\s*heart\b", re.IGNORECASE)
+_SKELETON_RE = re.compile(r"\b(?:skeleton|esqueleto)\b", re.IGNORECASE)
+_AUTOMATIC_RE = re.compile(r"\bautom[aá]tic[oa]\b", re.IGNORECASE)
+_SAPPHIRE_RE = re.compile(r"\b(?:cristal\s+de\s+)?safira\b|\bsapphire\b", re.IGNORECASE)
+
 
 def extract_stated_color(text: str | None) -> str | None:
     match = _COLOR_IN_MESSAGE_RE.search(str(text or ""))
@@ -183,7 +188,12 @@ def message_states_color(text: str | None) -> bool:
 
 
 def message_states_style(text: str | None) -> bool:
-    return extract_stated_style(text) is not None
+    raw = str(text or "")
+    return bool(
+        extract_stated_style(raw) is not None
+        or _OPEN_HEART_RE.search(raw)
+        or _SKELETON_RE.search(raw)
+    )
 
 
 def message_states_gender(text: str | None) -> bool:
@@ -480,6 +490,56 @@ def repair_specific_model_tokens(
             preferences.attributes = [*preferences.attributes, label]
 
 
+def repair_disjunctive_watch_features(
+    interpretation: SalesInterpretation,
+    *,
+    message_text: str | None = None,
+) -> None:
+    """Keep `open heart ou skeleton` as an OR preference, never a SKU identity.
+
+    This deliberately reads only the current message. Conversation context may
+    contain a previously selected brand/model and must not turn a new generic
+    browse into an exact lookup.
+    """
+    text = str(message_text or "")
+    has_open_heart = bool(_OPEN_HEART_RE.search(text))
+    has_skeleton = bool(_SKELETON_RE.search(text))
+    if not (has_open_heart and has_skeleton):
+        return
+    folded = _fold(text)
+    if not re.search(r"\b(?:ou|or)\b", folded):
+        return
+
+    preferences = interpretation.preferences
+    attrs = [
+        str(item)
+        for item in (preferences.attributes or [])
+        if not str(item).casefold().startswith("feature_any:")
+    ]
+    attrs.append("feature_any:open_heart|skeleton")
+    if _AUTOMATIC_RE.search(text):
+        attrs.append("required_feature:automatico")
+    if _SAPPHIRE_RE.search(text):
+        attrs.append("required_feature:safira")
+    preferences.attributes = list(dict.fromkeys(attrs))
+    preferences.style = "open heart ou skeleton"
+
+    # The interpreter sometimes emits `Open Heart Open Heart` as model and a
+    # stale brand from memory. The current utterance is a category browse with
+    # alternatives, so neither is a product identity.
+    interpretation.subject.model = None
+    stated_brand = _fold(interpretation.subject.brand)
+    if stated_brand and stated_brand not in folded:
+        interpretation.subject.brand = None
+    interpretation._force_recommendation_mode = True
+    interpretation.enough_information_to_search = True
+    interpretation.ready_for_retrieval = True
+    interpretation.stop_clarification = True
+    interpretation.needs_clarification = False
+    if interpretation.goal in {None, "discover", "find"}:
+        interpretation.goal = "recommend"
+
+
 def normalize_sales_interpretation(
     interpretation: SalesInterpretation,
     *,
@@ -541,6 +601,10 @@ def normalize_sales_interpretation(
         preferences,
         message_text=message_text,
         context_text=combined_context,
+    )
+    repair_disjunctive_watch_features(
+        interpretation,
+        message_text=message_text,
     )
 
     try:

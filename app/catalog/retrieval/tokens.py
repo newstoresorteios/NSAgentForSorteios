@@ -359,6 +359,39 @@ def preference_feature_tokens(interpretation: SalesInterpretation) -> tuple[str,
     return tuple(dict.fromkeys(tokens))
 
 
+def required_feature_groups(
+    interpretation: SalesInterpretation,
+) -> tuple[tuple[str, ...], ...]:
+    """Return AND groups whose members are OR alternatives from the current ask."""
+    groups: list[tuple[str, ...]] = []
+    for item in interpretation.preferences.attributes or []:
+        folded = _fold(item)
+        if folded.startswith("feature_any:"):
+            raw = folded.split(":", 1)[1]
+            members = tuple(part.strip() for part in raw.split("|") if part.strip())
+            if members:
+                groups.append(members)
+        elif folded.startswith("required_feature:"):
+            value = folded.split(":", 1)[1].strip()
+            if value:
+                groups.append((value,))
+    return tuple(groups)
+
+
+def product_matches_required_feature_groups(
+    product: dict[str, Any],
+    groups: tuple[tuple[str, ...], ...],
+) -> bool:
+    text = _product_text(product)
+    for group in groups:
+        if not any(
+            any(alias in text for alias in _FEATURE_SEARCH_ALIASES.get(token, (token,)))
+            for token in group
+        ):
+            return False
+    return True
+
+
 def preference_gender_tokens(interpretation: SalesInterpretation) -> tuple[str, ...]:
     """Catalog search/ranking tokens for requested gender (soft, not AND-hard)."""
     from app.catalog.specs.preference_normalize import gender_search_aliases, preference_gender_label

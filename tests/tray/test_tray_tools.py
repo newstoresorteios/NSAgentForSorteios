@@ -267,6 +267,7 @@ async def test_search_retries_without_price_range_on_adaptor_500():
     assert len(client.calls) == 2
     assert client.calls[0].get("current_price_range") == "0,2500"
     assert "current_price_range" not in client.calls[1]
+    assert client.calls[1]["price_range"] == "0,2500"
     assert result["products"][0]["id"] == "1"
 
 

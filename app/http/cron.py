@@ -86,6 +86,7 @@ async def catalog_url_health_cron(
 async def tray_keepalive_cron():
     """Keep TrayAdaptor warm and refresh OAuth when access looks unhealthy."""
     import httpx
+    from urllib.parse import urlparse
 
     settings = resolve("get_settings", _get_settings)()
     base = (settings.tray_adapter_url or "").rstrip("/")
@@ -94,7 +95,7 @@ async def tray_keepalive_cron():
     started = __import__("time").monotonic()
     payload: dict[str, Any] = {
         "ok": False,
-        "url_host": __import__("urllib.parse").urlparse(base).netloc,
+        "url_host": urlparse(base).netloc,
     }
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:

@@ -16,6 +16,39 @@ from app.verify.double_check import (
 )
 
 
+def test_council_no_match_reply_is_not_replaced_by_generic_insufficiency():
+    incoming = IncomingMessage(text="quero automático open heart até 3500")
+    result = AgentResult(
+        reply_text=(
+            "Não encontrei um relógio automático open heart ou skeleton com "
+            "safira até R$ 3.500. Posso mostrar os mais próximos?"
+        ),
+        intent="commerce",
+        safety_reason="answer_council_blocked",
+        commercial_data={"products": []},
+    )
+
+    updated, report = apply_double_check(incoming=incoming, result=result)
+
+    assert updated.reply_text == result.reply_text
+    assert report.skipped is True
+    assert report.skip_reason == "deterministic:answer_council_no_match"
+
+
+def test_catalog_clarification_is_not_vetoed_as_unanswered():
+    incoming = IncomingMessage(text="até 5 mil reais e me chamo Natalia")
+    result = AgentResult(
+        reply_text="Perfeito, Natalia. Você prefere um modelo social ou esportivo?",
+        intent="commerce",
+        safety_reason="commerce_clarification",
+    )
+
+    updated, report = apply_double_check(incoming=incoming, result=result)
+
+    assert updated.reply_text == result.reply_text
+    assert report.skip_reason == "deterministic:commerce_clarification"
+
+
 def test_phase0_skips_greeting_and_raffle():
     greeting = AgentResult(
         reply_text="Olá!",

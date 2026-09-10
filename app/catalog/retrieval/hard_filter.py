@@ -13,6 +13,8 @@ from app.catalog.retrieval.tokens import (
     preference_color_tokens,
     product_compatible_with_requested_movement,
     product_matches_color_tokens,
+    product_matches_required_feature_groups,
+    required_feature_groups,
     required_model_tokens,
 )
 
@@ -73,6 +75,7 @@ def hard_filter_products(
         excluded_brands = []
 
     selected: list[dict[str, Any]] = []
+    mandatory_feature_groups = required_feature_groups(interpretation)
     for product in products:
         if not isinstance(product, dict) or not product.get("id"):
             continue
@@ -95,6 +98,10 @@ def hard_filter_products(
             product,
             subject.model,
             interpretation.preferences.attributes,
+        ):
+            continue
+        if mandatory_feature_groups and not product_matches_required_feature_groups(
+            product, mandatory_feature_groups
         ):
             continue
         color_tokens = preference_color_tokens(interpretation)

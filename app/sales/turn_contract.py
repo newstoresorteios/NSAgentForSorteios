@@ -330,9 +330,10 @@ def inbound_from_message(
 ) -> InboundView:
     text = str(message_text or "").strip()
     brands = _mentioned_watch_brands(text)
-    brand = brands[0] if brands else (
-        interpretation.subject.brand if interpretation is not None else None
-    )
+    # Message view must contain only what this message states. Falling back to
+    # the hydrated interpretation here leaked a previous brand into fresh
+    # catalog requests (for example Hamilton into an unbranded browse).
+    brand = brands[0] if brands else None
     budget = _extract_budget_max(text) if text else None
     if budget is None and interpretation is not None and message_states_budget(text):
         budget = interpretation.preferences.budget_max
@@ -586,6 +587,8 @@ def merge_inbound_views(
     model = message_view.model
     if message_view.commerce_browse:
         model = message_view.model
+        if memory_view.model and not message_view.model:
+            stale.append("model")
     else:
         model = message_view.model or memory_view.model
     if brand_unlock:
@@ -661,6 +664,9 @@ def merge_inbound_views(
             interpretation.subject.reference or interpretation.subject.ean
         ):
             sku_lock = bool(purchase_close)
+        live_shortlist = False
+        if memory_view.live_shortlist:
+            stale.append("shortlist")
     if (
         live_checkout
         and (

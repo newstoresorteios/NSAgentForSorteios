@@ -164,6 +164,26 @@ def _should_skip(
 ) -> str | None:
     if result.handoff_required:
         return "human_handoff"
+    safety_reason = str(result.safety_reason or "").strip()
+    if (
+        safety_reason in {
+            "commerce_clarification",
+            "recommendation_budget_miss",
+            "product_unavailable",
+        }
+        and not _presented(result)
+        and not _live_purchase_context(commerce_state, result)
+    ):
+        return f"deterministic:{safety_reason}"
+    if (
+        result.safety_reason == "answer_council_blocked"
+        and not _presented(result)
+        and (result.reply_text or "").strip()
+    ):
+        # The deterministic council already removed the unsafe listing and
+        # produced a grounded no-match response. Re-judging that copy as
+        # `unanswered` turns useful guidance into a generic outage message.
+        return "deterministic:answer_council_no_match"
     source = str((result.response_metadata or {}).get("response_source") or "")
     if source in _COMMERCIAL_RESUME_SOURCES:
         return None

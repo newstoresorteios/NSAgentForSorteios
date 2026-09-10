@@ -414,6 +414,10 @@ def apply_corrections(
 ) -> SalesInterpretation:
     updated = interpretation.model_copy(deep=True)
     prefs = updated.preferences
+    if "drop_stale_brand" in codes:
+        updated.subject = updated.subject.model_copy(update={"brand": None})
+    if "drop_stale_model" in codes:
+        updated.subject = updated.subject.model_copy(update={"model": None})
     if "drop_stale_budget" in codes:
         prefs.budget_max = None
         prefs.budget_min = None
@@ -546,6 +550,10 @@ def pre_search_correction_codes(
 ) -> list[str]:
     """Codes the organizer must apply before the first catalog search."""
     codes: list[str] = []
+    if "brand" in contract.stale_fields:
+        codes.append("drop_stale_brand")
+    if "model" in contract.stale_fields:
+        codes.append("drop_stale_model")
     if "budget" in contract.stale_fields:
         codes.append("drop_stale_budget")
     elif contract.budget_max is not None:
@@ -840,9 +848,27 @@ def _honest_constraint_reply(
     commercial = dict(fixed.commercial_data or {})
     commercial["products"] = []
     fixed.commercial_data = commercial
+    criteria: list[str] = []
+    if contract.style:
+        criteria.append(str(contract.style))
+    if interpretation is not None:
+        attrs = " ".join(str(item) for item in interpretation.preferences.attributes or []).casefold()
+        material = str(interpretation.preferences.material or "").strip()
+        if "automatic" in attrs:
+            criteria.append("automático")
+        if "safira" in attrs or "safira" in material.casefold() or "sapphire" in material.casefold():
+            criteria.append("com cristal de safira")
+    subject = "relógio"
+    if criteria:
+        subject += " " + ", ".join(dict.fromkeys(criteria))
+    ceiling = (
+        f" até R$ {contract.budget_max:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        if contract.budget_max is not None
+        else ""
+    )
     fixed.reply_text = (
-        "Não consegui confirmar uma sugestão que atenda a todos os critérios nesta consulta. "
-        "Vou manter o que você pediu para continuarmos a busca."
+        f"Não consegui confirmar no catálogo disponível um {subject}{ceiling} que atenda a todos esses critérios. "
+        "Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas."
     )
     fixed.reply_modality = "text"
     fixed.reply_audio_bytes = None

@@ -21,6 +21,7 @@ from app.catalog.retrieval.tokens import (
     preference_color_search_labels,
     preference_color_tokens,
     preference_gender_tokens,
+    required_feature_groups,
 )
 from app.catalog.retrieval.types import ProductRetrievalPlan, ProductRetrievalRequest
 
@@ -304,6 +305,22 @@ class ProductRetrievalCompiler:
                     available=available,
                     available_in_store=available_in_store,
                 ))
+
+            # Alternative watch constructions need separate Tray probes. A
+            # single name such as "open heart skeleton" would impose AND
+            # semantics and miss both valid branches.
+            for group in required_feature_groups(interpretation):
+                if len(group) <= 1:
+                    continue
+                for feature in group[:3]:
+                    label = feature.replace("_", " ")
+                    requests.append(ProductRetrievalRequest(
+                        strategy="feature_alternative",
+                        name=label,
+                        brand=subject.brand,
+                        available=available,
+                        available_in_store=available_in_store,
+                    ))
 
             # Color probes (PT/EN aliases) so Tray returns blue when user said azul.
             color_labels = preference_color_search_labels(interpretation)

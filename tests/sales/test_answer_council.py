@@ -45,6 +45,41 @@ def test_contract_nessa_faixa_keeps_memory_budget_and_omega_brand():
     assert contract.must_not_claim_stale_occasion is True
 
 
+def test_fresh_alternative_browse_drops_stale_brand_model_and_shortlist():
+    interp = _interpretation()
+    interp.subject.brand = "Hamilton"
+    interp.subject.model = None
+    state = CommerceConversationState(
+        active_preferences={"locked_identity": {"brand": "Hamilton", "model": "Jazzmaster"}},
+        last_presented_products=[
+            {"position": 1, "product_id": "1045", "name": "Hamilton Jazzmaster"}
+        ],
+    )
+    contract = build_turn_contract(
+        message_text=(
+            "Eu quero um relógio automático, com cristal de safira, "
+            "que seja ou open heart ou skeleton até 3500"
+        ),
+        interpretation=interp,
+        commerce_state=state,
+    )
+    assert contract.brand is None
+    assert contract.model is None
+    assert contract.live_shortlist is False
+    assert contract.sku_lock is False
+    assert contract.budget_max == 3500
+    corrected = apply_turn_contract_for_search(
+        interp,
+        message_text=(
+            "Eu quero um relógio automático, com cristal de safira, "
+            "que seja ou open heart ou skeleton até 3500"
+        ),
+        commerce_state=state,
+    )
+    assert corrected.subject.brand is None
+    assert corrected.subject.model is None
+
+
 def test_checker_a_rejects_over_budget_near_match():
     contract = build_turn_contract(
         message_text="tem algum omega nessa faixa de preço?",

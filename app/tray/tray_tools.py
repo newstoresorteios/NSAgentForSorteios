@@ -421,7 +421,7 @@ async def _search_products_payload(
     filters: dict[str, Any],
     limit: int,
 ) -> Any:
-    """GET /internal/products. On adaptor 5xx, retry once without current_price_range."""
+    """GET /internal/products and preserve the customer's hard price ceiling."""
     try:
         return await client.search_products(**filters, limit=limit)
     except TrayAdapterError as exc:
@@ -435,8 +435,9 @@ async def _search_products_payload(
                 for key, value in filters.items()
                 if key != "current_price_range"
             }
+            retry["price_range"] = filters["current_price_range"]
             print(
-                "[tray.search] retry_without_price_range",
+                "[tray.search] retry_with_documented_price_range",
                 {"status_code": exc.status_code},
             )
             return await client.search_products(**retry, limit=limit)

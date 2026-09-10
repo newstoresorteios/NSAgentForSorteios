@@ -154,3 +154,73 @@ def test_current_open_heart_replaces_stale_kanno_model():
     )
 
     assert normalized.subject.model == "Open Heart"
+
+
+def test_open_heart_or_skeleton_is_recommendation_with_hard_features():
+    interpretation = _base(
+        subject={
+            "product_type": "relógio",
+            "brand": "Hamilton",
+            "model": "Open Heart Open Heart",
+        },
+        preferences={
+            "budget_max": 3500,
+            "material": "cristal de safira",
+            "attributes": ["automático"],
+        },
+        needs_clarification=False,
+    )
+    normalized = normalize_sales_interpretation(
+        interpretation,
+        message_text=(
+            "Eu quero um relógio automático, com cristal de safira, "
+            "que seja ou open heart ou skeleton até 3500"
+        ),
+        context_text="Antes vimos um Hamilton Open Heart",
+    )
+
+    assert normalized.subject.model is None
+    assert normalized.preferences.style == "open heart ou skeleton"
+    assert "feature_any:open_heart|skeleton" in normalized.preferences.attributes
+    assert "required_feature:automatico" in normalized.preferences.attributes
+    assert "required_feature:safira" in normalized.preferences.attributes
+    assert ProductRetrievalCompiler.compile(normalized).mode == "recommendation"
+    names = {
+        request.name for request in ProductRetrievalCompiler.compile(normalized).requests
+    }
+    assert {"open heart", "skeleton"} <= names
+
+    from app.catalog.product_retrieval import hard_filter_products
+
+    products = [
+        {
+            "id": "ok",
+            "name": "Relógio automático Open Heart cristal de safira",
+            "current_price": 3499.90,
+            "available": True,
+        },
+        {
+            "id": "over",
+            "name": "Relógio automático Skeleton cristal de safira",
+            "current_price": 5899.90,
+            "available": True,
+        },
+        {
+            "id": "quartz",
+            "name": "Relógio quartz Open Heart cristal de safira",
+            "current_price": 2500,
+            "available": True,
+        },
+        {
+            "id": "wrong-style",
+            "name": "Relógio automático Diver cristal de safira",
+            "current_price": 3000,
+            "available": True,
+        },
+    ]
+    assert [
+        item["id"]
+        for item in hard_filter_products(
+            products, normalized, mode="recommendation", message_text="até 3500"
+        )
+    ] == ["ok"]

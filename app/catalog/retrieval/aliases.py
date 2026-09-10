@@ -276,6 +276,10 @@ _FEATURE_SEARCH_ALIASES: dict[str, tuple[str, ...]] = {
     "gmt": ("gmt",),
     "pulseira_integrada": ("prx", "integrad"),
     "acabamento_escovado": ("escovad", "rajad", "brushed", "prata"),
+    "open_heart": ("open heart", "openheart", "open-heart"),
+    "skeleton": ("skeleton", "esqueleto", "skeletonized", "skeletonised"),
+    "automatico": ("automatico", "automatic", "automático"),
+    "safira": ("safira", "sapphire"),
 }
 
 __all__ = [
