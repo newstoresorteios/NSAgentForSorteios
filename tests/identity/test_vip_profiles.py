@@ -67,3 +67,33 @@ def test_build_agent_input_has_no_vip_block_for_founder_phone():
     assert "descamisado" not in lowered
     assert "big boss" not in lowered
     assert "felipe newbold" not in lowered
+
+
+def test_build_agent_input_never_exposes_untrusted_provider_display_name():
+    text = build_agent_input(
+        IncomingMessage(
+            channel="whatsapp",
+            text="quero um relógio",
+            sender_name="Bed Linen",
+        ),
+        {"found": False, "display_name": "Bed Linen"},
+        {"primary_intent": "commerce"},
+    )
+
+    assert "Bed Linen" not in text
+    assert 'use "cliente"' in text
+
+
+def test_build_agent_input_uses_trusted_registered_customer_name():
+    text = build_agent_input(
+        IncomingMessage(
+            channel="whatsapp",
+            text="quero um relógio",
+            sender_name="Bed Linen",
+        ),
+        {"found": True, "display_name": "Mariana"},
+        {"primary_intent": "commerce", "display_name": "Mariana"},
+    )
+
+    assert "Nome para tratamento: Mariana" in text
+    assert "Bed Linen" not in text

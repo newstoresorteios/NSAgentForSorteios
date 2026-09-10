@@ -97,15 +97,15 @@ def try_farewell(
         checkout_name = getattr(customer, "name", None)
     except Exception:
         checkout_name = None
+    trusted_account_name = None
+    if isinstance(customer_context, dict) and customer_context.get("found"):
+        trusted_account_name = customer_context.get("display_name") or customer_context.get("name")
     display_name = door.resolve_address_name(
         preferred_name=(customer_context or {}).get("preferred_name")
         if isinstance(customer_context, dict)
         else None,
         checkout_name=checkout_name,
-        account_name=(customer_context or {}).get("display_name")
-        or (customer_context or {}).get("name")
-        if isinstance(customer_context, dict)
-        else None,
+        account_name=trusted_account_name,
         whatsapp_profile_name=message.sender_name,
     )
     return door._annotate_agent_result(

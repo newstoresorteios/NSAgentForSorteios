@@ -239,17 +239,15 @@ def build_agent_input(message: IncomingMessage, customer_context: dict, facts: d
         customer = draft.get("customer") if isinstance(draft, dict) else None
         if isinstance(customer, dict):
             checkout_name = customer.get("name")
+    trusted_account_name = None
+    if isinstance(customer_context, dict) and customer_context.get("found"):
+        trusted_account_name = facts.get("display_name") or customer_context.get("display_name")
     display_name = resolve_address_name(
         preferred_name=(customer_context or {}).get("preferred_name")
         if isinstance(customer_context, dict)
         else None,
         checkout_name=checkout_name,
-        account_name=facts.get("display_name")
-        or (
-            customer_context.get("display_name")
-            if isinstance(customer_context, dict)
-            else None
-        ),
+        account_name=trusted_account_name,
         whatsapp_profile_name=message.sender_name,
     )
     display_label = display_name or (

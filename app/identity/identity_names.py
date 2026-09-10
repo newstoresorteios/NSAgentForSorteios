@@ -73,17 +73,20 @@ def resolve_address_name(
     account_name: str | None = None,
     whatsapp_profile_name: str | None = None,
 ) -> str | None:
-    """Prefer durable/legal identity over WhatsApp nick for addressivity."""
-    for candidate, profile_derived in (
-        (preferred_name, False),
-        (checkout_name, False),
-        (account_name, True),
-        (whatsapp_profile_name, True),
+    """Return only a name from a trusted identity source.
+
+    ``whatsapp_profile_name`` is accepted for API compatibility and audit context,
+    but is never suitable for addressivity: providers may expose arbitrary labels,
+    aliases, business names, or stale contact-book values as the display name.
+    """
+    del whatsapp_profile_name
+    for candidate in (
+        preferred_name,
+        checkout_name,
+        account_name,
     ):
         text = str(candidate or "").strip()
         if not text:
-            continue
-        if profile_derived and looks_like_whatsapp_nick(text):
             continue
         return text
     return None

@@ -134,8 +134,9 @@ def test_resolve_address_name_prefers_checkout_over_whatsapp_nick():
         ).startswith("João")
     )
     assert resolve_address_name(whatsapp_profile_name="Razor Blue") is None
-    assert resolve_address_name(account_name="Corn") is None
-    assert resolve_address_name(account_name="Dark", whatsapp_profile_name="Maria") == "Maria"
+    assert resolve_address_name(whatsapp_profile_name="Maria") is None
+    assert resolve_address_name(whatsapp_profile_name="Bed Linen") is None
+    assert resolve_address_name(account_name="Maria", whatsapp_profile_name="Bed Linen") == "Maria"
 
 
 def test_greeting_detectors_live_in_one_module():

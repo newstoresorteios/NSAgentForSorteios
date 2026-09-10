@@ -48,13 +48,17 @@ def test_message_is_stage_specific_and_always_contains_opt_out():
         }
     )
 
-    assert "Oi, Maria!" in text
+    assert text.startswith("Oi!")
+    assert "Maria" not in text
     assert "última mensagem" in text
     assert "https://loja.example/carrinho" in text
     assert "responda SAIR" in text
 
 
-@pytest.mark.parametrize("nickname", ["Corn", "Razor", "Dark", "Razor Blue", "Dark Orange"])
+@pytest.mark.parametrize(
+    "nickname",
+    ["Corn", "Razor", "Dark", "Razor Blue", "Dark Orange", "Bed Linen", "Nebula", "Maria"],
+)
 def test_remarketing_never_addresses_customer_by_brevo_nickname(nickname):
     text = _build_remarketing_message(
         {
