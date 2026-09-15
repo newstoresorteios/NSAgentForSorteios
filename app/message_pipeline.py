@@ -226,6 +226,10 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         configuration_tokens = bind_bundle(bundle, settings_from_bundle(get_settings(), bundle)) if bundle else None
         owned_token = _ensure_live_turn_budget(incoming)
         persona_token = set_persona_runtime(loaded_persona)
+        from app.configuration.workspace import stamp_inbound_workspace
+        resolved_workspace = loaded_persona.flow_params_dict().get("workspace_id")
+        if resolved_workspace and getattr(get_settings(), "database_url", None):
+            await asyncio.to_thread(stamp_inbound_workspace, (incoming.raw or {}).get("inbound_id"), resolved_workspace)
         if bundle and get_current_turn() is not None:
             from app.llm.llm_call_policy import resolve_turn_llm_budget
             limit = resolve_turn_llm_budget()
@@ -240,6 +244,9 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         if runtime is not None:
             result.response_metadata = dict(result.response_metadata or {})
             result.response_metadata["turn_runtime"] = runtime.safe_summary()
+            result.response_metadata["used_openai_interpreter"] = bool(
+                result.response_metadata.get("used_openai_interpreter") or runtime.llm_calls_by_type.get("decision")
+            )
         return result
     finally:
         if persona_token is not None:
@@ -308,7 +315,10 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
     from app.sales.dialogue_phase import (
         reset_browse_memory_keep_orders,
         should_reset_browse_memory,
+        reconcile_checkout_context,
     )
+
+    commerce_state = reconcile_checkout_context(commerce_state)
 
     browse_reset_this_turn = should_reset_browse_memory(
         incoming.text,
@@ -342,6 +352,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         "working_memory_payment_pending": bool(working_memory.get("payment_pending")),
         "working_memory_has_open_order": bool(working_memory.get("has_open_order")),
         "working_memory_keys": sorted(str(k) for k in working_memory.keys())[:30],
+        "context_repairs": commerce_state.context_repairs,
         "person_key_aliases": len(
             resolve_person_key_candidates(
                 sender_key=incoming.sender_key,
@@ -681,6 +692,13 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             runtime.register_fallback("quality_judge_failed")
 
     response_metadata = result.response_metadata or {}
+    if runtime is not None:
+        response_metadata["used_openai_interpreter"] = bool(
+            response_metadata.get("used_openai_interpreter") or runtime.llm_calls_by_type.get("decision")
+        )
+        response_metadata["used_tray"] = bool(response_metadata.get("used_tray") or runtime.tray_call_count)
+        response_metadata["generation_attempts"] = dict(runtime.llm_calls_by_type)
+        result.response_metadata = response_metadata
     outbound_snapshot = {
         "domain": response_metadata.get("domain"),
         "goal": response_metadata.get("goal"),

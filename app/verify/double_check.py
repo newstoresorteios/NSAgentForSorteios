@@ -54,15 +54,8 @@ _PRICE_ASK_RE = re.compile(
     r"\b(quanto custa|pre[cç]o|valor|parcela)\b",
     re.IGNORECASE,
 )
-_PHASE1_SYSTEM = (
-    "Você é um juiz independente do agente de vendas. "
-    "Não reescreva a resposta. Não sugira APIs. "
-    "action=approve se a reply responde o pedido com os fatos listados. "
-    "action=veto se inventou preço, link ou SKU, ignorou PIX/pedido "
-    "existente, ou não atendeu o pedido com estes IDs. "
-    "action=handoff só se pagamento ou pedido foi afirmado sem evidência. "
-    "code deve ser pix, price, order, sku ou unanswered."
-)
+def _phase1_system() -> str:
+    return operator_message("double_check_system")
 _ENFORCE_PAYMENT_CODES = frozenset(
     {"pix_denied", "greeting_in_checkout", "pix"}
 )
@@ -338,10 +331,6 @@ def _payment_resume_result(
         return None
 
 
-_INSUFFICIENCY_DEFAULT = (
-    "Não consigo confirmar isso com segurança agora. "
-    "Posso verificar de novo ou te passar para um atendente."
-)
 
 
 def _enforce_insufficiency(
@@ -350,7 +339,7 @@ def _enforce_insufficiency(
 ) -> AgentResult:
     fallback = str(
         (result.response_metadata or {}).get("factual_fallback_text") or ""
-    ).strip() or _INSUFFICIENCY_DEFAULT
+    ).strip() or operator_message("double_check_insufficiency")
     updated = result.model_copy(deep=True)
     updated.reply_text = fallback
     updated.safety_reason = "double_check_insufficient"
@@ -463,7 +452,8 @@ def collect_phase1_risk_signals(
         signals.append("inbound_asks_payment")
     if _ORDER_ASK_RE.search(text):
         signals.append("inbound_asks_order")
-    if _PRICE_ASK_RE.search(text):
+    from app.sales.conversation_repair import is_conversation_repair
+    if _PRICE_ASK_RE.search(text) and not is_conversation_repair(text):
         signals.append("inbound_asks_price")
     if order_id or pending in _PURCHASE_PENDING:
         signals.append("order_or_checkout")
@@ -550,6 +540,8 @@ def _phase1_packet(
         log_swallowed("double_check.phase1_view", exc)
     return {
         "customer_message": incoming.text,
+        "requested_subject": ((result.response_metadata or {}).get("interpretation") or {}).get("subject"),
+        "answer_strategy": ((result.response_metadata or {}).get("interpretation") or {}).get("answer_strategy"),
         "agent_reply": result.reply_text,
         "signals": signals,
         "payment_url": _payment_url(commerce_state, result) or None,
@@ -579,7 +571,7 @@ async def run_phase1_double_check(
         model=resolve_openai_model("fast"),
         text_format=DoubleCheckVerdict,
         messages=[
-            {"role": "system", "content": _PHASE1_SYSTEM},
+            {"role": "system", "content": _phase1_system()},
             {
                 "role": "user",
                 "content": json.dumps(

@@ -204,6 +204,8 @@ def is_deictic_product_price_request(text: str | None) -> bool:
     normalized = (text or "").casefold()
     if not normalized.strip():
         return False
+    if not re.search(r"\b(pre[cç]o|valor|quanto|custa|custando)\b", normalized):
+        return False
     photo_markers = (
         "da foto",
         "na foto",

@@ -572,3 +572,37 @@ async def test_open_circuit_serves_index_instead_of_not_found(monkeypatch):
     assert result.safety_reason != "product_not_found"
     assert (result.commercial_data or {}).get("products")
     assert captured["message_text"] == "caixa até 40"
+
+
+@pytest.mark.parametrize("identifier", ["reference", "ean"])
+def test_missing_exact_identifier_does_not_substitute_brand_sibling(monkeypatch, identifier):
+    from unittest.mock import MagicMock
+    repo = MagicMock()
+    repo.search_exact.return_value = []
+    monkeypatch.setattr("app.catalog.index.repository.CatalogIndexRepository", lambda: repo)
+    monkeypatch.setattr("app.catalog.retrieval.runtime.get_settings", lambda: SimpleNamespace(
+        agent_catalog_index_read_enabled=True, agent_catalog_index_candidate_limit=30,
+        agent_persona_tenant_id="newstore"))
+    item = _interpretation()
+    setattr(item.subject, identifier, "FAG03002B0" if identifier == "reference" else "7891234567890")
+    products, strategy = fetch_primary_index_candidates(item)
+    assert products == [] and strategy == "exact_identifier_miss"
+    repo.search_by_constraints.assert_not_called()
+    repo.search_lexical.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_index_refresh_bypasses_cached_available_pool(monkeypatch):
+    from unittest.mock import MagicMock, AsyncMock
+    from app.catalog.index.cache import fetch_and_cache_brand_pool
+    load = MagicMock(return_value=[{"id": "stale"}])
+    store = MagicMock()
+    execute = AsyncMock(return_value={"products": [{"id": "fresh", "available": False}]})
+    monkeypatch.setattr("app.catalog.index.cache.load_catalog_cache", load)
+    monkeypatch.setattr("app.catalog.index.cache.store_catalog_cache", store)
+    products = await fetch_and_cache_brand_pool("Orient", execute, pages=1, force_refresh=True, include_unavailable=True)
+    load.assert_not_called()
+    assert products[0]["id"] == "fresh"
+    assert "available" not in execute.call_args.args[1]
+    assert "available_in_store" not in execute.call_args.args[1]
+    assert store.call_args.args[0] == "brand:orient:all"

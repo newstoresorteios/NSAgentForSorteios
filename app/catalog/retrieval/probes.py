@@ -41,10 +41,10 @@ async def seed_from_catalog_index(session: RetrievalSession) -> None:
         if plan.mode == "exact":
             session.catalog_index_primary = bool(
                 session.hard_filtered
-            ) and index_pool_is_sufficient(
+            ) and (session.catalog_index_strategy in {"exact_ean", "exact_reference"} or index_pool_is_sufficient(
                 session.hard_filtered,
                 candidate_limit=min(plan.candidate_limit, 5),
-            )
+            ))
         else:
             session.catalog_index_primary = index_pool_is_sufficient(
                 session.hard_filtered,
@@ -69,7 +69,7 @@ async def seed_from_catalog_index(session: RetrievalSession) -> None:
         print(
             "[catalog.index.primary]",
             {
-                "strategy": None,
+                "strategy": session.catalog_index_strategy,
                 "mode": plan.mode,
                 "seeded": 0,
                 "hard_filtered": 0,

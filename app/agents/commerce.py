@@ -104,6 +104,11 @@ async def handle_sales_message_inner(
         semantic_plan, message, recent_turns, commerce_state=commerce_state
     )
     state = commerce_state or CommerceConversationState()
+    if interpretation is not None:
+        from app.sales.conversation_repair import repair_conversation
+        repair = await repair_conversation(incoming=message, interpretation=interpretation, state=state)
+        if repair is not None:
+            return repair
     resume = try_commerce_resume(message, interpretation, state)
     if resume is not None:
         return resume

@@ -37,6 +37,9 @@ async def resolve_catalog_reference(
 ) -> CatalogReferenceResolution:
     """Bind or drop the contextual SKU; return an early reply when vision/list wins."""
     sales = _sales()
+    from app.sales.conversation_repair import has_explicit_lookup_identity
+
+    explicit_lookup = has_explicit_lookup_identity(message.text, interpretation)
     resolved_product = None
     resolved_by = "none"
     if interpretation is None:
@@ -50,6 +53,11 @@ async def resolve_catalog_reference(
     resolved_product, resolved_by = sales.resolve_commerce_reference(
         interpretation, state
     )
+    if explicit_lookup and interpretation.resolved_answer_strategy() == "search_catalog":
+        resolved_product, resolved_by = None, "none"
+        interpretation = interpretation.model_copy(
+            update={"reference_type": None, "reference_position": None}
+        )
     sales.log_purchase_progress(
         "reference_resolution",
         "success" if resolved_product is not None else "blocked",
@@ -203,6 +211,7 @@ async def resolve_catalog_reference(
     # Brevo. Bare "valor" after that must not invent a SKU or ask vaguely.
     if (
         not has_inbound_image
+        and not explicit_lookup
         and should_guide_instagram_price_without_media(message)
         and interpretation.reference_type in vague_refs
         and interpretation.goal in {"inspect", "find", "discover", "recommend"}
@@ -239,6 +248,7 @@ async def resolve_catalog_reference(
         not has_inbound_image
         and not interpretation.image_request
         and is_deictic_product_price_request(message.text)
+        and not explicit_lookup
         and interpretation.reference_type in vague_refs
         and interpretation.goal in {"inspect", "find"}
     ):

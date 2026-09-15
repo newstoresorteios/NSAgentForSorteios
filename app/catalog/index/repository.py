@@ -63,7 +63,7 @@ class CatalogIndexRepository:
             clauses.append("sku = %(sku)s")
             params["sku"] = str(sku).strip()
         elif reference:
-            clauses.append("reference = %(reference)s")
+            clauses.append("lower(reference) = lower(%(reference)s)")
             params["reference"] = str(reference).strip()
         elif variant_id:
             clauses.append("variant_id = %(variant_id)s")
@@ -459,8 +459,8 @@ class CatalogIndexRepository:
             if runtime is not None:
                 runtime.stage_durations_ms["catalog_database"] = runtime.stage_durations_ms.get("catalog_database", 0) + (time.perf_counter() - started) * 1000
                 runtime.catalog_queries.append({"source": "catalog_index", "status": status,
-                    "strategy": "fuzzy" if "min_sim" in params else "lexical" if "qlike" in params else "constraints",
-                    "filters": {k:v for k,v in params.items() if k in {"qraw", "brand", "mechanism", "gender", "max_price", "min_mm", "max_mm", "limit"}},
+                    "strategy": "exact" if any(k in params for k in ("ean", "sku", "reference", "product_id", "variant_id")) else "fuzzy" if "min_sim" in params else "lexical" if "qlike" in params else "constraints",
+                    "filters": {k:v for k,v in params.items() if k in {"ean", "sku", "reference", "product_id", "variant_id", "qraw", "brand", "mechanism", "gender", "max_price", "min_mm", "max_mm", "limit"}},
                     "result_count": result_count, "duration_ms": round((time.perf_counter() - started)*1000, 2)})
 
 

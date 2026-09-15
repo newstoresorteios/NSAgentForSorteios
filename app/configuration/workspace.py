@@ -21,3 +21,15 @@ def resolve_conversation_workspace(conversation_id: str | None, channel: str | N
     if len(rows) > 1:
         raise ValueError("ambiguous_conversation_workspace")
     return str(rows[0]["workspace_id"]) if rows else None
+
+
+def stamp_inbound_workspace(inbound_id: int | None, workspace_id: str | None) -> None:
+    """Persist server-resolved ownership without ever reassigning another workspace."""
+    if inbound_id is None or not workspace_id:
+        return
+    from app.db import get_conn
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE public.ai_inbound_messages SET workspace_id=%s::uuid
+                WHERE id=%s AND workspace_id IS NULL""", (workspace_id, inbound_id))
+        conn.commit()

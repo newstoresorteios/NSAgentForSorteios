@@ -137,7 +137,7 @@ def is_browse_idle(
     state: CommerceConversationState | None,
     *,
     now: datetime | None = None,
-    idle_seconds: int = BROWSE_IDLE_SECONDS,
+    idle_seconds: int | None = None,
 ) -> bool:
     if state is None or not has_browse_memory(state):
         return False
@@ -145,7 +145,47 @@ def is_browse_idle(
     if stamped is None:
         return False
     current = _as_utc(now) or datetime.now(timezone.utc)
+    if idle_seconds is None:
+        from app.configuration.runtime import policy
+        idle_seconds = int(policy("browseContextMaxAgeSeconds"))
     return current - stamped >= timedelta(seconds=idle_seconds)
+
+
+def reconcile_checkout_context(state: CommerceConversationState, *, now: datetime | None = None) -> CommerceConversationState:
+    """Remove orphaned/expired cart context without changing an existing order."""
+    from app.catalog.specs.preference_normalize import normalize_model_identity
+    from app.configuration.runtime import policy
+    updated = state.model_copy(deep=True)
+    model = updated.active_preferences.get("subject_model")
+    if isinstance(model, str):
+        updated.active_preferences["subject_model"] = normalize_model_identity(model)
+    if updated.order_id or updated.order_lookup_id or updated.order_payment_url or updated.order_creation_ambiguous:
+        return updated
+    orphaned = bool((updated.cart_session_id or updated.dialogue_phase == "checkout")
+                    and not updated.cart_items and not updated.cart_product_id and updated.active_product is None)
+    stamped = _as_utc(updated.cart_context_updated_at)
+    current = _as_utc(now) or datetime.now(timezone.utc)
+    expired = bool(updated.cart_session_id and stamped and current - stamped >= timedelta(
+        seconds=int(policy("checkoutContextMaxAgeSeconds"))))
+    if orphaned or expired:
+        from app.commerce.cart_service import _clear_cart_session_state
+        from app.commerce.commerce_context import CheckoutDraft
+        for field, value in _clear_cart_session_state(updated).items():
+            setattr(updated, field, value)
+        updated.cart_context_updated_at = None
+        updated.checkout_draft = CheckoutDraft()
+        updated.pending_action = None
+        updated.pending_action_product_ids = []
+        updated.shipping_quotes = []
+        updated.selected_shipping = None
+        updated.selected_payment_option = None
+        updated.selected_payment_option_id = None
+        updated.order_confirmation_status = "not_ready"
+        updated.order_review_version = updated.confirmed_order_review_version = None
+        updated.dialogue_phase = "shortlist" if updated.last_presented_products else "discovery"
+        updated.purchase_stage = "selection"
+        updated.context_repairs = ["expired_cart" if expired else "orphaned_cart"]
+    return updated
 
 
 def is_new_commerce_thread(

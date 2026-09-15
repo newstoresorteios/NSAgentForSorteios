@@ -807,6 +807,9 @@ async def _route_after_interpret(
         if detect_explicit_raffle_intent(message.text)
         else interpretation.domain
     )
+    from app.sales.conversation_repair import is_conversation_repair
+    if scope_domain != "raffle" and is_conversation_repair(message.text, interpretation):
+        scope_domain = "commerce"
     print("[agent.scope]", {"domain": scope_domain})
     if scope_domain == "out_of_scope":
         return _annotate_agent_result(

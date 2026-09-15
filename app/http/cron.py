@@ -37,13 +37,34 @@ def add_cron(path: str, endpoint: Callable) -> None:
 
 async def catalog_url_health_cron(
     request: Request,
-    brand_limit: int = Query(default=8, ge=1, le=25),
-    products_per_brand: int = Query(default=40, ge=5, le=200),
+    brand_limit: int | None = Query(default=None, ge=1, le=25),
+    products_per_brand: int | None = Query(default=None, ge=5, le=200),
     url_limit: int = Query(default=50, ge=1, le=500),
     clear_brand_cache: bool = Query(default=False),
 ):
+    import asyncio
+    from app.configuration.runtime import current_bundle, bind_bundle, reset_bundle, settings_from_bundle, policy
+    tokens = None
+    if not current_bundle():
+        from app.persona.persona_runtime import load_persona_runtime
+        persona = await asyncio.to_thread(load_persona_runtime)
+        bundle = persona.configuration_bundle
+        tokens = bind_bundle(bundle, settings_from_bundle(_get_settings(), bundle))
+    try:
+        return await _catalog_url_health(request,
+            brand_limit=brand_limit or int(policy("catalogWarmBrandLimit")),
+            products_per_brand=products_per_brand or int(policy("catalogWarmProductsPerBrand")),
+            url_limit=url_limit, clear_brand_cache=clear_brand_cache)
+    finally:
+        if tokens is not None:
+            reset_bundle(tokens)
+
+
+async def _catalog_url_health(request: Request, *, brand_limit: int, products_per_brand: int,
+                              url_limit: int, clear_brand_cache: bool):
+    from app.configuration.runtime import policy
     from app.catalog.index.warm import (
-        _DEFAULT_TOP_BRANDS,
+        configured_warm_brands,
         list_top_index_brands,
         refresh_top_brands_into_index,
     )
@@ -60,7 +81,7 @@ async def catalog_url_health_cron(
             from app.db import get_conn
 
             brands = list_top_index_brands(limit=brand_limit) or list(
-                _DEFAULT_TOP_BRANDS[:brand_limit]
+                configured_warm_brands()[:brand_limit]
             )
             keys = [
                 f"brand:{' '.join(str(b).strip().lower().split())}"
@@ -82,7 +103,7 @@ async def catalog_url_health_cron(
             )
 
     result = await repair_catalog_storefront_urls(limit=url_limit, probe_live=True)
-    freshness = mark_stale_or_zero_price_unavailable(stale_days=3, limit=500)
+    freshness = mark_stale_or_zero_price_unavailable(stale_days=int(policy("catalogStaleDays")), limit=500)
     warm = await refresh_top_brands_into_index(
         execute_tool,
         brand_limit=brand_limit,

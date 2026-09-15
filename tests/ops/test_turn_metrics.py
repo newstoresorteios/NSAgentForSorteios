@@ -2,6 +2,15 @@ from app.ops.turn_metrics import build_turn_quality_event, hash_conversation_key
 from app.ops.turn_runtime import TurnRuntimeContext
 
 
+def test_latency_uses_wall_clock_instead_of_summing_nested_stages(monkeypatch):
+    runtime = TurnRuntimeContext(trace_id="clock-test", started_at=100.0)
+    runtime.stage_durations_ms = {"agent_decision": 30000, "openai_1": 28000, "double_check": 2000}
+    monkeypatch.setattr("app.ops.turn_metrics.time.perf_counter", lambda: 133.0)
+    assert build_turn_quality_event(runtime)["latency_ms"] == 33000
+    runtime.stage_durations_ms["request"] = 33120
+    assert build_turn_quality_event(runtime)["latency_ms"] == 33120
+
+
 def test_turn_quality_event_redacts_conversation_key():
     runtime = TurnRuntimeContext(
         trace_id="t1",

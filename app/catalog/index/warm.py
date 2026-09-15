@@ -10,18 +10,10 @@ from app.config import get_settings
 
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
-_DEFAULT_TOP_BRANDS = (
-    "Orient",
-    "Seiko",
-    "Citizen",
-    "Tissot",
-    "Bulova",
-    "Casio",
-    "Longines",
-    "Certina",
-    "TAG Heuer",
-    "Hamilton",
-)
+def configured_warm_brands() -> list[str]:
+    from app.configuration.runtime import policy
+    return list(dict.fromkeys(line.strip() for line in str(policy("catalogWarmBrands")).splitlines() if line.strip()))
+
 
 
 def list_top_index_brands(*, limit: int = 10) -> list[str]:
@@ -40,7 +32,7 @@ def list_top_index_brands(*, limit: int = 10) -> list[str]:
                       AND brand IS NOT NULL
                       AND btrim(brand) <> ''
                     GROUP BY brand
-                    ORDER BY n DESC
+                    ORDER BY max(freshness_at) ASC NULLS FIRST, n ASC, brand ASC
                     LIMIT %(limit)s
                     """,
                     {"tenant_id": tenant, "limit": max(1, min(int(limit), 25))},
@@ -65,11 +57,15 @@ async def refresh_top_brands_into_index(
     products_per_brand: int = 80,
 ) -> dict[str, Any]:
     """Fetch Tray brand pools and write-through to ai_catalog_index."""
-    brands = list_top_index_brands(limit=brand_limit) or list(_DEFAULT_TOP_BRANDS[:brand_limit])
+    known = list_top_index_brands(limit=25)
+    configured = configured_warm_brands()
+    missing = [brand for brand in configured if brand.casefold() not in {x.casefold() for x in known}]
+    brands = (missing + known + configured)[:brand_limit]
     written = 0
     warmed: list[str] = []
     for brand in brands:
-        pool = await fetch_and_cache_brand_pool(brand, execute_tool, pages=12, limit=50)
+        pool = await fetch_and_cache_brand_pool(brand, execute_tool, pages=max(1, (products_per_brand + 49) // 50), limit=50,
+                                              force_refresh=True, include_unavailable=True)
         if not pool:
             continue
         slice_products = pool[: max(5, min(int(products_per_brand), 200))]

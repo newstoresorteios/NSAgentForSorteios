@@ -860,6 +860,7 @@ def _prepare_inbound_message(message: dict[str, Any]) -> dict[str, Any]:
     defaults = {
         "provider": "brevo",
         "event_type": None,
+        "workspace_id": None,
         "message_id": None,
         "conversation_id": None,
         "channel": "unknown",
@@ -937,6 +938,7 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
                   (
                     provider,
                     event_type,
+                    workspace_id,
                     message_id,
                     conversation_id,
                     channel,
@@ -957,6 +959,7 @@ def insert_inbound_message(message: dict[str, Any]) -> int | None:
                   (
                     %(provider)s,
                     %(event_type)s,
+                    %(workspace_id)s,
                     %(message_id)s,
                     %(conversation_id)s,
                     %(channel)s,
@@ -1058,14 +1061,14 @@ def claim_inbound_message(message: dict[str, Any]) -> tuple[bool, int | None]:
                 """
                 INSERT INTO public.ai_inbound_messages
                   (
-                    provider, event_type, message_id, conversation_id, channel,
+                    provider, event_type, workspace_id, message_id, conversation_id, channel,
                     sender_key, sender_external_id, visitor_id, sender_username,
                     source_channel_ref, source_channel_link, source_conversation_ref,
                     sender_phone, sender_name, text, channel_metadata, raw
                   )
                 VALUES
                   (
-                    %(provider)s, %(event_type)s, %(message_id)s, %(conversation_id)s,
+                    %(provider)s, %(event_type)s, %(workspace_id)s, %(message_id)s, %(conversation_id)s,
                     %(channel)s, %(sender_key)s, %(sender_external_id)s, %(visitor_id)s,
                     %(sender_username)s, %(source_channel_ref)s, %(source_channel_link)s,
                     %(source_conversation_ref)s, %(sender_phone)s, %(sender_name)s,

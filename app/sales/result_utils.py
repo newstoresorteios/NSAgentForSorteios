@@ -43,6 +43,10 @@ def mark_sales_result(
             prefs["subject_brand"] = interpretation.subject.brand
         if interpretation.subject.model:
             prefs["subject_model"] = interpretation.subject.model
+        if interpretation.subject.reference:
+            prefs["subject_reference"] = interpretation.subject.reference
+        if interpretation.subject.ean:
+            prefs["subject_ean"] = interpretation.subject.ean
         try:
             from .qualification_slots import attach_qualification_slots
 

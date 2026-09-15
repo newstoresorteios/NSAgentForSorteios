@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 from typing import Any
 
 from app.config import get_settings
@@ -74,7 +75,7 @@ def build_turn_quality_event(
         "total_tokens": prompt_tokens + completion_tokens,
         "latency_ms": round(
             (runtime.stage_durations_ms.get("request") or 0.0)
-            or sum(runtime.stage_durations_ms.values()),
+            or max(0.0, (time.perf_counter() - runtime.started_at) * 1000),
             2,
         ),
         "stage_durations_ms": dict(runtime.stage_durations_ms),

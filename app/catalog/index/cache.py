@@ -156,9 +156,13 @@ async def fetch_and_cache_brand_pool(
     *,
     pages: int = 4,
     limit: int = 50,
+    force_refresh: bool = False,
+    include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
     cache_key = cache_key_for_brand(brand)
-    cached = load_catalog_cache(cache_key)
+    if include_unavailable:
+        cache_key += ":all"
+    cached = None if force_refresh else load_catalog_cache(cache_key)
     if cached:
         print("[catalog.cache.hit]", {"cache_key": cache_key, "count": len(cached)})
         return cached
@@ -170,8 +174,7 @@ async def fetch_and_cache_brand_pool(
             "search_products",
             {
                 "brand": brand,
-                "available": True,
-                "available_in_store": True,
+                **({} if include_unavailable else {"available": True, "available_in_store": True}),
                 "limit": limit,
                 "page": page,
             },

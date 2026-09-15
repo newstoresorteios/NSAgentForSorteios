@@ -155,10 +155,13 @@ class CommerceConversationState(BaseModel):
     # found_available | found_unknown | found_unavailable | plausible_matches | None
     product_resolution_state: str | None = None
     active_preferences: dict[str, Any] = Field(default_factory=dict)
+    conversation_repair_attempts: int = 0
     dialogue_phase: Literal["discovery", "shortlist", "buy", "checkout"] | None = None
     purchase_stage: str | None = None
     cart_id: str | None = None
     cart_session_id: str | None = None
+    cart_context_updated_at: datetime | None = None
+    context_repairs: list[str] = Field(default_factory=list)
     cart_url: str | None = None
     cart_product_id: str | None = None
     cart_variant_id: str | None = None
@@ -623,6 +626,8 @@ def evolve_commerce_state(
 ) -> CommerceConversationState:
     state = previous.model_copy(deep=True)
     metadata = result.response_metadata or {}
+    repair = metadata.get("conversation_repair") or {}
+    state.conversation_repair_attempts = int(repair.get("attempt") or 0)
     domain = metadata.get("domain")
     if domain in {"commerce", "raffle"}:
         state.active_domain = domain
@@ -635,6 +640,9 @@ def evolve_commerce_state(
         cart_state,
         metadata,
     )
+    if cart_materially_changed:
+        from datetime import timezone
+        state.cart_context_updated_at = datetime.now(timezone.utc)
     next_cart_session_id = (
         cart_state.get("cart_session_id")
         if isinstance(cart_state, dict) else None
@@ -887,7 +895,9 @@ def evolve_commerce_state(
         ):
             if field in pix_state:
                 setattr(state, field, pix_state[field])
-    active_preferences = _compact_preferences(metadata.get("active_preferences"))
+    active_preferences = _compact_preferences(
+        metadata.get("active_preferences", state.active_preferences)
+    )
     try:
         from app.sales.qualification_slots import merge_persisted_qualification_slots
 

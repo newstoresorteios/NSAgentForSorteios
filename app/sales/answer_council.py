@@ -37,7 +37,9 @@ _FRESH_LIST_RE = re.compile(
 _REQUALIFY_RE = re.compile(
     r"(como posso te chamar|seu nome|te chamar|"
     r"para qual cidade|sua cidade|"
-    r"para (que|qual) uso|qual o uso|qual a ocasi)",
+    r"para (que|qual) uso|qual o uso|qual a ocasi|"
+    r"qual (?:a |o )?(?:marca|modelo|faixa de investimento)|"
+    r"me (?:diz|diga|informe) (?:a |o )?(?:marca|modelo))",
     re.IGNORECASE,
 )
 _MUST_RETRIEVE_CODES = frozenset(
@@ -685,6 +687,8 @@ def _should_retrieve_on_restart(
     code_set = set(codes)
     if contract is not None and contract.purchase_close:
         return False
+    if "stop_requalify" in code_set and contract is not None and (contract.model or contract.brand):
+        return True
     if "continue_commerce" in code_set and commerce_state is not None:
         from app.memory.context_resume import should_redisplay_presented_catalog
 
@@ -810,6 +814,12 @@ def _fallback_blocked_reply(
     codes: list[str],
 ) -> AgentResult:
     code_set = set(codes)
+    if "stop_requalify" in code_set:
+        from app.ops.handoff_service import build_human_handoff_result
+        return build_human_handoff_result(
+            reason="answer_council_repair_failed",
+            reply_text=operator_message("conversation_repair_handoff"),
+        )
     if "pay_the_link" in code_set:
         replacement = _rewrite_live_cart_pay_link(result, commerce_state)
         if replacement is not None:
@@ -976,6 +986,15 @@ def _finish_council(
     contract: TurnContract,
     commerce_state: CommerceConversationState | None,
 ) -> tuple[AgentResult, CouncilDecision, SalesInterpretation | None]:
+    from app.sales.result_utils import mark_sales_result
+    metadata = result.response_metadata or {}
+    if interpretation is not None and "interpretation" not in metadata:
+        result = mark_sales_result(
+            result, interpretation=interpretation, goal=interpretation.goal,
+            response_source=metadata.get("response_source") or "answer_council_fallback",
+            used_openai_responder=bool(metadata.get("used_openai_responder")),
+            used_tray=bool(metadata.get("used_tray")),
+        )
     if (result.response_metadata or {}).get("answer_council_recomposed"):
         original_issues = list(decision.issues)
         decision = judge_council(
@@ -984,6 +1003,28 @@ def _finish_council(
         )
         decision.contract = contract.model_dump()
         result.response_metadata["answer_council_repaired_issues"] = original_issues
+    final_checks = [check_pedido(result, contract), check_fatos(result, contract)]
+    final_issues = [issue for check in final_checks for issue in check.issues]
+    if final_issues:
+        from app.ops.handoff_service import build_human_handoff_result
+        prior_metadata = result.response_metadata or {}
+        result = build_human_handoff_result(
+            reason="answer_council_final_validation_failed",
+            reply_text=operator_message("conversation_repair_handoff"),
+        )
+        if interpretation is not None:
+            result = mark_sales_result(result, interpretation=interpretation, goal=interpretation.goal,
+                response_source="answer_council_fallback", used_openai_responder=False,
+                used_tray=bool(prior_metadata.get("used_tray")))
+        for key in ("conversation_repair", "answer_council_repaired_issues"):
+            if key in prior_metadata:
+                result.response_metadata[key] = prior_metadata[key]
+        decision.approved = False
+    result.response_metadata = dict(result.response_metadata or {})
+    result.response_metadata["answer_council_final_validation"] = {
+        "rejected_issues": final_issues,
+        "passed": all(check.pass_check for check in (check_pedido(result, contract), check_fatos(result, contract))),
+    }
     attached = _stamp_stale_checkout_clear(
         _attach_decision(result, decision),
         contract,

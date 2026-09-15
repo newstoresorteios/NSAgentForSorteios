@@ -432,6 +432,21 @@ _MODEL_LINE_RE = re.compile(
 _SINGLE_MM_RE = re.compile(r"\b(3[0-9]|4[0-5])\s*mm\b", re.IGNORECASE)
 
 
+def normalize_model_identity(value: str | None) -> str | None:
+    if not value:
+        return value
+    words = value.split()
+    index = 0
+    while index < len(words):
+        for size in range((len(words) - index) // 2, 0, -1):
+            if [w.casefold() for w in words[index:index + size]] == [w.casefold() for w in words[index + size:index + 2 * size]]:
+                del words[index + size:index + 2 * size]
+                break
+        else:
+            index += 1
+    return " ".join(words)
+
+
 def repair_specific_model_tokens(
     subject: Any,
     preferences: ProductPreferences,
@@ -471,7 +486,7 @@ def repair_specific_model_tokens(
             subject.model = "Aquascaphe mk2" if token == "mk2" else token
         elif not model_fold or model_fold in {brand_fold, "relogio", "watch"}:
             subject.model = "Aquascaphe mk2" if token == "mk2" else token
-        elif token not in model_fold:
+        elif token.casefold() not in model_fold:
             subject.model = f"{subject.model} {token}".strip()
 
     mm_match = _SINGLE_MM_RE.search(combined)
@@ -557,6 +572,7 @@ def normalize_sales_interpretation(
     del recent_turns, conversation_id, include_other_threads
     preferences = interpretation.preferences
     subject = interpretation.subject
+    subject.model = normalize_model_identity(subject.model)
     combined_context = "\n".join(
         part for part in (context_text or "", message_text or "") if part
     )

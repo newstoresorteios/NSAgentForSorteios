@@ -87,6 +87,10 @@ def fetch_primary_index_candidates(
                 limit=lim,
             )
             strategy = "exact_reference" if rows else None
+        if (subject.ean or subject.reference) and not rows:
+            # A missing identifier is a live-lookup requirement, not permission
+            # to replace it with a same-brand sibling from a partial index.
+            return [], "exact_identifier_miss"
 
         gender = preference_gender_label(interpretation)
         from app.catalog.specs.preference_normalize import _fold
