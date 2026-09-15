@@ -1,79 +1,128 @@
 # Execução das melhorias — 15/09/2026
 
-Autorização: executar as etapas em sequência, sem novas confirmações. Políticas,
-persona, mensagens e parâmetros operacionais devem ser persistidos, versionados
-e editáveis pelos operadores no ChatBo. Segredos permanecem no ambiente seguro.
+## Resultado
 
-## Sequência e estado
+As etapas foram implementadas e publicadas nos quatro componentes. Dez migrações
+foram aplicadas ao Supabase NsAgent. O consumidor durável foi habilitado após
+conferir o código publicado, sua autenticação e o carregamento da persona.
 
-### Atualização da integração local
+O workspace da persona ativa está na **configuração v1**, com **451 definições**,
+incluindo **250 mensagens e instruções**. Os valores operacionais do ambiente foram
+capturados pelo runtime de produção; alterações posteriores são versionadas pelo
+editor. Outros workspaces ainda sem persona ativa recebem o catálogo e inicializam
+seus valores quando passarem a utilizar o agente.
 
-As etapas abaixo registram o estado inicial. O estado atual é:
+## Publicações e conferência
 
-- **Banco:** sete migrações aplicadas: RLS/grants, persona atômica, catálogo de configuração, despacho durável, edição atômica/mensagens, índices/documentos/traces, overview/aprovação atômica do aprendizado.
-- **Configuração:** 450 definições, incluindo 250 mensagens/instruções. Editor por categoria e validação de tipos, limites, variáveis e políticas comerciais.
-- **Runtime local:** orçamento/fallback, cache por turno e por versão, pool limitado, filtros de catálogo antes do limite, recuperação de erros transitórios, qualificação progressiva, checkout no site, URLs íntegras e aprendizado por workspace.
-- **Frontend local:** rotas sob demanda, cache limpo entre sessões, histórico protegido contra troca de conversa, paginação e detalhes das consultas. Build aprovado; bundle principal passou de 884 para 706 kB.
-- **Validações:** 134 testes backend antes da última integração; 755 testes comerciais NSAgent após migração de mensagens. Nova suíte integral pendente após ajustes RAG.
-- **Publicação:** código ainda não publicado; CLI Vercel sem autorização. Cron do despacho criado e desabilitado até validar o endpoint publicado. Bootstrap das configurações dos workspaces pendente do novo runtime.
-- **Em fechamento:** documentos com validade/versão na UI, aprendizado com contadores completos, contrato de atributos Tray, regressões e navegador.
+| Componente | Commits de implementação | Evidência em produção |
+| --- | --- | --- |
+| NSAgent | `a53afd4`, correção `af98c95` | Vercel READY; health confirmou `af98c957ad09`; runtime carregou persona 17, configuração 1 e 451 campos |
+| ChatBo backend | `7de9fef`, registro operacional `2f8d974` | Health e banco saudáveis; OpenAPI contém PATCH de validade de anexos |
+| ChatBo frontend | `2a3ad47`, ajuste de feedback `cc207cf` | Publicação pelo Git; site serve novos módulos de configuração, aprendizado e execuções |
+| TRAYadaptor | `ab295d4` | Health confirmou `ab295d4d6598`; CI do GitHub aprovado |
 
-### Registro inicial (histórico)
+Endereços conferidos:
 
-1. **Concluído em produção:** conter acesso público ao banco e verificar papéis internos.
-2. **Banco recuperado; código local validando:** publicação transacional da persona,
-   vínculo real de workspace e isolamento de testes. Release do backend pendente.
-3. **Em andamento:** orçamento/fallback corrigido e 34 testes aprovados;
-   catálogo de políticas e mensagens no banco;
-   coerência de permuta entre atendimento e aprendizado.
-4. Pendente: despacho durável frequente de inbox/outbox e idade da fila.
-5. Pendente: contexto único por turno, cache versionado e consultas redundantes.
-6. Pendente: precedência de configuração, qualificação progressiva e checkout.
-7. Pendente: filtros antes do limite, atributos e recuperação da busca aproximada.
-8. Pendente: validação final, links íntegros e estado consistente.
-9. Pendente: avaliações e aprendizado por workspace, rollout/rollback e documentos.
-10. Pendente adicional: completar configuração avançada, mensagens, aprendizado,
-    consulta de traces e experiência de conversas no ChatBo; contratos TrayAdaptor.
-11. Pendente: verificações integradas, migrações, publicação e conferência operacional.
+- NSAgent: https://ns-agent-for-sorteios.vercel.app/api/health
+- ChatBo: https://www.chatbo.com.br
+- Backend: https://chatbo-backendagent.onrender.com/health
+- TRAYadaptor: https://trayadaptor.onrender.com/health
 
-## Alterações preexistentes preservadas
+## Etapas concluídas
 
-- Backend: whatsapp_meta.py, conversa_repository.py, mensagem_repository.py,
-  routes/conversas.py, conversas_service.py, tests/test_conversation_read.py.
-- Frontend: ConversationsPage.tsx, conversations.service.ts; tmp-login.json
-  contém material local e não será incluído em artefatos/commits.
-- NSAgent: relatórios e evidências de auditorias anteriores não rastreados.
+1. **Banco:** RLS e grants restritos nas tabelas internas; acesso público removido.
+2. **Persona:** publicação e edição ativa atômicas, controle de versão e identidade;
+   isolamento de testes; recuperação da persona legítima Crono v17 / perfil v20.
+3. **Configuração:** catálogo no banco, editor avançado, tipos, limites, variáveis de
+   mensagens, conflitos de publicação e histórico/restauração como rascunho.
+4. **Orçamento:** limite zero respeitado; esgotamento encerra tentativas de modelos;
+   reserva e estorno não devolvem chamadas anteriormente consumidas.
+5. **Filas:** aceite durável antes do ACK, processamento imediato, retomada periódica,
+   autenticação dedicada no Vault e intervalo de retentativa após falhas.
+6. **Consultas:** cache por turno e versão, pool limitado, invalidação após escrita;
+   índices, disponibilidade antes do limite e recuperação após erro transitório.
+7. **Atendimento:** políticas do workspace prevalecem; qualificação progressiva;
+   checkout configurável no site; permuta com avaliação humana; links preservados.
+8. **Catálogo e estado:** atributos explícitos da Tray preservados com origem;
+   mecanismo explícito prevalece sobre nome ambíguo; estado alinhado à resposta final.
+9. **Conhecimento e aprendizado:** seleção contextual de trechos, hash e validade;
+   histórico de documentos; aprovação atômica e isolamento por workspace; propostas
+   pendentes não entram na memória ativa; contadores de 24 horas completos.
+10. **ChatBo:** rotas sob demanda, cache limpo entre sessões, histórico protegido
+    contra troca de conversa, links clicáveis, paginação de execuções e consultas
+    com filtros, resultados, duração e versões; histórico do aprendizado.
 
-## Decisões confirmadas
+## Filas em produção
 
-- O frontend utiliza a API ChatBo e não possui cliente Supabase direto.
-- O backend autentica com JWT próprio e autoriza recursos pelo workspace.
-- Credencial Supabase do backend: service_role; conexão SQL: postgres.
-  Valores de credenciais não foram impressos nem incorporados neste relatório.
-- As duas policies públicas de clientes/pedidos permitem ALL para PUBLIC e
-  devem ser removidas. As tabelas são internas ao backend.
-- Os testes de PersonaService injetam repositório falso, mas mantêm o publisher
-  real: isso explica uma rota concreta para a publicação de IDs de fixture.
+- Cron `nsagent-durable-queue-dispatch`: ativo, a cada **15 segundos**.
+- Controle privado `queue_dispatch_settings.enabled`: **true**.
+- Sem autorização: **HTTP 401**. Com segredo dedicado: **HTTP 200**.
+- O log do processamento confirmou persona ativa e configuração carregadas do banco.
+- Execuções às 07:23:30, 07:23:45 e 07:24:00 UTC terminaram com `succeeded`.
+- Na conferência: 172 entradas processadas e 57 saídas enviadas; nenhuma pendência.
+- Com filas vazias, o cron não solicita processamento ao Vercel.
+- Nenhuma conversa de cliente foi criada nem mensagem de teste enviada.
 
-## Validação e evidências
+## Validação
 
-Cada etapa registrará aqui testes executados, migrações aplicadas e limitações.
-Nenhuma melhoria será considerada concluída apenas por ter seu código escrito.
+- NSAgent: **1.993 testes aprovados, 1 ignorado**; suíte final após a correção UUID.
+- Backend: **139 testes aprovados**.
+- TRAYadaptor: **237 testes aprovados**, incluindo preservação de especificações.
+- Frontend: TypeScript/Vite aprovados; lint dos arquivos alterados sem erros.
+- Navegador local com API simulada: configuração, publicação, histórico, validade,
+  aprendizado e consultas; sem erros JavaScript observados.
+- Build principal caiu de aproximadamente **884 para 706 kB** (cerca de 20%).
+- Pool: mediana local de SELECT simples aproximadamente 399 ms nas conexões
+  reaproveitadas; não representa a latência total do atendimento em produção.
+- SQL: uso do índice de trigramas confirmado; rollback transacional confirmado.
+- Segurança Supabase: nenhum aviso ou erro no advisor; apenas informes de RLS sem
+  policy nas tabelas internas, acessadas pelo backend autorizado.
 
-- Migrações aplicadas no NsAgent: restrict_internal_data_api e
-  atomic_workspace_persona_publication (arquivos no backend/supabase/migrations).
-- Segurança: 0 tabelas sem RLS, 0 grants de tabelas para anon/authenticated/PUBLIC.
-  Data API (limit=0, sem leitura de conteúdo) negou anon com 42501 e manteve 200
-  para service_role em persona, workspace_agents, cache OAuth e clientes.
-- Advisors: sem erros de segurança; INFO de RLS sem policy é esperado para
-  tabelas internas. Restou WARN de pg_trgm em public, tratado na etapa de busca.
-- Publicação: Crono New Store v17 recuperado e ligado ao workspace real.
-  Recompilação do perfil ChatBo v20 + 1 anexo = 24.335 caracteres, hash idêntico;
-  RPC retornou idempotent=true, sem criar nova versão nem arquivar a válida.
-- Teste transacional no banco: vínculo persona-1/workspace-a rejeitado antes da
-  ativação; conjunto de personas ativas preservado.
-- Fallback: testes novos cobrem Responses/canary, texto/estrutura, orçamento zero
-  e consumido, e estorno associado à reserva posterior ao checkpoint.
-- A proteção dos testes do backend revelou dependências reais de autenticação
-  não simuladas nos testes Mercos; foram substituídas por dependências explícitas
-  de teste. Assertions antigas do wizard aposentado foram alinhadas ao contrato.
+## Correções identificadas na verificação final
+
+O primeiro teste publicado encontrou um UUID nativo do psycopg onde o modelo
+esperava string. A persona não carregou nessa tentativa. Foi adicionada a conversão
+no modelo e uma regressão; a leitura do registro real e a nova publicação confirmaram
+a correção. A ativação do cron ocorreu depois dessa conferência.
+
+O feedback de upload foi ajustado: falha na extração aparece como falha de leitura,
+e sucesso de armazenamento não afirma uma republicação não confirmada.
+
+## Migrações
+
+Arquivos em `Chatbo-backendAgent/supabase/migrations`:
+
+1. `20260915052413_restrict_internal_data_api.sql`
+2. `20260915052534_atomic_workspace_persona_publication.sql`
+3. `20260915053433_operator_configuration_catalog.sql`
+4. `20260915055026_durable_queue_dispatch.sql`
+5. `20260915061227_atomic_persona_edits_and_operator_messages.sql`
+6. `20260915062507_catalog_retrieval_and_trace_performance.sql`
+7. `20260915063904_workspace_learning_overview_and_atomic_approval.sql`
+8. `20260915064908_workspace_learning_uniqueness_and_document_audit.sql`
+9. `20260915070404_operator_template_contract_metadata.sql`
+10. `20260915072305_enable_verified_queue_dispatch.sql`
+
+## Limites e acompanhamento
+
+- O cadastro controla persona, regras comerciais, textos e controles registrados.
+  Credenciais, identidades de integração, contratos técnicos e validações de segurança
+  ficam fora do editor comercial. Novas chaves exigem migração; valores existentes
+  podem ser alterados pelos operadores.
+- A conferência inclui endpoints reais, banco e arquivos servidos. A navegação
+  autenticada das novas telas foi validada com uma API local simulada.
+- O ambiente conferido tem uma persona ativa. Escala de consumidores e agendamentos
+  para várias personas simultâneas exige teste de carga e distribuição por workspace.
+- Aprendizado legado sem workspace precisa ser atribuído antes de promoção automática.
+- O bundle principal ainda gera o aviso do Vite para chunks acima de 500 kB.
+- O health do NSAgent informa um diagnóstico de configuração. O endpoint público
+  fornece apenas a contagem; o detalhe exige o diagnóstico administrativo autenticado.
+- Conversão e latência total precisam ser medidas em atendimentos representativos
+  após a publicação; não foram estimadas a partir dos testes locais.
+
+## Trabalho preexistente preservado
+
+As melhorias de envio, histórico incremental, mídias e confirmação de leitura
+preexistentes foram preservadas. Backend e frontend receberam commits próprios
+dessas alterações durante a execução. Credenciais locais e arquivos temporários
+não foram incluídos nos commits.

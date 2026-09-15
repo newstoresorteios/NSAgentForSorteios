@@ -59,7 +59,7 @@ foram preservadas. Elas foram registradas em commits próprios durante esta exec
 
 ## Evidências de validação
 
-- NSAgent: **1.992 testes aprovados, 1 ignorado**; 232 aliases de ambiente documentados.
+- NSAgent: **1.993 testes aprovados, 1 ignorado**; 232 aliases de ambiente documentados.
 - ChatBo backend: **139 testes aprovados**; avisos existentes de depreciação de datas.
 - TRAYadaptor: **237 testes aprovados**.
 - Frontend: TypeScript/Vite aprovados; lint dos arquivos alterados com **0 erros**
@@ -80,15 +80,18 @@ foram preservadas. Elas foram registradas em commits próprios durante esta exec
 
 ## Migrações
 
-Nove migrações em `Chatbo-backendAgent/supabase/migrations`, de
+Dez migrações em `Chatbo-backendAgent/supabase/migrations`, de
 `20260915052413_restrict_internal_data_api.sql` até
-`20260915070404_operator_template_contract_metadata.sql`.
+`20260915072305_enable_verified_queue_dispatch.sql`.
 Elas já estão aplicadas no projeto Supabase NsAgent.
 
 ## Acompanhamento da publicação
 
-O estado da publicação e a validação dos endpoints serão registrados no arquivo
-`EXECUCAO-MELHORIAS.md`. Migração aplicada não implica código publicado.
+Os quatro componentes foram publicados. O runtime de produção confirmou a persona
+v17 e a configuração v1 com 451 campos. O despacho durável está ativo a cada 15
+segundos, sem pendências nas filas durante a conferência. Commits, endpoints,
+correção UUID encontrada em produção e limites da evidência estão registrados em
+`EXECUCAO-MELHORIAS.md`.
 
 ## Limites da evidência e continuidade
 
