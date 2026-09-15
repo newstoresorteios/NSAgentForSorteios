@@ -606,3 +606,16 @@ async def test_index_refresh_bypasses_cached_available_pool(monkeypatch):
     assert "available" not in execute.call_args.args[1]
     assert "available_in_store" not in execute.call_args.args[1]
     assert store.call_args.args[0] == "brand:orient:all"
+
+
+@pytest.mark.parametrize("raw,expected", [("0", False), ("false", False), (0, False), (False, False), ("1", True), ("true", True), (1, True)])
+def test_tray_availability_flags_survive_index_and_snapshot(raw, expected):
+    from app.catalog.index.catalog_index import to_canonical_item
+    from app.catalog.index.snapshot import product_dict_to_snapshot
+    product = {"id": "sku", "name": "Relogio", "price": 2499.99, "stock": 38,
+               "available": raw, "available_in_store": raw}
+    item = to_canonical_item(product)
+    assert item.available is expected
+    assert item.available_in_store is expected
+    assert product_dict_to_snapshot(product).available is expected
+    assert product_dict_to_snapshot({**product, "stock": {"quantity": 38, "available": raw}}).available is expected

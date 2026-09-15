@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.models import SalesInterpretation
 from app.catalog.retrieval.price import effective_price
+from app.catalog.retrieval.availability import _truth_state
 from app.catalog.index.product_fields import product_id_of
 from app.catalog.retrieval.runtime import log_swallowed
 from app.catalog.retrieval.text import fold_text as _fold
@@ -272,16 +273,8 @@ def to_canonical_item(
         price=price,
         promotional_price=promo_f,
         stock=stock,
-        available=(
-            bool(product.get("available"))
-            if product.get("available") is not None
-            else None
-        ),
-        available_in_store=(
-            bool(product.get("available_in_store"))
-            if product.get("available_in_store") is not None
-            else None
-        ),
+        available=_truth_state(product.get("available")),
+        available_in_store=_truth_state(product.get("available_in_store")),
         url=str(product.get("url")) if product.get("url") else None,
         image_url=str(
             product.get("primary_image_url") or product.get("image_url") or ""

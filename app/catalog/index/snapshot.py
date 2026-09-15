@@ -223,25 +223,22 @@ def product_dict_to_snapshot(
     match_kind: Literal["exact", "similar", "unknown"] = "unknown",
 ) -> ProductSnapshot:
     product_id = product_id_of(payload) or ""
+    from app.catalog.retrieval.availability import _truth_state
     stock_raw = payload.get("stock")
     if isinstance(stock_raw, dict):
-        stock_qty = stock_raw.get("quantity") or stock_raw.get("stock")
-        available = bool(
-            stock_raw.get("available")
-            if stock_raw.get("available") is not None
-            else (int(stock_qty or 0) > 0)
-        )
+        stock_qty = stock_raw.get("quantity") if stock_raw.get("quantity") is not None else stock_raw.get("stock")
+        raw_available = stock_raw.get("available")
+        if raw_available is None:
+            raw_available = payload.get("available")
     else:
         stock_qty = stock_raw
-        available = bool(
-            payload.get("available")
-            if payload.get("available") is not None
-            else (int(stock_qty or 0) > 0 if stock_qty is not None else False)
-        )
+        raw_available = payload.get("available")
     try:
         stock_quantity = int(stock_qty) if stock_qty is not None else None
     except (TypeError, ValueError):
         stock_quantity = None
+    explicit_available = _truth_state(raw_available)
+    available = explicit_available if explicit_available is not None else bool(stock_quantity and stock_quantity > 0)
     images: list[str] = []
     for key in ("images", "image_urls"):
         value = payload.get(key)
