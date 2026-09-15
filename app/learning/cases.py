@@ -23,6 +23,7 @@ def _is_undefined_table(exc: BaseException) -> bool:
 def upsert_learning_case(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     failure_code: str,
     conversation_key: str | None,
     customer_excerpt: str,
@@ -39,16 +40,20 @@ def upsert_learning_case(
                 cur.execute(
                     """
                     INSERT INTO public.ai_learning_cases (
-                        tenant_id, case_key, conversation_key, failure_codes,
+                        tenant_id, workspace_id, case_key, conversation_key, failure_codes,
                         customer_excerpt, bad_reply, correction, status,
                         insight_id, importance, created_at, updated_at, metadata
                     )
                     VALUES (
-                        %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
                         %s, %s, %s, 'active',
                         %s, %s, %s, %s, %s
                     )
-                    ON CONFLICT (tenant_id, case_key) DO UPDATE SET
+                    ON CONFLICT (
+                        tenant_id,
+                        COALESCE(workspace_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                        case_key
+                    ) DO UPDATE SET
                         conversation_key = EXCLUDED.conversation_key,
                         failure_codes = EXCLUDED.failure_codes,
                         customer_excerpt = EXCLUDED.customer_excerpt,
@@ -66,6 +71,7 @@ def upsert_learning_case(
                     """,
                     (
                         tenant_id,
+                        workspace_id,
                         case_key,
                         conversation_key,
                         to_jsonb([failure_code]),
@@ -90,6 +96,7 @@ def upsert_learning_case(
 def list_active_cases(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     safe_limit = max(0, min(int(limit), 20))
@@ -103,11 +110,12 @@ def list_active_cases(
                     SELECT *
                     FROM public.ai_learning_cases
                     WHERE tenant_id = %s
+                      AND (workspace_id = %s OR workspace_id IS NULL)
                       AND status = 'active'
                     ORDER BY importance DESC NULLS LAST, updated_at DESC
                     LIMIT %s
                     """,
-                    (tenant_id, safe_limit),
+                    (tenant_id, workspace_id, safe_limit),
                 )
                 return [dict(row) for row in (cur.fetchall() or [])]
     except psycopg.Error as exc:

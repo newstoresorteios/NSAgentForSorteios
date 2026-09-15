@@ -17,6 +17,22 @@ from app.learning.constitution import check_instruction_delta
 from app.learning.rollback import evaluate_canaries
 
 
+@pytest.mark.asyncio
+async def test_workspace_runtime_can_disable_learning_batch(monkeypatch):
+    monkeypatch.setattr(
+        "app.persona.persona_runtime.load_persona_runtime",
+        lambda: SimpleNamespace(
+            runtime_configuration={"learningEnabled": False},
+            workspace_id="22222222-2222-2222-2222-222222222222",
+        ),
+    )
+
+    summary = await run_attendance_learning_batch()
+
+    assert summary["skipped"] == "learning_disabled"
+    assert summary["workspace_id"] == "22222222-2222-2222-2222-222222222222"
+
+
 def test_classify_preference_misread_empty_catalog():
     row = {
         "customer_text": "feminino até 3000 reais",

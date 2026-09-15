@@ -234,6 +234,14 @@ def compile_agent_prompt(
             or getattr(incoming, "sender_key", None)
             or getattr(incoming, "sender_phone", None)
         )
+    workspace_id: str | None = None
+    try:
+        from app.persona.persona_runtime import get_persona_runtime
+
+        turn_runtime = get_persona_runtime()
+        workspace_id = turn_runtime.workspace_id if turn_runtime is not None else None
+    except Exception as exc:
+        log_swallowed("compiler.workspace_runtime", exc)
     if load_extensions:
         try:
             from app.persona.instruction_extension_repository import (
@@ -243,6 +251,7 @@ def compile_agent_prompt(
 
             extensions = list_active_extensions(
                 tenant_id=tenant_id,
+                workspace_id=workspace_id,
                 channel=channel,
                 sender_key=sender_key,
                 limit=int(getattr(settings, "agent_max_instruction_extensions", 20)),
@@ -263,6 +272,7 @@ def compile_agent_prompt(
 
             learned_cases = list_active_cases(
                 tenant_id=tenant_id,
+                workspace_id=workspace_id,
                 limit=int(getattr(settings, "agent_max_learned_cases", 5) or 0),
             )
             learned_cases_block = format_learned_cases_block(

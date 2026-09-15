@@ -46,11 +46,17 @@ def compute_fail_rate(
     return failed / total, total
 
 
-def evaluate_canaries(*, tenant_id: str) -> dict[str, int]:
+def evaluate_canaries(
+    *,
+    tenant_id: str,
+    min_reviews: int | None = None,
+    fail_lift: float | None = None,
+    canary_hours: int | None = None,
+) -> dict[str, int]:
     settings = get_settings()
-    min_reviews = int(getattr(settings, "agent_learning_rollback_min_reviews", 20) or 20)
-    lift = float(getattr(settings, "agent_learning_rollback_fail_lift", 1.2) or 1.2)
-    canary_hours = int(getattr(settings, "agent_learning_canary_hours", 6) or 6)
+    min_reviews = int(min_reviews or getattr(settings, "agent_learning_rollback_min_reviews", 20) or 20)
+    lift = float(fail_lift or getattr(settings, "agent_learning_rollback_fail_lift", 1.2) or 1.2)
+    canary_hours = int(canary_hours or getattr(settings, "agent_learning_canary_hours", 6) or 6)
     now = datetime.now(timezone.utc)
     rolled_back = 0
     confirmed = 0

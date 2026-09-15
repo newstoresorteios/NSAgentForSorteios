@@ -384,6 +384,7 @@ def ensure_tables() -> None:
                 CREATE TABLE IF NOT EXISTS public.ai_agent_instruction_extensions (
                     id bigserial PRIMARY KEY,
                     tenant_id text NOT NULL,
+                    workspace_id uuid,
                     scope text NOT NULL
                         CHECK (scope IN ('tenant', 'channel', 'contact')),
                     scope_key text,
@@ -518,6 +519,7 @@ def ensure_tables() -> None:
                 CREATE TABLE IF NOT EXISTS public.ai_attendance_reviews (
                     id bigserial PRIMARY KEY,
                     tenant_id text NOT NULL,
+                    workspace_id uuid,
                     conversation_key text,
                     sender_key text,
                     inbound_id bigint,
@@ -537,6 +539,7 @@ def ensure_tables() -> None:
                 CREATE TABLE IF NOT EXISTS public.ai_learning_insights (
                     id bigserial PRIMARY KEY,
                     tenant_id text NOT NULL,
+                    workspace_id uuid,
                     insight_key text NOT NULL,
                     category text NOT NULL,
                     title text NOT NULL,
@@ -582,6 +585,7 @@ def ensure_tables() -> None:
                 CREATE TABLE IF NOT EXISTS public.ai_learning_cases (
                     id bigserial PRIMARY KEY,
                     tenant_id text NOT NULL,
+                    workspace_id uuid,
                     case_key text NOT NULL,
                     conversation_key text,
                     failure_codes jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -603,6 +607,22 @@ def ensure_tables() -> None:
                 ON public.ai_learning_cases (
                     tenant_id, status, importance DESC, updated_at DESC
                 );
+
+                ALTER TABLE public.ai_agent_instruction_extensions
+                  ADD COLUMN IF NOT EXISTS workspace_id uuid;
+                ALTER TABLE public.ai_attendance_reviews
+                  ADD COLUMN IF NOT EXISTS workspace_id uuid;
+                ALTER TABLE public.ai_learning_insights
+                  ADD COLUMN IF NOT EXISTS workspace_id uuid;
+                ALTER TABLE public.ai_learning_cases
+                  ADD COLUMN IF NOT EXISTS workspace_id uuid;
+
+                CREATE INDEX IF NOT EXISTS idx_ai_attendance_reviews_workspace_created
+                ON public.ai_attendance_reviews(workspace_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_ai_learning_insights_workspace_status
+                ON public.ai_learning_insights(workspace_id, status, importance DESC, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_ai_learning_cases_workspace_status
+                ON public.ai_learning_cases(workspace_id, status, importance DESC, updated_at DESC);
 
                 CREATE TABLE IF NOT EXISTS public.ai_human_takeover_state (
                     state_key text PRIMARY KEY,

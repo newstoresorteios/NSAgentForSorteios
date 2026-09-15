@@ -60,6 +60,7 @@ def mark_insight_status(
 def promote_insights_to_extensions(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     insight_id: int,
     category: str,
     insight_text: str,
@@ -68,6 +69,7 @@ def promote_insights_to_extensions(
     baseline_fail_rate: float | None = None,
     baseline_reviews: int | None = None,
     reviewed: bool = False,
+    canary_hours: int | None = None,
 ) -> int | None:
     """Create an instruction extension. Activate only after explicit review."""
     settings = get_settings()
@@ -85,8 +87,8 @@ def promote_insights_to_extensions(
         return None
 
     extension_key = f"learning:{category}:{insight_id}"
-    canary_hours = int(getattr(settings, "agent_learning_canary_hours", 6) or 6)
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=max(1, canary_hours))
+    resolved_canary_hours = int(canary_hours or getattr(settings, "agent_learning_canary_hours", 6) or 6)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=max(1, resolved_canary_hours))
     auto_activate = bool(getattr(settings, "agent_learning_auto_activate", False)) and bool(
         reviewed
     )
@@ -101,6 +103,7 @@ def promote_insights_to_extensions(
     try:
         created = create_extension_proposal(
             tenant_id=tenant_id,
+            workspace_id=workspace_id,
             extension_key=extension_key,
             instruction_text=insight_text,
             category=category,

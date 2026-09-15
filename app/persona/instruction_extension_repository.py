@@ -20,6 +20,7 @@ def _norm_scope_key(scope_key: str | None) -> str:
 def list_active_extensions(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     channel: str | None = None,
     sender_key: str | None = None,
     limit: int = 20,
@@ -31,6 +32,7 @@ def list_active_extensions(
                 SELECT *
                 FROM public.ai_agent_instruction_extensions
                 WHERE tenant_id = %s
+                  AND (workspace_id = %s OR workspace_id IS NULL)
                   AND status = 'active'
                   AND (expires_at IS NULL OR expires_at > now())
                   AND (
@@ -43,6 +45,7 @@ def list_active_extensions(
                 """,
                 (
                     tenant_id,
+                    workspace_id,
                     _norm_scope_key(channel),
                     _norm_scope_key(sender_key),
                     limit,
@@ -71,6 +74,7 @@ def list_pending_extensions(*, tenant_id: str, limit: int = 50) -> list[dict[str
 def create_extension_proposal(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     extension_key: str,
     instruction_text: str,
     category: str,
@@ -89,19 +93,20 @@ def create_extension_proposal(
             cur.execute(
                 """
                 INSERT INTO public.ai_agent_instruction_extensions (
-                    tenant_id, scope, scope_key, scope_key_norm, extension_key,
+                    tenant_id, workspace_id, scope, scope_key, scope_key_norm, extension_key,
                     category, instruction_text, instruction_hash, source, status,
                     importance, confidence, proposed_by_inbound_id,
                     proposed_by_response_id, first_seen_at, last_seen_at, metadata
                 )
                 VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending_review',
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending_review',
                     %s, %s, %s, %s, %s, %s, %s
                 )
                 RETURNING *
                 """,
                 (
                     tenant_id,
+                    workspace_id,
                     scope,
                     scope_key,
                     _norm_scope_key(scope_key),

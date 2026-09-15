@@ -43,6 +43,20 @@ def _insight_key(category: str, title: str) -> str:
     return f"{category}:{digest}"
 
 
+def _workspace_id(row: dict[str, Any]) -> str | None:
+    direct = str(row.get("workspace_id") or "").strip()
+    if direct:
+        return direct
+    metadata = row.get("response_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    runtime = metadata.get("persona_runtime")
+    if not isinstance(runtime, dict):
+        return None
+    value = str(runtime.get("workspace_id") or "").strip()
+    return value or None
+
+
 def fetch_recent_attendances(
     *,
     tenant_id: str,
@@ -71,18 +85,19 @@ def persist_attendance_review(
             cur.execute(
                 """
                 INSERT INTO public.ai_attendance_reviews (
-                    tenant_id, conversation_key, sender_key,
+                    tenant_id, workspace_id, conversation_key, sender_key,
                     inbound_id, response_id, channel,
                     customer_text, agent_reply, outcome,
                     failure_codes, signals
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (tenant_id, response_id) WHERE response_id IS NOT NULL
                 DO NOTHING
                 RETURNING id
                 """,
                 (
                     tenant_id,
+                    _workspace_id(row),
                     row.get("conversation_id"),
                     row.get("sender_key"),
                     row.get("inbound_id"),
@@ -144,6 +159,11 @@ def record_pipeline_block_review(
         channel=channel,
     )
     row = {
+        "workspace_id": (
+            (result_metadata or {}).get("persona_runtime", {}).get("workspace_id")
+            if isinstance((result_metadata or {}).get("persona_runtime"), dict)
+            else None
+        ),
         "conversation_id": conversation_key,
         "sender_key": sender_key,
         "inbound_id": inbound_id,
@@ -234,7 +254,7 @@ def fetch_recent_reviews_for_cluster(
             cur.execute(
                 """
                 SELECT id, conversation_key, customer_text, agent_reply,
-                       outcome, failure_codes
+                       outcome, failure_codes, workspace_id
                 FROM public.ai_attendance_reviews
                 WHERE tenant_id = %s
                   AND created_at >= %s
@@ -263,6 +283,7 @@ def fetch_recent_reviews_for_cluster(
             "agent_reply": row[3],
             "outcome": row[4],
             "failure_codes": [str(item) for item in codes],
+            "workspace_id": row[6] if len(row) > 6 else None,
         })
     return reviews
 
@@ -270,6 +291,7 @@ def fetch_recent_reviews_for_cluster(
 def upsert_learning_insight(
     *,
     tenant_id: str,
+    workspace_id: str | None,
     category: str,
     title: str,
     insight_text: str,
@@ -286,16 +308,20 @@ def upsert_learning_insight(
             cur.execute(
                 """
                 INSERT INTO public.ai_learning_insights (
-                    tenant_id, insight_key, category, title, insight_text,
+                    tenant_id, workspace_id, insight_key, category, title, insight_text,
                     evidence_count, confidence, importance, status,
                     source_review_ids, metadata, first_seen_at, last_seen_at
                 )
                 VALUES (
-                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, 'pending_review',
                     %s, %s, %s, %s
                 )
-                ON CONFLICT (tenant_id, insight_key) WHERE status = 'pending_review'
+                ON CONFLICT (
+                    tenant_id,
+                    COALESCE(workspace_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                    insight_key
+                ) WHERE status = 'pending_review'
                 DO UPDATE SET
                     evidence_count = public.ai_learning_insights.evidence_count + EXCLUDED.evidence_count,
                     confidence = GREATEST(
@@ -315,6 +341,7 @@ def upsert_learning_insight(
                 """,
                 (
                     tenant_id,
+                    workspace_id,
                     key,
                     category,
                     title,
@@ -338,23 +365,58 @@ async def run_attendance_learning_batch(
     auto_promote: bool | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
+    runtime_values: dict[str, Any] = {}
+    runtime_workspace_id: str | None = None
+    try:
+        from app.persona.persona_runtime import load_persona_runtime
+
+        learning_runtime = load_persona_runtime()
+        runtime_values = learning_runtime.runtime_configuration
+        runtime_workspace_id = learning_runtime.workspace_id
+    except Exception as exc:
+        print("[attendance.learning.runtime_config_error]", {
+            "error_type": type(exc).__name__, "error": str(exc)[:160]
+        })
+
+    if runtime_values.get("learningEnabled", True) is False:
+        return {
+            "ok": True,
+            "skipped": "learning_disabled",
+            "tenant_id": str(getattr(settings, "agent_persona_tenant_id", "newstore") or "newstore"),
+            "workspace_id": runtime_workspace_id,
+            "rows_scanned": 0,
+        }
     tenant_id = str(getattr(settings, "agent_persona_tenant_id", "newstore") or "newstore")
-    bootstrap_hours = lookback_hours or int(
+    bootstrap_hours = lookback_hours or int(runtime_values.get("learningLookbackHours") or
         getattr(settings, "agent_learning_bootstrap_hours", None)
         or getattr(settings, "agent_learning_lookback_hours", 24)
         or 24
     )
-    row_limit = limit or int(getattr(settings, "agent_learning_batch_limit", 500) or 500)
+    row_limit = limit or int(runtime_values.get("learningBatchLimit") or getattr(settings, "agent_learning_batch_limit", 500) or 500)
     if auto_promote is None:
-        auto_apply = bool(getattr(settings, "agent_learning_auto_promote", False))
+        auto_apply = bool(runtime_values.get("learningAutoPromote", getattr(settings, "agent_learning_auto_promote", False)))
     else:
         auto_apply = bool(auto_promote)
-    max_clusters = int(getattr(settings, "agent_learning_max_clusters", 5) or 5)
+    max_clusters = int(runtime_values.get("learningMaxClusters") or getattr(settings, "agent_learning_max_clusters", 5) or 5)
+    canary_hours = int(runtime_values.get("learningCanaryHours") or getattr(settings, "agent_learning_canary_hours", 6) or 6)
+    rollback_min_reviews = int(runtime_values.get("learningRollbackMinReviews") or getattr(settings, "agent_learning_rollback_min_reviews", 20) or 20)
+    rollback_fail_lift = float(runtime_values.get("learningRollbackFailLift") or getattr(settings, "agent_learning_rollback_fail_lift", 1.2) or 1.2)
+    auto_activate_enabled = bool(
+        runtime_values.get(
+            "learningAutoActivate",
+            getattr(settings, "agent_learning_auto_activate", False),
+        )
+    )
 
     errors: list[str] = []
     rollback_summary = {"rolled_back": 0, "confirmed": 0, "extended": 0}
     try:
-        rollback_summary = evaluate_canaries(tenant_id=tenant_id)
+        rollback_summary = evaluate_canaries(
+            tenant_id=tenant_id,
+            min_reviews=rollback_min_reviews,
+            fail_lift=rollback_fail_lift,
+            canary_hours=canary_hours,
+        )
     except Exception as exc:
         errors.append("canary_evaluation_failed")
         print("[attendance.learning.rollback_batch_error]", {
@@ -426,6 +488,7 @@ async def run_attendance_learning_batch(
             "customer_text": row.get("customer_text"),
             "agent_reply": row.get("agent_reply"),
             "conversation_id": row.get("conversation_id"),
+            "workspace_id": _workspace_id(row),
         })
 
     try:
@@ -482,7 +545,10 @@ async def run_attendance_learning_batch(
         }
 
     conversations = group_by_conversation(rows)
-    buckets = aggregate_failures(reviews)
+    buckets: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
+    for workspace_review in reviews:
+        for code, items in aggregate_failures([workspace_review]).items():
+            buckets.setdefault((workspace_review.get("workspace_id"), code), []).extend(items)
     ranked = sorted(buckets.items(), key=lambda item: len(item[1]), reverse=True)
     ranked = ranked[:max_clusters]
 
@@ -499,7 +565,7 @@ async def run_attendance_learning_batch(
     reflections = 0
     constitution_rejected = 0
     activated = 0
-    for code, cluster_reviews in ranked:
+    for (workspace_id, code), cluster_reviews in ranked:
         if not cluster_is_high_signal(code, len(cluster_reviews)):
             continue
         delta = await reflect_cluster(failure_code=code, reviews=cluster_reviews)
@@ -517,6 +583,7 @@ async def run_attendance_learning_batch(
         try:
             insight_id = upsert_learning_insight(
                 tenant_id=tenant_id,
+                workspace_id=workspace_id,
                 category=category if category in {
                     "persona", "knowledge", "retrieval", "handoff",
                     "greeting", "policy", "other",
@@ -551,6 +618,7 @@ async def run_attendance_learning_batch(
             continue
         ext_id = promote_insights_to_extensions(
             tenant_id=tenant_id,
+            workspace_id=workspace_id,
             insight_id=insight_id,
             category=category,
             insight_text=insight_text,
@@ -558,15 +626,18 @@ async def run_attendance_learning_batch(
             importance=importance,
             baseline_fail_rate=baseline_rate,
             baseline_reviews=baseline_n,
+            canary_hours=canary_hours,
+            reviewed=auto_activate_enabled,
         )
         if ext_id:
             extensions_created += 1
-            if bool(getattr(settings, "agent_learning_auto_activate", False)):
+            if auto_activate_enabled:
                 activated += 1
             sample = cluster_reviews[0]
             try:
                 upsert_learning_case(
                     tenant_id=tenant_id,
+                    workspace_id=workspace_id,
                     failure_code=code,
                     conversation_key=str(sample.get("conversation_id") or "") or None,
                     customer_excerpt=str(sample.get("customer_text") or ""),
@@ -592,7 +663,7 @@ async def run_attendance_learning_batch(
         "conversations": len(conversations),
         "cursor_from": cursor_from,
         "cursor_to": last_response_id,
-        "clusters": {k: len(v) for k, v in ranked},
+        "clusters": {f"{workspace or 'legacy'}:{code}": len(v) for (workspace, code), v in ranked},
         "reflections": reflections,
         "insights_upserted": insights_created,
         "extensions_promoted": extensions_created,
@@ -600,7 +671,7 @@ async def run_attendance_learning_batch(
         "rolled_back": int(rollback_summary.get("rolled_back") or 0),
         "confirmed": int(rollback_summary.get("confirmed") or 0),
         "constitution_rejected": constitution_rejected,
-        "failure_buckets": {k: len(v) for k, v in buckets.items()},
+        "failure_buckets": {f"{workspace or 'legacy'}:{code}": len(v) for (workspace, code), v in buckets.items()},
     }
     print("[attendance.learning.batch]", summary)
     return summary
