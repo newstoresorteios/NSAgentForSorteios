@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 PersonaStatus = Literal["draft", "active", "archived"]
@@ -27,6 +28,12 @@ class PersonaVersion(BaseModel):
     activated_at: datetime | None = None
     archived_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("workspace_id", mode="before")
+    @classmethod
+    def normalize_workspace_id(cls, value: Any) -> Any:
+        # psycopg returns UUID objects; HTTP/JSON repositories return strings.
+        return str(value) if isinstance(value, UUID) else value
 
 
 class PersonaVersionCreate(BaseModel):

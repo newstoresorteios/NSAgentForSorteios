@@ -2,6 +2,18 @@ from __future__ import annotations
 
 import app.persona.persona_repository as repo
 from tests.persona.persona_fakes import InMemoryPersonaStore
+from uuid import UUID
+
+
+def test_postgres_uuid_workspace_survives_persona_mapping():
+    workspace_id = UUID("b3d7eed2-1cd0-45ac-82c7-8a8e8c0430b8")
+    persona = repo._row_to_persona({
+        "id": 17, "tenant_id": "tenant", "persona_key": "commercial",
+        "workspace_id": workspace_id, "version": 1, "name": "Agent",
+        "instructions": "Database persona", "instructions_hash": "hash",
+    })
+    assert persona.workspace_id == str(workspace_id)
+    assert persona.model_dump(mode="json")["workspace_id"] == str(workspace_id)
 
 
 def test_hash_instructions_stable():
