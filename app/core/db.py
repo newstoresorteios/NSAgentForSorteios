@@ -1,6 +1,7 @@
 from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Iterator
+from uuid import UUID
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -205,7 +206,8 @@ def ensure_tables() -> None:
 
                 ALTER TABLE public.ai_agent_responses
                   ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown',
-                  ADD COLUMN IF NOT EXISTS sender_key text;
+                  ADD COLUMN IF NOT EXISTS sender_key text,
+                  ADD COLUMN IF NOT EXISTS workspace_id uuid;
 
                 CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_inbound_id
                 ON public.ai_agent_responses(inbound_id);
@@ -215,6 +217,9 @@ def ensure_tables() -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_sender_key_created_at
                 ON public.ai_agent_responses(sender_key, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_ai_agent_responses_workspace_created_at
+                ON public.ai_agent_responses(workspace_id, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS public.ai_customer_identity_links (
                   id bigserial PRIMARY KEY,
@@ -1570,6 +1575,20 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
     safe_data.setdefault("handoff_required", False)
     safe_data.setdefault("safety_reason", None)
     safe_data.setdefault("provider_send_ok", False)
+    safe_data.setdefault("workspace_id", None)
+
+    metadata = safe_data.get("response_metadata")
+    if isinstance(metadata, dict):
+        persona_runtime = metadata.get("persona_runtime")
+        workspace_id = (
+            persona_runtime.get("workspace_id")
+            if isinstance(persona_runtime, dict)
+            else None
+        )
+        try:
+            safe_data["workspace_id"] = str(UUID(str(workspace_id))) if workspace_id else None
+        except (TypeError, ValueError, AttributeError):
+            safe_data["workspace_id"] = None
 
     provider_response = dict(safe_data.get("provider_response") or {})
     if isinstance(safe_data.get("response_metadata"), dict):
@@ -1591,7 +1610,8 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
                     handoff_required,
                     safety_reason,
                     provider_send_ok,
-                    provider_response
+                    provider_response,
+                    workspace_id
                   )
                 VALUES
                   (
@@ -1604,7 +1624,8 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
                     %(handoff_required)s,
                     %(safety_reason)s,
                     %(provider_send_ok)s,
-                    %(provider_response)s
+                    %(provider_response)s,
+                    %(workspace_id)s
                   )
                 RETURNING id
                 """,

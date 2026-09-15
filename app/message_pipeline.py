@@ -207,6 +207,7 @@ def _ensure_live_turn_budget(incoming: IncomingMessage):
 
 async def process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
     from app.persona.persona_runtime import (
+        get_persona_runtime,
         load_persona_runtime,
         reset_persona_runtime,
         set_persona_runtime,
@@ -215,7 +216,16 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     owned_token = _ensure_live_turn_budget(incoming)
     persona_token = set_persona_runtime(load_persona_runtime())
     try:
-        return await _process_incoming_message(incoming, customer_context)
+        result = await _process_incoming_message(incoming, customer_context)
+        persona = get_persona_runtime()
+        if persona is not None:
+            result.response_metadata = dict(result.response_metadata or {})
+            result.response_metadata.setdefault("persona_runtime", persona.flow_params_dict())
+        runtime = get_current_turn()
+        if runtime is not None:
+            result.response_metadata = dict(result.response_metadata or {})
+            result.response_metadata["turn_runtime"] = runtime.safe_summary()
+        return result
     finally:
         reset_persona_runtime(persona_token)
         if owned_token is not None:
