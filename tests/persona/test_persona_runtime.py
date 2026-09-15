@@ -7,6 +7,7 @@ from app.persona.persona_runtime import (
     build_persona_runtime,
     extract_pix_discount_percent,
     get_persona_runtime,
+    load_persona_runtime,
     reset_persona_runtime,
     set_persona_runtime,
 )
@@ -127,6 +128,35 @@ def test_contextvar_roundtrip():
     finally:
         reset_persona_runtime(token)
     assert get_persona_runtime() is None
+
+
+def test_load_runtime_binds_published_workspace_configuration(monkeypatch):
+    from app.persona import persona_knowledge_repository, persona_repository
+
+    persona = _persona(
+        metadata={"chatboPersonaId": "11111111-1111-1111-1111-111111111111"}
+    )
+    monkeypatch.setattr(persona_repository, "get_active_persona", lambda *_args: persona)
+    monkeypatch.setattr(
+        persona_knowledge_repository,
+        "get_chatbo_persona_profile",
+        lambda *_args: {
+            "workspace_id": "22222222-2222-2222-2222-222222222222",
+            "name": "Crono",
+            "agent_configuration": {
+                "runtime": {
+                    "schemaVersion": 1,
+                    "values": {"catalogShortlistSize": 5, "historyTurns": 16},
+                }
+            },
+        },
+    )
+
+    runtime = load_persona_runtime()
+
+    assert runtime.workspace_id == "22222222-2222-2222-2222-222222222222"
+    assert runtime.runtime_configuration["historyTurns"] == 16
+    assert runtime.max_catalog_options == 5
 
 
 def test_apply_policy_overrides_clamps_discount():

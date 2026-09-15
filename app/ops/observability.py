@@ -24,7 +24,11 @@ _CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 def full_obs_enabled() -> bool:
     try:
         from app.config import get_settings
+        from app.persona.persona_runtime import runtime_setting
 
+        configured = runtime_setting("observabilityLevel", None)
+        if configured is not None:
+            return configured == "detailed"
         return bool(getattr(get_settings(), "agent_full_obs_logs", False))
     except Exception:
         # Fail closed: never dump full prompts/history on config errors.

@@ -206,10 +206,18 @@ def _ensure_live_turn_budget(incoming: IncomingMessage):
 
 
 async def process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
+    from app.persona.persona_runtime import (
+        load_persona_runtime,
+        reset_persona_runtime,
+        set_persona_runtime,
+    )
+
     owned_token = _ensure_live_turn_budget(incoming)
+    persona_token = set_persona_runtime(load_persona_runtime())
     try:
         return await _process_incoming_message(incoming, customer_context)
     finally:
+        reset_persona_runtime(persona_token)
         if owned_token is not None:
             reset_current_turn(owned_token)
 
@@ -626,7 +634,9 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             and runtime is not None
         ):
             runtime.register_fallback("double_check_applied")
-    max_reply_chars = getattr(settings, "max_reply_chars", 900)
+    from app.persona.persona_runtime import runtime_setting
+
+    max_reply_chars = int(runtime_setting("maxReplyChars", getattr(settings, "max_reply_chars", 900)))
     result = compose_outbound_reply(
         incoming,
         result,

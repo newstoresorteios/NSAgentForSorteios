@@ -48,7 +48,9 @@ def resolve_model_history_limit(settings: Any | None = None) -> int:
         from app.config import get_settings
 
         settings = get_settings()
-    raw = getattr(settings, "agent_history_limit", None)
+    from app.persona.persona_runtime import runtime_setting
+
+    raw = runtime_setting("historyTurns", getattr(settings, "agent_history_limit", None))
     if raw is None:
         raw = getattr(settings, "agent_max_recent_turns", 12)
     try:

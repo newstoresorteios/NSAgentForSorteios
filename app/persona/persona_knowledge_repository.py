@@ -117,6 +117,7 @@ def retrieve_attachment_sections(
 
 # Full ChatBo agent_personas surface used by the attendance UI.
 CHATBO_PROFILE_COLUMNS = (
+    "workspace_id",
     "name",
     "role",
     "segment",
@@ -140,6 +141,9 @@ CHATBO_PROFILE_COLUMNS = (
     "restrictions",
     "examples",
     "status",
+    "(SELECT wa.configuration FROM public.workspace_agents wa "
+    "WHERE wa.workspace_id = agent_personas.workspace_id AND wa.status = 'active' "
+    "LIMIT 1) AS agent_configuration",
 )
 
 _TONE_LABELS = {

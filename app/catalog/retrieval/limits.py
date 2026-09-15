@@ -45,8 +45,9 @@ def prefer_ready_stock_enabled() -> bool:
 
 def rerank_selection_limit() -> int:
     settings = _runtime.get_settings()
+    from app.persona.persona_runtime import runtime_setting
     try:
-        value = int(getattr(settings, "agent_rerank_selection_limit", 15) or 15)
+        value = int(runtime_setting("catalogRerankLimit", getattr(settings, "agent_rerank_selection_limit", 15)) or 15)
     except (TypeError, ValueError):
         value = 15
     return max(5, min(20, value))
@@ -63,8 +64,9 @@ def revalidate_top_n() -> int:
 
 def candidate_pool_limit() -> int:
     settings = _runtime.get_settings()
+    from app.persona.persona_runtime import runtime_setting
     try:
-        value = int(getattr(settings, "agent_candidate_pool_limit", CANDIDATE_POOL_LIMIT) or CANDIDATE_POOL_LIMIT)
+        value = int(runtime_setting("catalogCandidatePool", getattr(settings, "agent_candidate_pool_limit", CANDIDATE_POOL_LIMIT)) or CANDIDATE_POOL_LIMIT)
     except (TypeError, ValueError):
         value = CANDIDATE_POOL_LIMIT
     return max(5, min(80, value))

@@ -363,8 +363,13 @@ async def generate_persona_greeting_reply(
     content = sanitize_greeting_reply(content)
     if not content or content.casefold().startswith("saudação padrão"):
         content = choose_greeting_reply(recent_turns)
+    from app.persona.persona_runtime import runtime_setting
+
     return AgentResult(
-        reply_text=_truncate(content, settings.max_reply_chars),
+        reply_text=_truncate(
+            content,
+            int(runtime_setting("maxReplyChars", settings.max_reply_chars)),
+        ),
         intent="general",
         handoff_required=False,
     )
@@ -413,9 +418,11 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
             temperature=0.3,
             call_type="response_composition",
         )
+        from app.persona.persona_runtime import runtime_setting
+
         reply = _truncate(
             text_result.text or _non_handoff_fallback(message, facts),
-            settings.max_reply_chars,
+            int(runtime_setting("maxReplyChars", settings.max_reply_chars)),
         )
         return AgentResult(
             reply_text=reply,
@@ -557,10 +564,14 @@ async def _resolve_greeting_door(
 
 async def generate_agent_reply_async(message: IncomingMessage, customer_context: dict) -> AgentResult:
     from app.persona.persona_runtime import (
+        get_persona_runtime,
         load_persona_runtime,
         reset_persona_runtime,
         set_persona_runtime,
     )
+
+    if get_persona_runtime() is not None:
+        return await _generate_agent_reply_async_inner(message, customer_context)
 
     persona_runtime = load_persona_runtime()
     persona_token = set_persona_runtime(persona_runtime)

@@ -42,6 +42,8 @@ class PersonaRuntimeConfig(BaseModel):
     persona_key: str = "newstore_commercial"
     display_name: str | None = None
     chatbo_persona_id: str | None = None
+    workspace_id: str | None = None
+    runtime_configuration: dict[str, Any] = Field(default_factory=dict)
     agent_display_name: str = "Crono"
     greeting_text: str | None = None
     closing_message: str | None = None
@@ -115,6 +117,8 @@ class PersonaRuntimeConfig(BaseModel):
             "negotiation_beyond_pix": self.negotiation_beyond_pix,
             "policy_source": self.policy_source,
             "chatbo_persona_id": self.chatbo_persona_id,
+            "workspace_id": self.workspace_id,
+            "runtime_configuration_keys": sorted(self.runtime_configuration),
         }
 
     def sales_skills_block(
@@ -243,6 +247,14 @@ def set_persona_runtime(config: PersonaRuntimeConfig | None) -> Token:
 
 def reset_persona_runtime(token: Token) -> None:
     _persona_runtime_var.reset(token)
+
+
+def runtime_setting(name: str, default: Any = None) -> Any:
+    """Resolve one published workspace override inside the current turn."""
+    runtime = get_persona_runtime()
+    if runtime is None:
+        return default
+    return runtime.runtime_configuration.get(name, default)
 
 
 def _coerce_int(value: Any, default: int) -> int:
@@ -526,6 +538,9 @@ def _enrich_from_chatbo_profile(
     from app.persona.persona_knowledge_repository import _tone_label
 
     updates: dict[str, Any] = {}
+    workspace_id = str(chatbo_profile.get("workspace_id") or "").strip()
+    if workspace_id:
+        updates["workspace_id"] = workspace_id
     name = str(chatbo_profile.get("name") or "").strip()
     if name:
         updates["display_name"] = name
@@ -692,6 +707,15 @@ def load_persona_runtime() -> PersonaRuntimeConfig:
                 "error": str(exc)[:160],
             })
 
+    runtime_configuration: dict[str, Any] = {}
+    workspace_id = str((chatbo_profile or {}).get("workspace_id") or "").strip()
+    raw_configuration = (chatbo_profile or {}).get("agent_configuration") or {}
+    if isinstance(raw_configuration, dict):
+        runtime_node = raw_configuration.get("runtime") or raw_configuration
+        values = runtime_node.get("values") if isinstance(runtime_node, dict) else {}
+        if isinstance(values, dict):
+            runtime_configuration = dict(values)
+
     config = build_persona_runtime(
         active=active,
         chatbo_profile=chatbo_profile,
@@ -700,6 +724,14 @@ def load_persona_runtime() -> PersonaRuntimeConfig:
         enabled=enabled,
         load_error=load_error,
     )
+    config.workspace_id = workspace_id or None
+    config.runtime_configuration = runtime_configuration
+    shortlist = runtime_configuration.get("catalogShortlistSize")
+    if shortlist is not None:
+        try:
+            config.max_catalog_options = max(1, min(5, int(shortlist)))
+        except (TypeError, ValueError):
+            pass
     print("[persona.runtime.loaded]", {
         "enabled": config.enabled,
         "persona_version_id": config.persona_version_id,
@@ -709,5 +741,7 @@ def load_persona_runtime() -> PersonaRuntimeConfig:
             config.require_cart_for_informational_payment
         ),
         "greeting_mode": config.greeting_mode,
+        "workspace_id": config.workspace_id,
+        "runtime_configuration_keys": sorted(config.runtime_configuration),
     })
     return config
