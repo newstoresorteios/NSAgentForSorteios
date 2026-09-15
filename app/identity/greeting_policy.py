@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import unicodedata
 from typing import Any
@@ -9,19 +11,18 @@ from typing import Any
 from app.identity import log_swallowed
 from app.identity.identity_names import looks_like_whatsapp_nick, resolve_address_name
 
-GREETING_REPLY = "Olá! Como posso ajudar?"
+def GREETING_REPLY():
+    return operator_message('business.greeting_reply.e280997ce6')
 
 # Short, distinct follow-ups when the primary Crono greeting was already used.
 # Keep Crono identity in the first fallbacks so soft re-greets don't sound generic.
-_FALLBACK_GREETING_VARIANTS = (
-    "Oi! Sou o Crono da New Store Relógios. Em que posso te ajudar?",
-    "Olá de novo! Sou o Crono — me conta o que você procura.",
-    GREETING_REPLY,
-    "Oi! Em que posso te ajudar?",
-    "Olá! Me conta o que você procura.",
-    "Oi! Pode falar, estou aqui.",
-    "Olá! Como posso te ajudar agora?",
-)
+def _FALLBACK_GREETING_VARIANTS():
+    import json
+    from app.configuration.runtime import policy
+    from app.persona.persona_runtime import get_persona_runtime
+    runtime = get_persona_runtime()
+    name = runtime.agent_display_name if runtime else policy('business.agent_name')
+    return tuple(v.format(agent_name=name) for v in json.loads(policy('business.greeting_variants')))
 
 _GREETING_BODY_RE = re.compile(
     r"^\s*(ol[aá]|oi|bom dia|boa tarde|boa noite)[!.,\s]*"
@@ -142,7 +143,7 @@ def greeting_variants() -> tuple[str, ...]:
     primary = resolve_persona_greeting()
     for candidate in (
         primary,
-        *(_FALLBACK_GREETING_VARIANTS),
+        *(_FALLBACK_GREETING_VARIANTS()),
     ):
         text = str(candidate or "").strip()
         if not text:
@@ -152,7 +153,7 @@ def greeting_variants() -> tuple[str, ...]:
             continue
         seen.add(key)
         ordered.append(text)
-    return tuple(ordered) or _FALLBACK_GREETING_VARIANTS
+    return tuple(ordered) or _FALLBACK_GREETING_VARIANTS()
 
 
 def is_generic_greeting_reply(text: str | None) -> bool:
@@ -162,7 +163,11 @@ def is_generic_greeting_reply(text: str | None) -> bool:
     folded = _fold(cleaned)
     if any(folded == _fold(variant) for variant in greeting_variants()):
         return True
-    if "eu sou o crono" in folded and len(cleaned) <= 220:
+    from app.configuration.runtime import policy
+    from app.persona.persona_runtime import get_persona_runtime
+    runtime = get_persona_runtime()
+    name = _fold(runtime.agent_display_name if runtime else policy("business.agent_name"))
+    if name and f"sou o {name}" in folded and len(cleaned) <= 220:
         return True
     return bool(_GREETING_BODY_RE.match(cleaned))
 
@@ -216,10 +221,10 @@ def choose_greeting_reply(recent_turns: list[dict[str, Any]] | None = None) -> s
             return variant
 
     # All greetings already used — still avoid repeating the last one.
-    fallback = "Pode me dizer o que você precisa?"
+    fallback = operator_message('identity.greeting_policy.choose_greeting_reply.0cc3700da4')
     if not already_said(fallback, recent_turns):
         return fallback
-    return "Estou aqui — o que você procura?"
+    return operator_message('identity.greeting_policy.choose_greeting_reply.67fb9018de')
 
 
 def is_farewell_message(text: str | None) -> bool:
@@ -243,8 +248,8 @@ def is_farewell_message(text: str | None) -> bool:
 def choose_farewell_reply(name: str | None = None) -> str:
     first = str(name or "").strip().split()[0] if name and str(name).strip() else None
     if first:
-        return f"Até, {first}! Qualquer coisa, é só chamar."
-    return "Até! Qualquer coisa, é só chamar."
+        return operator_message('identity.greeting_policy.choose_farewell_reply.adca7d8480', first=f'{first}')
+    return operator_message('identity.greeting_policy.choose_farewell_reply.f1a13d9030')
 
 
 def is_greeting_message(text: str | None) -> bool:

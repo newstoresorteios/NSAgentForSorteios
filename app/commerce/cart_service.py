@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import secrets
 import unicodedata
 from dataclasses import dataclass, field
@@ -576,12 +578,12 @@ def current_cart_reply(
     cart_url = _valid_cart_url(state.cart_url)
     if not cart_url or not state.cart_session_id:
         return _validation_failure(
-            "Ainda não há um carrinho ativo nesta conversa.",
+            operator_message('commerce.cart_service.current_cart_reply.c61327af0f'),
         )
     public_url = visible_cart_url(state, cart_url=cart_url)
     if not public_url:
         return AgentResult(
-            reply_text="O link do carrinho só fica disponível no checkout pelo site.",
+            reply_text=operator_message('commerce.cart_service.current_cart_reply.71040eafa9'),
             intent="commerce",
             handoff_required=False,
             safety_reason="site_checkout_not_selected",
@@ -1073,7 +1075,7 @@ def _reconciled_cart_result(
         reply_text=(
             cart_pay_link_copy(cart_url=public_url)
             if public_url
-            else "Estado factual do carrinho confirmado."
+            else operator_message('commerce.cart_service._reconciled_cart_result.9e54595660')
         ),
         intent="commerce",
         handoff_required=False,
@@ -1575,7 +1577,7 @@ async def _create_cart_items_checkout_impl(
     checkout = checkout_capabilities(checkout_state)
     public_url = visible_cart_url(checkout_state, cart_url=cart_url)
     if partial:
-        reply = "Carrinho atualizado parcialmente."
+        reply = operator_message('commerce.cart_service._create_cart_items_checkout_impl.15ca1b31c8')
     elif public_url:
         reply = cart_pay_link_copy(
             cart_url=public_url,

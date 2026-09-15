@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.core.turn_cache import cached_turn_read
+
 import hashlib
 from datetime import datetime, timezone
 from typing import Any
@@ -17,6 +19,7 @@ def _norm_scope_key(scope_key: str | None) -> str:
     return (scope_key or "").strip()
 
 
+@cached_turn_read
 def list_active_extensions(
     *,
     tenant_id: str,
@@ -32,7 +35,7 @@ def list_active_extensions(
                 SELECT *
                 FROM public.ai_agent_instruction_extensions
                 WHERE tenant_id = %s
-                  AND (workspace_id = %s OR workspace_id IS NULL)
+                  AND workspace_id IS NOT DISTINCT FROM %s::uuid
                   AND status = 'active'
                   AND (expires_at IS NULL OR expires_at > now())
                   AND (
@@ -164,6 +167,7 @@ def approve_extension(
                   AND extension_key = %s
                   AND status = 'active'
                   AND id <> %s
+                  AND workspace_id IS NOT DISTINCT FROM %s::uuid
                 """,
                 (
                     now,
@@ -172,6 +176,7 @@ def approve_extension(
                     target["scope_key_norm"],
                     target["extension_key"],
                     extension_id,
+                    target.get("workspace_id"),
                 ),
             )
             cur.execute(

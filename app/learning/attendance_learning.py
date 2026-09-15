@@ -552,27 +552,52 @@ async def run_attendance_learning_batch(
     ranked = sorted(buckets.items(), key=lambda item: len(item[1]), reverse=True)
     ranked = ranked[:max_clusters]
 
-    try:
-        baseline_rate, baseline_n = compute_fail_rate(
-            tenant_id=tenant_id,
-            since=datetime.now(timezone.utc) - timedelta(hours=24),
-        )
-    except Exception:
-        baseline_rate, baseline_n = 0.0, 0
-
     insights_created = 0
     extensions_created = 0
     reflections = 0
     constitution_rejected = 0
     activated = 0
+    workspace_bundles = {}
     for (workspace_id, code), cluster_reviews in ranked:
         if not cluster_is_high_signal(code, len(cluster_reviews)):
             continue
-        delta = await reflect_cluster(failure_code=code, reviews=cluster_reviews)
-        if delta is None:
+        from app.configuration.repository import load_workspace_bundle
+        from app.configuration.runtime import bind_bundle, reset_bundle, settings_from_bundle
+        if workspace_id:
+            try:
+                if workspace_id not in workspace_bundles:
+                    workspace_bundles[workspace_id] = load_workspace_bundle(workspace_id)
+                cluster_bundle = workspace_bundles[workspace_id]
+            except Exception:
+                errors.append("workspace_configuration_unavailable")
+                continue
+        else:
+            # Legacy rows require explicit attribution before policy-dependent learning.
+            errors.append("learning_workspace_unresolved")
             continue
-        reflections += 1
-        ok, reason = check_instruction_delta(delta.instruction_delta)
+        cluster_values = cluster_bundle.get("values") or {}
+        if cluster_values.get("learningEnabled") is False:
+            continue
+        # Promotion and the baseline belong to the same workspace as the cluster.
+        auto_apply = bool(cluster_values.get("learningAutoPromote", False)) if auto_promote is None else bool(auto_promote)
+        auto_activate_enabled = bool(cluster_values.get("learningAutoActivate", False))
+        canary_hours = int(cluster_values.get("learningCanaryHours", 6))
+        try:
+            baseline_rate, baseline_n = compute_fail_rate(tenant_id=tenant_id, workspace_id=workspace_id,
+                since=datetime.now(timezone.utc) - timedelta(hours=24))
+        except Exception:
+            # Unknown baseline cannot justify automatic activation.
+            baseline_rate, baseline_n = 0.0, 0
+            auto_activate_enabled = False
+        policy_tokens = bind_bundle(cluster_bundle, settings_from_bundle(settings, cluster_bundle))
+        try:
+            delta = await reflect_cluster(failure_code=code, reviews=cluster_reviews)
+            if delta is None:
+                continue
+            reflections += 1
+            ok, reason = check_instruction_delta(delta.instruction_delta, business_policy=cluster_values)
+        finally:
+            reset_bundle(policy_tokens)
         category = delta.category or insight_category_for(code)
         title = delta.title
         insight_text = delta.instruction_delta
@@ -628,11 +653,15 @@ async def run_attendance_learning_batch(
             baseline_reviews=baseline_n,
             canary_hours=canary_hours,
             reviewed=auto_activate_enabled,
+            business_policy=cluster_values,
         )
         if ext_id:
             extensions_created += 1
             if auto_activate_enabled:
                 activated += 1
+            else:
+                # A pending proposal must not enter the active experience bank.
+                continue
             sample = cluster_reviews[0]
             try:
                 upsert_learning_case(

@@ -364,6 +364,10 @@ async def test_batch_kill_switch_does_not_promote(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_batch_advances_cursor_and_skips_duplicate_reviews(monkeypatch):
+    from app.configuration.runtime import current_bundle
+    bundle = current_bundle()
+    monkeypatch.setattr("app.configuration.repository.load_workspace_bundle", lambda *_a, **_k: bundle)
+    monkeypatch.setattr("app.configuration.runtime.settings_from_bundle", lambda base, bundle: base)
     saved: dict = {}
     persist_calls: list[int] = []
 
@@ -391,6 +395,7 @@ async def test_batch_advances_cursor_and_skips_duplicate_reviews(monkeypatch):
         lambda **_k: [
             {
                 "response_id": 11,
+                "workspace_id": "workspace-test",
                 "inbound_id": 1,
                 "agent_reply": "Separei Hermétique.",
                 "intent": "commerce",
@@ -405,6 +410,7 @@ async def test_batch_advances_cursor_and_skips_duplicate_reviews(monkeypatch):
             },
             {
                 "response_id": 12,
+                "workspace_id": "workspace-test",
                 "inbound_id": 2,
                 "agent_reply": "ok",
                 "intent": "commerce",
@@ -630,9 +636,14 @@ def test_attach_response_id_skips_without_database(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_batch_clusters_existing_pipeline_reviews(monkeypatch):
+    from app.configuration.runtime import current_bundle
+    bundle = current_bundle()
+    monkeypatch.setattr("app.configuration.repository.load_workspace_bundle", lambda *_a, **_k: bundle)
+    monkeypatch.setattr("app.configuration.runtime.settings_from_bundle", lambda base, bundle: base)
     extras = [
         {
             "id": 501,
+            "workspace_id": "workspace-test",
             "conversation_id": "wa:1",
             "customer_text": "quero Hamilton",
             "agent_reply": "Qual faixa?",
@@ -703,8 +714,8 @@ def test_constitution_blocks_price_url_skip_tray(monkeypatch):
     ok, reason = check_instruction_delta(
         "A New Store não avalia nem compra relógios de particulares."
     )
-    assert ok is True
-    assert reason is None
+    assert ok is False
+    assert reason == "trade_in_policy_rewrite"
 
 
 def test_fetch_attendances_since_uses_response_id_cursor(monkeypatch):

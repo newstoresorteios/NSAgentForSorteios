@@ -357,7 +357,7 @@ async def test_async_agent_passes_loaded_history_to_interpreter(monkeypatch):
     )
 
     assert result.intent == "commerce"
-    assert result.reply_text != openai_agent.OUT_OF_SCOPE_REPLY
+    assert result.reply_text != openai_agent.OUT_OF_SCOPE_REPLY()
     assert captured["history"] == history
     assert captured["sales_history"] == history
     assert captured["plan"] is interpretation

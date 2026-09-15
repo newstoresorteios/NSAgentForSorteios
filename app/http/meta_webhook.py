@@ -7,6 +7,7 @@ from json import JSONDecodeError
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.background import BackgroundTask
 
 from app.config import get_settings as _get_settings
 from app.http.bindings import resolve
@@ -156,6 +157,8 @@ async def meta_instagram_webhook(request: Request):
                 "raw": incoming.raw,
             },
         )
+        if inbox_id is None:
+            raise HTTPException(status_code=503, detail={"error": "inbox_unavailable"})
         queued.append({"created": created, "inbox_id": inbox_id})
 
     change_fields: list[str] = []
@@ -182,11 +185,13 @@ async def meta_instagram_webhook(request: Request):
     print("[meta.webhook.result]", result_log)
     log_event("meta.webhook.result", result_log)
 
+    from app.ingress.dispatch import dispatch_pending_queues
     return JSONResponse(
         {
             "ok": True,
             "provider": "meta",
             "messages": len(messages),
             "queued": queued,
-        }
+        },
+        background=BackgroundTask(dispatch_pending_queues) if queued else None,
     )

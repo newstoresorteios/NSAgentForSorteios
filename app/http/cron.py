@@ -14,6 +14,16 @@ from app.security import verify_remarketing_cron
 
 router = APIRouter(tags=["cron"])
 
+from app.ingress.dispatch import verify_queue_dispatch
+
+
+@router.post("/api/cron/process-queues", dependencies=[Depends(verify_queue_dispatch)])
+async def cron_dispatch_queues():
+    from starlette.background import BackgroundTask
+    from starlette.responses import JSONResponse
+    from app.ingress.dispatch import dispatch_pending_queues
+    return JSONResponse({"ok": True, "accepted": True}, background=BackgroundTask(dispatch_pending_queues))
+
 
 def add_cron(path: str, endpoint: Callable) -> None:
     """Register GET+POST once. Vercel Hobby cron is GET and must still run the job."""

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import json
 from typing import Any, Awaitable, Callable, Literal
 
@@ -200,7 +202,7 @@ def apply_fast_deterministic_critique(
                 pass_check=False,
                 issues=["trade_in_policy_violation"],
                 summary="Cliente pediu avaliação/troca/compra de usado; handoff obrigatório.",
-                better_reply_hint=TRADE_IN_HANDOFF_MESSAGE,
+                better_reply_hint=TRADE_IN_HANDOFF_MESSAGE(),
             )
             return fixed, verdict, "fast_trade_in_handoff"
 
@@ -865,16 +867,7 @@ async def _regenerate_reply(
             {
                 "role": "system",
                 "content": (
-                    "Você é o agente de RESPOSTA da NewStore. "
-                    "Regenera a resposta ao cliente usando o histórico, os fatos "
-                    "já conhecidos e os novos resultados de API. "
-                    "Não invente dados. Se houver payment_url nos fatos, envie o link. "
-                    "Se commercial_data.products foi atualizado pela reconsulta, "
-                    "apresente SOMENTE esses produtos (não os da resposta anterior). "
-                    "Se a reconsulta search_products veio vazia, diga com honestidade "
-                    "que não encontrou o que o cliente pediu — nunca reenvie a lista "
-                    "anterior inadequada. "
-                    "Resposta curta em português do Brasil para WhatsApp.\n\n"
+                    operator_message('verify.response_critique._regenerate_reply.2807ee309e')
                     + format_capability_catalog_for_prompt()
                 ),
             },

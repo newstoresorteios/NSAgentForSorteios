@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.core.turn_cache import cached_turn_read
+
 import json
 import math
 import re
@@ -85,16 +87,20 @@ def retrieve_attachment_sections(
     attachments: list[PersonaKnowledgeAttachment],
     query_text: str | None,
     *,
-    max_chunks: int = 3,
+    max_chunks: int | None = None,
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """Select source-labelled attachment chunks with evidence for this turn."""
     query_tokens = retrieval_tokens(query_text)
+    from app.config import get_settings
+    settings = get_settings()
+    max_chunks = max_chunks if max_chunks is not None else settings.agent_knowledge_max_chunks
     if not query_tokens:
         return [], []
     ranked: list[tuple[int, int, str, str, str]] = []
+    versions = {item.id: item.content_hash for item in attachments}
     for attachment in attachments:
         filename_tokens = retrieval_tokens(attachment.filename)
-        for index, chunk in enumerate(_attachment_chunks(attachment.extracted_text), start=1):
+        for index, chunk in enumerate(_attachment_chunks(attachment.extracted_text, chunk_chars=settings.agent_knowledge_chunk_chars), start=1):
             chunk_tokens = retrieval_tokens(chunk)
             overlap = query_tokens & (chunk_tokens | filename_tokens)
             if not overlap:
@@ -104,13 +110,14 @@ def retrieve_attachment_sections(
     ranked.sort(reverse=True)
     if not ranked:
         return [], []
-    relative_floor = max(10, math.ceil(ranked[0][0] * 0.8))
+    relative_floor = max(10, math.ceil(ranked[0][0] * settings.agent_knowledge_relative_score))
     selected = [item for item in ranked if item[0] >= relative_floor][
         : max(1, max_chunks)
     ]
     ids = list(dict.fromkeys(item[2] for item in selected))
     sections = [
-        (f"{filename} [source:{attachment_id}#chunk-{abs(negative_index)}]", chunk)
+        (f"{filename} [source:{attachment_id}#chunk-{abs(negative_index)}]"
+         + (f" [version:{versions[attachment_id]}]" if versions.get(attachment_id) else ""), chunk)
         for _, negative_index, attachment_id, filename, chunk in selected
     ]
     return ids, sections
@@ -165,6 +172,7 @@ class PersonaKnowledgeAttachment:
     filename: str
     extracted_text: str
     content_type: str | None = None
+    content_hash: str | None = None
 
 
 def chatbo_persona_id(metadata: dict[str, Any] | None) -> str | None:
@@ -173,23 +181,27 @@ def chatbo_persona_id(metadata: dict[str, Any] | None) -> str | None:
     return text or None
 
 
+@cached_turn_read
 def list_persona_attachments(
     chatbo_persona_id: str,
     *,
-    limit: int = 10,
+    limit: int | None = None,
 ) -> list[PersonaKnowledgeAttachment]:
     from app.db import get_conn
+    from app.config import get_settings
+    limit = limit if limit is not None else get_settings().agent_knowledge_attachment_limit
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id::text, filename, content_type, extracted_text
+                SELECT id::text, filename, content_type, extracted_text, content_hash
                 FROM public.agent_persona_attachments
                 WHERE persona_id = %s::uuid
                   AND status = ANY(%s)
+                  AND (valid_until IS NULL OR valid_until > now())
                   AND coalesce(trim(extracted_text), '') <> ''
-                ORDER BY created_at ASC
+                ORDER BY updated_at DESC, id DESC
                 LIMIT %s
                 """,
                 (chatbo_persona_id, list(ATTACHMENT_READY_STATUSES), limit),
@@ -206,11 +218,13 @@ def list_persona_attachments(
                 filename=str(row.get("filename") or "attachment"),
                 extracted_text=text,
                 content_type=str(row.get("content_type") or "") or None,
+                content_hash=str(row.get("content_hash") or "") or None,
             )
         )
     return out
 
 
+@cached_turn_read
 def get_chatbo_persona_profile(chatbo_persona_id: str) -> dict[str, Any] | None:
     from app.db import get_conn
 
@@ -411,7 +425,7 @@ def format_persona_knowledge_block(
 def load_persona_knowledge_for_prompt(
     persona: PersonaVersion,
     *,
-    limit: int = 10,
+    limit: int | None = None,
     max_chars: int = 12000,
     relevant_knowledge: list[Any] | None = None,
     query_text: str | None = None,

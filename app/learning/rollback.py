@@ -20,6 +20,7 @@ def compute_fail_rate(
     tenant_id: str,
     since: datetime,
     until: datetime | None = None,
+    workspace_id: str | None = None,
 ) -> tuple[float, int]:
     until = until or datetime.now(timezone.utc)
     with get_conn() as conn:
@@ -33,10 +34,11 @@ def compute_fail_rate(
                     ) AS failed
                 FROM public.ai_attendance_reviews
                 WHERE tenant_id = %s
+                  AND workspace_id IS NOT DISTINCT FROM %s::uuid
                   AND created_at >= %s
                   AND created_at < %s
                 """,
-                (tenant_id, since, until),
+                (tenant_id, workspace_id, since, until),
             )
             row = cur.fetchone() or {}
     total = int(row.get("total") or 0)
@@ -54,14 +56,23 @@ def evaluate_canaries(
     canary_hours: int | None = None,
 ) -> dict[str, int]:
     settings = get_settings()
-    min_reviews = int(min_reviews or getattr(settings, "agent_learning_rollback_min_reviews", 20) or 20)
-    lift = float(fail_lift or getattr(settings, "agent_learning_rollback_fail_lift", 1.2) or 1.2)
-    canary_hours = int(canary_hours or getattr(settings, "agent_learning_canary_hours", 6) or 6)
+    requested_min, requested_lift, requested_hours = min_reviews, fail_lift, canary_hours
     now = datetime.now(timezone.utc)
     rolled_back = 0
     confirmed = 0
     extended = 0
     for row in list_learning_auto_extensions(tenant_id=tenant_id):
+        values = {}
+        if row.get("workspace_id"):
+            from app.configuration.repository import load_workspace_bundle
+            try:
+                values = load_workspace_bundle(str(row["workspace_id"]))["values"]
+            except Exception:
+                # Never roll back a workspace using another workspace's thresholds.
+                continue
+        min_reviews = int(values.get("learningRollbackMinReviews", requested_min if requested_min is not None else getattr(settings, "agent_learning_rollback_min_reviews", 20)))
+        lift = float(values.get("learningRollbackFailLift", requested_lift if requested_lift is not None else getattr(settings, "agent_learning_rollback_fail_lift", 1.2)))
+        canary_hours = int(values.get("learningCanaryHours", requested_hours if requested_hours is not None else getattr(settings, "agent_learning_canary_hours", 6)))
         metadata = row.get("metadata") or {}
         if isinstance(metadata, str):
             metadata = {}
@@ -88,6 +99,7 @@ def evaluate_canaries(
             baseline_rate = 0.0
         fail_rate, n_reviews = compute_fail_rate(
             tenant_id=tenant_id,
+            workspace_id=str(row["workspace_id"]) if row.get("workspace_id") else None,
             since=activated_at or (now - timedelta(hours=canary_hours)),
             until=now,
         )
@@ -95,7 +107,7 @@ def evaluate_canaries(
         insight_id = metadata.get("insight_id")
         expires_at = row.get("expires_at")
         enough = n_reviews >= min_reviews
-        abs_fail = float(getattr(settings, "agent_learning_rollback_abs_fail", 0.5) or 0.5)
+        abs_fail = float(values.get("agent_learning_rollback_abs_fail", getattr(settings, "agent_learning_rollback_abs_fail", 0.5)))
         worse = enough and (
             (baseline_known and baseline_rate > 0 and fail_rate > baseline_rate * lift)
             or fail_rate >= abs_fail

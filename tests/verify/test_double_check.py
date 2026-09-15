@@ -185,7 +185,7 @@ def test_phase0_greeting_in_checkout():
     issues = run_phase0_double_check(
         incoming=IncomingMessage(text="e o pagamento?"),
         result=AgentResult(
-            reply_text=GREETING_REPLY,
+            reply_text=GREETING_REPLY(),
             intent="commerce",
             response_metadata={"domain": "commerce", "response_source": "openai"},
         ),
@@ -419,7 +419,7 @@ def test_phase0_greeting_in_checkout_enforce_resumes_pix():
     result, report = apply_double_check(
         incoming=IncomingMessage(text="e o pagamento?"),
         result=AgentResult(
-            reply_text=GREETING_REPLY,
+            reply_text=GREETING_REPLY(),
             intent="commerce",
             response_metadata={"domain": "commerce", "response_source": "openai"},
         ),

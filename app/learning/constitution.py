@@ -31,6 +31,7 @@ def check_instruction_delta(
     text: str,
     *,
     max_chars: int | None = None,
+    business_policy: dict[str, Any] | None = None,
 ) -> tuple[bool, str | None]:
     """Return (ok, rejection_reason)."""
     settings = get_settings()
@@ -48,8 +49,16 @@ def check_instruction_delta(
         return False, "price_claim"
     if _URL_RE.search(instruction):
         return False, "url_claim"
-    if _TRADE_BUY_RE.search(instruction) and not _TRADE_DENIAL_RE.search(instruction):
-        return False, "trade_in_policy_rewrite"
+    if _TRADE_BUY_RE.search(instruction) or _TRADE_DENIAL_RE.search(instruction):
+        from app.configuration.runtime import current_bundle
+        values = business_policy if business_policy is not None else current_bundle().get("values", {})
+        if "acceptsTradeIn" not in values:
+            return False, "trade_in_policy_unavailable"
+        denies = bool(_TRADE_DENIAL_RE.search(instruction))
+        if bool(values["acceptsTradeIn"]) == denies:
+            return False, "trade_in_policy_rewrite"
+        if not denies and not re.search(r"humano|equipe|consultor|atendente", instruction, re.I):
+            return False, "trade_in_requires_human"
     if _SKIP_TRAY_RE.search(instruction):
         return False, "skip_tray"
     return True, None

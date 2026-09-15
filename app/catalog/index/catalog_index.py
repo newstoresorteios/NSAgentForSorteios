@@ -116,6 +116,12 @@ def _infer_material(title: str, product: dict[str, Any]) -> str | None:
 
 
 def _infer_mechanism(title: str, product: dict[str, Any]) -> str | None:
+    explicit = _fold(str(product.get("mechanism") or product.get("movement") or ""))
+    for pattern, canonical in ((r"\b(automatico|automatic|powermatic|auto)\b", "automatic"),
+                               (r"\b(quartz|quartzo)\b", "quartz"),
+                               (r"\b(mecanico|mechanical|manual)\b", "mechanical")):
+        if re.search(pattern, explicit):
+            return canonical
     blob = _fold(
         " ".join(
             str(part)

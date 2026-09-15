@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import html
 import json
 import re
@@ -52,9 +54,9 @@ def _responder_contract_for_turn(
         or (state is not None and session_in_checkout_phase(state))
     )
     return (
-        SALES_RESPONDER_INSTRUCTIONS
+        SALES_RESPONDER_INSTRUCTIONS()
         if purchase_turn
-        else BASE_SALES_RESPONDER_INSTRUCTIONS
+        else BASE_SALES_RESPONDER_INSTRUCTIONS()
     )
 
 
@@ -254,7 +256,7 @@ async def generate_clarification_reply(
             used_tray=used_tray,
         )
     _clarification_empty_fallback = (
-        "Me diz em uma frase o que você busca — marca, modelo ou faixa de investimento."
+        operator_message('sales.responder.generate_clarification_reply.8054ad3cc3')
     )
     if not settings.openai_api_key:
         reply = (deterministic_question or "").strip()
@@ -281,7 +283,7 @@ async def generate_clarification_reply(
         persona_runtime = get_persona_runtime()
     except Exception:
         persona_runtime = None
-    persona_blocks: list[str] = [SALES_CLARIFICATION_INSTRUCTIONS]
+    persona_blocks: list[str] = [SALES_CLARIFICATION_INSTRUCTIONS()]
     if persona_runtime and persona_runtime.enabled:
         policy = (persona_runtime.prompt_policy_block() or "").strip()
         skills = (

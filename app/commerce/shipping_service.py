@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import hashlib
 from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable
@@ -107,12 +109,8 @@ def _parse_quote(option: dict[str, Any]) -> ShippingQuote | None:
         return None
 
 
-SHIPPING_LEADTIME_GUIDANCE = (
-    "Prazo para RS (incluindo Porto Alegre) depende do modelo e do CEP. "
-    "Em geral o pedido sai em poucos dias \u00fateis depois da confirma\u00e7\u00e3o. "
-    "Me passa o CEP com 8 d\u00edgitos e qual rel\u00f3gio voc\u00ea tem em mente "
-    "que eu te oriento melhor \u2014 a cota\u00e7\u00e3o em reais sai no checkout."
-)
+def SHIPPING_LEADTIME_GUIDANCE():
+    return operator_message('instructions.shipping_leadtime_guidance.6e088df59a')
 
 
 async def quote_shipping(
@@ -125,7 +123,7 @@ async def quote_shipping(
     has_cart = bool(state.cart_items or state.cart_session_id)
     if not has_cart:
         return AgentResult(
-            reply_text=SHIPPING_LEADTIME_GUIDANCE,
+            reply_text=SHIPPING_LEADTIME_GUIDANCE(),
             intent="commerce",
             safety_reason="shipping_guidance_without_cart",
             commercial_data={"success": False, "stage": "shipping_guidance"},
@@ -133,7 +131,7 @@ async def quote_shipping(
         )
     if state.checkout_channel_preference != "whatsapp":
         return AgentResult(
-            reply_text="O canal WhatsApp e necessario para cotar frete pelo agente.",
+            reply_text=operator_message('commerce.shipping_service.quote_shipping.bca9087441'),
             intent="commerce",
             safety_reason="whatsapp_order_channel_required",
             commercial_data={"success": False, "stage": "shipping_quote"},
@@ -142,7 +140,7 @@ async def quote_shipping(
     normalized_zipcode = normalize_zipcode(zipcode)
     if normalized_zipcode is None:
         return AgentResult(
-            reply_text="CEP inv\u00e1lido para cota\u00e7\u00e3o.",
+            reply_text=operator_message('commerce.shipping_service.quote_shipping.f19a6c1566'),
             intent="commerce",
             safety_reason="shipping_zipcode_invalid",
             commercial_data={"success": False, "stage": "shipping_quote"},
@@ -150,7 +148,7 @@ async def quote_shipping(
         )
     if not state.cart_session_id:
         return AgentResult(
-            reply_text="N\u00e3o h\u00e1 carrinho ativo para cota\u00e7\u00e3o.",
+            reply_text=operator_message('commerce.shipping_service.quote_shipping.eab38ae6f0'),
             intent="commerce",
             safety_reason="cart_validation_error",
             commercial_data={"success": False, "stage": "shipping_quote"},
@@ -174,7 +172,7 @@ async def quote_shipping(
             "session": session_tag, "success": False, "option_count": 0,
         })
         return AgentResult(
-            reply_text="A cota\u00e7\u00e3o de frete n\u00e3o p\u00f4de ser conclu\u00edda.",
+            reply_text=operator_message('commerce.shipping_service.quote_shipping.abb98103eb'),
             intent="commerce",
             safety_reason="shipping_quote_technical_failure",
             commercial_data={
@@ -190,7 +188,7 @@ async def quote_shipping(
     products = cart_shipping_products(cart, state.cart_items)
     if not products or len(products) != len(cart.get("items") or []):
         return AgentResult(
-            reply_text="Os itens reais do carrinho n\u00e3o puderam ser validados para o frete.",
+            reply_text=operator_message('commerce.shipping_service.quote_shipping.6e33b71e9f'),
             intent="commerce",
             safety_reason="shipping_cart_validation_error",
             commercial_data={"success": False, "stage": "shipping_quote"},
@@ -208,7 +206,7 @@ async def quote_shipping(
             "session": session_tag, "success": False, "option_count": 0,
         })
         return AgentResult(
-            reply_text="A cota\u00e7\u00e3o de frete n\u00e3o p\u00f4de ser conclu\u00edda.",
+            reply_text=operator_message('commerce.shipping_service.quote_shipping.abb98103eb'),
             intent="commerce",
             safety_reason=(
                 "shipping_quote_upstream_validation_failed"
@@ -261,7 +259,7 @@ async def quote_shipping(
         "option_count": len(quotes),
     })
     return AgentResult(
-        reply_text="Cota\u00e7\u00e3o de frete consultada.",
+        reply_text=operator_message('commerce.shipping_service.quote_shipping.e76b4dd623'),
         intent="commerce",
         safety_reason="shipping_options_empty" if not quotes else None,
         commercial_data={
@@ -320,7 +318,7 @@ async def list_shipping_methods(*, execute: ToolExecutor) -> AgentResult:
         result = {"error": "commerce_upstream_error", "error_type": type(exc).__name__}
     if "error" in result:
         return AgentResult(
-            reply_text="Os m\u00e9todos de envio n\u00e3o puderam ser consultados.",
+            reply_text=operator_message('commerce.shipping_service.list_shipping_methods.d08dc01c96'),
             intent="commerce",
             safety_reason="shipping_methods_technical_failure",
             commercial_data={"success": False, "stage": "shipping_methods"},
@@ -331,7 +329,7 @@ async def list_shipping_methods(*, execute: ToolExecutor) -> AgentResult:
             },
         )
     return AgentResult(
-        reply_text="M\u00e9todos de envio consultados.",
+        reply_text=operator_message('commerce.shipping_service.list_shipping_methods.8c809e06c1'),
         intent="commerce",
         commercial_data={
             "success": True,
@@ -348,7 +346,7 @@ def select_shipping(
 ) -> AgentResult:
     if state.checkout_channel_preference != "whatsapp":
         return AgentResult(
-            reply_text="O canal WhatsApp e necessario para selecionar frete pelo agente.",
+            reply_text=operator_message('commerce.shipping_service.select_shipping.a3c1379297'),
             intent="commerce",
             safety_reason="whatsapp_order_channel_required",
             commercial_data={"success": False, "stage": "shipping_selection"},
@@ -369,7 +367,7 @@ def select_shipping(
         ]
     if len(matches) != 1:
         return AgentResult(
-            reply_text="A op\u00e7\u00e3o de frete n\u00e3o corresponde \u00e0 cota\u00e7\u00e3o ativa.",
+            reply_text=operator_message('commerce.shipping_service.select_shipping.7562a73d17'),
             intent="commerce",
             safety_reason="shipping_selection_invalid",
             commercial_data={
@@ -385,7 +383,7 @@ def select_shipping(
         "quotation_id_present": bool(selected.quotation_id),
     })
     return AgentResult(
-        reply_text="Op\u00e7\u00e3o de frete validada.",
+        reply_text=operator_message('commerce.shipping_service.select_shipping.255657933b'),
         intent="commerce",
         commercial_data={"success": True, "selected_shipping": selected.model_dump(mode="json")},
         response_metadata={

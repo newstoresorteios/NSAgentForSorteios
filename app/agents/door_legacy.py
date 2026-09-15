@@ -6,6 +6,8 @@ Names are resolved on ``app.agents.door`` so monkeypatches keep working.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from openai import APIError
 
 from app.models import AgentResult, IncomingMessage
@@ -37,10 +39,10 @@ def generate_openai_reply(
 
     user_input = door.build_agent_input(message, customer_context, facts)
     system_instructions = resolve_system_instructions(
-        fallback_instructions=door.SYSTEM_INSTRUCTIONS,
+        fallback_instructions=door.SYSTEM_INSTRUCTIONS(),
         incoming=message,
         extra_system_blocks=legacy_contract_extra_blocks(
-            door.SYSTEM_INSTRUCTIONS,
+            door.SYSTEM_INSTRUCTIONS(),
             tag="legacy_agent_contract",
         ),
     )
@@ -108,7 +110,7 @@ def generate_agent_reply(message: IncomingMessage, customer_context: dict) -> Ag
     print("[agent.scope]", {"domain": scope.get("domain")})
     if scope.get("domain") == "out_of_scope":
         return AgentResult(
-            reply_text=door.OUT_OF_SCOPE_REPLY,
+            reply_text=door.OUT_OF_SCOPE_REPLY(),
             intent="out_of_scope",
             handoff_required=False,
             safety_reason="scope_refusal",

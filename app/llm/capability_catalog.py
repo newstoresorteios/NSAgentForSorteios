@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from app.tray.tray_tools import TOOL_REGISTRY, TOOL_SCHEMAS
@@ -98,15 +100,15 @@ def build_capability_catalog() -> dict[str, Any]:
 
 def format_capability_catalog_for_prompt(catalog: dict[str, Any] | None = None) -> str:
     payload = catalog or build_capability_catalog()
-    lines = ["CAPABILITIES (o que você pode fazer):"]
+    lines = [operator_message('llm.capability_catalog.format_capability_catalog_for_prompt.b4a625f78f')]
     for policy in payload.get("policy") or []:
         lines.append(f"- {policy}")
-    lines.append("APIs commerce disponíveis:")
+    lines.append(operator_message('llm.capability_catalog.format_capability_catalog_for_prompt.9ebf887cec'))
     for name in payload.get("commerce_apis") or []:
         hint = _API_HINTS.get(str(name), "")
         retry = "retryable" if name in RETRYABLE_API_NAMES else "manual"
         lines.append(f"- {name} ({retry}){': ' + hint if hint else ''}")
     raffle = payload.get("raffle_capabilities") or []
     if raffle:
-        lines.append("Capacidades de sorteio: " + ", ".join(str(item) for item in raffle))
+        lines.append(operator_message('llm.capability_catalog.format_capability_catalog_for_prompt.fa11716c98') + ", ".join(str(item) for item in raffle))
     return "\n".join(lines)

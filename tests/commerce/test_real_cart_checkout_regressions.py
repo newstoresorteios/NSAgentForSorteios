@@ -54,11 +54,11 @@ def _contains_key(value, target):
 
 
 def test_interpreter_examples_distinguish_interest_context_and_explicit_retrieval():
-    assert '"quero comprar um relogio"' in SALES_INTERPRETER_INSTRUCTIONS
-    assert "enough_information_to_search=false" in SALES_INTERPRETER_INSTRUCTIONS
-    assert "ready_for_retrieval=false" in SALES_INTERPRETER_INSTRUCTIONS
-    assert '"quero um relogio casual ate uns R$ 5.000"' in SALES_INTERPRETER_INSTRUCTIONS
-    assert '"me mostre os relogios disponiveis"' in SALES_INTERPRETER_INSTRUCTIONS
+    assert '"quero comprar um relogio"' in SALES_INTERPRETER_INSTRUCTIONS()
+    assert "enough_information_to_search=false" in SALES_INTERPRETER_INSTRUCTIONS()
+    assert "ready_for_retrieval=false" in SALES_INTERPRETER_INSTRUCTIONS()
+    assert '"quero um relogio casual ate uns R$ 5.000"' in SALES_INTERPRETER_INSTRUCTIONS()
+    assert '"me mostre os relogios disponiveis"' in SALES_INTERPRETER_INSTRUCTIONS()
 
 
 def test_quantity_action_is_semantic_and_does_not_accept_session_id():

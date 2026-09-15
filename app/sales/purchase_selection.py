@@ -6,6 +6,8 @@ Keep this path off the LLM.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import unicodedata
 from typing import Any
@@ -339,9 +341,9 @@ def _ask_which_option_repair(
         name = (item.name or item.brand or item.product_id or "").strip()
         labels.append(f"{item.position}. {name}" if item.position else name)
     question = (
-        "Qual opção você quer comprar?\n" + "\n".join(labels)
+        operator_message('sales.purchase_selection._ask_which_option_repair.2148b19bdc') + "\n".join(labels)
         if labels
-        else "Qual das opções da lista você quer comprar (1, 2 ou 3)?"
+        else operator_message('sales.purchase_selection._ask_which_option_repair.3bc12d7456')
     )
     repaired = interpretation.model_copy(
         update={

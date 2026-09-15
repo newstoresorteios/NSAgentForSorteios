@@ -9,7 +9,8 @@ from app.persona.site_knowledge import TRADE_IN_HANDOFF_MESSAGE, STORE_URL
 
 
 def trade_in_policy_text() -> str:
-    return TRADE_IN_HANDOFF_MESSAGE
+    from app.configuration.runtime import message, policy
+    return message("trade_in_handoff" if policy("acceptsTradeIn") else "trade_in_unavailable")
 
 
 @dataclass(frozen=True)
@@ -22,96 +23,14 @@ class EvidencePackage:
         return list(self.items)
 
 
-_INSTITUTIONAL_SNIPPETS: tuple[dict[str, Any], ...] = (
-    {
-        "title": "Troca e avaliação",
-        "cues": (
-            "seminovo",
-            "usado",
-            "troca",
-            "avalia",
-            "avaliação",
-            "avaliacao",
-            "compram",
-            "comprando",
-            "trade",
-        ),
-        "body": (
-            "A New Store avalia, troca e compra relógios. "
-            "Esse fluxo é feito por atendente humano da loja — "
-            "não negar a política e não inventar valores de avaliação."
-        ),
-    },
-    {
-        "title": "Garantia e autenticidade",
-        "cues": (
-            "garantia",
-            "autentic",
-            "original",
-            "certificado",
-            "procedência",
-            "procedencia",
-        ),
-        "body": (
-            "Relógios vendidos pela New Store seguem política de garantia e "
-            "procedência do fabricante/distribuidor. "
-            "Não invente prazo ou cobertura — confirme com tools ou encaminhe ao humano."
-        ),
-    },
-    {
-        "title": "Entrega e pronta-entrega",
-        "cues": (
-            "frete",
-            "entrega",
-            "envio",
-            "pronta entrega",
-            "pronta-entrega",
-            "cep",
-        ),
-        "body": (
-            "Prazos e valores de frete vêm somente de cotação oficial (Tray/tools). "
-            "Peças em pronta-entrega podem ter prazo reduzido — confirme no catálogo, "
-            "sem inventar dias ou valores."
-        ),
-    },
-    {
-        "title": "Loja e atendimento",
-        "cues": (
-            "loja física",
-            "loja fisica",
-            "endereço",
-            "endereco",
-            "horário",
-            "horario",
-            "atendimento humano",
-        ),
-        "body": (
-            f"A New Store Relógios opera pelo site {STORE_URL} e canais digitais. "
-            "Para avaliação de seminovos ou casos complexos, encaminhe ao atendente humano."
-        ),
-    },
-    {
-        "title": "Pagamento e PIX",
-        "cues": (
-            "pix",
-            "pagamento",
-            "pagar",
-            "boleto",
-            "cartão",
-            "cartao",
-            "parcel",
-            "link de pagamento",
-            "link do pagamento",
-        ),
-        "body": (
-            "Pagamento oficial é pelo link do carrinho/checkout da Tray "
-            "ou pelo PIX gerado nesse checkout. "
-            "Não invente chave PIX, código, boleto ou valor. "
-            "Se o link já está nos FACTS, peça para abrir e pagar o link. "
-            "Não reabra atendimento humano só para pagar."
-        ),
-    },
-)
+def _INSTITUTIONAL_SNIPPETS():
+    import json
+    from app.configuration.runtime import policy
+    entries = json.loads(policy('business.institutional_knowledge'))
+    for entry in entries:
+        if entry.get('policyKey') == 'acceptsTradeIn':
+            entry['body'] = trade_in_policy_text()
+    return entries
 
 
 def format_institutional_knowledge_block(
@@ -170,7 +89,7 @@ def fetch_institutional_knowledge(
     items: list[dict[str, str]] = []
     seen_titles: set[str] = set()
 
-    for entry in _INSTITUTIONAL_SNIPPETS:
+    for entry in _INSTITUTIONAL_SNIPPETS():
         cues = entry.get("cues") or ()
         if normalized and not any(str(cue).casefold() in normalized for cue in cues):
             continue

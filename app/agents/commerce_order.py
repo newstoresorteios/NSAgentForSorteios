@@ -5,6 +5,8 @@ Look up patched names on ``app.sales_agent`` at call time.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
@@ -32,7 +34,7 @@ async def try_commerce_confirmation(
     if deterministic_confirmation != "reject":
         return None
     rejected = AgentResult(
-        reply_text="A confirmação do pedido foi cancelada.",
+        reply_text=operator_message('agents.commerce_order.try_commerce_confirmation.1e8abffe4e'),
         intent="commerce",
         response_metadata={
             "domain": "commerce",

@@ -31,17 +31,20 @@ class LLMCallBudget(BaseModel):
     enforce: bool = False
     allowed_call_types: set[str] = Field(default_factory=set)
     reserved_call_types: set[str] = Field(
-        default_factory=lambda: {"response_composition"}
+        default_factory=lambda: {"response_composition", "clarification"}
     )
     reserved_used: set[str] = Field(default_factory=set)
 
     def reserve(self, call_type: str) -> None:
+        call_type = call_type.removesuffix("_fallback_chat")
         blocked_type = bool(
             self.allowed_call_types
             and call_type not in self.allowed_call_types
         )
         reserved = set(self.reserved_call_types or ())
-        pending_reserved = reserved - set(self.reserved_used or ())
+        # These are alternative ways to produce the final reply: one reserved
+        # slot is satisfied by either composition or clarification.
+        pending_reserved = reserved if not self.reserved_used else set()
         hold_for_reserved = 0
         if pending_reserved and call_type not in reserved and self.max_calls >= 2:
             hold_for_reserved = 1
@@ -70,6 +73,7 @@ class TurnRuntimeContext(BaseModel):
     chat_fallback_attempts: int = 0
     tray_call_count: int = 0
     database_call_count: int = 0
+    catalog_queries: list[dict] = Field(default_factory=list)
     openai_input_tokens: int = 0
     openai_output_tokens: int = 0
     openai_cached_tokens: int = 0
@@ -194,6 +198,7 @@ class TurnRuntimeContext(BaseModel):
                 "reason": reason or call_type,
                 "index": self.openai_call_count,
                 "logical": True,
+                "attempt_id": self.openai_transport_attempts,
             }
         )
         if self.openai_call_count == 1 and self.execution_path == "fast":
@@ -211,11 +216,18 @@ class TurnRuntimeContext(BaseModel):
         if self.execution_path not in {"critical"}:
             self.execution_path = "complex"
 
-    def release_failed_openai_attempt(self, call_type: str) -> None:
+    def release_failed_openai_attempt(self, call_type: str, *, after_attempt: int = -1) -> None:
         """Refund logical budget only when Responses fails and Chat will retry.
 
         Transport attempt counters are never refunded (Etapa 7).
         """
+        if not self.llm_call_reasons:
+            return
+        reservation = self.llm_call_reasons[-1]
+        if (reservation.get("call_type") != call_type
+                or int(reservation.get("attempt_id", -1)) <= after_attempt):
+            return
+        self.llm_budget.reserved_used.discard(call_type.removesuffix("_fallback_chat"))
         if self.llm_budget.used_calls > 0:
             self.llm_budget.used_calls -= 1
         if self.openai_call_count > 0:
@@ -283,6 +295,7 @@ class TurnRuntimeContext(BaseModel):
             "chat_fallback_attempts": self.chat_fallback_attempts,
             "tray_call_count": self.tray_call_count,
             "database_call_count": self.database_call_count,
+            "catalog_queries": self.catalog_queries[:30],
             "openai_input_tokens": self.openai_input_tokens,
             "openai_output_tokens": self.openai_output_tokens,
             "openai_cached_tokens": self.openai_cached_tokens,

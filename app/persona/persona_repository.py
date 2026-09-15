@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import hashlib
 from datetime import datetime, timezone
 from typing import Any
@@ -25,21 +27,27 @@ def _row_to_persona(row: dict[str, Any]) -> PersonaVersion:
 def get_active_persona(
     tenant_id: str = DEFAULT_TENANT_ID,
     persona_key: str = DEFAULT_PERSONA_KEY,
+    *,
+    workspace_id: str | None = None,
 ) -> PersonaVersion | None:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT *
+                SELECT *, COUNT(*) OVER() AS active_workspace_count
                 FROM public.ai_agent_persona_versions
                 WHERE tenant_id = %s
                   AND persona_key = %s
                   AND status = 'active'
+                  AND (%s::uuid IS NULL OR workspace_id = %s::uuid)
+                ORDER BY version DESC
                 LIMIT 1
                 """,
-                (tenant_id, persona_key),
+                (tenant_id, persona_key, workspace_id, workspace_id),
             )
             row = cur.fetchone()
+            if row and int(row.get("active_workspace_count") or 1) > 1:
+                raise ValueError("ambiguous_persona_workspace")
     return _row_to_persona(row) if row else None
 
 
@@ -163,7 +171,7 @@ def activate_persona_version(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, persona_key, status
+                SELECT id, persona_key, status, workspace_id
                 FROM public.ai_agent_persona_versions
                 WHERE id = %s AND tenant_id = %s
                 LIMIT 1
@@ -185,8 +193,9 @@ def activate_persona_version(
                   AND persona_key = %s
                   AND status = 'active'
                   AND id <> %s
+                  AND workspace_id IS NOT DISTINCT FROM %s::uuid
                 """,
-                (now, tenant_id, persona_key, persona_id),
+                (now, tenant_id, persona_key, persona_id, target.get("workspace_id")),
             )
             cur.execute(
                 """
@@ -304,20 +313,7 @@ def insert_prompt_compilation(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                INSERT INTO public.ai_prompt_compilations (
-                    tenant_id, conversation_key, sender_key,
-                    inbound_id, response_id, persona_version_id,
-                    instruction_extension_ids, contact_memory_ids,
-                    compiled_instructions_hash,
-                    instructions_char_count, input_char_count,
-                    approximate_input_tokens, channel, openai_api_mode, metadata
-                )
-                VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-                RETURNING id
-                """,
+                operator_message('persona.persona_repository.insert_prompt_compilation.9111729e77'),
                 (
                     tenant_id,
                     conversation_key,

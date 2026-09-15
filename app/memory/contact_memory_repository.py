@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.core.turn_cache import cached_turn_read, invalidates_turn_reads
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +15,7 @@ def _row_to_memory(row: dict[str, Any]) -> ContactMemory:
     return ContactMemory.model_validate(row)
 
 
+@cached_turn_read
 def get_active_contact_memories(
     *,
     tenant_id: str,
@@ -123,6 +126,7 @@ def select_relevant_memories(
     return selected
 
 
+@invalidates_turn_reads
 def upsert_contact_memory(
     *,
     tenant_id: str,
@@ -223,6 +227,7 @@ def upsert_contact_memory(
     raise RuntimeError("contact_memory_upsert_failed")
 
 
+@invalidates_turn_reads
 def forget_contact_memory(
     *,
     tenant_id: str,

@@ -19,6 +19,14 @@ class Settings(BaseSettings):
 
     environment: str = Field(default="production", alias="ENVIRONMENT")
     log_level: str = Field(default="info", alias="LOG_LEVEL")
+    agent_catalog_similarity_threshold: float = Field(default=0.28, ge=0.1, le=0.9, alias="AGENT_CATALOG_SIMILARITY_THRESHOLD")
+    agent_knowledge_attachment_limit: int = Field(default=50, ge=1, le=200, alias="AGENT_KNOWLEDGE_ATTACHMENT_LIMIT")
+    agent_knowledge_chunk_chars: int = Field(default=1400, ge=300, le=5000, alias="AGENT_KNOWLEDGE_CHUNK_CHARS")
+    agent_knowledge_max_chunks: int = Field(default=3, ge=1, le=12, alias="AGENT_KNOWLEDGE_MAX_CHUNKS")
+    agent_knowledge_relative_score: float = Field(default=0.8, ge=0, le=1, alias="AGENT_KNOWLEDGE_RELATIVE_SCORE")
+    agent_catalog_trgm_retry_seconds: int = Field(default=60, ge=5, le=600, alias="AGENT_CATALOG_TRGM_RETRY_SECONDS")
+    agent_queue_retry_base_seconds: int = Field(default=30, ge=5, le=300, alias="AGENT_QUEUE_RETRY_BASE_SECONDS")
+    agent_queue_retry_max_seconds: int = Field(default=300, ge=30, le=1800, alias="AGENT_QUEUE_RETRY_MAX_SECONDS")
     app_name: str = Field(default="NewStoreAgent", alias="APP_NAME")
     dry_run: bool = Field(default=True, alias="DRY_RUN")
 
@@ -512,6 +520,7 @@ class Settings(BaseSettings):
         ge=1,
         le=20,
     )
+    agent_learning_rollback_abs_fail: float = Field(default=0.5, ge=0, le=1, alias="AGENT_LEARNING_ROLLBACK_ABS_FAIL")
     agent_learning_max_instruction_chars: int = Field(
         default=800,
         alias="AGENT_LEARNING_MAX_INSTRUCTION_CHARS",
@@ -784,6 +793,9 @@ class Settings(BaseSettings):
 
     # Agent-owned Postgres (ai_* tables, sessions, memory, image index).
     database_url: str = Field(default="", alias="DATABASE_URL")
+    database_pool_enabled: bool = Field(default=True, alias="DATABASE_POOL_ENABLED")
+    database_pool_max_size: int = Field(default=2, ge=1, le=8, alias="DATABASE_POOL_MAX_SIZE")
+    database_pool_timeout_seconds: float = Field(default=5, gt=0, le=30, alias="DATABASE_POOL_TIMEOUT_SECONDS")
     # Sorteio/raffle domain Postgres (users, draw/draws, payments, app_config_new).
     # Falls back to DATABASE_URL when empty (legacy shared-DB setups).
     sorteio_database_url: str = Field(default="", alias="SORTEIO_DATABASE_URL")
@@ -1124,8 +1136,17 @@ class Settings(BaseSettings):
 
 
 @lru_cache(maxsize=1)
-def get_settings() -> Settings:
+def _environment_settings() -> Settings:
     return Settings()
+
+
+def get_settings() -> Settings:
+    from app.configuration.runtime import effective_settings
+    return effective_settings() or _environment_settings()
+
+
+get_settings.cache_clear = _environment_settings.cache_clear
+get_settings.cache_info = _environment_settings.cache_info
 
 
 def supabase_storage_configured(settings: Settings | None = None) -> bool:

@@ -5,6 +5,8 @@ Look up patched names on ``app.sales_agent`` at call time.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from app.commerce.commerce_context import CommerceConversationState
@@ -392,7 +394,7 @@ async def try_catalog_purchase(
         )
         return sales._mark_sales_result(
             AgentResult(
-                reply_text="Encontrei mais de uma possibilidade. Confirme quais itens da lista devem entrar no carrinho.",
+                reply_text=operator_message('sales.catalog_purchase.try_catalog_purchase.d92b051a7e'),
                 intent="commerce",
                 handoff_required=False,
                 safety_reason="ambiguous_purchase_item",

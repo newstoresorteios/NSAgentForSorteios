@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import mimetypes
 import re
 from typing import Any
@@ -36,10 +38,8 @@ def resolved_brevo_whatsapp_send_url(raw: str | None) -> tuple[str, str | None]:
 
 # Never send this caption to the customer — WhatsApp shows it as a failed PTT.
 _AUDIO_CAPTION_PLACEHOLDER = "Resposta em áudio"
-_EMPTY_REPLY_FALLBACK = (
-    "Não consegui montar a resposta agora. Me diz em uma frase o que você busca "
-    "(marca, modelo ou faixa de investimento)?"
-)
+def _EMPTY_REPLY_FALLBACK():
+    return operator_message('instructions._empty_reply_fallback.ef243cd947')
 
 
 def customer_visible_reply_text(
@@ -55,7 +55,7 @@ def customer_visible_reply_text(
         return f"Ouça: {audio_url}"
     if cleaned:
         return cleaned
-    return _EMPTY_REPLY_FALLBACK
+    return _EMPTY_REPLY_FALLBACK()
 
 
 def _agent_payload(settings: Any) -> dict[str, str]:

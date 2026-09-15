@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import html
 import re
 
@@ -16,13 +18,26 @@ def truncate_reply(text: str, max_chars: int) -> str:
     cleaned = (text or "").strip()
     if len(cleaned) <= max_chars:
         return cleaned
-    # Prefer not to cut mid-URL when possible.
-    cut = cleaned[: max_chars - 1].rstrip()
-    if "http" in cut and "://" in cleaned[max_chars - 40 : max_chars + 40]:
-        last_space = cut.rfind(" ")
-        if last_space > max_chars // 2:
-            cut = cut[:last_space].rstrip()
-    return cut + "…"
+    if max_chars <= 0:
+        return ""
+    boundary = max_chars - 1
+    # Treat URLs (including long signed checkout links) as indivisible tokens.
+    for match in re.finditer(r"https?://[^\s<>]+", cleaned):
+        if match.start() < boundary < match.end():
+            # The configured length is a presentation preference. Preserve the
+            # complete actionable link, including its preceding explanation.
+            boundary = match.end()
+            break
+    cut = cleaned[:boundary].rstrip()
+    # A link longer than the whole display budget cannot be shortened safely.
+    # Preserve it when it is the only available content; channel transport has
+    # its own hard limit, separate from the operator's preferred reply length.
+    if not cut:
+        match = re.match(r"https?://[^\s<>]+", cleaned)
+        return match.group(0) if match else "…"[:max_chars]
+    if boundary >= len(cleaned):
+        return cleaned
+    return cut + ("\n…" if re.search(r"https?://[^\s<>]+$", cut) else "…")
 
 
 def normalize_reply_text(text: str) -> str:

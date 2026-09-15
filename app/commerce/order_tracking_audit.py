@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any, Awaitable, Callable
 
 from app.config import get_settings
@@ -85,12 +87,7 @@ def fetch_recent_missing_tracking_reply_count(*, days: int = 1) -> dict[str, Any
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT COUNT(*)::int AS n
-                FROM public.ai_agent_responses
-                WHERE created_at > now() - (%(days)s * interval '1 day')
-                  AND reply_text ILIKE %(pattern)s
-                """,
+                operator_message('commerce.order_tracking_audit.fetch_recent_missing_tracking_reply_count.c0027a74c2'),
                 {
                     "days": window,
                     "pattern": "%rastreio%cadastrado%",

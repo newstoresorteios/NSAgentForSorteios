@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from app.commerce.commerce_context import CommerceConversationState
@@ -76,16 +78,11 @@ def informational_payment_policy_result(
     )
     if preference == "pix":
         reply_text = (
-            f"No PIX o desconto oficial da New Store é de {pix_pct}% "
-            "sobre o valor do site — não consigo aplicar mais do que isso. "
-            "Se quiser, me diga qual modelo te interessa que eu te passo o valor no PIX."
+            operator_message('sales.policies.action_authority.informational_payment_policy_result.1e4776f73c', pix_pct=f'{pix_pct}')
         )
     else:
         reply_text = (
-            f"Aceitamos PIX (com {pix_pct}% de desconto sobre o valor do site), "
-            "cartão e boleto conforme as opções oficiais. "
-            f"O preço do site é final; desconto além dos {max_pix}% no PIX {beyond}. "
-            "Quer que eu calcule em algum modelo específico?"
+            operator_message('sales.policies.action_authority.informational_payment_policy_result.7c0782063f', pix_pct=f'{pix_pct}', max_pix=f'{max_pix}', beyond=f'{beyond}')
         )
     commercial_data: dict[str, Any] = {
         "payment_policy": {
@@ -129,9 +126,9 @@ def purchase_product_required_result(
     ambiguous = bool(state.last_presented_products)
     return AgentResult(
         reply_text=(
-            "Qual desses produtos você quer? Assim eu te passo o valor e as formas de pagamento."
+            operator_message('sales.policies.action_authority.purchase_product_required_result.de22e507ce')
             if ambiguous
-            else "Me diga qual produto você quer que eu te passo o valor e as formas de pagamento."
+            else operator_message('sales.policies.action_authority.purchase_product_required_result.78d26293ee')
         ),
         intent="commerce",
         handoff_required=False,

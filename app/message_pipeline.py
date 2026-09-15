@@ -197,7 +197,7 @@ def _ensure_live_turn_budget(incoming: IncomingMessage):
             f"pipeline:{incoming.message_id or incoming.sender_key or incoming.sender_phone or 'anon'}"
         ),
         llm_budget=LLMCallBudget(
-            max_calls=int(cfg.get("max_calls") or 2),
+            max_calls=int(cfg.get("max_calls", 2)),
             enforce=True,
         ),
     )
@@ -213,9 +213,24 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         set_persona_runtime,
     )
 
-    owned_token = _ensure_live_turn_budget(incoming)
-    persona_token = set_persona_runtime(load_persona_runtime())
+    from app.configuration.runtime import bind_bundle, reset_bundle, settings_from_bundle
+    import asyncio
+    from app.core.turn_cache import begin_turn_cache, end_turn_cache
+    cache_token = begin_turn_cache()
+    configuration_tokens = owned_token = persona_token = None
     try:
+        from app.configuration.workspace import resolve_conversation_workspace
+        workspace_id = await asyncio.to_thread(resolve_conversation_workspace, incoming.conversation_id, incoming.channel)
+        loaded_persona = await asyncio.to_thread(load_persona_runtime, workspace_id=workspace_id) if workspace_id else await asyncio.to_thread(load_persona_runtime)
+        bundle = loaded_persona.configuration_bundle
+        configuration_tokens = bind_bundle(bundle, settings_from_bundle(get_settings(), bundle)) if bundle else None
+        owned_token = _ensure_live_turn_budget(incoming)
+        persona_token = set_persona_runtime(loaded_persona)
+        if bundle and get_current_turn() is not None:
+            from app.llm.llm_call_policy import resolve_turn_llm_budget
+            limit = resolve_turn_llm_budget()
+            get_current_turn().llm_budget.max_calls = limit["max_calls"]
+            get_current_turn().llm_budget.enforce = limit["enforce"]
         result = await _process_incoming_message(incoming, customer_context)
         persona = get_persona_runtime()
         if persona is not None:
@@ -227,12 +242,17 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             result.response_metadata["turn_runtime"] = runtime.safe_summary()
         return result
     finally:
-        reset_persona_runtime(persona_token)
+        if persona_token is not None:
+            reset_persona_runtime(persona_token)
+        end_turn_cache(cache_token)
+        if configuration_tokens is not None:
+            reset_bundle(configuration_tokens)
         if owned_token is not None:
             reset_current_turn(owned_token)
 
 
 async def _process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
+    import asyncio
     settings = get_settings()
     runtime = get_current_turn()
     if runtime is not None:
@@ -283,7 +303,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
     }
     with runtime_stage("load_context"):
         commerce_state = CommerceConversationState.from_payload(
-            load_commerce_conversation_state(**state_lookup)
+            await asyncio.to_thread(load_commerce_conversation_state, **state_lookup)
         )
     from app.sales.dialogue_phase import (
         reset_browse_memory_keep_orders,
@@ -817,4 +837,5 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             enriched,
             max_reply_chars=max_reply_chars,
         )
+        commerce_state = _realign_commerce_state_to_reply(commerce_state, result)
         return _persist_commerce_session(incoming, commerce_state, result)

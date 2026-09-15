@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 from contextvars import ContextVar, Token
 from typing import Any, Literal
@@ -44,6 +46,7 @@ class PersonaRuntimeConfig(BaseModel):
     chatbo_persona_id: str | None = None
     workspace_id: str | None = None
     runtime_configuration: dict[str, Any] = Field(default_factory=dict)
+    configuration_bundle: dict[str, Any] = Field(default_factory=dict)
     agent_display_name: str = "Crono"
     greeting_text: str | None = None
     closing_message: str | None = None
@@ -118,7 +121,8 @@ class PersonaRuntimeConfig(BaseModel):
             "policy_source": self.policy_source,
             "chatbo_persona_id": self.chatbo_persona_id,
             "workspace_id": self.workspace_id,
-            "runtime_configuration_keys": sorted(self.runtime_configuration),
+            "runtime_configuration_count": len(self.runtime_configuration),
+            "configuration_version": self.configuration_bundle.get("version"),
         }
 
     def sales_skills_block(
@@ -201,36 +205,32 @@ class PersonaRuntimeConfig(BaseModel):
 
     def prompt_policy_block(self) -> str:
         negotiation = (
-            "escalar para consultor humano"
+            operator_message('persona.persona_runtime.prompt_policy_block.a0dc1acb1e')
             if self.negotiation_beyond_pix == "human_handoff"
-            else "recusar e manter a política oficial"
+            else operator_message('persona.persona_runtime.prompt_policy_block.1f42cf601d')
         )
         lines = [
             "<persona_runtime_policy>",
-            f"Identidade operacional: {self.agent_display_name}.",
+            operator_message('persona.persona_runtime.prompt_policy_block.8215a56d88', value_1=f'{self.agent_display_name}'),
         ]
         if self.tone:
-            lines.append(f"Tom de voz: {self.tone}.")
+            lines.append(operator_message('persona.persona_runtime.prompt_policy_block.24ceed8ddd', value_1=f'{self.tone}'))
         if self.greeting_text:
             lines.append(f"Saudação oficial: {self.greeting_text}")
         if self.customer_address_style:
-            lines.append(f"Tratamento ao cliente: {self.customer_address_style}")
+            lines.append(operator_message('persona.persona_runtime.prompt_policy_block.83006804b8', value_1=f'{self.customer_address_style}'))
         if self.closing_message:
             lines.append(f"Encerramento padrão: {self.closing_message}")
         lines.extend(
             [
-                f"Desconto oficial no PIX: {self.pix_discount_percent}% "
-                f"(máximo {self.max_pix_discount_percent}%).",
-                f"Preço do site é final: {self.site_price_is_final}.",
-                "Consulta informativa de pagamento/desconto "
-                f"{'exige' if self.require_cart_for_informational_payment else 'não exige'} "
-                "carrinho.",
-                "Antes de listar catálogo: "
-                f"{'pergunte preferências da qualificação ChatBo' if self.require_qualification_before_catalog else 'pode buscar se o cliente pedir opções'}.",
-                f"Máximo de peças por resposta: {self.max_catalog_options}.",
-                f"Priorizar pronta entrega: {self.prefer_ready_stock}.",
-                f"Negociação além do PIX oficial: {negotiation}.",
-                "Siga o bloco <persona_knowledge> / persona ChatBo completo.",
+                operator_message('persona.persona_runtime.prompt_policy_block.b0ffb37ca5', value_1=f'{self.pix_discount_percent}', value_2=f'{self.max_pix_discount_percent}'),
+                operator_message('persona.persona_runtime.prompt_policy_block.614717c941', value_1=f'{self.site_price_is_final}'),
+                operator_message('persona.persona_runtime.prompt_policy_block.d0d6392aba', value_1=f"{('exige' if self.require_cart_for_informational_payment else 'não exige')}"),
+                operator_message('persona.persona_runtime.prompt_policy_block.44d521606e', value_1=f"{('pergunte preferências da qualificação ChatBo' if self.require_qualification_before_catalog else 'pode buscar se o cliente pedir opções')}"),
+                operator_message('persona.persona_runtime.prompt_policy_block.8e874a098f', value_1=f'{self.max_catalog_options}'),
+                operator_message('persona.persona_runtime.prompt_policy_block.5fb731be61', value_1=f'{self.prefer_ready_stock}'),
+                operator_message('persona.persona_runtime.prompt_policy_block.5c5b16523d', negotiation=f'{negotiation}'),
+                operator_message('persona.persona_runtime.prompt_policy_block.a06fb52629'),
                 "</persona_runtime_policy>",
             ]
         )
@@ -329,7 +329,7 @@ def apply_policy_overrides(
         ),
         pix,
     )
-    pix = max(1, min(40, pix))
+    pix = max(0, min(40, pix))
     max_pix = max(pix, min(40, max_pix))
     greeting_mode = str(
         policy.get("greeting_mode", policy.get("greetingMode", config.greeting_mode))
@@ -373,6 +373,10 @@ def apply_policy_overrides(
                     ),
                 ),
                 config.require_cart_for_informational_payment,
+            ),
+            "require_qualification_before_catalog": _coerce_bool(
+                policy.get("require_qualification_before_catalog", policy.get("requireQualificationBeforeCatalog", config.require_qualification_before_catalog)),
+                config.require_qualification_before_catalog,
             ),
             "require_product_before_checkout": _coerce_bool(
                 policy.get(
@@ -621,7 +625,6 @@ def build_persona_runtime(
     meta_policy = _metadata_policy(active.metadata)
     if meta_policy:
         config = apply_policy_overrides(config, meta_policy, source="metadata")
-        config = _enrich_from_chatbo_profile(config, chatbo_profile)
         config.chatbo_persona_id = chatbo_persona_id(active.metadata)
         return config
 
@@ -651,7 +654,7 @@ def build_persona_runtime(
     return config
 
 
-def load_persona_runtime() -> PersonaRuntimeConfig:
+def load_persona_runtime(*, workspace_id: str | None = None) -> PersonaRuntimeConfig:
     """Load active persona + derive executable flow params for this turn."""
     from app.config import get_settings
     from app.persona.persona_repository import (
@@ -682,8 +685,10 @@ def load_persona_runtime() -> PersonaRuntimeConfig:
     active: PersonaVersion | None = None
     load_error: str | None = None
     try:
-        active = get_active_persona(tenant_id, persona_key)
+        active = get_active_persona(tenant_id, persona_key, workspace_id=workspace_id) if workspace_id else get_active_persona(tenant_id, persona_key)
     except Exception as exc:
+        if str(exc) == "ambiguous_persona_workspace":
+            raise
         load_error = f"persona_load_failed:{type(exc).__name__}"
         print("[persona.runtime.load_error]", {
             "error_type": type(exc).__name__,
@@ -708,7 +713,7 @@ def load_persona_runtime() -> PersonaRuntimeConfig:
             })
 
     runtime_configuration: dict[str, Any] = {}
-    workspace_id = str((chatbo_profile or {}).get("workspace_id") or "").strip()
+    workspace_id = str((chatbo_profile or {}).get("workspace_id") or getattr(active, "workspace_id", None) or workspace_id or "").strip()
     raw_configuration = (chatbo_profile or {}).get("agent_configuration") or {}
     if isinstance(raw_configuration, dict):
         runtime_node = raw_configuration.get("runtime") or raw_configuration
@@ -726,7 +731,13 @@ def load_persona_runtime() -> PersonaRuntimeConfig:
     )
     config.workspace_id = workspace_id or None
     config.runtime_configuration = runtime_configuration
-    shortlist = runtime_configuration.get("catalogShortlistSize")
+    if workspace_id:
+        from app.configuration.repository import load_workspace_bundle
+        config.configuration_bundle = load_workspace_bundle(workspace_id, bootstrap_settings=settings)
+        config.runtime_configuration = dict(config.configuration_bundle["values"])
+        runtime_configuration = config.runtime_configuration
+        config = apply_policy_overrides(config, runtime_configuration, source="workspace_database")
+    shortlist = runtime_configuration.get("maxCatalogOptions", runtime_configuration.get("catalogShortlistSize"))
     if shortlist is not None:
         try:
             config.max_catalog_options = max(1, min(5, int(shortlist)))
@@ -742,6 +753,7 @@ def load_persona_runtime() -> PersonaRuntimeConfig:
         ),
         "greeting_mode": config.greeting_mode,
         "workspace_id": config.workspace_id,
-        "runtime_configuration_keys": sorted(config.runtime_configuration),
+        "runtime_configuration_count": len(config.runtime_configuration),
+        "configuration_version": config.configuration_bundle.get("version"),
     })
     return config

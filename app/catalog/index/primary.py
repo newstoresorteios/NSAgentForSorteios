@@ -89,6 +89,14 @@ def fetch_primary_index_candidates(
             strategy = "exact_reference" if rows else None
 
         gender = preference_gender_label(interpretation)
+        from app.catalog.specs.preference_normalize import _fold
+        attributes = _fold(" ".join(prefs.attributes or []))
+        mechanism = None
+        # Use explicit interpreted constraints; do not infer from historic model names.
+        if "automatic" in attributes:
+            mechanism = "autom"
+        elif "quartz" in attributes or "quartzo" in attributes:
+            mechanism = "quartz"
         case_range = None
         try:
             from app.catalog.specs.catalog_specs import interpretation_case_size_range
@@ -105,6 +113,7 @@ def fetch_primary_index_candidates(
                 subject.brand,
                 prefs.budget_max is not None,
                 gender,
+                mechanism,
                 case_range,
             )
         )
@@ -113,6 +122,7 @@ def fetch_primary_index_candidates(
                 tenant_id=tenant,
                 brand=subject.brand,
                 gender=gender,
+                mechanism=mechanism,
                 max_price=prefs.budget_max,
                 min_case_size_mm=min_case_mm,
                 max_case_size_mm=max_case_mm,

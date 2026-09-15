@@ -360,7 +360,7 @@ async def test_council_continue_commerce_retrieves_instead_of_dumping_shortlist(
     )
     incoming = IncomingMessage(channel="whatsapp", text="quero um relogio")
     result, _decision, _interp = await apply_answer_council_with_retry(
-        AgentResult(reply_text=GREETING_REPLY, intent="commerce"),
+        AgentResult(reply_text=GREETING_REPLY(), intent="commerce"),
         incoming=incoming,
         interpretation=_interpretation(brand=None, preferences={}),
         commerce_state=CommerceConversationState(
@@ -398,7 +398,7 @@ async def test_council_replays_shortlist_only_when_customer_asks(monkeypatch):
     )
     incoming = IncomingMessage(channel="whatsapp", text="quais eram os relogios")
     result, _decision, _interp = await apply_answer_council_with_retry(
-        AgentResult(reply_text=GREETING_REPLY, intent="commerce"),
+        AgentResult(reply_text=GREETING_REPLY(), intent="commerce"),
         incoming=incoming,
         interpretation=_interpretation(),
         commerce_state=CommerceConversationState(

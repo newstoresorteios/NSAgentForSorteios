@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import json
 import re
 from typing import Any
@@ -183,16 +185,7 @@ def mark_preferred_name_prompted(user_id: int) -> None:
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO public.ai_user_preferences
-                      (user_id, ask_preferred_name, last_preferred_name_prompt_at, updated_at)
-                    VALUES
-                      (%(user_id)s, false, now(), now())
-                    ON CONFLICT (user_id) DO UPDATE SET
-                      ask_preferred_name = false,
-                      last_preferred_name_prompt_at = now(),
-                      updated_at = now()
-                    """,
+                    operator_message('identity.user_preferences.mark_preferred_name_prompted.4a9f3154ef'),
                     {"user_id": user_id},
                 )
     except Exception as exc:

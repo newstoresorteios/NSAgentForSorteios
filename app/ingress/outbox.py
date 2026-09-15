@@ -214,6 +214,8 @@ def claim_pending_outbox(
                   SELECT id
                   FROM public.ai_outbound_outbox
                   WHERE attempts < max_attempts
+                    AND (status <> 'failed' OR updated_at + make_interval(secs =>
+                        LEAST(%(retry_max)s, %(retry_base)s * power(2, GREATEST(attempts - 1, 0)))::int) <= now())
                     AND (
                       status IN ('pending', 'failed')
                       OR (
@@ -244,6 +246,8 @@ def claim_pending_outbox(
                     "limit": max(1, min(int(limit), 25)),
                     "owner": lease_owner,
                     "expires": expires,
+                    "retry_base": getattr(settings, "agent_queue_retry_base_seconds", 30),
+                    "retry_max": getattr(settings, "agent_queue_retry_max_seconds", 300),
                 },
             )
             rows = cur.fetchall() or []

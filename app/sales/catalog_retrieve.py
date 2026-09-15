@@ -5,6 +5,8 @@ Look up patched names on ``app.sales_agent`` at call time.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from app.commerce.commerce_context import CommerceConversationState
@@ -242,8 +244,7 @@ async def retrieve_catalog_or_clarify(
             return sales._mark_sales_result(
                 AgentResult(
                     reply_text=(
-                        "Me diz em uma frase o que você busca — "
-                        "marca, modelo ou faixa de investimento."
+                        operator_message('sales.catalog_retrieve.retrieve_catalog_or_clarify.8054ad3cc3')
                     ),
                     intent="commerce",
                     handoff_required=False,

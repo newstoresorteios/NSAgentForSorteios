@@ -13,9 +13,9 @@ def test_catalog_turn_omits_checkout_only_contract():
         CommerceConversationState(dialogue_phase="shortlist"),
     )
 
-    assert contract == BASE_SALES_RESPONDER_INSTRUCTIONS
-    assert CHECKOUT_FLOW_INSTRUCTIONS not in contract
-    assert len(contract) < len(SALES_RESPONDER_INSTRUCTIONS)
+    assert contract == BASE_SALES_RESPONDER_INSTRUCTIONS()
+    assert CHECKOUT_FLOW_INSTRUCTIONS() not in contract
+    assert len(contract) < len(SALES_RESPONDER_INSTRUCTIONS())
 
 
 def test_purchase_turn_keeps_checkout_contract():
@@ -24,5 +24,5 @@ def test_purchase_turn_keeps_checkout_contract():
         CommerceConversationState(dialogue_phase="buy"),
     )
 
-    assert contract == SALES_RESPONDER_INSTRUCTIONS
-    assert CHECKOUT_FLOW_INSTRUCTIONS in contract
+    assert contract == SALES_RESPONDER_INSTRUCTIONS()
+    assert CHECKOUT_FLOW_INSTRUCTIONS() in contract

@@ -28,8 +28,9 @@ def test_trade_in_triggers_handoff_with_policy_message():
     result = build_human_handoff_result(reason="trade_in_or_appraisal")
     assert result.handoff_required is True
     assert "avalia" in result.reply_text.lower()
-    assert "troca" in result.reply_text.lower()
-    assert TRADE_IN_HANDOFF_MESSAGE.split(".")[0] in result.reply_text
+    from app.persona.store_knowledge import trade_in_policy_text
+    assert "permuta" in result.reply_text.lower()
+    assert result.reply_text == trade_in_policy_text()
 
 
 def test_fast_critique_rewrites_trade_in_denial():

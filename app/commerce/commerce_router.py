@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 from typing import Any
 
@@ -8,20 +10,22 @@ from app.tray.tool_errors import is_upstream_not_found
 from app.tray.tray_tools import execute_tool
 
 
-COMMERCE_UNAVAILABLE = "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."
-PRODUCT_NOT_FOUND_REPLY = "N\u00e3o encontrei esse produto no cat\u00e1logo da loja."
+def COMMERCE_UNAVAILABLE():
+    return operator_message('instructions.commerce_unavailable.08732f3104')
+def PRODUCT_NOT_FOUND_REPLY():
+    return operator_message('instructions.product_not_found_reply.2fc50111a8')
 
 
 def _tool_error_result(payload: dict[str, Any]) -> AgentResult:
     if is_upstream_not_found(payload):
         return AgentResult(
-            reply_text=PRODUCT_NOT_FOUND_REPLY,
+            reply_text=PRODUCT_NOT_FOUND_REPLY(),
             intent="commerce",
             handoff_required=False,
             safety_reason="product_not_found",
         )
     return AgentResult(
-        reply_text=COMMERCE_UNAVAILABLE,
+        reply_text=COMMERCE_UNAVAILABLE(),
         intent="commerce",
         handoff_required=False,
         safety_reason="tray_adapter_unavailable",
@@ -526,7 +530,7 @@ def _product_lines(
 
 def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
     if not products:
-        return AgentResult(reply_text="N\u00e3o encontrei esse produto no cat\u00e1logo agora.", intent="commerce", handoff_required=False, safety_reason="product_not_found")
+        return AgentResult(reply_text=operator_message('commerce.commerce_router._product_result.7cc54b8858'), intent="commerce", handoff_required=False, safety_reason="product_not_found")
     if action == "product_disambiguation":
         prefix = "Encontrei algumas possibilidades:"
     else:
@@ -555,7 +559,7 @@ def guided_near_match_result(
     shortlist = [product for product in products if isinstance(product, dict)][: max(1, min(limit, 5))]
     if not shortlist:
         return AgentResult(
-            reply_text="Não encontrei esse produto no catálogo agora.",
+            reply_text=operator_message('commerce.commerce_router.guided_near_match_result.7cc54b8858'),
             intent="commerce",
             handoff_required=False,
             safety_reason="product_not_found",
@@ -588,7 +592,7 @@ def guided_near_match_result(
         for position, line in enumerate(_product_lines(shortlist, compact=True), start=1)
     ]
     return AgentResult(
-        reply_text=prefix + "\n" + "\n".join(numbered_lines) + "\n\nÉ algum desses?",
+        reply_text=prefix + "\n" + "\n".join(numbered_lines) + operator_message('commerce.commerce_router.guided_near_match_result.6c86daa333'),
         intent="commerce",
         handoff_required=False,
         safety_reason=safety_reason,
@@ -623,18 +627,18 @@ async def handle_commerce_message(
         _log_route(action, "list_coupons", bool(query))
         result = await execute_tool("list_coupons", {"limit": 3})
         if "error" in result:
-            return AgentResult(reply_text=COMMERCE_UNAVAILABLE, intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
+            return AgentResult(reply_text=COMMERCE_UNAVAILABLE(), intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
         coupons = result.get("coupons") if isinstance(result.get("coupons"), list) else []
         if not coupons:
-            return AgentResult(reply_text="N\u00e3o encontrei cupons comerciais dispon\u00edveis agora.", intent="commerce", handoff_required=False, safety_reason="coupon_not_found")
+            return AgentResult(reply_text=operator_message('commerce.commerce_router.handle_commerce_message.b5a2563ce4'), intent="commerce", handoff_required=False, safety_reason="coupon_not_found")
         lines = [f"{coupon.get('code') or 'Cupom'}: {coupon.get('description') or 'dispon\u00edvel para consulta'}" for coupon in coupons[:3] if isinstance(coupon, dict)]
-        return AgentResult(reply_text="Encontrei estes cupons comerciais:\n" + "\n".join(lines), intent="commerce", handoff_required=False)
+        return AgentResult(reply_text=operator_message('commerce.commerce_router.handle_commerce_message.bca0c01912') + "\n".join(lines), intent="commerce", handoff_required=False)
 
     remembered = _remembered_product(message)
     if _is_follow_up_without_product(query):
         if not remembered or not remembered.get("id"):
             return AgentResult(
-                reply_text="Qual produto você quer consultar? Informe o nome, modelo ou referência.",
+                reply_text=operator_message('commerce.commerce_router.handle_commerce_message.65c74c62dc'),
                 intent="commerce",
                 handoff_required=False,
                 safety_reason="product_context_missing",
@@ -645,7 +649,7 @@ async def handle_commerce_message(
             inventory = await execute_tool("check_inventory", {"product_id": product_id})
             if "error" in inventory:
                 return _tool_error_result(inventory)
-            return AgentResult(reply_text="Consulta de estoque:\n" + "\n".join(_product_lines([remembered], inventory)), intent="commerce", handoff_required=False, commercial_data={"products": [remembered], "inventory": inventory})
+            return AgentResult(reply_text=operator_message('commerce.commerce_router.handle_commerce_message.4760f4c191') + "\n".join(_product_lines([remembered], inventory)), intent="commerce", handoff_required=False, commercial_data={"products": [remembered], "inventory": inventory})
         _log_route(action, "get_product", False)
         current = await execute_tool("get_product", {"product_id": product_id})
         if "error" in current:
@@ -656,7 +660,7 @@ async def handle_commerce_message(
     _log_route(action, "search_products", True)
     search = await execute_tool("search_products", {"query": query, "limit": 3})
     if "error" in search:
-        return AgentResult(reply_text=COMMERCE_UNAVAILABLE, intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
+        return AgentResult(reply_text=COMMERCE_UNAVAILABLE(), intent="commerce", handoff_required=False, safety_reason="tray_adapter_unavailable")
     products = _products(search)
     if action == "product_price" and len(products) == 1 and products[0].get("id"):
         _log_route(action, "get_product", True)
@@ -674,14 +678,14 @@ async def handle_commerce_message(
     if not products:
         return _product_result(action, products)
     if len(products) != 1:
-        return AgentResult(reply_text="Encontrei mais de um produto com esse termo. Pode informar a refer\u00eancia ou o modelo exato?", intent="commerce", handoff_required=False, safety_reason="ambiguous_product")
+        return AgentResult(reply_text=operator_message('commerce.commerce_router.handle_commerce_message.32b49f1456'), intent="commerce", handoff_required=False, safety_reason="ambiguous_product")
 
     product_id = products[0].get("id")
     if not product_id:
-        return AgentResult(reply_text="N\u00e3o consegui identificar esse produto para confirmar o estoque.", intent="commerce", handoff_required=False, safety_reason="product_id_missing")
+        return AgentResult(reply_text=operator_message('commerce.commerce_router.handle_commerce_message.8cf78f2a2d'), intent="commerce", handoff_required=False, safety_reason="product_id_missing")
     _remember_product(message, products[0])
     _log_route(action, "check_inventory", True)
     inventory = await execute_tool("check_inventory", {"product_id": str(product_id)})
     if "error" in inventory:
         return _tool_error_result(inventory)
-    return AgentResult(reply_text="Consulta de estoque:\n" + "\n".join(_product_lines(products, inventory)), intent="commerce", handoff_required=False, commercial_data={"products": products, "inventory": inventory})
+    return AgentResult(reply_text=operator_message('commerce.commerce_router.handle_commerce_message.4760f4c191') + "\n".join(_product_lines(products, inventory)), intent="commerce", handoff_required=False, commercial_data={"products": products, "inventory": inventory})

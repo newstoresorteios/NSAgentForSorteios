@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+from app.configuration.runtime import policy
+
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -15,6 +18,26 @@ from app.models import AgentResult
 
 
 CheckoutChannel = Literal["whatsapp", "site"]
+
+
+def assisted_checkout_enabled() -> bool:
+    return policy("checkoutMode") == "assisted"
+
+
+def site_checkout_result(state: CommerceConversationState) -> AgentResult:
+    url = _site_url(state.cart_url) if state.cart_session_id else None
+    return AgentResult(
+        reply_text=operator_message("checkout_site", url=url) if url else operator_message("catalog_unavailable"),
+        intent="commerce",
+        handoff_required=not bool(url),
+        safety_reason=None if url else "checkout_link_unavailable",
+        commercial_data={"checkout": {"selected_channel": "site", "cart_url": url,
+                                      "site_checkout_supported": bool(url)}},
+        response_metadata={"domain": "commerce", "checkout_channel_preference": "site",
+                           "purchase_stage": "checkout_ready" if url else "checkout_channel_selection",
+                           "clear_pending_action": True, "used_tray": False,
+                           "response_source": "workspace_checkout_policy"},
+    )
 
 # The agent can create the Tray order after an explicit review.
 # Native PIX in chat is gated by PIX_DIRECT_ENABLED + MP token.
@@ -67,7 +90,7 @@ def visible_cart_url(
     channel = selected_channel
     if channel is None and state is not None:
         channel = state.checkout_channel_preference
-    if channel == "whatsapp":
+    if channel == "whatsapp" and assisted_checkout_enabled():
         return None
     raw = cart_url
     if raw is None and state is not None:
@@ -101,8 +124,8 @@ def cart_pay_link_copy(
     """Customer copy after a live reserved cart: open the official link and pay."""
     url = cart_url.strip()
     lines = [
-        "Separei o relógio no carrinho — já está reservado.",
-        "Entra neste link e paga para concluir:",
+        operator_message('commerce.checkout_service.cart_pay_link_copy.d7ae9ab664'),
+        operator_message('commerce.checkout_service.cart_pay_link_copy.9b0f19ecb6'),
         url,
     ]
     list_price, pix_price = _display_prices(products)
@@ -117,9 +140,9 @@ def cart_pay_link_copy(
         and pix_price is not None
         and abs(list_price - pix_price) >= 0.01
     ):
-        lines.append(f"No site ele aparece a {list_label}, ou {pix_label} no PIX.")
+        lines.append(operator_message('commerce.checkout_service.cart_pay_link_copy.2232cf8060', list_label=f'{list_label}', pix_label=f'{pix_label}'))
     elif list_label:
-        lines.append(f"No site ele aparece a {list_label}.")
+        lines.append(operator_message('commerce.checkout_service.cart_pay_link_copy.3db3f7e0bb', list_label=f'{list_label}'))
     return "\n".join(lines)
 
 
@@ -187,24 +210,27 @@ def checkout_capabilities(
         if selected_channel is not None
         else state.checkout_channel_preference
     )
+    assisted = assisted_checkout_enabled()
+    if not assisted:
+        effective_channel = "site"
     official_url = _site_url(state.cart_url)
     cart_ready = bool(state.cart_session_id and official_url)
     settings = get_settings()
     pix_direct = bool(
         cart_ready
-        and settings.pix_direct_enabled
+        and assisted and settings.pix_direct_enabled
         and settings.resolved_mp_access_token()
     )
     supported = {
-        "whatsapp": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
+        "whatsapp": bool(assisted and cart_ready and WHATSAPP_ORDER_SUPPORTED),
         "site": bool(cart_ready and official_url),
     }
     facts = {
         "cart_ready": cart_ready,
         "whatsapp_checkout_supported": bool(cart_ready and WHATSAPP_CHECKOUT_SUPPORTED),
-        "whatsapp_order_supported": bool(cart_ready and WHATSAPP_ORDER_SUPPORTED),
+        "whatsapp_order_supported": supported["whatsapp"],
         "whatsapp_hosted_payment_supported": bool(
-            cart_ready and WHATSAPP_HOSTED_PAYMENT_SUPPORTED
+            assisted and cart_ready and WHATSAPP_HOSTED_PAYMENT_SUPPORTED
         ),
         "whatsapp_native_payment_supported": pix_direct,
         "whatsapp_payment_supported": bool(cart_ready and WHATSAPP_PAYMENT_SUPPORTED),
@@ -250,18 +276,20 @@ def checkout_channel_choice_prompt(
         return cart_pay_link_copy(cart_url=public_url, products=products)
     facts = checkout_capabilities(state)
     if facts.get("whatsapp_order_supported"):
-        return "Seu carrinho está pronto. Prefere fechar por aqui no WhatsApp?"
-    return "Seu carrinho está pronto. Posso te enviar o link para concluir pelo site."
+        return operator_message('commerce.checkout_service.checkout_channel_choice_prompt.ce7df37d91')
+    return operator_message('commerce.checkout_service.checkout_channel_choice_prompt.f0e9369d89')
 
 
 def select_checkout_channel(
     state: CommerceConversationState,
     channel: CheckoutChannel,
 ) -> AgentResult:
+    if not assisted_checkout_enabled():
+        return site_checkout_result(state)
     facts = checkout_capabilities(state, selected_channel=channel)
     if not facts["cart_ready"]:
         return AgentResult(
-            reply_text="Ainda não há um carrinho pronto para escolher o canal de checkout.",
+            reply_text=operator_message('commerce.checkout_service.select_checkout_channel.009ee3abb2'),
             intent="commerce",
             handoff_required=False,
             safety_reason="cart_validation_error",
@@ -303,12 +331,11 @@ def select_checkout_channel(
         reply_text = template
     elif supported:
         reply_text = (
-            "Perfeito — seguimos por aqui no WhatsApp. "
-            "Me diga se prefere PIX, cartão ou boleto."
+            operator_message('commerce.checkout_service.select_checkout_channel.fff5f0d39b')
         )
     else:
         reply_text = (
-            "O canal solicitado ainda não possui suporte técnico para concluir esta compra."
+            operator_message('commerce.checkout_service.select_checkout_channel.2d9be610e7')
         )
     return AgentResult(
         reply_text=reply_text,

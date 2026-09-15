@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 from typing import Any
 
@@ -59,16 +61,16 @@ def _format_last_participation(user_id: int) -> str | None:
 def _build_last_participation_reply(last_payment: dict[str, Any]) -> str:
     title = last_payment.get("raffle_title") or "sorteio"
     date_label = (last_payment.get("participated_at") or "")[:10]
-    parts = [f"Sua última participação foi em *{title}*"]
+    parts = [operator_message('llm.agent_replies._build_last_participation_reply.1b7105ab98', title=f'{title}')]
     if date_label:
         parts[0] += f", em {date_label}"
     parts[0] += "."
     if last_payment.get("numbers"):
-        parts.append(f"Seus números: {last_payment['numbers']}.")
+        parts.append(operator_message('llm.agent_replies._build_last_participation_reply.0212990f69', value_1=f"{last_payment['numbers']}"))
     if last_payment.get("amount_brl"):
         parts.append(f"Valor: {last_payment['amount_brl']}.")
     if last_payment.get("winning_number"):
-        parts.append(f"Número sorteado: {last_payment['winning_number']}.")
+        parts.append(operator_message('llm.agent_replies._build_last_participation_reply.fd4b151e43', value_1=f"{last_payment['winning_number']}"))
     return " ".join(parts)
 
 
@@ -95,7 +97,7 @@ def build_preferred_name_reply(message: IncomingMessage, account: dict[str, Any]
 
     save_preferred_name(int(account["user_id"]), preferred_name)
     return AgentResult(
-        reply_text=f"Perfeito! A partir de agora vou te chamar de {preferred_name}.",
+        reply_text=operator_message('llm.agent_replies.build_preferred_name_reply.23bfc8fbfd', preferred_name=f'{preferred_name}'),
         intent="preferred_name_update",
         handoff_required=False,
     )
@@ -103,7 +105,7 @@ def build_preferred_name_reply(message: IncomingMessage, account: dict[str, Any]
 
 def _account_missing_reply(intent: str) -> AgentResult:
     return AgentResult(
-        reply_text=REGISTER_PHONE_MESSAGE,
+        reply_text=REGISTER_PHONE_MESSAGE(),
         intent=intent,
         handoff_required=False,
         safety_reason="account_phone_not_registered",
@@ -112,7 +114,7 @@ def _account_missing_reply(intent: str) -> AgentResult:
 
 def _third_party_reply() -> AgentResult:
     return AgentResult(
-        reply_text=THIRD_PARTY_REFUSAL,
+        reply_text=THIRD_PARTY_REFUSAL(),
         intent="security_refusal",
         handoff_required=False,
         safety_reason="third_party_account_inquiry",
@@ -127,7 +129,7 @@ def build_balance_reply(message: IncomingMessage) -> AgentResult:
 
     if account.get("error") == "phone_missing":
         return AgentResult(
-            reply_text=REGISTER_PHONE_MESSAGE,
+            reply_text=REGISTER_PHONE_MESSAGE(),
             intent="balance_inquiry",
             handoff_required=False,
             safety_reason="phone_missing",
@@ -154,7 +156,7 @@ def build_balance_reply(message: IncomingMessage) -> AgentResult:
 
     if not account.get("found"):
         return AgentResult(
-            reply_text=REGISTER_PHONE_MESSAGE,
+            reply_text=REGISTER_PHONE_MESSAGE(),
             intent="balance_inquiry",
             handoff_required=False,
         )
@@ -162,7 +164,7 @@ def build_balance_reply(message: IncomingMessage) -> AgentResult:
     user_id = int(account["user_id"])
     preferences = get_user_preferences(user_id)
     display_name = resolve_display_name(account.get("name"), preferences)
-    parts = [f"{_greeting(display_name)} Seu saldo disponível é {account['balance_brl']}."]
+    parts = [operator_message('llm.agent_replies.build_balance_reply.3a823ceb76', value_1=f'{_greeting(display_name)}', value_2=f"{account['balance_brl']}")]
 
     last_participation = _format_last_participation(user_id)
     if last_participation:
@@ -185,11 +187,11 @@ def build_coupon_code_reply(message: IncomingMessage) -> AgentResult:
     if account.get("error") == "third_party_inquiry":
         return _third_party_reply()
     if account.get("error") == "phone_missing":
-        return AgentResult(reply_text=REGISTER_PHONE_MESSAGE, intent="coupon_code", handoff_required=False)
+        return AgentResult(reply_text=REGISTER_PHONE_MESSAGE(), intent="coupon_code", handoff_required=False)
     if account.get("error") == "phone_not_registered":
         return _account_missing_reply("coupon_code")
     if not account.get("found"):
-        return AgentResult(reply_text=REGISTER_PHONE_MESSAGE, intent="coupon_code", handoff_required=False)
+        return AgentResult(reply_text=REGISTER_PHONE_MESSAGE(), intent="coupon_code", handoff_required=False)
     if account.get("lookup_error"):
         return AgentResult(reply_text=LOCAL_LOOKUP_UNAVAILABLE, intent="coupon_code", handoff_required=False, safety_reason="coupon_lookup_failed")
 
@@ -201,8 +203,7 @@ def build_coupon_code_reply(message: IncomingMessage) -> AgentResult:
     suffix = _personalized_suffix(user_id, preferences, message.sender_phone, display_name)
     return AgentResult(
         reply_text=(
-            f"{_greeting(display_name)} Seu Cartão Presente: código *{code}* | saldo {balance}. "
-            f"Use em {STORE_URL} no checkout. Código pessoal e intransferível.{suffix}"
+            operator_message('llm.agent_replies.build_coupon_code_reply.f33fa19168', value_1=f'{_greeting(display_name)}', code=f'{code}', balance=f'{balance}', STORE_URL=f'{STORE_URL()}', suffix=f'{suffix}')
         ),
         intent="coupon_code",
         handoff_required=False,
@@ -243,8 +244,7 @@ def build_simulation_reply(message: IncomingMessage) -> AgentResult:
     if not account.get("found") and credit_cents <= 0 and product_cents is None:
         return AgentResult(
             reply_text=(
-                f"Para simular o uso do Cartão Presente, informe o valor do relógio (ex.: de R$ 10 mil) "
-                f"ou cadastre seu telefone em {SITE_URL} para eu usar seu saldo real."
+                operator_message('llm.agent_replies.build_simulation_reply.632dc1f5fb', SITE_URL=f'{SITE_URL()}')
             ),
             intent="simulation",
             handoff_required=False,
@@ -253,9 +253,7 @@ def build_simulation_reply(message: IncomingMessage) -> AgentResult:
     if not account.get("found") and credit_cents <= 0 and product_cents is not None:
         return AgentResult(
             reply_text=(
-                f"Consigo simular o desconto no produto de {format_cents_to_brl(product_cents)}, "
-                f"mas preciso do seu saldo. Cadastre seu telefone em {SITE_URL} ou informe quanto quer aplicar "
-                f"(ex.: R$ 800 de Cartão Presente)."
+                operator_message('llm.agent_replies.build_simulation_reply.a469556ff6', value_1=f'{format_cents_to_brl(product_cents)}', SITE_URL=f'{SITE_URL()}')
             ),
             intent="simulation",
             handoff_required=False,
@@ -281,8 +279,7 @@ def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentR
     if raffle.get("lookup_error"):
         return AgentResult(
             reply_text=(
-                f"Não consegui consultar o sorteio aberto agora. "
-                f"Tente novamente em instantes ou acesse {SITE_URL}."
+                operator_message('llm.agent_replies.build_current_raffle_reply.c2901dd5bc', SITE_URL=f'{SITE_URL()}')
             ),
             intent="current_raffle",
             handoff_required=False,
@@ -292,8 +289,7 @@ def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentR
     if raffle.get("error") == "database_not_configured":
         return AgentResult(
             reply_text=(
-                f"Consulta de sorteio indisponível no momento. "
-                f"Acompanhe a rodada aberta em {SITE_URL}."
+                operator_message('llm.agent_replies.build_current_raffle_reply.5c9c50c9c3', SITE_URL=f'{SITE_URL()}')
             ),
             intent="current_raffle",
             handoff_required=False,
@@ -303,25 +299,24 @@ def build_current_raffle_reply(message: IncomingMessage | None = None) -> AgentR
     if not raffle.get("found"):
         return AgentResult(
             reply_text=(
-                f"No momento não há sorteio com status aberto. "
-                f"Acompanhe novas rodadas em {SITE_URL}."
+                operator_message('llm.agent_replies.build_current_raffle_reply.538144f136', SITE_URL=f'{SITE_URL()}')
             ),
             intent="current_raffle",
             handoff_required=False,
         )
 
     lines = [
-        f"Sorteio aberto: *{raffle.get('title') or 'Rodada aberta'}*.",
+        operator_message('llm.agent_replies.build_current_raffle_reply.d3473a2f6d', value_1=f"{raffle.get('title') or 'Rodada aberta'}"),
         f"Prêmio: {raffle.get('prize_name') or 'consulte o site'}.",
         f"Status: {raffle.get('status') or 'open'}.",
     ]
-    if raffle.get("quota_price_brl"):
-        lines.append(f"Valor do sorteio: {raffle['quota_price_brl']}.")
+    if raffle.get('quota_price_brl'):
+        lines.append(operator_message('llm.agent_replies.build_current_raffle_reply.ec8278f4e0', value_1=f"{raffle['quota_price_brl']}"))
     available = raffle.get("available_numbers") or []
     if available:
         preview = _format_available_numbers_list(available, max_chars=280)
-        lines.append(f"Números disponíveis ({len(available)}): {preview}.")
-    lines.append(f"Participe em {SITE_URL}.")
+        lines.append(operator_message('llm.agent_replies.build_current_raffle_reply.8e45ccdd4d', value_1=f'{len(available)}', preview=f'{preview}'))
+    lines.append(operator_message('llm.agent_replies.build_current_raffle_reply.6c521170f1', SITE_URL=f'{SITE_URL()}'))
     reply_text = " ".join(lines)
     return AgentResult(
         reply_text=reply_text[: settings.max_reply_chars],
@@ -347,9 +342,9 @@ def _format_available_numbers_list(numbers: list[str], max_chars: int) -> str:
 
     hidden = len(numbers) - len(shown)
     if not shown:
-        return f"{numbers[0]}… (+{len(numbers) - 1} números; veja a lista completa em {SITE_URL})"
+        return f"{numbers[0]}… (+{len(numbers) - 1} números; veja a lista completa em {SITE_URL()})"
     if hidden > 0:
-        return f"{', '.join(shown)}… (+{hidden} números; lista completa em {SITE_URL})"
+        return f"{', '.join(shown)}… (+{hidden} números; lista completa em {SITE_URL()})"
     return ", ".join(shown)
 
 
@@ -360,8 +355,7 @@ def build_available_numbers_reply(message: IncomingMessage) -> AgentResult:
     if result.get("error") == "database_not_configured":
         return AgentResult(
             reply_text=(
-                f"Consulta de números indisponível no momento. "
-                f"Veja a grade em {SITE_URL}."
+                operator_message('llm.agent_replies.build_available_numbers_reply.036dda7d33', SITE_URL=f'{SITE_URL()}')
             ),
             intent="available_numbers",
             handoff_required=False,
@@ -370,8 +364,7 @@ def build_available_numbers_reply(message: IncomingMessage) -> AgentResult:
     if result.get("lookup_error"):
         return AgentResult(
             reply_text=(
-                f"Não consegui listar os números agora. "
-                f"Consulte a grade disponível em {SITE_URL}."
+                operator_message('llm.agent_replies.build_available_numbers_reply.362fcb86b2', SITE_URL=f'{SITE_URL()}')
             ),
             intent="available_numbers",
             handoff_required=False,
@@ -380,8 +373,7 @@ def build_available_numbers_reply(message: IncomingMessage) -> AgentResult:
     if result.get("error") == "no_open_draw":
         return AgentResult(
             reply_text=(
-                f"No momento não há sorteio aberto. Acompanhe novas rodadas em {SITE_URL} "
-                f"ou fale com a equipe no WhatsApp {NS_SALES_WHATSAPP}."
+                operator_message('llm.agent_replies.build_available_numbers_reply.5961f7e0f5', SITE_URL=f'{SITE_URL()}', NS_SALES_WHATSAPP=f'{NS_SALES_WHATSAPP()}')
             ),
             intent="available_numbers",
             handoff_required=False,
@@ -400,18 +392,15 @@ def build_available_numbers_reply(message: IncomingMessage) -> AgentResult:
     if count == 0:
         if result.get("total_count") is None:
             reply_text = (
-                f"Sorteio *{title}* aberto. Consulte a grade de números disponíveis em {SITE_URL}."
+                operator_message('llm.agent_replies.build_available_numbers_reply.be93f10e7d', title=f'{title}', SITE_URL=f'{SITE_URL()}')
             )
         else:
             reply_text = (
-                f"No sorteio *{title}*, todos os números já foram confirmados (pagamento aprovado). "
-                f"Acompanhe novas rodadas em {SITE_URL}."
+                operator_message('llm.agent_replies.build_available_numbers_reply.b8ed2512c0', title=f'{title}', SITE_URL=f'{SITE_URL()}')
             )
     else:
         reply_text = (
-            f"Sorteio *{title}*. {prize_line}"
-            f"{count} número(s) disponível(is): {numbers_text}. "
-            f"Escolha e participe em {SITE_URL}. A vaga só confirma após compensação do pagamento."
+            operator_message('llm.agent_replies.build_available_numbers_reply.8192e309b6', title=f'{title}', prize_line=f'{prize_line}', count=f'{count}', numbers_text=f'{numbers_text}', SITE_URL=f'{SITE_URL()}')
         )
 
     return AgentResult(
@@ -426,7 +415,7 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
     if account.get("error") == "third_party_inquiry":
         return _third_party_reply()
     if not account.get("found"):
-        return AgentResult(reply_text=REGISTER_PHONE_MESSAGE, intent="raffle_history", handoff_required=False)
+        return AgentResult(reply_text=REGISTER_PHONE_MESSAGE(), intent="raffle_history", handoff_required=False)
 
     user_id = int(account["user_id"])
     last_payment = find_last_payment_participation(user_id)
@@ -457,7 +446,7 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
                 parts.append(f"número sorteado: {item['winning_number']}")
             chunks.append(" | ".join(parts))
 
-        reply_text = "Suas participações recentes: " + " // ".join(chunks)
+        reply_text = operator_message('llm.agent_replies.build_raffle_history_reply.3960e8e168') + " // ".join(chunks)
 
         return AgentResult(
             reply_text=reply_text,
@@ -474,8 +463,7 @@ def build_raffle_history_reply(message: IncomingMessage) -> AgentResult:
 
     return AgentResult(
         reply_text=(
-            f"Ainda não encontramos participações aprovadas no seu cadastro. "
-            f"Confira sorteios passados e resultados em {SITE_URL}."
+            operator_message('llm.agent_replies.build_raffle_history_reply.3798160d72', SITE_URL=f'{SITE_URL()}')
         ),
         intent="raffle_history",
         handoff_required=False,

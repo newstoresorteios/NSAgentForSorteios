@@ -8,6 +8,8 @@ constraint miss.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import math
 from typing import Any
@@ -710,8 +712,7 @@ def _continue_prompt_result(*, drop_stale_checkout: bool = False) -> AgentResult
         metadata["drop_stale_checkout"] = True
     return AgentResult(
         reply_text=(
-            "Pode seguir — me diz a marca, a faixa de investimento "
-            "ou o modelo que você tem em mente."
+            operator_message('sales.answer_council._continue_prompt_result.03b11ace96')
         ),
         intent="commerce",
         safety_reason="commerce_clarification",
@@ -750,8 +751,7 @@ def _continue_commerce_reply(
             }
             return AgentResult(
                 reply_text=(
-                    f"Fechamos na opção {position} — {name}. "
-                    "Prefere PIX, cartão ou o link do site para pagar?"
+                    operator_message('sales.answer_council._continue_commerce_reply.a9ba15d95c', position=f'{position}', name=f'{name}')
                 ),
                 intent="commerce",
                 safety_reason="commerce_clarification",
@@ -781,7 +781,7 @@ def _continue_commerce_reply(
                 if contract.purchase_close:
                     listed = str(resume.reply_text or "").split(":\n\n", 1)[-1]
                     resume.reply_text = (
-                        "Qual você quer fechar — a 1, 2 ou 3?\n\n" + listed
+                        operator_message('sales.answer_council._continue_commerce_reply.c3716da9ad') + listed
                     )
                 return resume
     return None
@@ -857,7 +857,7 @@ def _honest_constraint_reply(
         if "automatic" in attrs:
             criteria.append("automático")
         if "safira" in attrs or "safira" in material.casefold() or "sapphire" in material.casefold():
-            criteria.append("com cristal de safira")
+            criteria.append(operator_message('sales.answer_council._honest_constraint_reply.955d8d4ba5'))
     subject = "relógio"
     if criteria:
         subject += " " + ", ".join(dict.fromkeys(criteria))
@@ -867,8 +867,7 @@ def _honest_constraint_reply(
         else ""
     )
     fixed.reply_text = (
-        f"Não consegui confirmar no catálogo disponível um {subject}{ceiling} que atenda a todos esses critérios. "
-        "Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas."
+        operator_message('sales.answer_council._honest_constraint_reply.5d9a82525b', subject=f'{subject}', ceiling=f'{ceiling}')
     )
     fixed.reply_modality = "text"
     fixed.reply_audio_bytes = None

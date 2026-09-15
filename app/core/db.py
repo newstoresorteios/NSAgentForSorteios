@@ -30,12 +30,19 @@ def get_returning_id(row: Any) -> int | None:
 def get_conn() -> Iterator[psycopg.Connection]:
     """Agent-dedicated Postgres (ai_* tables and agent operational state).
 
-    No connection pool — do not add one until p95 latency is measured.
+    Pool size is bounded per process; conversation locks use dedicated connections.
     """
     settings = get_settings()
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
     register_database_call()
+    if getattr(settings, "database_pool_enabled", False):
+        from app.core.connection_pool import connection_pool
+        pool = connection_pool(settings.database_url, settings.database_pool_max_size,
+                               settings.database_pool_timeout_seconds)
+        with pool.connection() as conn:
+            yield conn
+        return
     conn = psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=10)
     try:
         yield conn
@@ -71,22 +78,23 @@ _catalog_pg_trgm_attempted = False
 _CATALOG_PG_TRGM_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_title_trgm
 ON public.ai_catalog_index
-USING gin ((lower(title_normalized)) gin_trgm_ops);
+USING gin ((lower(coalesce(title_normalized, ''))) extensions.gin_trgm_ops);
 
 CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_model_trgm
 ON public.ai_catalog_index
-USING gin ((lower(coalesce(model, ''))) gin_trgm_ops);
+USING gin ((lower(coalesce(model, ''))) extensions.gin_trgm_ops);
 
 CREATE INDEX IF NOT EXISTS idx_ai_catalog_index_reference_trgm
 ON public.ai_catalog_index
-USING gin ((lower(coalesce(reference, ''))) gin_trgm_ops);
+USING gin ((lower(coalesce(reference, ''))) extensions.gin_trgm_ops);
 """
 
 
 def apply_catalog_pg_trgm(cur: Any) -> None:
     """Idempotent fuzzy-search support for ai_catalog_index (sql/025)."""
     global _catalog_pg_trgm_ready
-    cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    cur.execute("CREATE SCHEMA IF NOT EXISTS extensions")
+    cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA extensions")
     cur.execute(_CATALOG_PG_TRGM_INDEX_SQL)
     _catalog_pg_trgm_ready = True
 

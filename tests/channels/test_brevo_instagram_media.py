@@ -45,5 +45,5 @@ def test_should_guide_instagram_price_without_media():
 
 
 def test_guide_replies_are_actionable():
-    assert "reenviar" in UNVIEWABLE_MEDIA_GUIDE_REPLY.casefold()
-    assert "foto" in PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY.casefold()
+    assert "reenviar" in UNVIEWABLE_MEDIA_GUIDE_REPLY().casefold()
+    assert "foto" in PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY().casefold()

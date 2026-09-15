@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import unicodedata
 from typing import Any
@@ -425,7 +427,7 @@ def _is_fulfillment_persona_prompt(prompt: str) -> bool:
             "chamar",
             "seu nome",
             "cidade",
-            "pressa para receber",
+            operator_message('sales.discovery._is_fulfillment_persona_prompt.c9ff6b5a7e'),
             "pode esperar",
             "sob encomenda",
         )
@@ -539,7 +541,7 @@ def _persona_qualification_question(
         folded = prompt.casefold()
         return is_shipping_city_prompt(prompt) or any(
             needle in folded
-            for needle in ("pressa para receber", "pode esperar", "sob encomenda")
+            for needle in (operator_message('sales.discovery._city_or_urgency_prompt.c9ff6b5a7e'), "pode esperar", "sob encomenda")
         )
 
     fulfillment = _is_fulfillment_qualification_turn(interpretation)

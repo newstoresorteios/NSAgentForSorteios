@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import tempfile
 from pathlib import Path
@@ -19,10 +21,8 @@ AUDIO_MIME_TYPES = {
 }
 AUDIO_EXTENSIONS = (".ogg", ".opus", ".mp3", ".m4a", ".aac", ".amr", ".wav", ".webm")
 
-AUDIO_TRANSCRIPTION_FAILED_REPLY = (
-    "Recebi seu áudio, mas não consegui transcrever. "
-    "Pode repetir por texto ou enviar outro áudio?"
-)
+def AUDIO_TRANSCRIPTION_FAILED_REPLY():
+    return operator_message('instructions.audio_transcription_failed_reply.f0aba5867b')
 
 
 def inbound_audio_failed(message: IncomingMessage | None) -> bool:
@@ -35,20 +35,15 @@ def inbound_audio_failed(message: IncomingMessage | None) -> bool:
 
 def audio_transcription_failed_result() -> AgentResult:
     return AgentResult(
-        reply_text=AUDIO_TRANSCRIPTION_FAILED_REPLY,
+        reply_text=AUDIO_TRANSCRIPTION_FAILED_REPLY(),
         intent="audio_transcription_failed",
         handoff_required=False,
         safety_reason="audio_transcription_failed",
     )
 
 
-_WHISPER_BRAND_PROMPT = (
-    "Transcrição de mensagem de WhatsApp em português do Brasil sobre a New Store "
-    "Relógios: marcas (Seiko, Hamilton, Tissot, Omega, Tag Heuer, Christopher Ward, "
-    "Certina, Orient, Citizen, Casio, Longines, Breitling, Ballade, Sealander), "
-    "modelo, referência, preço, Pix, frete, CEP, saldo e sorteio. "
-    "Prefira nomes de marcas de relógio quando o áudio for ambíguo."
-)
+def _WHISPER_BRAND_PROMPT():
+    return operator_message('instructions._whisper_brand_prompt.bd3748af7a')
 
 # Whisper often turns short "tem Hamilton?" into "tem remetente?" on WhatsApp audio.
 _HAMILTON_MISHEARING = re.compile(
@@ -187,7 +182,7 @@ async def transcribe_audio_url(url: str, filename: str | None = None) -> str:
                     model=settings.openai_transcribe_model,
                     file=audio_file,
                     language="pt",
-                    prompt=_WHISPER_BRAND_PROMPT,
+                    prompt=_WHISPER_BRAND_PROMPT(),
                 ),
             )
     except APIStatusError as exc:

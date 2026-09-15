@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -175,6 +177,7 @@ def admin_prompt_preview(
     persona_key: str = Query(default=DEFAULT_PERSONA_KEY),
     sender_key: str | None = Query(default=None),
     text: str = Query(default="Olá"),
+    workspace_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     """Safe debug preview of compiled instruction blocks (no secrets)."""
     settings = get_settings()
@@ -188,15 +191,27 @@ def admin_prompt_preview(
         sender_key=masked_sender,
         text=(text or "")[:200],
     )
-    compiled = compile_agent_prompt(
-        incoming=incoming,
-        tenant_id=tenant_id,
-        persona_key=persona_key,
-        fallback_instructions=(
-            "Você é o assistente comercial oficial da NewStore."
-        ),
-        audit=False,
-    )
+    from app.persona.persona_runtime import load_persona_runtime, set_persona_runtime, reset_persona_runtime
+    from app.configuration.runtime import bind_bundle, reset_bundle, settings_from_bundle
+    runtime = load_persona_runtime(workspace_id=workspace_id)
+    if runtime.tenant_id != tenant_id or runtime.persona_key != persona_key or not runtime.configuration_bundle:
+        raise HTTPException(status_code=409, detail="workspace_persona_configuration_required")
+    config_tokens = bind_bundle(runtime.configuration_bundle, settings_from_bundle(settings, runtime.configuration_bundle))
+    persona_token = set_persona_runtime(runtime)
+    try:
+        compiled = compile_agent_prompt(
+            incoming=incoming,
+            tenant_id=tenant_id,
+            persona_key=persona_key,
+            fallback_instructions=(
+                operator_message('persona.persona_admin_api.admin_prompt_preview.f81cf6860a')
+            ),
+            audit=False,
+            active_persona=runtime.active_persona,
+        )
+    finally:
+        reset_persona_runtime(persona_token)
+        reset_bundle(config_tokens)
     return {
         "ok": True,
         "tenant_id": tenant_id,

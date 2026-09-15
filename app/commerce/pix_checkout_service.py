@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any, Awaitable, Callable
 
 from app.config import Settings, get_settings
@@ -39,12 +41,9 @@ def should_use_direct_pix(
 
 
 def _pix_reply(copy_paste: str, amount_label: str | None) -> str:
-    amount_bit = f" Valor: R$ {amount_label}." if amount_label else ""
+    amount_bit = operator_message('commerce.pix_checkout_service._pix_reply.92993c4f81', amount_label=f'{amount_label}') if amount_label else ""
     return (
-        f"Segue o PIX para pagamento.{amount_bit}\n"
-        f"Copia e cola:\n{copy_paste}\n"
-        "Assim que o pagamento for confirmado, eu crio o pedido automaticamente. "
-        "Se quiser, diga \"já paguei\" depois de pagar."
+        operator_message('commerce.pix_checkout_service._pix_reply.1dce2051a5', amount_bit=f'{amount_bit}', copy_paste=f'{copy_paste}')
     )
 
 
@@ -61,7 +60,7 @@ async def generate_direct_pix_checkout(
     cfg = settings or get_settings()
     if not should_use_direct_pix(state, settings=cfg):
         return AgentResult(
-            reply_text="O PIX direto no chat não está disponível neste momento.",
+            reply_text=operator_message('commerce.pix_checkout_service.generate_direct_pix_checkout.9b4b172314'),
             intent="commerce",
             safety_reason="pix_direct_unavailable",
             commercial_data={"success": False, "stage": "pix_direct"},
@@ -74,7 +73,7 @@ async def generate_direct_pix_checkout(
         or state.confirmed_order_review_version != state.order_review_version
     ):
         return AgentResult(
-            reply_text="A geração do PIX está bloqueada sem confirmação do resumo atual.",
+            reply_text=operator_message('commerce.pix_checkout_service.generate_direct_pix_checkout.9141b0c789'),
             intent="commerce",
             safety_reason="order_confirmation_required",
             commercial_data={"success": False, "stage": "pix_direct"},
@@ -131,7 +130,7 @@ async def generate_direct_pix_checkout(
     facts, missing = await _current_order_facts(state, execute)
     if facts is None:
         return AgentResult(
-            reply_text="Os fatos do pedido mudaram; não posso gerar o PIX agora.",
+            reply_text=operator_message('commerce.pix_checkout_service.generate_direct_pix_checkout.5bedac07a5'),
             intent="commerce",
             safety_reason="order_confirmation_stale",
             commercial_data={
@@ -143,7 +142,7 @@ async def generate_direct_pix_checkout(
         )
     if facts["version"] != state.confirmed_order_review_version:
         return AgentResult(
-            reply_text="Os fatos do pedido mudaram; confirme o novo resumo antes do PIX.",
+            reply_text=operator_message('commerce.pix_checkout_service.generate_direct_pix_checkout.1ccbcdc17c'),
             intent="commerce",
             safety_reason="order_confirmation_stale",
             commercial_data=facts.get("summary") or {},
@@ -165,7 +164,7 @@ async def generate_direct_pix_checkout(
     expected_cents = brl_to_cents(display_total)
     if expected_cents is None or expected_cents <= 0:
         return AgentResult(
-            reply_text="Não consegui calcular o valor do PIX com segurança.",
+            reply_text=operator_message('commerce.pix_checkout_service.generate_direct_pix_checkout.adb0598970'),
             intent="commerce",
             safety_reason="pix_amount_unavailable",
             commercial_data={"success": False, "stage": "pix_direct"},
@@ -211,7 +210,7 @@ async def generate_direct_pix_checkout(
             "status_code": exc.status_code,
         })
         return AgentResult(
-            reply_text="Não consegui gerar o PIX agora. Tente novamente em instantes.",
+            reply_text=operator_message('commerce.pix_checkout_service.generate_direct_pix_checkout.4c25f78488'),
             intent="commerce",
             safety_reason="pix_create_failed",
             commercial_data={
@@ -234,8 +233,7 @@ async def generate_direct_pix_checkout(
         })
         return AgentResult(
             reply_text=(
-                "O PIX gerado não bateu com o valor do pedido; "
-                "não vou seguir com essa cobrança."
+                operator_message('commerce.pix_checkout_service.generate_direct_pix_checkout.ca560299bb')
             ),
             intent="commerce",
             safety_reason="pix_amount_mismatch",
@@ -251,7 +249,7 @@ async def generate_direct_pix_checkout(
     copy_paste = created.copy_paste_code or created.qr_code
     if not copy_paste:
         return AgentResult(
-            reply_text="O PIX foi criado, mas o código copia e cola não veio completo.",
+            reply_text=operator_message('commerce.pix_checkout_service.generate_direct_pix_checkout.13dd2db01b'),
             intent="commerce",
             safety_reason="pix_code_missing",
             commercial_data={
@@ -320,7 +318,7 @@ async def refresh_direct_pix_checkout(
     payment_id = state.pix_payment_id
     if not payment_id:
         return AgentResult(
-            reply_text="Não há um PIX pendente nesta conversa.",
+            reply_text=operator_message('commerce.pix_checkout_service.refresh_direct_pix_checkout.723824a905'),
             intent="commerce",
             safety_reason="pix_pending_missing",
             commercial_data={"success": False, "stage": "pix_direct"},
@@ -331,7 +329,7 @@ async def refresh_direct_pix_checkout(
         refreshed = await refresh_pix_payment_status(payment_id, settings=cfg)
     except MercadoPagoError as exc:
         return AgentResult(
-            reply_text="Ainda não consegui confirmar o pagamento do PIX.",
+            reply_text=operator_message('commerce.pix_checkout_service.refresh_direct_pix_checkout.6120cd3962'),
             intent="commerce",
             safety_reason="pix_status_unavailable",
             commercial_data={
@@ -355,7 +353,7 @@ async def refresh_direct_pix_checkout(
     if status == "approved" and settlement and settlement.get("ok"):
         order_id = settlement.get("tray_order_id")
         reply = (
-            f"Pagamento confirmado e pedido criado: {order_id}."
+            operator_message('commerce.pix_checkout_service.refresh_direct_pix_checkout.933a009f3f', order_id=f'{order_id}')
             if order_id
             else "Pagamento confirmado."
         )
@@ -409,8 +407,7 @@ async def refresh_direct_pix_checkout(
         reason = settlement.get("reason") or "settle_failed"
         return AgentResult(
             reply_text=(
-                "Recebi a confirmação do PIX, mas ainda não consegui criar o pedido. "
-                "Vou precisar de um momento ou de suporte."
+                operator_message('commerce.pix_checkout_service.refresh_direct_pix_checkout.e78910c2a8')
             ),
             intent="commerce",
             safety_reason="pix_settle_failed",
@@ -433,8 +430,7 @@ async def refresh_direct_pix_checkout(
         )
 
     reply = (
-        "Ainda não identifiquei a confirmação do PIX. "
-        "Se já pagou, aguarde um instante e tente de novo."
+        operator_message('commerce.pix_checkout_service.refresh_direct_pix_checkout.19005ae7f7')
     )
     return AgentResult(
         reply_text=reply,

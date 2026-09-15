@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import json
 from typing import Any
 
@@ -19,6 +21,21 @@ from app.persona.persona_repository import (
     hash_instructions,
     insert_prompt_compilation,
 )
+
+
+def _knowledge_query(incoming, conversation_state, recent_turns) -> str | None:
+    if incoming is None:
+        return None
+    text = str(incoming.text or "").strip()
+    # Short follow-ups inherit only the active item and the latest user topic.
+    # New detailed requests use their own terms, avoiding stale brand carryover.
+    if len(text.split()) > 6:
+        return text
+    active = getattr(conversation_state, "active_product", None)
+    subject = getattr(active, "name", None) or getattr(active, "title", None)
+    previous = next((str(t.get("content") or "")[:250] for t in reversed(recent_turns or [])
+                     if t.get("role") == "user" and str(t.get("content") or "").strip() != text), "")
+    return " ".join(str(v) for v in (text, subject, previous) if v)
 
 
 FIXED_SAFETY_POLICY = """\
@@ -160,8 +177,7 @@ def compile_agent_prompt(
         persona_text = (fallback_instructions or "").strip()
         if not persona_text:
             persona_text = (
-                "Você é o assistente comercial oficial da NewStore. "
-                "Responda em português do Brasil de forma natural e factual."
+                operator_message('llm.prompt_compiler.compile_agent_prompt.5468db63bb')
             )
             fallback_reason = fallback_reason or "persona_fallback_default"
 
@@ -184,10 +200,10 @@ def compile_agent_prompt(
 
             persona_attachment_ids, knowledge_block = load_persona_knowledge_for_prompt(
                 active_persona,
-                limit=int(getattr(settings, "agent_max_persona_attachments", 10)),
+                limit=int(getattr(settings, "agent_knowledge_attachment_limit", 50)),
                 max_chars=int(getattr(settings, "agent_max_persona_knowledge_chars", 12000)),
                 relevant_knowledge=relevant_knowledge,
-                query_text=getattr(incoming, "text", None) if incoming is not None else None,
+                query_text=_knowledge_query(incoming, conversation_state, recent_turns),
             )
         except Exception as exc:
             print("[prompt.compiler.persona_knowledge.error]", {

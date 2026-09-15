@@ -8,6 +8,8 @@ not the original copy. Phase 1 never invents SKU or price.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 from typing import Any, Literal
 

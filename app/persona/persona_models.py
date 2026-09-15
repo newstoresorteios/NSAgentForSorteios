@@ -14,6 +14,7 @@ class PersonaVersion(BaseModel):
     id: int | None = None
     tenant_id: str
     persona_key: str
+    workspace_id: str | None = None
     version: int
     name: str
     source: PersonaSource = "user"

@@ -5,6 +5,8 @@ Look up patched names on ``app.sales_agent`` at call time.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from app.commerce.commerce_context import CommerceConversationState, CommerceProductReference
@@ -41,7 +43,7 @@ def _dead_product_link_reply(
     resolved_product: Any,
     link_facts: dict[str, Any],
 ) -> str:
-    parts = ["Não consegui o link agora."]
+    parts = [operator_message('sales.catalog_media._dead_product_link_reply.986a0a5b2b')]
     reference = link_facts.get("reference") or getattr(resolved_product, "reference", None)
     price = (
         link_facts.get("current_price")
@@ -347,12 +349,10 @@ async def try_catalog_media(
             return sales._mark_sales_result(
                 AgentResult(
                     reply_text=(
-                        "Pode me enviar a foto do relógio (ou a marca e o modelo) "
-                        "que eu identifico no catálogo pra você?"
+                        operator_message('sales.catalog_media.try_catalog_media.42d87281fd')
                         if not (message.image_url or "").strip()
                         else (
-                            "Recebi a foto, mas não consegui identificar o produto agora. "
-                            "Pode me dizer a marca e o modelo, ou enviar uma imagem mais nítida?"
+                            operator_message('sales.catalog_media.try_catalog_media.06f88dada6')
                         )
                     ),
                     intent="commerce",
@@ -428,10 +428,10 @@ async def try_catalog_media(
             )
             safety = "product_link_not_available"
         elif link_failed:
-            reply_text = "Não consegui consultar o link oficial deste produto agora."
+            reply_text = operator_message('sales.catalog_media.try_catalog_media.11c2e62298')
             safety = "tray_adapter_unavailable"
         else:
-            reply_text = f"Link oficial consultado.\n{product_url}"
+            reply_text = operator_message('sales.catalog_media.try_catalog_media.4fff6f82c4', product_url=f'{product_url}')
             safety = None
         link_result = AgentResult(
             reply_text=reply_text,
@@ -508,7 +508,7 @@ async def try_catalog_media(
         )
     if interpretation is None or interpretation.quantity is None:
         quantity_result = AgentResult(
-            reply_text="A quantidade final não foi identificada.",
+            reply_text=operator_message('sales.catalog_media.try_catalog_media.dae59443c2'),
             intent="commerce",
             handoff_required=False,
             safety_reason="cart_validation_error",

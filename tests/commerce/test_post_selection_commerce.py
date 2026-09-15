@@ -945,6 +945,6 @@ def test_sales_responder_forbids_turning_preferences_into_product_facts():
     from app.sales_agent import SALES_RESPONDER_INSTRUCTIONS
 
     assert "Preferências do cliente no plano não são fatos confirmados" in (
-        SALES_RESPONDER_INSTRUCTIONS
+        SALES_RESPONDER_INSTRUCTIONS()
     )
-    assert "dimensões reais" in SALES_RESPONDER_INSTRUCTIONS
+    assert "dimensões reais" in SALES_RESPONDER_INSTRUCTIONS()

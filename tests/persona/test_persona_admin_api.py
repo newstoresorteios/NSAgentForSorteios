@@ -85,9 +85,16 @@ def test_admin_archive_and_rollback(client):
     assert rolled.json()["persona"]["id"] == v1.id
 
 
-def test_admin_prompt_preview(client):
+def test_admin_prompt_preview(client, monkeypatch):
     created = repo.create_persona_version(instructions="PREVIEW_PERSONA\n", name="P")
     repo.activate_persona_version(created.id)
+    from app.configuration.runtime import current_bundle
+    from app.persona.persona_runtime import PersonaRuntimeConfig
+    runtime = PersonaRuntimeConfig(tenant_id="newstore", persona_key="newstore_commercial",
+        workspace_id="test-workspace", configuration_bundle=current_bundle(), enabled=True)
+    runtime.bind_sources(active_persona=repo.get_active_persona(), chatbo_profile=None)
+    monkeypatch.setattr("app.persona.persona_runtime.load_persona_runtime", lambda **_k: runtime)
+    monkeypatch.setattr("app.configuration.runtime.settings_from_bundle", lambda base, bundle: base)
     preview = client.get(
         "/api/admin/agents/newstore/prompt-preview",
         params={"channel": "instagram", "sender_key": "instagram:secret123", "text": "oi"},

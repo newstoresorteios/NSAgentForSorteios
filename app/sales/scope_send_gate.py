@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import unicodedata
 from typing import Any
 
@@ -14,13 +16,10 @@ from app.catalog.specs.catalog_specs import (
 from app.commerce.commerce_context import CommerceConversationState
 from ..models import AgentResult, SalesInterpretation
 
-SCOPE_SEND_FALLBACK = (
-    "Preciso confirmar no catálogo as opções que combinam com o que você pediu. "
-    "Me dá um instante que já volto com sugestões certinhas."
-)
-PURCHASE_CLOSE_RELIST_FALLBACK = (
-    "Qual opção da lista você quer comprar (1, 2 ou 3)?"
-)
+def SCOPE_SEND_FALLBACK():
+    return operator_message('instructions.scope_send_fallback.c3669b99d4')
+def PURCHASE_CLOSE_RELIST_FALLBACK():
+    return operator_message('instructions.purchase_close_relist_fallback.915c8beed7')
 
 _RETRYABLE_SCOPE_GATE_REASONS = frozenset({
     "all_excluded_brand",
@@ -358,9 +357,9 @@ def apply_scope_send_gate(
     commercial.pop("products", None)
     fixed.commercial_data = commercial or None
     fallback = (
-        PURCHASE_CLOSE_RELIST_FALLBACK
+        PURCHASE_CLOSE_RELIST_FALLBACK()
         if report.reason == "purchase_close_relist"
-        else SCOPE_SEND_FALLBACK
+        else SCOPE_SEND_FALLBACK()
     )
     fixed.reply_text = fallback
     fixed.safety_reason = "scope_send_gate_blocked"

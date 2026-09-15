@@ -237,9 +237,9 @@ def should_run_quality_judge(
 
 def resolve_turn_llm_budget(*, complex_turn: bool = False) -> dict[str, Any]:
     settings = get_settings()
-    base = int(getattr(settings, "agent_max_llm_calls_per_turn", 2) or 2)
+    base = int(getattr(settings, "agent_max_llm_calls_per_turn", 2))
     complex_cap = int(
-        getattr(settings, "agent_max_llm_calls_per_turn_complex", 4) or 4
+        getattr(settings, "agent_max_llm_calls_per_turn_complex", 4)
     )
     max_calls = max(base, complex_cap) if complex_turn else base
     return {

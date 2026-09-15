@@ -143,8 +143,14 @@ def test_inbox_claim_only_selects_first_unfinished_turn_per_conversation(monkeyp
     # only PostgreSQL locking/parameter syntax is removed, never the predicates.
     selection = sql[sql.index("SELECT candidate.id"):sql.index("FOR UPDATE SKIP LOCKED")]
     selection = selection.replace("public.ai_inbound_inbox","queue")
+    selection = selection.replace("make_interval(secs =>", "CAST(").replace("::int)", " AS INTEGER)")
+    selection = selection.replace("%(retry_max)s", ":retry_max").replace("%(retry_base)s", ":retry_base")
+    retry_params = {"retry_base":30,"retry_max":300}
     db = sqlite3.connect(":memory:")
     db.create_function("now",0,lambda:100)
+    db.create_function("LEAST",2,min)
+    db.create_function("GREATEST",2,max)
+    db.create_function("power",2,pow)
     db.execute("CREATE TABLE queue(id,conversation_key,sender_key,provider,channel,status,attempts,max_attempts,lease_expires_at,created_at)")
     db.executemany("INSERT INTO queue VALUES(?,?,?,?,?,?,?,?,?,?)",[
         (1,'A','sender-A','brevo','whatsapp','leased',1,8,200,1),
@@ -152,9 +158,14 @@ def test_inbox_claim_only_selects_first_unfinished_turn_per_conversation(monkeyp
         (3,'B','sender-B','brevo','whatsapp','pending',0,8,None,3),
         (4,'B','sender-B','brevo','whatsapp','pending',0,8,None,4),
     ])
-    assert db.execute(selection).fetchall() == [(3,)]
+    db.execute("ALTER TABLE queue ADD COLUMN updated_at DEFAULT 0")
+    assert db.execute(selection, retry_params).fetchall() == [(3,)]
     db.execute("UPDATE queue SET status='processed' WHERE id=1")
-    assert db.execute(selection).fetchall() == [(2,),(3,)]
+    assert db.execute(selection, retry_params).fetchall() == [(2,),(3,)]
+    db.execute("UPDATE queue SET status='failed',attempts=2,updated_at=80 WHERE id=3")
+    assert db.execute(selection, retry_params).fetchall() == [(2,)]
+    db.execute("UPDATE queue SET updated_at=20 WHERE id=3")
+    assert db.execute(selection, retry_params).fetchall() == [(2,),(3,)]
     db.close()
 
 

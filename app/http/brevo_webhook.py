@@ -246,7 +246,7 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                     reason="instagram_media_unviewable_duplicate",
                 )
             guide = AgentResult(
-                reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY,
+                reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY(),
                 intent="commerce",
                 handoff_required=False,
                 safety_reason="instagram_media_unviewable",
@@ -341,6 +341,8 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
     # FASE 2: optional durable enqueue — HTTP 200 before agent turn.
     if bool(getattr(settings, "agent_async_ingress_enabled", False)):
         from app.ingress.inbox import enqueue_inbound
+        from app.ingress.dispatch import dispatch_pending_queues
+        from starlette.background import BackgroundTask
 
         created, inbox_id = enqueue_inbound(
             provider=incoming.provider or "brevo",
@@ -355,6 +357,9 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                 "raw": incoming.raw if isinstance(incoming.raw, dict) else {},
             },
         )
+        if inbox_id is None:
+            # Never acknowledge a message that was not durably persisted.
+            return JSONResponse({"ok": False, "error": "inbox_unavailable"}, status_code=503)
         return JSONResponse(
             {
                 "ok": True,
@@ -362,7 +367,8 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
                 "created": created,
                 "inbox_id": inbox_id,
                 "async_ingress": True,
-            }
+            },
+            background=BackgroundTask(dispatch_pending_queues),
         )
 
     # Cheap duplicate check before waiting on the conversation lock. Brevo often

@@ -3,13 +3,14 @@ from app.persona.site_knowledge import HUMAN_SUPPORT_MESSAGE, NS_SALES_WHATSAPP
 
 
 def test_human_support_message_contains_whatsapp():
-    assert NS_SALES_WHATSAPP in HUMAN_SUPPORT_MESSAGE
-    assert "vendas" in HUMAN_SUPPORT_MESSAGE.lower()
+    assert NS_SALES_WHATSAPP() in HUMAN_SUPPORT_MESSAGE()
+    assert "vendas" in HUMAN_SUPPORT_MESSAGE().lower()
 
 
 def test_default_safe_handoff_promises_human_queue():
     reply = default_safe_handoff()
-    assert "instantes" in reply.lower()
+    assert "instantes" not in reply.lower()
+    assert "equipe" in reply.lower()
     assert "encaminh" in reply.lower()
 
 

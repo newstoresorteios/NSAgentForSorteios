@@ -70,10 +70,11 @@ def promote_insights_to_extensions(
     baseline_reviews: int | None = None,
     reviewed: bool = False,
     canary_hours: int | None = None,
+    business_policy: dict[str, Any] | None = None,
 ) -> int | None:
     """Create an instruction extension. Activate only after explicit review."""
     settings = get_settings()
-    ok, reason = check_instruction_delta(insight_text)
+    ok, reason = check_instruction_delta(insight_text, business_policy=business_policy)
     if not ok:
         mark_insight_status(
             insight_id=insight_id,
@@ -89,7 +90,7 @@ def promote_insights_to_extensions(
     extension_key = f"learning:{category}:{insight_id}"
     resolved_canary_hours = int(canary_hours or getattr(settings, "agent_learning_canary_hours", 6) or 6)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=max(1, resolved_canary_hours))
-    auto_activate = bool(getattr(settings, "agent_learning_auto_activate", False)) and bool(
+    auto_activate = bool((business_policy or {}).get("learningAutoActivate", getattr(settings, "agent_learning_auto_activate", False))) and bool(
         reviewed
     )
     meta = {
@@ -137,6 +138,7 @@ def promote_insights_to_extensions(
                 "error": str(exc)[:160],
                 "extension_id": extension_id,
             })
+            return None
     if extension_id:
         if activated:
             mark_insight_status(

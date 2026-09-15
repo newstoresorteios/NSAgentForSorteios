@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
@@ -550,7 +552,7 @@ def build_fact_pack(
         "outbound_image_url": metadata.get("outbound_image_url"),
     }
     pack = FactPack(source_payload=source_payload)
-    pack.trusted_urls.add(_clean_url(STORE_PRONTA_ENTREGA_URL))
+    pack.trusted_urls.add(_clean_url(STORE_PRONTA_ENTREGA_URL()))
     _collect_facts(source_payload, pack=pack, used_tray=used_tray)
     _ground_catalog_display_pix(pack, result, used_tray=used_tray)
 

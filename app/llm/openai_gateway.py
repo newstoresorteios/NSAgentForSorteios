@@ -8,6 +8,11 @@ not migrated to Responses in this phase.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
+from app.ops.turn_runtime import LLMCallBudgetExceeded
+
+
 import asyncio
 import json
 import random
@@ -615,7 +620,7 @@ class ChatCompletionsGateway:
                 timeout_seconds=_resolve_timeout(timeout_seconds),
                 operation=lambda: self.client.chat.completions.parse(**kwargs),
             )
-        except BadRequestError:
+        except (BadRequestError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             raise _map_api_error(exc) from exc
@@ -666,7 +671,7 @@ class ChatCompletionsGateway:
                 timeout_seconds=_resolve_timeout(timeout_seconds),
                 operation=lambda: self.client.chat.completions.create(**kwargs),
             )
-        except BadRequestError:
+        except (BadRequestError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             raise _map_api_error(exc) from exc
@@ -738,7 +743,7 @@ class ChatCompletionsGateway:
                     timeout_seconds=resolved_timeout,
                     operation=lambda: self.client.chat.completions.create(**kwargs),
                 )
-            except BadRequestError:
+            except (BadRequestError, LLMCallBudgetExceeded):
                 raise
             except Exception as exc:
                 raise _map_api_error(exc) from exc
@@ -858,6 +863,8 @@ class ResponsesGateway:
                 timeout_seconds=_resolve_timeout(timeout_seconds),
                 operation=lambda: self.client.responses.parse(**kwargs),
             )
+        except LLMCallBudgetExceeded:
+            raise
         except Exception as exc:
             raise _map_api_error(exc) from exc
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -918,6 +925,8 @@ class ResponsesGateway:
                 timeout_seconds=_resolve_timeout(timeout_seconds),
                 operation=lambda: self.client.responses.create(**kwargs),
             )
+        except LLMCallBudgetExceeded:
+            raise
         except Exception as exc:
             raise _map_api_error(exc) from exc
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -1007,7 +1016,7 @@ class ResponsesGateway:
                     timeout_seconds=resolved_timeout,
                     operation=lambda: self.client.responses.create(**kwargs),
                 )
-            except BadRequestError:
+            except (BadRequestError, LLMCallBudgetExceeded):
                 raise
             except Exception as exc:
                 raise _map_api_error(exc) from exc
@@ -1099,6 +1108,12 @@ class ResponsesGateway:
         )
 
 
+def _transport_attempt_checkpoint() -> int:
+    from app.ops.runtime_context import get_current_turn
+    runtime = get_current_turn()
+    return runtime.openai_transport_attempts if runtime else 0
+
+
 class FallbackOpenAIGateway:
     """Responses primary with Chat Completions emergency fallback.
 
@@ -1115,7 +1130,7 @@ class FallbackOpenAIGateway:
         self._primary = primary or ResponsesGateway()
         self._fallback = fallback or ChatCompletionsGateway()
 
-    def _mark_fallback(self, reason: str, *, call_type: str | None = None) -> None:
+    def _mark_fallback(self, reason: str, *, call_type: str | None = None, attempts_before: int | None = None) -> None:
         from app.ops.runtime_context import get_current_turn
 
         runtime = get_current_turn()
@@ -1126,8 +1141,8 @@ class FallbackOpenAIGateway:
             runtime.register_fallback(reason)
             # Failed Responses attempt already reserved budget — refund so Chat
             # fallback counts as the same logical LLM operation (Etapa 6).
-            if call_type:
-                runtime.release_failed_openai_attempt(call_type)
+            if call_type and attempts_before is not None:
+                runtime.release_failed_openai_attempt(call_type, after_attempt=attempts_before)
 
     def _fallback_enabled(self) -> bool:
         return bool(getattr(get_settings(), "openai_responses_fallback_to_chat", True))
@@ -1145,6 +1160,7 @@ class FallbackOpenAIGateway:
         timeout_seconds: float | None = None,
         store: bool | None = None,
     ) -> StructuredParseResult:
+        attempts_before = _transport_attempt_checkpoint()
         try:
             result = await self._primary.parse_structured(
                 model=model,
@@ -1159,7 +1175,7 @@ class FallbackOpenAIGateway:
             )
             result.api_mode = "responses"
             return result
-        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError):
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             if not self._fallback_enabled():
@@ -1170,7 +1186,7 @@ class FallbackOpenAIGateway:
                 "error": str(exc)[:200],
                 "reason": reason,
             })
-            self._mark_fallback(reason, call_type=call_type)
+            self._mark_fallback(reason, call_type=call_type, attempts_before=attempts_before)
             result = await self._fallback.parse_structured(
                 model=model,
                 text_format=text_format,
@@ -1197,6 +1213,7 @@ class FallbackOpenAIGateway:
         timeout_seconds: float | None = None,
         store: bool | None = None,
     ) -> TextGenerationResult:
+        attempts_before = _transport_attempt_checkpoint()
         try:
             result = await self._primary.generate_text(
                 model=model,
@@ -1210,7 +1227,7 @@ class FallbackOpenAIGateway:
             )
             result.api_mode = "responses"
             return result
-        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError):
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             if not self._fallback_enabled():
@@ -1221,7 +1238,7 @@ class FallbackOpenAIGateway:
                 "error": str(exc)[:200],
                 "reason": reason,
             })
-            self._mark_fallback(reason, call_type=call_type)
+            self._mark_fallback(reason, call_type=call_type, attempts_before=attempts_before)
             result = await self._fallback.generate_text(
                 model=model,
                 messages=messages,
@@ -1297,7 +1314,7 @@ class CanaryOpenAIGateway:
         settings = get_settings()
         return bool(getattr(settings, "openai_responses_fallback_to_chat", True))
 
-    def _mark_fallback(self, *, call_type: str | None = None) -> None:
+    def _mark_fallback(self, *, call_type: str | None = None, attempts_before: int | None = None) -> None:
         from app.ops.runtime_context import get_current_turn
 
         runtime = get_current_turn()
@@ -1305,8 +1322,8 @@ class CanaryOpenAIGateway:
             runtime.openai_api_fallback = True
             runtime.openai_api_route = "chat_completions"
             runtime.register_fallback("openai_responses_canary_fallback")
-            if call_type:
-                runtime.release_failed_openai_attempt(call_type)
+            if call_type and attempts_before is not None:
+                runtime.release_failed_openai_attempt(call_type, after_attempt=attempts_before)
 
     async def parse_structured(
         self,
@@ -1322,6 +1339,7 @@ class CanaryOpenAIGateway:
         store: bool | None = None,
     ) -> StructuredParseResult:
         primary, mode_label = self._resolve_gateways()
+        attempts_before = _transport_attempt_checkpoint()
         try:
             result = await primary.parse_structured(
                 model=model,
@@ -1341,7 +1359,7 @@ class CanaryOpenAIGateway:
                 "latency_ms": result.latency_ms,
             })
             return result
-        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError):
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             if mode_label != "canary_responses" or not self._fallback_enabled():
@@ -1350,7 +1368,7 @@ class CanaryOpenAIGateway:
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:200],
             })
-            self._mark_fallback(call_type=call_type)
+            self._mark_fallback(call_type=call_type, attempts_before=attempts_before)
             result = await self._chat.parse_structured(
                 model=model,
                 text_format=text_format,
@@ -1378,6 +1396,7 @@ class CanaryOpenAIGateway:
         store: bool | None = None,
     ) -> TextGenerationResult:
         primary, mode_label = self._resolve_gateways()
+        attempts_before = _transport_attempt_checkpoint()
         try:
             result = await primary.generate_text(
                 model=model,
@@ -1396,7 +1415,7 @@ class CanaryOpenAIGateway:
                 "latency_ms": result.latency_ms,
             })
             return result
-        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError):
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             if mode_label != "canary_responses" or not self._fallback_enabled():
@@ -1405,7 +1424,7 @@ class CanaryOpenAIGateway:
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:200],
             })
-            self._mark_fallback(call_type=call_type)
+            self._mark_fallback(call_type=call_type, attempts_before=attempts_before)
             result = await self._chat.generate_text(
                 model=model,
                 messages=messages,

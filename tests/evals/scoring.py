@@ -27,7 +27,8 @@ def score_eval_case(
     checks["tools_required"] = all(tool in tools for tool in must_call)
     must_not = list(expected.get("must_not_call_tools") or [])
     checks["tools_forbidden"] = not any(tool in tools for tool in must_not)
-    checks["openai_budget"] = openai_calls <= int(expected.get("max_openai_calls") or 99)
+    maximum = expected.get("max_openai_calls")
+    checks["openai_budget"] = openai_calls <= int(99 if maximum is None else maximum)
     checks["no_invention"] = not invented_claim
     if expected.get("requires_factual_support"):
         checks["factual_support"] = bool(factual_valid)

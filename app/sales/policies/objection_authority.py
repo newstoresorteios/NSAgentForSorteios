@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import unicodedata
 from typing import Any, Literal
@@ -203,56 +205,43 @@ def _short_reply_for_kind(
 ) -> tuple[str, bool]:
     """Return (reply_text, handoff_required). Prefer short WhatsApp copy over full ChatBo essay."""
     beyond = (
-        "posso te conectar com um consultor humano"
+        operator_message('sales.policies.objection_authority._short_reply_for_kind.c5b65b8ddd')
         if negotiation == "human_handoff"
-        else "não consigo negociar além disso"
+        else operator_message('sales.policies.objection_authority._short_reply_for_kind.2c21b2e70c')
     )
     if kind == "trade_in":
         return (
-            "A New Store não avalia nem compra relógios de particulares por aqui. "
-            "Se quiser, te passo para um consultor humano ver o melhor caminho.",
+            operator_message('sales.policies.objection_authority._short_reply_for_kind.6c2b85b188'),
             True,
         )
     if kind == "extra_discount":
         return (
-            f"O desconto oficial no PIX é de {pix_pct}% sobre o valor do site — "
-            f"não aplico além disso. Se precisar negociar, {beyond}.",
+            operator_message('sales.policies.objection_authority._short_reply_for_kind.895f63801e', pix_pct=f'{pix_pct}', beyond=f'{beyond}'),
             negotiation == "human_handoff",
         )
     if kind == "price":
         return (
-            f"O valor do site já é o preço final (impostos, NF e entrega inclusos). "
-            f"No PIX sai com {pix_pct}% de desconto. Se estiver acima do orçamento, "
-            "me diga a faixa que eu busco opções semelhantes ou Open Box, quando houver.",
+            operator_message('sales.policies.objection_authority._short_reply_for_kind.ff1040aa67', pix_pct=f'{pix_pct}'),
             False,
         )
     if kind == "lead_time":
         return (
-            "O prazo depende da modalidade confirmada no catálogo: "
-            "pronta entrega em cerca de 2 a 5 dias úteis, "
-            "ou sob encomenda em cerca de 25 a 35 dias úteis. "
-            "Se você tem data-alvo, priorizo as opções de pronta entrega.",
+            operator_message('sales.policies.objection_authority._short_reply_for_kind.de55a633fb'),
             False,
         )
     if kind == "trust":
         return (
-            "Faz sentido essa preocupação numa compra de valor. "
-            "A New Store importa com NF brasileira no seu nome, garantia "
-            "(fabricante ou nossa) e impostos já recolhidos. "
-            "Se quiser, te coloco com a equipe.",
+            operator_message('sales.policies.objection_authority._short_reply_for_kind.e288c50991'),
             False,
         )
     if kind == "comparison":
         return (
-            f"Não falo mal de outros anúncios. Aqui o preço já inclui importação, "
-            f"impostos, NF e entrega — no PIX ainda tem {pix_pct}%. "
-            f"Se precisar de cobertura de preço, {beyond}.",
+            operator_message('sales.policies.objection_authority._short_reply_for_kind.4a12ed8d72', pix_pct=f'{pix_pct}', beyond=f'{beyond}'),
             negotiation == "human_handoff",
         )
     if kind == "approval":
         return (
-            "Sem pressão. Posso deixar pronto um resumo com modelo, valor no PIX/"
-            "parcelado, prazo e o link oficial para você alinhar com quem precisar.",
+            operator_message('sales.policies.objection_authority._short_reply_for_kind.453ca9b585'),
             False,
         )
     # Fallback: first sentence of persona script if present.
@@ -261,8 +250,7 @@ def _short_reply_for_kind(
         if first:
             return first[:400], False
     return (
-        "Posso te explicar com base na política oficial da New Store. "
-        "O que mais te preocupa agora: preço, prazo ou confiança?",
+        operator_message('sales.policies.objection_authority._short_reply_for_kind.01da67ab2f'),
         False,
     )
 

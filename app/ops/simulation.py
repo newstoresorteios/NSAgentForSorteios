@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 from typing import Any
 
@@ -179,17 +181,17 @@ def simulate_purchase(credit_cents: int, product_cents: int) -> dict[str, Any]:
 
     eligible = True
     reason = None
-    if credit_cents < CARD_USAGE_TABLE[0][0]:
+    if credit_cents < CARD_USAGE_TABLE()[0][0]:
         eligible = False
         reason = (
-            f"O simulador oficial considera saldos a partir de {format_cents_to_brl(CARD_USAGE_TABLE[0][0])}. "
+            f"O simulador oficial considera saldos a partir de {format_cents_to_brl(CARD_USAGE_TABLE()[0][0])}. "
             "Confirme seu saldo ou fale com a equipe."
         )
     elif max_applicable <= 0:
         eligible = False
         reason = (
             f"Para usar Cartão Presente, o produto deve ser superior a "
-            f"{format_cents_to_brl(CARD_USAGE_TABLE[0][2])} (tabela oficial)."
+            f"{format_cents_to_brl(CARD_USAGE_TABLE()[0][2])} (tabela oficial)."
         )
     elif applied_cents <= 0:
         eligible = False
@@ -233,13 +235,10 @@ def build_purchase_simulation_reply(
         min_purchase = min_purchase_for_credit_cents(credit_cents)
         if min_purchase is None:
             return (
-                f"{greeting} Com crédito de {credit_label}, consulte a tabela completa em "
-                "https://www.sorteionewstore.com.br/ ou informe o valor do relógio para eu simular o desconto."
+                operator_message('ops.simulation.build_purchase_simulation_reply.0efcfa05e5', greeting=f'{greeting}', credit_label=f'{credit_label}')
             )
         return (
-            f"{greeting} Com {credit_label} de Cartão Presente, a compra deve ser superior a "
-            f"{format_cents_to_brl(min_purchase)} (tabela oficial). "
-            "Informe o valor do produto (ex.: relógio de R$ 6.799,99) que eu calculo quanto abate e quanto fica a pagar."
+            operator_message('ops.simulation.build_purchase_simulation_reply.ab192a9608', greeting=f'{greeting}', credit_label=f'{credit_label}', value_3=f'{format_cents_to_brl(min_purchase)}')
         )
 
     product_label = format_cents_to_brl(product_cents)
@@ -247,9 +246,7 @@ def build_purchase_simulation_reply(
 
     if not result["eligible"]:
         return (
-            f"{greeting} Seu saldo é {credit_label}. "
-            f"{result['reason']} "
-            f"O produto informado ficou em {product_label}."
+            operator_message('ops.simulation.build_purchase_simulation_reply.82c83c52cd', greeting=f'{greeting}', credit_label=f'{credit_label}', value_3=f"{result['reason']}", product_label=f'{product_label}')
         )
 
     applied_label = format_cents_to_brl(result["applied_cents"])
@@ -259,41 +256,37 @@ def build_purchase_simulation_reply(
 
     if result["can_apply_full_balance"]:
         summary = (
-            f"{greeting} Sim, dá para abater todo o saldo de {credit_label} "
-            f"no relógio de {product_label}."
+            operator_message('ops.simulation.build_purchase_simulation_reply.871ad1b102', greeting=f'{greeting}', credit_label=f'{credit_label}', product_label=f'{product_label}')
         )
     else:
         summary = (
-            f"{greeting} Não dá para abater todo o saldo de {credit_label} "
-            f"no relógio de {product_label}. "
-            f"Pela tabela oficial, nesta compra o máximo aplicável é {max_applicable_label}."
+            operator_message('ops.simulation.build_purchase_simulation_reply.9dd3356379', greeting=f'{greeting}', credit_label=f'{credit_label}', product_label=f'{product_label}', max_applicable_label=f'{max_applicable_label}')
         )
 
     lines = [
         summary,
         "",
         "Simulação:",
-        f"• Valor do produto: {product_label}",
-        f"• Saldo informado: {credit_label}",
-        f"• Máximo aplicável nesta compra (tabela): {max_applicable_label}",
-        f"• Cartão Presente aplicado: {applied_label}",
-        f"• Valor a pagar: {final_label}",
+        operator_message('ops.simulation.build_purchase_simulation_reply.79a0d667b7', product_label=f'{product_label}'),
+        operator_message('ops.simulation.build_purchase_simulation_reply.fde0b57483', credit_label=f'{credit_label}'),
+        operator_message('ops.simulation.build_purchase_simulation_reply.6350fc5046', max_applicable_label=f'{max_applicable_label}'),
+        operator_message('ops.simulation.build_purchase_simulation_reply.035e76d3c4', applied_label=f'{applied_label}'),
+        operator_message('ops.simulation.build_purchase_simulation_reply.7cdafa24cd', final_label=f'{final_label}'),
     ]
 
     if result["remaining_balance_cents"] > 0:
-        lines.append(f"• Saldo que sobra no cartão: {remaining_label}")
+        lines.append(operator_message('ops.simulation.build_purchase_simulation_reply.0b3e2abf73', remaining_label=f'{remaining_label}'))
 
     if payment_method == "credit" and result["final_cents"] > 0:
         installment = result["final_cents"] / 12
-        lines.append(f"• Referência no crédito: em até 12x de {format_cents_to_brl(int(installment))} sem juros")
+        lines.append(operator_message('ops.simulation.build_purchase_simulation_reply.98fbe2017a', value_1=f'{format_cents_to_brl(int(installment))}'))
 
     lines.extend(
         [
             "",
-            "A tabela limita quanto do cartão pode ser usado conforme o valor do produto; "
-            "o saldo disponível pode ser maior que o permitido na compra.",
-            "O desconto segue a forma de pagamento escolhida (Pix ou crédito). Compras via Pix podem precisar de aplicação manual pela equipe.",
-            "Válido em compra única; dá para usar só parte do saldo. Simule também em https://www.newstorerj.com.br/",
+            operator_message('ops.simulation.build_purchase_simulation_reply.e788d1c115'),
+            operator_message('ops.simulation.build_purchase_simulation_reply.390ba6de03'),
+            operator_message('ops.simulation.build_purchase_simulation_reply.f3f0f5ebcc'),
         ]
     )
     return "\n".join(lines)

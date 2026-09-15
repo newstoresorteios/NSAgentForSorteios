@@ -128,7 +128,7 @@ async def test_interpreter_request_uses_gpt_4_1_mini_and_normalized_messages(mon
     assert captured["messages"] == [
         {
             "role": "system",
-            "content": f"{sales_agent.SALES_INTERPRETER_INSTRUCTIONS}\n\n{HISTORY_TIME_POLICY}",
+            "content": f"{sales_agent.SALES_INTERPRETER_INSTRUCTIONS()}\n\n{HISTORY_TIME_POLICY}",
         },
         {
             "role": "system",

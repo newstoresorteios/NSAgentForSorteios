@@ -148,6 +148,9 @@ def claim_pending_inbox(
                   SELECT candidate.id
                   FROM public.ai_inbound_inbox AS candidate
                   WHERE candidate.attempts < candidate.max_attempts
+                    AND (candidate.status <> 'failed' OR candidate.updated_at +
+                        make_interval(secs => LEAST(%(retry_max)s,
+                            %(retry_base)s * power(2, GREATEST(candidate.attempts - 1, 0)))::int) <= now())
                     AND (
                       status IN ('pending', 'failed')
                       OR (
@@ -191,6 +194,8 @@ def claim_pending_inbox(
                     "owner": lease_owner,
                     "expires": expires,
                     "conversation_keys": keys or None,
+                    "retry_base": getattr(settings, "agent_queue_retry_base_seconds", 30),
+                    "retry_max": getattr(settings, "agent_queue_retry_max_seconds", 300),
                 },
             )
             rows = cur.fetchall() or []

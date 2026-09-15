@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.core.turn_cache import cached_turn_read
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -93,6 +95,7 @@ def upsert_learning_case(
         raise
 
 
+@cached_turn_read
 def list_active_cases(
     *,
     tenant_id: str,
@@ -110,7 +113,7 @@ def list_active_cases(
                     SELECT *
                     FROM public.ai_learning_cases
                     WHERE tenant_id = %s
-                      AND (workspace_id = %s OR workspace_id IS NULL)
+                      AND workspace_id IS NOT DISTINCT FROM %s::uuid
                       AND status = 'active'
                     ORDER BY importance DESC NULLS LAST, updated_at DESC
                     LIMIT %s

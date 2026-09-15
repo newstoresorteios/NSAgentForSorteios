@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import json
 
@@ -83,51 +85,19 @@ from app.identity.greeting_policy import (
 )
 
 
-PERSONA_GREETING_OPERATIONAL = """\
-<greeting_contract>
-O cliente enviou apenas uma saudação.
-Responda SOMENTE com a mensagem final ao cliente — nunca copie rótulos de prompt
-como "Saudação padrão", "adapte ao contexto", "Saudação oficial:" ou títulos de seção.
-Se FACTS.official_greeting existir, use essa frase (pode trocar Olá/Bom dia conforme
-a mensagem do cliente e incluir o primeiro nome se conhecido).
-Apresente-se como Crono quando fizer sentido e pergunte como pode ajudar.
-Não invente produtos, preços, estoque, pedidos ou links.
-Resposta curta, natural, em português do Brasil.
-</greeting_contract>
-""".strip()
+def PERSONA_GREETING_OPERATIONAL():
+    return operator_message('business.persona_greeting_operational.02a8ba3200').strip()
 
 
-SYSTEM_INSTRUCTIONS = f"""
-Você é o NewStoreAgent, atendente virtual da New Store Sorteios.
+def SYSTEM_INSTRUCTIONS():
+    return operator_message('business.system_instructions.a369e54ee8', value_1=f'{build_site_knowledge_text()}', NS_SALES_WHATSAPP=f'{NS_SALES_WHATSAPP()}').strip()
 
-{build_site_knowledge_text()}
-
-Regras obrigatórias:
-- Responda em português do Brasil, de forma curta e clara para WhatsApp.
-- Use APENAS os dados consultados no banco e a base oficial acima.
-- Nunca invente saldo, cupom, números ou resultados.
-- Responda primeiro o que o cliente perguntou; só depois complemente se fizer sentido.
-- Nunca consulte ou revele dados de outra pessoa.
-- Se o cliente não tiver telefone cadastrado, oriente a acessar https://www.sorteionewstore.com.br/ e incluir o telefone no perfil.
-- Não altere cadastro ou participações pelo WhatsApp. Em compras, execute somente
-  capacidades comerciais validadas e nunca colete dados sensíveis de pagamento no chat.
-- Não prometa ganhar sorteio; explique regras oficiais.
-- Se não souber, oriente o site ou encaminhe para a equipe no WhatsApp {NS_SALES_WHATSAPP}.
-- Use a memória do cliente quando disponível; não repita perguntas sobre nome ou preferências já registradas.
-- Adapte tom e tamanho da resposta ao estilo preferido do cliente.
-- Se a mensagem veio de áudio transcrito, responda naturalmente ao conteúdo falado.
-- Para produtos, pre\u00e7os, estoque, clientes e cupons, use as ferramentas de consulta quando dispon\u00edveis.
-- Nunca invente pre\u00e7o, estoque, parcelamento ou validade de cupom. `promotional_price` nulo n\u00e3o \u00e9 promo\u00e7\u00e3o.
-- Para estoque, considere todos os campos retornados, n\u00e3o apenas `stock > 0`.
-- O banco local \u00e9 a fonte oficial para saldo, Cart\u00e3o Presente pessoal, sorteios, participa\u00e7\u00f5es, n\u00fameros e hist\u00f3rico.
-- O TrayAdapter \u00e9 a fonte oficial para cat\u00e1logo, produtos, marcas, pre\u00e7os, estoque, EAN, refer\u00eancia e condi\u00e7\u00f5es comerciais.
-- Para qualquer informa\u00e7\u00e3o comercial atual, use as tools do TrayAdapter; nunca use exemplos do site como pre\u00e7o ou estoque atual.
-- Responda somente sobre a NewStore, seus produtos, compras, atendimento comercial e sorteios; para assuntos externos, use a recusa curta de escopo.
-""".strip()
-
-STORE_LOOKUP_UNAVAILABLE = "N\u00e3o consegui consultar as informa\u00e7\u00f5es da loja neste momento. Tente novamente em instantes."
-GENERAL_GREETING_FALLBACK = "Ol\u00e1! Como posso ajudar?"
-STORE_KNOWLEDGE_UNAVAILABLE = "Ainda não tenho essa informação oficial da loja disponível neste atendimento."
+def STORE_LOOKUP_UNAVAILABLE():
+    return operator_message('business.store_lookup_unavailable.08732f3104')
+def GENERAL_GREETING_FALLBACK():
+    return operator_message('business.general_greeting_fallback.e280997ce6')
+def STORE_KNOWLEDGE_UNAVAILABLE():
+    return operator_message('business.store_knowledge_unavailable.81b8d95141')
 
 
 def _annotate_agent_result(result: AgentResult, **metadata: object) -> AgentResult:
@@ -176,10 +146,8 @@ def _preferred_name_reply_if_requested(message: IncomingMessage, facts: dict) ->
 
 
 def _truncate(text: str, max_chars: int) -> str:
-    text = (text or "").strip()
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 1].rstrip() + "…"
+    from app.llm.response_composer import truncate_reply
+    return truncate_reply(text, max_chars)
 
 
 def _sanitize_log_message(text: str) -> str:
@@ -192,12 +160,12 @@ def _non_handoff_fallback(message: IncomingMessage, facts: dict) -> str:
     if fallback:
         return fallback
     if facts.get("primary_intent") == "commerce":
-        return STORE_LOOKUP_UNAVAILABLE
+        return STORE_LOOKUP_UNAVAILABLE()
     if facts.get("primary_intent") == "general":
         if facts.get("scope_domain") == "store_general":
-            return STORE_KNOWLEDGE_UNAVAILABLE
-        return GENERAL_GREETING_FALLBACK
-    return "N\u00e3o consegui concluir a consulta neste momento. Tente novamente em instantes."
+            return STORE_KNOWLEDGE_UNAVAILABLE()
+        return GENERAL_GREETING_FALLBACK()
+    return operator_message('agents.door._non_handoff_fallback.f9f5712adb')
 
 
 def _is_personal_intent(intent: str) -> bool:
@@ -322,7 +290,7 @@ async def generate_persona_greeting_reply(
     except Exception:
         pass
     system_instructions = resolve_system_instructions(
-        fallback_instructions=PERSONA_GREETING_OPERATIONAL,
+        fallback_instructions=PERSONA_GREETING_OPERATIONAL(),
         incoming=message,
         conversation_state=conversation_state,
         recent_turns=recent_turns,
@@ -388,19 +356,15 @@ async def generate_openai_reply_async(message: IncomingMessage, customer_context
     # Non-commerce door path is text-only. Commerce must go through handle_sales_message
     # / ProductRetrievalCompiler — never open TOOL_SCHEMAS here.
     system_instructions = resolve_system_instructions(
-        fallback_instructions=SYSTEM_INSTRUCTIONS,
+        fallback_instructions=SYSTEM_INSTRUCTIONS(),
         incoming=message,
         extra_system_blocks=[
             *legacy_contract_extra_blocks(
-                SYSTEM_INSTRUCTIONS,
+                SYSTEM_INSTRUCTIONS(),
                 tag="legacy_agent_contract",
             ),
             (
-                "<legacy_path_no_tools>\n"
-                "Neste caminho não há ferramentas Tray. "
-                "Não invente preço, estoque, pedido, cupom ou link. "
-                "Se a pergunta for comercial e faltar dado oficial, peça um detalhe.\n"
-                "</legacy_path_no_tools>"
+                operator_message('agents.door.generate_openai_reply_async.d5937d8b8d')
             ),
         ],
     )
@@ -846,7 +810,7 @@ async def _route_after_interpret(
     print("[agent.scope]", {"domain": scope_domain})
     if scope_domain == "out_of_scope":
         return _annotate_agent_result(
-            AgentResult(reply_text=OUT_OF_SCOPE_REPLY, intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal"),
+            AgentResult(reply_text=OUT_OF_SCOPE_REPLY(), intent="out_of_scope", handoff_required=False, safety_reason="scope_refusal"),
             domain=scope_domain,
             goal=interpretation.goal,
             response_source="guardrail" if used_openai_interpreter else "deterministic_fallback",
@@ -947,8 +911,7 @@ async def _route_after_interpret(
         return _annotate_agent_result(
             AgentResult(
                 reply_text=(
-                    "Me diz em uma frase o que você busca — "
-                    "marca, modelo ou faixa de investimento."
+                    operator_message('agents.door._route_after_interpret.8054ad3cc3')
                 ),
                 intent="commerce",
                 handoff_required=False,

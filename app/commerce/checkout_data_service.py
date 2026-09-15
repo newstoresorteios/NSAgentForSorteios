@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import re
 import json
 import unicodedata
@@ -136,9 +138,9 @@ def checkout_data_template(
     if not requested:
         return ""
     if errors:
-        intro = "Não consegui validar alguns dados. Corrija e envie neste modelo:"
+        intro = operator_message('commerce.checkout_data_service.checkout_data_template.14427b9d20')
     else:
-        intro = "Para continuar, copie, preencha e envie neste modelo:"
+        intro = operator_message('commerce.checkout_data_service.checkout_data_template.3763ba7d83')
     lines = [
         f"{_FIELD_LABELS[field][0]}: {_FIELD_LABELS[field][1]}"
         for field in requested
@@ -149,7 +151,7 @@ def checkout_data_template(
         "",
         *lines,
         "",
-        "Não precisa repetir os dados que já foram validados.",
+        operator_message('commerce.checkout_data_service.checkout_data_template.b5b0c345ba'),
     ])
 
 
@@ -314,6 +316,9 @@ def update_checkout_data(
     state: CommerceConversationState,
     updates: dict[str, Any],
 ) -> AgentResult:
+    from app.commerce.checkout_service import assisted_checkout_enabled, site_checkout_result
+    if not assisted_checkout_enabled():
+        return site_checkout_result(state)
     allowed = _CUSTOMER_FIELDS | _ADDRESS_FIELDS
     unknown = sorted(set(updates) - allowed)
     errors: dict[str, str] = {
@@ -389,7 +394,7 @@ def update_checkout_data(
     })
     template = checkout_data_template(missing, errors)
     return AgentResult(
-        reply_text=template or "Dados de checkout atualizados.",
+        reply_text=template or operator_message('commerce.checkout_data_service.update_checkout_data.1d1064be49'),
         intent="commerce",
         commercial_data={
             "success": not errors,

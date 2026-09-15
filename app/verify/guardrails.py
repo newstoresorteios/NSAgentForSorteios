@@ -317,5 +317,5 @@ def default_safe_handoff() -> str:
 
     return (
         "Para sua segurança, encaminhei esse atendimento para a equipe da New Store. "
-        f"{HUMAN_HANDOFF_ACK_MESSAGE}"
+        f"{HUMAN_HANDOFF_ACK_MESSAGE()}"
     )

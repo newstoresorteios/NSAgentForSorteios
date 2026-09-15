@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import time
 from typing import Any
 
 from app.catalog.index.catalog_index import CanonicalCatalogItem
@@ -28,6 +29,7 @@ class CatalogIndexRepository:
     """All queries require explicit tenant_id."""
 
     _pg_trgm_available: bool | None = None
+    _pg_trgm_retry_at: float = 0
 
     def search_exact(
         self,
@@ -106,7 +108,7 @@ class CatalogIndexRepository:
             "tenant_id": tenant,
             "qlike": f"%{qraw}%",
             "qraw": qraw,
-            "min_sim": 0.28,
+            "min_sim": float(getattr(settings, "agent_catalog_similarity_threshold", 0.28)),
             "limit": lim,
         }
         ttl_sql = ""
@@ -122,8 +124,10 @@ class CatalogIndexRepository:
             SELECT *
             FROM public.ai_catalog_index
             WHERE tenant_id = %(tenant_id)s
+              AND available IS NOT FALSE
+              AND (stock IS NULL OR stock > 0)
               AND (
-                    lower(title_normalized) LIKE %(qlike)s
+                    lower(coalesce(title_normalized, '')) LIKE %(qlike)s
                  OR lower(coalesce(model, '')) LIKE %(qlike)s
                  OR lower(coalesce(reference, '')) LIKE %(qlike)s
               )
@@ -136,37 +140,48 @@ class CatalogIndexRepository:
             SELECT *
             FROM public.ai_catalog_index
             WHERE tenant_id = %(tenant_id)s
+              AND available IS NOT FALSE
+              AND (stock IS NULL OR stock > 0)
               AND (
-                    lower(title_normalized) LIKE %(qlike)s
+                    lower(coalesce(title_normalized, '')) LIKE %(qlike)s
                  OR lower(coalesce(model, '')) LIKE %(qlike)s
                  OR lower(coalesce(reference, '')) LIKE %(qlike)s
-                 OR similarity(lower(coalesce(title_normalized, '')), %(qraw)s) >= %(min_sim)s
-                 OR similarity(lower(coalesce(model, '')), %(qraw)s) >= %(min_sim)s
-                 OR similarity(lower(coalesce(reference, '')), %(qraw)s) >= %(min_sim)s
+                 OR lower(coalesce(title_normalized, '')) OPERATOR(extensions.%%) %(qraw)s
+                 OR lower(coalesce(model, '')) OPERATOR(extensions.%%) %(qraw)s
+                 OR lower(coalesce(reference, '')) OPERATOR(extensions.%%) %(qraw)s
               )
               {brand_sql}
               {ttl_sql}
             ORDER BY GREATEST(
-                similarity(lower(coalesce(title_normalized, '')), %(qraw)s),
-                similarity(lower(coalesce(model, '')), %(qraw)s),
-                similarity(lower(coalesce(reference, '')), %(qraw)s)
+                extensions.similarity(lower(coalesce(title_normalized, '')), %(qraw)s),
+                extensions.similarity(lower(coalesce(model, '')), %(qraw)s),
+                extensions.similarity(lower(coalesce(reference, '')), %(qraw)s)
             ) DESC,
             freshness_at DESC NULLS LAST
             LIMIT %(limit)s
         """
         rows: list[dict[str, Any]] = []
-        if CatalogIndexRepository._pg_trgm_available is not False:
+        use_like = False
+        if (CatalogIndexRepository._pg_trgm_available is not False
+                or time.monotonic() >= CatalogIndexRepository._pg_trgm_retry_at):
             try:
                 rows = self._fetch(trgm_sql, params, swallow=False)
                 CatalogIndexRepository._pg_trgm_available = True
             except Exception as exc:
-                CatalogIndexRepository._pg_trgm_available = False
+                # Timeouts/network failures must not disable fuzzy search for
+                # subsequent turns. Only a missing extension gets a short TTL.
+                use_like = True
+                if getattr(exc, "sqlstate", None) in {"42883", "42704"}:
+                    CatalogIndexRepository._pg_trgm_available = False
+                    CatalogIndexRepository._pg_trgm_retry_at = time.monotonic() + float(
+                        getattr(settings, "agent_catalog_trgm_retry_seconds", 60)
+                    )
                 print(
                     "[catalog.index.lexical.trgm_unavailable]",
                     {"error_type": type(exc).__name__},
                 )
                 rows = []
-        if CatalogIndexRepository._pg_trgm_available is False:
+        if use_like or CatalogIndexRepository._pg_trgm_available is False:
             like_params = {
                 key: value
                 for key, value in params.items()
@@ -207,7 +222,7 @@ class CatalogIndexRepository:
                 (trigram_similarity(query, field) for field in fields if field),
                 default=0.0,
             )
-            if like_hit or sim >= 0.28:
+            if like_hit or sim >= float(getattr(get_settings(), "agent_catalog_similarity_threshold", 0.28)):
                 scored.append((sim + (0.15 if like_hit else 0.0), row))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [row for _, row in scored[:limit]]
@@ -222,12 +237,15 @@ class CatalogIndexRepository:
         max_price: float | None = None,
         min_case_size_mm: int | None = None,
         max_case_size_mm: int | None = None,
+        available_only: bool = True,
         limit: int = 30,
     ) -> list[dict[str, Any]]:
         tenant = str(tenant_id or "").strip()
         if not tenant:
             raise ValueError("tenant_id required")
         clauses = ["tenant_id = %(tenant_id)s"]
+        if available_only:
+            clauses.extend(["available IS DISTINCT FROM false", "(stock IS NULL OR stock > 0)"])
         params: dict[str, Any] = {
             "tenant_id": tenant,
             "limit": max(1, min(int(limit), 100)),
@@ -246,7 +264,7 @@ class CatalogIndexRepository:
             clauses.append("lower(coalesce(gender, '')) LIKE lower(%(gender)s)")
             params["gender"] = f"%{str(gender).strip()}%"
         if max_price is not None:
-            clauses.append("price IS NOT NULL AND price <= %(max_price)s")
+            clauses.append("COALESCE(NULLIF(promotional_price, 0), price) <= %(max_price)s")
             params["max_price"] = float(max_price)
         if min_case_size_mm is not None or max_case_size_mm is not None:
             clauses.append(
@@ -408,23 +426,42 @@ class CatalogIndexRepository:
         sql: str,
         params: dict[str, Any],
         *,
-        swallow: bool = True,
+        swallow: bool = False,
     ) -> list[dict[str, Any]]:
         if not str(params.get("tenant_id") or "").strip():
             raise ValueError("tenant_id required")
+        started = time.perf_counter()
+        from app.ops.runtime_context import get_current_turn
+        runtime = get_current_turn()
+        result_count = None
+        status = "error"
         try:
             from app.db import get_conn
 
             with get_conn() as conn:
                 with conn.cursor() as cur:
+                    if "min_sim" in params:
+                        cur.execute("SELECT set_config('pg_trgm.similarity_threshold', %s, true)", (str(params["min_sim"]),))
                     cur.execute(sql, params)
                     rows = list(cur.fetchall() or [])
+            result_count = len(rows)
+            status = "ok"
             return [dict(row) for row in rows]
         except Exception as exc:
+            if runtime is not None:
+                runtime.register_integration_failure("catalog_index")
+                runtime.register_fallback("catalog_index_query_failed")
             if not swallow:
                 raise
             print("[catalog.index.read.error]", {"error_type": type(exc).__name__})
             return []
+        finally:
+            if runtime is not None:
+                runtime.stage_durations_ms["catalog_database"] = runtime.stage_durations_ms.get("catalog_database", 0) + (time.perf_counter() - started) * 1000
+                runtime.catalog_queries.append({"source": "catalog_index", "status": status,
+                    "strategy": "fuzzy" if "min_sim" in params else "lexical" if "qlike" in params else "constraints",
+                    "filters": {k:v for k,v in params.items() if k in {"qraw", "brand", "mechanism", "gender", "max_price", "min_mm", "max_mm", "limit"}},
+                    "result_count": result_count, "duration_ms": round((time.perf_counter() - started)*1000, 2)})
 
 
 def row_to_product_dict(row: dict[str, Any]) -> dict[str, Any]:

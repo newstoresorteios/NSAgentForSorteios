@@ -5,6 +5,8 @@ Look up patched names on ``app.sales_agent`` at call time.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -183,7 +185,7 @@ async def resolve_catalog_reference(
             resolved_by=resolved_by,
             early_result=sales._mark_sales_result(
                 AgentResult(
-                    reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY,
+                    reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY(),
                     intent="commerce",
                     handoff_required=False,
                     safety_reason="instagram_media_unviewable",
@@ -217,7 +219,7 @@ async def resolve_catalog_reference(
             resolved_by=resolved_by,
             early_result=sales._mark_sales_result(
                 AgentResult(
-                    reply_text=PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
+                    reply_text=PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY(),
                     intent="commerce",
                     handoff_required=False,
                     safety_reason="instagram_media_unviewable",
@@ -264,9 +266,7 @@ async def resolve_catalog_reference(
                 early_result=sales._mark_sales_result(
                     AgentResult(
                         reply_text=(
-                            "Recebi sua pergunta de preço. Se for o relógio da foto, "
-                            "me envia a imagem (ou a marca e o modelo) que eu confirmo "
-                            "no catálogo e te passo o valor certinho."
+                            operator_message('sales.catalog_reference.resolve_catalog_reference.e5e477867c')
                         ),
                         intent="commerce",
                         handoff_required=False,
@@ -389,8 +389,7 @@ async def resolve_catalog_reference(
             early_result=sales._mark_sales_result(
                 AgentResult(
                     reply_text=(
-                        "Ainda não confirmei o modelo exato. Destes que listei, "
-                        "qual você quer o preço?\n"
+                        operator_message('sales.catalog_reference.resolve_catalog_reference.a35c141ec3')
                         + "\n".join(numbered)
                     ),
                     intent="commerce",

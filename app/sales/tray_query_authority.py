@@ -10,6 +10,8 @@ Empty authorized search → honest miss, not a luxury-brand dump.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -113,25 +115,17 @@ def _budget_miss_reply(brand: str | None, ceiling: str, floor: float | None) -> 
     if floor is not None:
         if brand:
             return (
-                f"Não encontrei {subject} até {ceiling}. "
-                f"Na loja, o {subject} mais acessível que vi fica a partir de "
-                f"{_brl(floor)} — fora da faixa. "
-                "Prefere outra marca nessa faixa, ou subir o orçamento?"
+                operator_message('sales.tray_query_authority._budget_miss_reply.c5ac523a55', subject=f'{subject}', ceiling=f'{ceiling}', value_3=f'{subject}', value_4=f'{_brl(floor)}')
             )
         return (
-            f"Não encontrei {subject} até {ceiling}. "
-            f"Na loja, o mais acessível que vi fica a partir de "
-            f"{_brl(floor)} — fora da faixa. "
-            "Quer ajustar a faixa ou outro critério?"
+            operator_message('sales.tray_query_authority._budget_miss_reply.f771665be9', subject=f'{subject}', ceiling=f'{ceiling}', value_3=f'{_brl(floor)}')
         )
     if brand:
         return (
-            f"Não encontrei {subject} até {ceiling}. "
-            "Prefere outra marca nessa faixa, ou subir o orçamento?"
+            operator_message('sales.tray_query_authority._budget_miss_reply.b429990c60', subject=f'{subject}', ceiling=f'{ceiling}')
         )
     return (
-        f"Não encontrei {subject} até {ceiling}. "
-        "Quer ajustar a faixa ou outro critério?"
+        operator_message('sales.tray_query_authority._budget_miss_reply.426ba2ac4f', subject=f'{subject}', ceiling=f'{ceiling}')
     )
 
 
@@ -205,8 +199,7 @@ def budget_miss_from_authorization(
         reply = _budget_miss_reply(brand, _brl(authorization.budget_max), floor)
     else:
         reply = (
-            f"Não encontrei {_miss_subject_label(brand)} dentro do que você pediu. "
-            "Prefere ajustar marca ou faixa?"
+            operator_message('sales.tray_query_authority.budget_miss_from_authorization.c97880417c', value_1=f'{_miss_subject_label(brand)}')
         )
     return AgentResult(
         reply_text=reply,
@@ -263,8 +256,7 @@ def budget_hard_miss_result(
         reply = _budget_miss_reply(brand, _brl(auth.budget_max), floor)
     else:
         reply = (
-            f"Não encontrei {_miss_subject_label(brand)} dentro da faixa pedida. "
-            "Prefere outra marca, ou ajustar o orçamento?"
+            operator_message('sales.tray_query_authority.budget_hard_miss_result.895e8c8464', value_1=f'{_miss_subject_label(brand)}')
         )
     print(
         "[sales.tray_query.budget_miss]",

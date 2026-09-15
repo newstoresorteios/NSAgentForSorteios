@@ -23,6 +23,14 @@ _ALLOWED_CATEGORIES = frozenset({
 })
 
 
+def reflection_instructions() -> str:
+    from app.configuration.runtime import message, policy
+    return message("learning_reflection_system") + "\n" + json.dumps({
+        "acceptsTradeIn": policy("acceptsTradeIn"),
+        "agentCanAppraise": policy("agentCanAppraise"),
+    }, ensure_ascii=False)
+
+
 class ReflectionDelta(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -76,7 +84,7 @@ def _evidence_payload(
         "constraints": [
             "Write a short operational instruction in Portuguese.",
             "Do not include prices, currency, URLs, or SKU lists.",
-            "Do not claim New Store buys or appraises used watches.",
+            "Preserve the registered business policy; agent appraisal of customer items is prohibited.",
             "Do not tell the agent to skip Tray / catalog tools.",
             "Do not rewrite the full persona; one delta only.",
         ],
@@ -105,13 +113,7 @@ async def reflect_cluster(
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Você é o módulo de Reflexion do Crono (New Store Relógios). "
-                        "Dado um cluster de falhas reais, escreva UM delta curto de "
-                        "instrução operacional para o próximo turno. "
-                        "Não invente política comercial. Não cite preços nem URLs. "
-                        "A New Store não avalia nem compra relógios de particulares."
-                    ),
+                    "content": reflection_instructions(),
                 },
                 {
                     "role": "user",

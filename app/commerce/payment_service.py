@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
@@ -36,7 +38,7 @@ def _payment_failure_metadata(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _no_cart() -> AgentResult:
     return AgentResult(
-        reply_text="Ainda não há um carrinho ativo para consultar.",
+        reply_text=operator_message('commerce.payment_service._no_cart.03969c105d'),
         intent="commerce",
         handoff_required=False,
         safety_reason="cart_validation_error",
@@ -56,7 +58,7 @@ async def inspect_current_cart(
     )
     if "error" in cart:
         return AgentResult(
-            reply_text="Não consegui consultar o carrinho neste momento.",
+            reply_text=operator_message('commerce.payment_service.inspect_current_cart.e15adfacd3'),
             intent="commerce",
             handoff_required=False,
             safety_reason="cart_technical_failure",
@@ -70,7 +72,7 @@ async def inspect_current_cart(
         ),
     })
     return AgentResult(
-        reply_text="Consultei o estado atual do seu carrinho.",
+        reply_text=operator_message('commerce.payment_service.inspect_current_cart.2a0cb78456'),
         intent="commerce",
         handoff_required=False,
         commercial_data={
@@ -120,7 +122,7 @@ def _blocked_payment_advance(
         "blocker_codes": blockers,
     })
     return AgentResult(
-        reply_text="O avanço do checkout está bloqueado por requisitos factuais pendentes.",
+        reply_text=operator_message('commerce.payment_service._blocked_payment_advance.3fb984b57a'),
         intent="commerce",
         handoff_required=False,
         safety_reason="checkout_requirements_missing",
@@ -277,7 +279,7 @@ async def inspect_payment_options(
                 }
             )
         return AgentResult(
-            reply_text="Não consegui reconciliar o carrinho neste momento.",
+            reply_text=operator_message('commerce.payment_service.inspect_payment_options.9d914e0008'),
             intent="commerce",
             handoff_required=False,
             safety_reason="cart_technical_failure",
@@ -300,7 +302,7 @@ async def inspect_payment_options(
             "method_available": None,
         })
         return AgentResult(
-            reply_text="Não consegui consultar as formas de pagamento neste momento.",
+            reply_text=operator_message('commerce.payment_service.inspect_payment_options.5f58381e82'),
             intent="commerce",
             handoff_required=False,
             safety_reason="payment_options_technical_failure",
@@ -438,11 +440,11 @@ async def inspect_payment_options(
         "checkout": checkout_capabilities(state),
     }
     if payment_method_preference is not None and method_available is False:
-        reply = "A forma escolhida não aparece nas opções factuais deste carrinho."
+        reply = operator_message('commerce.payment_service.inspect_payment_options.99903915c2')
     elif installment_count is not None and selected is None:
-        reply = "A Tray não informou essa quantidade de parcelas para este carrinho."
+        reply = operator_message('commerce.payment_service.inspect_payment_options.1db337bdf7')
     else:
-        reply = "Consultei as formas de pagamento reais deste carrinho."
+        reply = operator_message('commerce.payment_service.inspect_payment_options.061cc0a0be')
     cart_items = cart.get("items") if isinstance(cart.get("items"), list) else []
     previous_items = {
         (item.product_id, normalize_variant_identity(item.variant_id)): (
@@ -591,7 +593,7 @@ async def inspect_order_payment(
     targets = order_reference_candidates(seed)
     if not targets:
         return AgentResult(
-            reply_text="Nao ha pedido identificado para consultar o pagamento.",
+            reply_text=operator_message('commerce.payment_service.inspect_order_payment.befda12511'),
             intent="commerce",
             safety_reason="order_id_required",
             commercial_data={
@@ -651,7 +653,7 @@ async def inspect_order_payment(
             "status": "unknown",
         })
         return AgentResult(
-            reply_text="A consulta atual do pagamento nao pode ser confirmada.",
+            reply_text=operator_message('commerce.payment_service.inspect_order_payment.ed27d4db69'),
             intent="commerce",
             safety_reason="order_payment_technical_failure",
             commercial_data={
@@ -732,21 +734,18 @@ async def inspect_order_payment(
     # Live inspect is the only source. A stored transcript URL may be stale.
     effective_url = payment_url
     if status == "confirmed":
-        reply_text = f"O pagamento do pedido {order_label} já está confirmado."
+        reply_text = operator_message('commerce.payment_service.inspect_order_payment.48544e92b4', order_label=f'{order_label}')
     elif effective_url:
         reply_text = (
-            f"Seu pedido {order_label} ainda está aguardando pagamento. "
-            f"Segue o link: {effective_url}"
+            operator_message('commerce.payment_service.inspect_order_payment.edf4ba4b0f', order_label=f'{order_label}', effective_url=f'{effective_url}')
         )
     elif status == "pending":
         reply_text = (
-            f"Seu pedido {order_label} ainda está aguardando pagamento, "
-            "mas não encontrei o link agora. Posso tentar de novo em instantes."
+            operator_message('commerce.payment_service.inspect_order_payment.f46e3eef6b', order_label=f'{order_label}')
         )
     else:
         reply_text = (
-            f"Não há informação de pagamento disponível para o pedido {order_label} "
-            "no momento."
+            operator_message('commerce.payment_service.inspect_order_payment.7746205634', order_label=f'{order_label}')
         )
     return AgentResult(
         reply_text=reply_text,

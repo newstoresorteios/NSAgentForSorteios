@@ -16,8 +16,9 @@ def test_customer_request_triggers_handoff():
     assert should_request_human_handoff(incoming) == "customer_requested_human"
     result = build_human_handoff_result(reason="customer_requested_human")
     assert result.handoff_required is True
-    assert "instantes" in result.reply_text.lower()
-    assert "encaminh" in result.reply_text.lower()
+    from app.configuration.runtime import message
+    assert result.reply_text == message("handoff_requested")
+    assert "instantes" not in result.reply_text.lower()
     assert handoff_provider_payload(result)["provider_action"] == "mark_for_human"
 
 
@@ -38,8 +39,9 @@ def test_por_favor_accepts_team_handoff_offer():
     )
     result = build_human_handoff_result(reason="customer_accepted_handoff_offer")
     assert result.handoff_required is True
-    assert "instantes" in result.reply_text.lower()
-    assert "encaminh" in result.reply_text.lower()
+    from app.configuration.runtime import message
+    assert result.reply_text == message("handoff_requested")
+    assert "instantes" not in result.reply_text.lower()
 
 
 def test_enrich_handoff_keeps_existing_reason():
@@ -67,4 +69,5 @@ def test_integration_failure_triggers_handoff():
     assert handoff.response_metadata["handoff"]["reason"] == (
         "integration_failure:tray_authentication_failed"
     )
-    assert "instantes" in handoff.reply_text.lower()
+    from app.configuration.runtime import message
+    assert handoff.reply_text == message("handoff_requested")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from app.commerce.cart_service import (
@@ -250,6 +252,9 @@ async def _advance_whatsapp_checkout(
     installment_count: int | None,
 ) -> AgentResult:
     """Advance factual WhatsApp steps without asking the customer to confirm each one."""
+    from app.commerce.checkout_service import assisted_checkout_enabled, site_checkout_result
+    if not assisted_checkout_enabled():
+        return site_checkout_result(evolve_commerce_state(state, result))
     current = evolve_commerce_state(state, result)
     cart_snapshot: dict[str, Any] | None = None
     if current.checkout_channel_preference != "whatsapp":
@@ -322,15 +327,14 @@ def _combine_order_and_payment_results(
     order_id = order_facts.get("order_id")
     if payment_url:
         reply_text = (
-            f'Seu pedido {order_id} está com status "{status}". '
-            f"Segue o link para pagamento: {payment_url}"
+            operator_message('sales.checkout_flow._combine_order_and_payment_results.b01b2ca247', order_id=f'{order_id}', status=f'{status}', payment_url=f'{payment_url}')
         )
     else:
         reply_text = (
             payment_result.reply_text
             if payment_result.reply_text
             and "factual" not in payment_result.reply_text.casefold()
-            else f'Seu pedido {order_id} está com status "{status}".'
+            else operator_message('sales.checkout_flow._combine_order_and_payment_results.39d57eb3ad', order_id=f'{order_id}', status=f'{status}')
         )
     metadata["factual_fallback_text"] = reply_text
     return AgentResult(
@@ -481,7 +485,7 @@ async def _inspect_listed_products(
         products.append(product)
     if not products:
         return AgentResult(
-            reply_text="Não consegui consultar agora os modelos que acabei de listar.",
+            reply_text=operator_message('sales.checkout_flow._inspect_listed_products.2a5f73dd2e'),
             intent="commerce",
             handoff_required=False,
             safety_reason="tray_adapter_unavailable",
@@ -502,7 +506,7 @@ async def _inspect_listed_products(
         lines.append(f"{position}. {name} — {status}")
     return AgentResult(
         reply_text=(
-            "Sobre os modelos que acabei de listar:\n"
+            operator_message('sales.checkout_flow._inspect_listed_products.039679e1d2')
             + "\n".join(lines)
         ),
         intent="commerce",
@@ -537,7 +541,7 @@ def _pending_action_rejected_result(
     interpretation._clear_pending_action = True
     return mark_sales_result(
         AgentResult(
-            reply_text="Tudo bem. Não vou executar essa ação.",
+            reply_text=operator_message('sales.checkout_flow._pending_action_rejected_result.e21311b402'),
             intent="commerce",
             handoff_required=False,
             response_metadata={

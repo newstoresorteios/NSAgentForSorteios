@@ -11,6 +11,8 @@ These helpers detect that case and provide a clear visitor-facing guide.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from app.models import IncomingMessage
 
 _UNVIEWABLE_MARKERS = (
@@ -21,20 +23,11 @@ _UNVIEWABLE_MARKERS = (
     "mensagem nao pode ser visualizada no brevo",
 )
 
-UNVIEWABLE_MEDIA_GUIDE_REPLY = (
-    "Recebi que você mandou uma mídia pelo Instagram, mas o Brevo não me entrega "
-    "a imagem pra eu analisar (limitação do Instagram/Brevo com Stories e alguns "
-    "anexos).\n\n"
-    "Pode reenviar a foto do relógio aqui no chat como imagem normal? Assim eu "
-    "identifico o modelo e te passo o valor certinho."
-)
+def UNVIEWABLE_MEDIA_GUIDE_REPLY():
+    return operator_message('instructions.unviewable_media_guide_reply.38b7fbef16')
 
-PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY = (
-    "Não consigo ver a imagem/Story que você mandou pelo Instagram — o Brevo "
-    "não entrega esse anexo pro agente.\n\n"
-    "Reenvia a foto do relógio aqui no chat (imagem normal) ou me fala a marca "
-    "e o modelo que eu confirmo o valor no catálogo."
-)
+def PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY():
+    return operator_message('instructions.price_without_image_instagram_reply.d4742da0f8')
 
 
 def is_brevo_unviewable_media_text(text: str | None) -> bool:

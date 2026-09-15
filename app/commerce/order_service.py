@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import hashlib
 import json
 import re
@@ -311,7 +313,7 @@ def _handoff_offer_metadata(*, reason: str) -> dict[str, Any]:
             "required": False,
             "offer": True,
             "reason": reason,
-            "contact_whatsapp": NS_SALES_WHATSAPP,
+            "contact_whatsapp": NS_SALES_WHATSAPP(),
             "provider_action": "mark_for_human_on_accept",
         },
         "pending_action": "awaiting_handoff_confirmation",
@@ -323,8 +325,7 @@ def order_notes_unavailable_result(
 ) -> AgentResult:
     order_label = state.order_id or state.order_lookup_id or "do pedido"
     reply_text = (
-        f"Sobre o pedido {order_label}, não consigo ver observações internas por aqui. "
-        "Quer que eu encaminhe para a equipe confirmar?"
+        operator_message('commerce.order_service.order_notes_unavailable_result.4202b4712d', order_label=f'{order_label}')
     )
     metadata = {
         "domain": "commerce",
@@ -539,6 +540,9 @@ async def prepare_order(
     execute: ToolExecutor,
     cart_snapshot: dict[str, Any] | None = None,
 ) -> AgentResult:
+    from app.commerce.checkout_service import assisted_checkout_enabled, site_checkout_result
+    if not assisted_checkout_enabled():
+        return site_checkout_result(state)
     print("[sales.order.prepare]", {
         "session": _session_tag(state.cart_session_id),
         "has_shipping": bool(state.selected_shipping),
@@ -550,7 +554,7 @@ async def prepare_order(
             "missing_count": len(missing), "missing_fields": missing,
         })
         return AgentResult(
-            reply_text="O pedido ainda n\u00e3o est\u00e1 pronto para revis\u00e3o.",
+            reply_text=operator_message('commerce.order_service.prepare_order.0ba06f033b'),
             intent="commerce",
             safety_reason="order_not_ready",
             commercial_data={
@@ -616,7 +620,7 @@ def confirm_prepared_order(state: CommerceConversationState) -> AgentResult:
     )
     if not allowed:
         return AgentResult(
-            reply_text="N\u00e3o h\u00e1 resumo atual aguardando confirma\u00e7\u00e3o.",
+            reply_text=operator_message('commerce.order_service.confirm_prepared_order.ac99869145'),
             intent="commerce",
             safety_reason="order_confirmation_missing",
             commercial_data={"success": False, "stage": "order_confirmation"},
@@ -627,7 +631,7 @@ def confirm_prepared_order(state: CommerceConversationState) -> AgentResult:
         "review_version": state.order_review_version[:10],
     })
     return AgentResult(
-        reply_text="Confirma\u00e7\u00e3o expl\u00edcita vinculada ao resumo atual.",
+        reply_text=operator_message('commerce.order_service.confirm_prepared_order.5bc2c4491d'),
         intent="commerce",
         commercial_data={"success": True, "stage": "order_confirmation"},
         response_metadata={
@@ -656,9 +660,12 @@ async def create_order(
     state: CommerceConversationState,
     execute: ToolExecutor,
 ) -> AgentResult:
+    from app.commerce.checkout_service import assisted_checkout_enabled, site_checkout_result
+    if not assisted_checkout_enabled():
+        return site_checkout_result(state)
     if state.order_id:
         return AgentResult(
-            reply_text="Pedido existente recuperado do estado.",
+            reply_text=operator_message('commerce.order_service.create_order.63cf392e2a'),
             intent="commerce",
             commercial_data={
                 "success": True, "existing": True, "order_id": state.order_id,
@@ -672,7 +679,7 @@ async def create_order(
         or state.confirmed_order_review_version != state.order_review_version
     ):
         return AgentResult(
-            reply_text="A cria\u00e7\u00e3o do pedido est\u00e1 bloqueada sem confirma\u00e7\u00e3o do resumo atual.",
+            reply_text=operator_message('commerce.order_service.create_order.3e0820c503'),
             intent="commerce",
             safety_reason="order_confirmation_required",
             commercial_data={"success": False, "stage": "order_creation"},
@@ -681,7 +688,7 @@ async def create_order(
     facts, missing = await _current_order_facts(state, execute)
     if facts is None:
         return AgentResult(
-            reply_text="Os fatos do pedido mudaram ap\u00f3s a confirma\u00e7\u00e3o.",
+            reply_text=operator_message('commerce.order_service.create_order.a2443c9932'),
             intent="commerce",
             safety_reason="order_confirmation_stale",
             commercial_data={
@@ -702,7 +709,7 @@ async def create_order(
         )
     if facts["version"] != state.confirmed_order_review_version:
         return AgentResult(
-            reply_text="Os fatos do pedido mudaram ap\u00f3s a confirma\u00e7\u00e3o.",
+            reply_text=operator_message('commerce.order_service.create_order.a2443c9932'),
             intent="commerce",
             safety_reason="order_confirmation_stale",
             commercial_data=facts["summary"],
@@ -730,7 +737,7 @@ async def create_order(
             preflight = {"error": "commerce_upstream_error"}
         if "error" in preflight:
             return AgentResult(
-                reply_text="A cria\u00e7\u00e3o anterior ainda precisa ser reconciliada.",
+                reply_text=operator_message('commerce.order_service.create_order.c2f4dfa254'),
                 intent="commerce",
                 safety_reason="order_creation_technical_failure",
                 commercial_data={
@@ -790,7 +797,7 @@ async def create_order(
             "tray_error_message": effective.get("tray_error_message"),
         })
         return AgentResult(
-            reply_text="A cria\u00e7\u00e3o do pedido n\u00e3o foi confirmada pela integra\u00e7\u00e3o.",
+            reply_text=operator_message('commerce.order_service.create_order.651103c0a5'),
             intent="commerce",
             safety_reason="order_creation_technical_failure",
             commercial_data={
@@ -812,7 +819,7 @@ async def create_order(
     })
     status = effective.get("status")
     return AgentResult(
-        reply_text="Pedido criado e identificado pela integra\u00e7\u00e3o.",
+        reply_text=operator_message('commerce.order_service.create_order.797bc8020f'),
         intent="commerce",
         commercial_data={
             "success": True,
@@ -843,8 +850,7 @@ async def create_order(
 def _order_not_found_result(target: str) -> AgentResult:
     return AgentResult(
         reply_text=(
-            "Não consegui confirmar esse código de pedido diretamente. "
-            "Para procurar o mesmo pedido no cadastro correto, informe o CPF ou CNPJ do comprador."
+            operator_message('commerce.order_service._order_not_found_result.1dd6354819')
         ),
         intent="commerce",
         safety_reason="order_not_found",
@@ -860,7 +866,7 @@ def _order_not_found_result(target: str) -> AgentResult:
 
 def invalid_tax_document_result() -> AgentResult:
     return AgentResult(
-        reply_text="O CPF ou CNPJ informado não é válido. Confira os números e envie novamente.",
+        reply_text=operator_message('commerce.order_service.invalid_tax_document_result.0afb481931'),
         intent="commerce",
         safety_reason="invalid_customer_document",
         commercial_data={"success": False, "stage": "order_customer_lookup"},
@@ -941,16 +947,14 @@ def _order_facts_result(
     )
     if awaiting_payment and state.order_payment_url:
         reply_text = (
-            f'Seu pedido está com status "{status_label}". '
-            f"Segue o link para pagamento: {state.order_payment_url}"
+            operator_message('commerce.order_service._order_facts_result.64519fcb81', status_label=f'{status_label}', value_2=f'{state.order_payment_url}')
         )
     elif awaiting_payment:
         reply_text = (
-            f'Seu pedido está com status "{status_label}". '
-            "Posso enviar o link para você realizar o pagamento?"
+            operator_message('commerce.order_service._order_facts_result.739504b12f', status_label=f'{status_label}')
         )
     else:
-        reply_text = f'Seu pedido está com status "{status_label}".'
+        reply_text = operator_message('commerce.order_service._order_facts_result.9b1e427de9', status_label=f'{status_label}')
     tracking_url = tracking.get("tracking_url")
     sending_code = tracking.get("sending_code")
     shipped = status_group == "shipped" or "enviad" in status_label.casefold()
@@ -958,12 +962,11 @@ def _order_facts_result(
         reply_text = f"{reply_text} Rastreio: {tracking_url}"
     elif sending_code:
         reply_text = (
-            f'{reply_text} Código de rastreio: {sending_code}'
+            operator_message('commerce.order_service._order_facts_result.d1ee53d2cb', reply_text=f'{reply_text}', sending_code=f'{sending_code}')
         )
     elif shipped:
         reply_text = (
-            f"{reply_text} O pedido já foi enviado, mas o código de rastreio "
-            "ainda não está cadastrado. Quer que eu encaminhe para a equipe confirmar?"
+            operator_message('commerce.order_service._order_facts_result.270c451578', reply_text=f'{reply_text}')
         )
     metadata: dict[str, Any] = {
         "domain": "commerce",
@@ -1001,8 +1004,7 @@ def _order_facts_result(
 def _order_customer_mismatch_result(target: str) -> AgentResult:
     return AgentResult(
         reply_text=(
-            "Não consegui confirmar que esse pedido pertence ao cadastro desta conversa. "
-            "Informe o CPF ou o e-mail do comprador para eu localizar o pedido certo."
+            operator_message('commerce.order_service._order_customer_mismatch_result.256694b25c')
         ),
         intent="commerce",
         safety_reason="order_customer_mismatch",
@@ -1167,7 +1169,7 @@ async def get_order_facts(
 
     if not targets:
         return AgentResult(
-            reply_text="N\u00e3o h\u00e1 pedido identificado para consulta.",
+            reply_text=operator_message('commerce.order_service.get_order_facts.2785df718d'),
             intent="commerce",
             safety_reason="order_id_required",
             commercial_data={"success": False, "stage": "order_status"},
@@ -1212,7 +1214,7 @@ async def get_order_facts(
             if allow_customer_recovery and status_code == "404":
                 return _order_not_found_result(target)
             return AgentResult(
-                reply_text="A consulta atual do pedido n\u00e3o p\u00f4de ser conclu\u00edda.",
+                reply_text=operator_message('commerce.order_service.get_order_facts.809728b4ae'),
                 intent="commerce",
                 safety_reason="order_status_technical_failure",
                 commercial_data={"success": False, "stage": "order_status"},
@@ -1243,7 +1245,7 @@ async def get_order_facts(
         return _order_not_found_result(last_empty_target)
     if last_error is not None:
         return AgentResult(
-            reply_text="A consulta atual do pedido n\u00e3o p\u00f4de ser conclu\u00edda.",
+            reply_text=operator_message('commerce.order_service.get_order_facts.809728b4ae'),
             intent="commerce",
             safety_reason="order_status_technical_failure",
             commercial_data={"success": False, "stage": "order_status"},
@@ -1254,7 +1256,7 @@ async def get_order_facts(
             },
         )
     return AgentResult(
-        reply_text="Não consegui confirmar esse pedido no cadastro informado.",
+        reply_text=operator_message('commerce.order_service.get_order_facts.176aa1b9be'),
         intent="commerce",
         safety_reason="order_not_found",
         commercial_data={"success": False, "stage": "order_status"},
@@ -1272,7 +1274,7 @@ async def find_order_by_customer_document(
     target = str(state.order_lookup_id or state.order_id or "").strip()
     if not target:
         return AgentResult(
-            reply_text="Informe também o código do pedido que deseja consultar.",
+            reply_text=operator_message('commerce.order_service.find_order_by_customer_document.bab271469f'),
             intent="commerce",
             safety_reason="order_id_required",
             commercial_data={"success": False, "stage": "order_customer_lookup"},
@@ -1288,7 +1290,7 @@ async def find_order_by_customer_document(
         customer_result = {"error": "commerce_upstream_error"}
     if "error" in customer_result:
         return AgentResult(
-            reply_text="Não consegui consultar o cadastro do comprador agora. Tente novamente em instantes.",
+            reply_text=operator_message('commerce.order_service.find_order_by_customer_document.6354833eb6'),
             intent="commerce",
             safety_reason="order_customer_lookup_technical_failure",
             commercial_data={"success": False, "stage": "order_customer_lookup"},
@@ -1302,8 +1304,7 @@ async def find_order_by_customer_document(
     if len(customers) != 1:
         return AgentResult(
             reply_text=(
-                "Não consegui confirmar um único cadastro com esses dados. "
-                "Confira o CPF/CNPJ ou fale com a equipe de atendimento."
+                operator_message('commerce.order_service.find_order_by_customer_document.cfd1ae9f14')
             ),
             intent="commerce",
             safety_reason="order_customer_not_confirmed",
@@ -1320,7 +1321,7 @@ async def find_order_by_customer_document(
         order_result = {"error": "commerce_upstream_error"}
     if "error" in order_result:
         return AgentResult(
-            reply_text="Não consegui consultar os pedidos desse cadastro agora. Tente novamente em instantes.",
+            reply_text=operator_message('commerce.order_service.find_order_by_customer_document.00f5f3e5fe'),
             intent="commerce",
             safety_reason="customer_orders_lookup_technical_failure",
             commercial_data={"success": False, "stage": "order_customer_lookup"},
@@ -1359,8 +1360,7 @@ async def find_order_by_customer_document(
     if matching_order is None:
         return AgentResult(
             reply_text=(
-                "O código informado não foi confirmado entre os pedidos desse cadastro. "
-                "Confira o código ou fale com a equipe de atendimento."
+                operator_message('commerce.order_service.find_order_by_customer_document.7e9d61c10d')
             ),
             intent="commerce",
             safety_reason="order_customer_mismatch",
@@ -1382,7 +1382,7 @@ async def find_order_by_customer_document(
     if _order_payload_exists(matching_order):
         return _order_facts_result(matching_order, canonical_id, state)
     return AgentResult(
-        reply_text="O pedido foi identificado, mas o status não está disponível agora.",
+        reply_text=operator_message('commerce.order_service.find_order_by_customer_document.d71b24fb4d'),
         intent="commerce",
         safety_reason="order_status_technical_failure",
         commercial_data={"success": False, "stage": "order_status"},

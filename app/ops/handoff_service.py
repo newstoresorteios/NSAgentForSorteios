@@ -133,14 +133,14 @@ def build_human_handoff_result(
     text = (reply_text or "").strip()
     if not text:
         if reason == "trade_in_or_appraisal":
-            text = TRADE_IN_HANDOFF_MESSAGE
+            from app.persona.store_knowledge import trade_in_policy_text
+            text = trade_in_policy_text()
         elif reason == "customer_accepted_handoff_offer":
-            text = (
-                "Perfeito — encaminhei seu atendimento. "
-                "Você será atendido em instantes."
-            )
+            from app.configuration.runtime import message
+            text = message("handoff_requested")
         else:
-            text = HUMAN_HANDOFF_ACK_MESSAGE
+            from app.configuration.runtime import message
+            text = message("handoff_requested")
     if reason.startswith("blocked_topic:"):
         text = default_safe_handoff()
     return AgentResult(
@@ -154,7 +154,7 @@ def build_human_handoff_result(
             "handoff": {
                 "required": True,
                 "reason": reason,
-                "contact_whatsapp": NS_SALES_WHATSAPP,
+                "contact_whatsapp": NS_SALES_WHATSAPP(),
                 "provider_action": "mark_for_human",
             },
         },
@@ -180,7 +180,7 @@ def enrich_handoff_metadata(
             "channel": incoming.channel,
             "conversation_id_present": bool(incoming.conversation_id),
             "visitor_id_present": bool(incoming.visitor_id),
-            "contact_whatsapp": NS_SALES_WHATSAPP,
+            "contact_whatsapp": NS_SALES_WHATSAPP(),
             "provider_action": "mark_for_human",
         }
     )
@@ -207,7 +207,7 @@ def apply_integration_failure_handoff(result: AgentResult) -> AgentResult:
         return result
     return build_human_handoff_result(
         reason=f"integration_failure:{reason}",
-        reply_text=HUMAN_HANDOFF_ACK_MESSAGE,
+        reply_text=None,
     )
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from typing import Any
 
 from app.models import AgentResult, IncomingMessage
@@ -70,8 +72,7 @@ async def try_media_routes(
             return door._annotate_agent_result(
                 AgentResult(
                     reply_text=(
-                        "Identifiquei o Story, mas não consegui confirmar o valor "
-                        "agora. Posso tentar de novo em instantes."
+                        operator_message('agents.door_media.try_media_routes.8725e9c344')
                     ),
                     intent="commerce",
                     handoff_required=False,
@@ -126,7 +127,7 @@ async def try_media_routes(
         if is_brevo_unviewable_media_text(message.text):
             return door._annotate_agent_result(
                 AgentResult(
-                    reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY,
+                    reply_text=UNVIEWABLE_MEDIA_GUIDE_REPLY(),
                     intent="commerce",
                     handoff_required=False,
                     safety_reason="instagram_media_unviewable",
@@ -145,7 +146,7 @@ async def try_media_routes(
         ):
             return door._annotate_agent_result(
                 AgentResult(
-                    reply_text=PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY,
+                    reply_text=PRICE_WITHOUT_IMAGE_INSTAGRAM_REPLY(),
                     intent="commerce",
                     handoff_required=False,
                     safety_reason="instagram_media_unviewable",

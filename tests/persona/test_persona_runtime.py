@@ -131,6 +131,8 @@ def test_contextvar_roundtrip():
 
 
 def test_load_runtime_binds_published_workspace_configuration(monkeypatch):
+    monkeypatch.setattr("app.configuration.repository.load_workspace_bundle", lambda *_args, **_kwargs: {
+        "version": 2, "values": {"catalogShortlistSize": 5, "historyTurns": 16}, "fields": []})
     from app.persona import persona_knowledge_repository, persona_repository
 
     persona = _persona(

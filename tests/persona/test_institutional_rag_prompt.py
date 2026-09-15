@@ -75,7 +75,7 @@ def test_resolve_system_instructions_includes_knowledge_snippet(monkeypatch):
     assert "fallback base" in instructions
     assert "<retrieved_knowledge>" in instructions
     assert "Troca e avaliação" in instructions
-    assert "não inventar valores de avaliação" in instructions
+    assert "equipe humana" in instructions
 
 
 def test_fetch_institutional_knowledge_matches_pix_cues():

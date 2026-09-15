@@ -5,6 +5,8 @@ Look up patched names on ``app.sales_agent`` at call time.
 
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -151,8 +153,7 @@ async def apply_catalog_pending(
                 early_result=sales._mark_sales_result(
                     AgentResult(
                         reply_text=(
-                            "Ainda não achei opções dessa linha no catálogo agora. "
-                            "Se tiver a referência do modelo, me manda que eu confiro."
+                            operator_message('sales.catalog_pending.apply_catalog_pending.519d2f2555')
                         ),
                         intent="commerce",
                         handoff_required=False,
@@ -295,7 +296,7 @@ async def apply_catalog_pending(
         elif pending_action == "awaiting_shipping_zipcode":
             interpretation._clear_pending_action = False
             requirement_result = AgentResult(
-                reply_text="Ainda existe um requisito factual de entrega pendente.",
+                reply_text=operator_message('sales.catalog_pending.apply_catalog_pending.3f5e4c9c97'),
                 intent="commerce",
                 handoff_required=False,
                 safety_reason="checkout_requirements_missing",
