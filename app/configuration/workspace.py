@@ -14,7 +14,7 @@ def resolve_conversation_workspace(conversation_id: str | None, channel: str | N
                 SELECT DISTINCT workspace_id FROM public.conversas
                 WHERE workspace_id IS NOT NULL
                   AND (id::text=%s OR external_thread_id=%s)
-                  AND (%s IS NULL OR channel=%s)
+                  AND (%s::text IS NULL OR channel=%s)
                 LIMIT 2
             """, (conversation_id, conversation_id, channel, channel))
             rows = list(cur.fetchall())
