@@ -84,6 +84,7 @@ async def _no_openai_responder(*_args, **_kwargs):
 async def test_pipeline_resolves_first_presented_product_and_reaches_cart(
     monkeypatch,
     capsys,
+    approved_critique,
 ):
     import app.message_pipeline as message_pipeline
     import app.openai_agent as openai_agent
@@ -148,6 +149,7 @@ async def test_pipeline_resolves_first_presented_product_and_reaches_cart(
 @pytest.mark.asyncio
 async def test_pipeline_direct_product_resolution_reaches_same_cart_path(
     monkeypatch,
+    approved_critique,
 ):
     import app.message_pipeline as message_pipeline
     import app.openai_agent as openai_agent

@@ -35,6 +35,22 @@ class LLMCallBudget(BaseModel):
     )
     reserved_used: set[str] = Field(default_factory=set)
 
+    def can_afford(self, call_types: list[str], *, extra_reserved: int = 0) -> bool:
+        if not self.enforce:
+            return True
+        probe = self.model_copy(deep=True)
+        probe.max_calls = max(0, probe.max_calls - extra_reserved)
+        try:
+            for call_type in call_types:
+                probe.reserve(call_type)
+        except LLMCallBudgetExceeded:
+            return False
+        return True
+
+    def response_available(self) -> None:
+        """A completed deterministic draft also satisfies the response reserve."""
+        self.reserved_used.update(self.reserved_call_types)
+
     def reserve(self, call_type: str) -> None:
         call_type = call_type.removesuffix("_fallback_chat")
         blocked_type = bool(

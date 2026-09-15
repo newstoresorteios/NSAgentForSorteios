@@ -316,6 +316,8 @@ def _hard_constraints_from_interpretation(
         "dial_color": None,
         "gender": None,
         "material": None,
+        "mechanism": prefs.mechanism,
+        "crystal": prefs.crystal,
         "must_match_fields": [],
     }
     attrs = [str(item) for item in (prefs.attributes or [])]

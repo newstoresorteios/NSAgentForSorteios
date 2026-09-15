@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.configuration.runtime import message as operator_message
+
 import json
 import re
 from typing import Any
@@ -106,12 +108,13 @@ async def rerank_products(
     from app.ops.runtime_context import get_current_turn, register_avoided_llm_call
 
     runtime = get_current_turn()
+    from app.llm.llm_call_policy import prepare_catalog_budget
+    reserve_review = prepare_catalog_budget(interpretation)
     if runtime is not None and runtime.llm_budget.enforce:
-        remaining = runtime.llm_budget.max_calls - runtime.llm_budget.used_calls
-        if remaining <= 1:
+        if not runtime.llm_budget.can_afford(["product_selection"], extra_reserved=reserve_review):
             # A semantic reorder is optional; keep the final call for the
             # grounded generative answer instead of forcing a template reply.
-            register_avoided_llm_call("rerank_reserve_response", intended_call_type="product_selection")
+            register_avoided_llm_call("rerank_reserve_response_and_review", intended_call_type="product_selection")
             return fallback
     if not available_products or not settings.openai_api_key:
         print("[sales.reranker]", {
@@ -149,17 +152,7 @@ async def rerank_products(
                 {
                     "role": "system",
                     "content": (
-                        "Classifique produtos reais da NewStore conforme as preferências. "
-                        f"Retorne no máximo {selection_limit} IDs presentes em CANDIDATES, "
-                        "em ordem de relevância. "
-                        "Trate sinônimos de cor (azul=blue, preto=black, branco=white, rosa=pink, "
-                        "verde=green, vermelho=red) e gênero (feminino/lady/dama). "
-                        "Se o cliente pediu diver/mergulho, priorize 200m/diver/Aquascaphe/DS Action "
-                        "e não ranqueie alto modelos dress/100m (ex.: DS-7) como diver. "
-                        "Se pediu caixa menor, prefira ~37–40 mm sobre 41 mm+. "
-                        "Não invente IDs. Não altere preço, estoque, URL ou disponibilidade. "
-                        "Use só evidências dos candidatos (nome, marca, cor, descrição)."
-                    ),
+                        operator_message("catalog_rerank_system", limit=selection_limit)                    ),
                 },
                 {
                     "role": "user",

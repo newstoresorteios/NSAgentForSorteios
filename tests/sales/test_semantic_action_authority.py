@@ -351,7 +351,7 @@ async def test_pending_action_without_persisted_target_does_not_use_active_produ
 
 
 @pytest.mark.asyncio
-async def test_complete_pipeline_keeps_current_semantics_above_old_state(monkeypatch):
+async def test_complete_pipeline_keeps_current_semantics_above_old_state(monkeypatch, approved_critique):
     import app.message_pipeline as message_pipeline
     import app.openai_agent as openai_agent
     import app.sales_agent as sales_agent
@@ -405,7 +405,13 @@ async def test_complete_pipeline_keeps_current_semantics_above_old_state(monkeyp
 
     async def retrieve(interpretation, **_kwargs):
         if interpretation.subject.model == "Coleção Nova":
-            return _catalog_result("C", "D")
+            result = _catalog_result("C", "D")
+            # Catalog fixtures must satisfy the requested model, including the
+            # independent final-response check after the council stub.
+            for product in result.commercial_data["products"]:
+                product["name"] = "Coleção Nova " + product["name"]
+            result.reply_text = "\n".join(product["name"] for product in result.commercial_data["products"])
+            return result
         return _catalog_result("A", "B")
 
     async def execute(tool, arguments):

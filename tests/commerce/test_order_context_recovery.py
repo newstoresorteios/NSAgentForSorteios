@@ -258,7 +258,7 @@ async def test_pipeline_recovers_order_from_transcript_for_status(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_pix_request_reuses_payment_link_from_transcript(monkeypatch):
+async def test_pipeline_pix_request_reuses_payment_link_from_transcript(monkeypatch, approved_critique):
     import app.message_pipeline as pipeline
     import app.openai_agent as openai_agent
 

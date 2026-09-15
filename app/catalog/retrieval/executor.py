@@ -166,6 +166,10 @@ async def _execute_compiled_product_retrieval_unlocked(
 ) -> AgentResult | None:
     tool = resolve_execute_tool(execute_tool)
     initial_plan = ProductRetrievalCompiler.compile(interpretation)
+    from app.catalog.specs.requirements import normalize_requirements
+    requirements = normalize_requirements(interpretation, message_text)
+    from app.llm.llm_call_policy import prepare_catalog_budget
+    prepare_catalog_budget(interpretation)
     category_resolution = None
     if (
         initial_plan.mode == "recommendation"
@@ -244,6 +248,10 @@ async def _execute_compiled_product_retrieval_unlocked(
     )
     await harvest_family_and_color(session)
     await merge_brand_cache(session)
+
+    if requirements:
+        from app.catalog.retrieval.technical import retrieve_technical_products
+        return await retrieve_technical_products(session)
 
     if retrieval_plan.mode == "recommendation" and not discovery_requests:
         session.refresh_hard_filtered()

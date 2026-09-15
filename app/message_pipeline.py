@@ -232,7 +232,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             await asyncio.to_thread(stamp_inbound_workspace, (incoming.raw or {}).get("inbound_id"), resolved_workspace)
         if bundle and get_current_turn() is not None:
             from app.llm.llm_call_policy import resolve_turn_llm_budget
-            limit = resolve_turn_llm_budget()
+            limit = resolve_turn_llm_budget(complex_turn=get_current_turn().execution_path in {"complex", "critical"})
             get_current_turn().llm_budget.max_calls = limit["max_calls"]
             get_current_turn().llm_budget.enforce = limit["enforce"]
         result = await _process_incoming_message(incoming, customer_context)
@@ -578,7 +578,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
                 openai_call_count=openai_calls,
             )
             if critique_report.applied_handoff and runtime is not None:
-                runtime.register_fallback("response_critique_failed")
+                runtime.register_fallback(result.safety_reason or "response_critique_failed")
             if (
                 getattr(critique_report, "applied_factual_fallback", False)
                 and runtime is not None
@@ -625,9 +625,10 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         )
         critique_enforced = bool(
             critique_report
-            and critique_mode == "enforce"
+            and critique_report.mode == "enforce"
             and (
-                getattr(critique_report, "regenerated", False)
+                critique_report.review_status in {"approved", "rejected", "unavailable"}
+                or getattr(critique_report, "regenerated", False)
                 or getattr(critique_report, "applied_handoff", False)
             )
         )
@@ -683,6 +684,11 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         result,
         max_reply_chars=max_reply_chars,
     )
+    from app.verify.final_response import finalize_response
+    result, commerce_state = finalize_response(result, incoming=incoming, interpretation=interpretation,
+                                               previous_state=commerce_state_before_evolve)
+    result = _attach_commerce_metadata(incoming, commerce_state, result)
+    result = enrich_handoff_metadata(incoming, result)
     if runtime is not None:
         runtime.execution_path = decision.execution_path
         runtime.risk_score = decision.risk.score
@@ -855,5 +861,17 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             enriched,
             max_reply_chars=max_reply_chars,
         )
-        commerce_state = _realign_commerce_state_to_reply(commerce_state, result)
+        result, commerce_state = finalize_response(
+            result, incoming=incoming, interpretation=interpretation,
+            previous_state=commerce_state_before_evolve,
+        )
+        result = _attach_commerce_metadata(incoming, commerce_state, result)
+        result = enrich_handoff_metadata(incoming, result)
+        if runtime is not None:
+            runtime.outbound_snapshot.update(
+                safety_reason=result.safety_reason, handoff_required=result.handoff_required,
+                reply_chars=len(result.reply_text or ""), reply_preview=redact_text(result.reply_text,max_chars=280),
+                final_order_id=commerce_state.order_id, final_pending_action=commerce_state.pending_action,
+            )
+            log_event("turn.finalized", runtime.outbound_snapshot)
         return _persist_commerce_session(incoming, commerce_state, result)

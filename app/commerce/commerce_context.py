@@ -932,7 +932,10 @@ def evolve_commerce_state(
                 compact_products.append(
                     PresentedCommerceProduct(position=position, **identity.model_dump())
                 )
-    if metadata.get("presented_products") and compact_products:
+    if metadata.get("clear_presented_products") or result.handoff_required:
+        state.last_presented_products = []
+        state.forget_shortlist = True
+    elif metadata.get("presented_products") and compact_products:
         state.last_presented_products = compact_products
         state.forget_shortlist = False
         state.closed_by_farewell = False

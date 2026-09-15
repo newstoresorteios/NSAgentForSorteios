@@ -249,6 +249,19 @@ def resolve_turn_llm_budget(*, complex_turn: bool = False) -> dict[str, Any]:
     }
 
 
+def prepare_catalog_budget(interpretation) -> int:
+    """Reserve review before optional ranking and apply the published complex cap."""
+    from app.configuration.runtime import policy
+    from app.ops.runtime_context import get_current_turn
+    from app.catalog.specs.requirements import technical_requirements
+    runtime = get_current_turn()
+    review = int(bool(policy("catalogReserveReviewCall")))
+    complex_turn = interpretation.goal == "compare" or len(technical_requirements(interpretation)) > 1
+    if runtime is not None and complex_turn:
+        runtime.promote_budget(resolve_turn_llm_budget(complex_turn=True)["max_calls"])
+    return review
+
+
 ExecutionPath = Literal["fast", "normal", "complex", "critical"]
 
 

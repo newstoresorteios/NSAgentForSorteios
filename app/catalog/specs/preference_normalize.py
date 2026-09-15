@@ -622,6 +622,8 @@ def normalize_sales_interpretation(
         interpretation,
         message_text=message_text,
     )
+    from app.catalog.specs.requirements import normalize_requirements
+    normalize_requirements(interpretation, message_text)
 
     try:
         from app.catalog.specs.identity_lock import specific_product_lock

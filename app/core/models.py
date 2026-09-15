@@ -16,6 +16,8 @@ class ProductPreferences(BaseModel):
     color: str | None = None
     style: str | None = None
     material: str | None = None
+    mechanism: str | None = Field(default_factory=lambda: None)
+    crystal: str | None = Field(default_factory=lambda: None)
     occasion: str | None = None
     recipient: str | None = None
     attributes: list[str] = Field(default_factory=list)
@@ -184,6 +186,7 @@ class SalesInterpretation(BaseModel):
     _turn_understanding: Any = PrivateAttr(default=None)
     _catalog_memory_rehydrate_skipped: bool = PrivateAttr(default=False)
     _prior_catalog_theme: str | None = PrivateAttr(default=None)
+    _technical_requirements: dict[str, str] = PrivateAttr(default_factory=dict)
     _slot_answer_hold: bool = PrivateAttr(default=False)
 
     def resolved_answer_strategy(self) -> str | None:

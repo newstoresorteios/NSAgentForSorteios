@@ -37,7 +37,7 @@ def test_social_memory_is_isolated_by_user_and_channel():
 
 
 @pytest.mark.asyncio
-async def test_phone_less_social_conversation_reloads_commerce_state(monkeypatch):
+async def test_phone_less_social_conversation_reloads_commerce_state(monkeypatch, approved_critique):
     import app.message_pipeline as pipeline
 
     stored = {}

@@ -197,7 +197,7 @@ def test_contextual_greeting_is_soft_and_non_intrusive():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_greeting_resumes_unpaid_order_link(monkeypatch):
+async def test_pipeline_greeting_resumes_unpaid_order_link(monkeypatch, approved_critique):
     import app.message_pipeline as pipeline
     import app.openai_agent as openai_agent
 

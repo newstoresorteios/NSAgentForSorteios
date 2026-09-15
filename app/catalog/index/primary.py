@@ -95,7 +95,7 @@ def fetch_primary_index_candidates(
         gender = preference_gender_label(interpretation)
         from app.catalog.specs.preference_normalize import _fold
         attributes = _fold(" ".join(prefs.attributes or []))
-        mechanism = None
+        mechanism = prefs.mechanism
         # Use explicit interpreted constraints; do not infer from historic model names.
         if "automatic" in attributes:
             mechanism = "autom"

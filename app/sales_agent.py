@@ -1114,6 +1114,10 @@ def _hydrate_sales_interpretation(
         from app.sales import log_swallowed
 
         log_swallowed("hydrate.qual_state", exc)
+    if semantic_plan.references_previous_context and not semantic_plan.domain_change_explicit and commerce_state is not None:
+        for field in ("mechanism", "crystal"):
+            if getattr(semantic_plan.preferences, field) is None:
+                setattr(semantic_plan.preferences, field, (commerce_state.active_preferences or {}).get(field))
     interpretation = normalize_sales_interpretation(
         semantic_plan,
         message_text=message.text,

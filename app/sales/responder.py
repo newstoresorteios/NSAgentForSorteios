@@ -413,7 +413,7 @@ async def sales_response_with_openai(
         )
     if deterministic_tray_copy_ready(tray_result, plan) and not (
         interpretation is not None and interpretation.references_previous_context
-    ):
+    ) and not (tray_result.response_metadata or {}).get("technical_requirements"):
         return _mark_sales_result(
             tray_result,
             interpretation=interpretation,

@@ -6,7 +6,7 @@ from app.commerce.commerce_context import CommerceConversationState, CommercePro
 from app.config import get_settings
 from app.models import AgentResult, IncomingMessage
 from app.verify.response_critique import (
-    CRITIQUE_JUDGE_SYSTEM_PROMPT,
+    critique_system_prompt,
     CritiqueVerdict,
     RecommendedApiCall,
     apply_response_critique_loop,
@@ -318,7 +318,7 @@ async def test_critique_shadow_does_not_change_reply(monkeypatch):
 
 
 def test_critique_judge_prompt_requires_catalog_fit():
-    prompt = CRITIQUE_JUDGE_SYSTEM_PROMPT.casefold()
+    prompt = critique_system_prompt().casefold()
     assert "cronógrafo" in prompt or "cronografo" in prompt
     assert "search_products" in prompt
     assert "commercial_data.products" in prompt
@@ -586,8 +586,8 @@ async def test_failed_rejudge_uses_new_grounded_shortlist_without_more_retries(m
         execute=execute,
     )
 
-    assert report.max_retries == 1
-    assert report.attempts == 2
+    assert report.max_retries == 3
+    assert report.attempts == 4
     assert report.applied_factual_fallback is True
     assert report.applied_handoff is False
     assert final.handoff_required is False

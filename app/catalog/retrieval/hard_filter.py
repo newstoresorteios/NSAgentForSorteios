@@ -24,6 +24,7 @@ def hard_filter_products(
     *,
     mode: Literal["exact", "recommendation"],
     message_text: str | None = None,
+    allow_unknown_features: bool = False,
 ) -> list[dict[str, Any]]:
     """Apply mandatory filters. Prefer TurnUnderstanding hard constraints when present."""
     subject = interpretation.subject
@@ -75,11 +76,22 @@ def hard_filter_products(
         excluded_brands = []
 
     selected: list[dict[str, Any]] = []
+    from app.catalog.specs.requirements import technical_requirements, feature_evidence, feature_rules
+    requirements = technical_requirements(interpretation)
     mandatory_feature_groups = required_feature_groups(interpretation)
+    # Technical fields have a three-state evidence check above. Do not run an
+    # older text-only check again and discard candidates awaiting a live sheet.
+    covered_terms = {_fold(term) for rule in feature_rules() if rule["field"] in requirements
+                     for term in [rule["value"], *rule["aliases"]]}
+    mandatory_feature_groups = tuple(group for group in mandatory_feature_groups
+                                    if not all(_fold(term) in covered_terms for term in group))
     for product in products:
         if not isinstance(product, dict) or not product.get("id"):
             continue
         text = _product_text(product)
+        evidence = feature_evidence(product, requirements) if requirements else None
+        if evidence and (evidence["status"] == "mismatch" or (evidence["status"] == "unknown" and not allow_unknown_features)):
+            continue
         if excluded_brands and product_matches_excluded_brand(product, excluded_brands):
             continue
         if expected_brand:
@@ -94,7 +106,7 @@ def hard_filter_products(
             continue
         if expected_ean and _fold(product.get("ean")) != expected_ean:
             continue
-        if not product_compatible_with_requested_movement(
+        if "mechanism" not in requirements and not product_compatible_with_requested_movement(
             product,
             subject.model,
             interpretation.preferences.attributes,

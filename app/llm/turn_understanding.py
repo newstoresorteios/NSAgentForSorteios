@@ -91,6 +91,7 @@ class ExtractedEntities(BaseModel):
     material: str | None = Field(default_factory=lambda: None)
     strap_type: str | None = Field(default_factory=lambda: None)
     mechanism: str | None = Field(default_factory=lambda: None)
+    crystal: str | None = Field(default_factory=lambda: None)
     gender: str | None = Field(default_factory=lambda: None)
     case_size: str | None = Field(default_factory=lambda: None)
     budget_min: float | None = Field(default_factory=lambda: None)
@@ -118,6 +119,7 @@ class ProductHardConstraints(BaseModel):
     strap_color: str | None = Field(default_factory=lambda: None)
     material: str | None = Field(default_factory=lambda: None)
     mechanism: str | None = Field(default_factory=lambda: None)
+    crystal: str | None = Field(default_factory=lambda: None)
     case_size: str | None = Field(default_factory=lambda: None)
     budget_min: float | None = Field(default_factory=lambda: None)
     budget_max: float | None = Field(default_factory=lambda: None)
@@ -136,6 +138,7 @@ class ProductSoftPreferences(BaseModel):
     occasion: str | None = Field(default_factory=lambda: None)
     recipient: str | None = Field(default_factory=lambda: None)
     mechanism: str | None = Field(default_factory=lambda: None)
+    crystal: str | None = Field(default_factory=lambda: None)
     case_size: str | None = Field(default_factory=lambda: None)
     budget_min: float | None = Field(default_factory=lambda: None)
     budget_max: float | None = Field(default_factory=lambda: None)
@@ -541,6 +544,8 @@ def turn_understanding_to_sales(
         color=color,
         style=soft.style,
         material=hard.material or entities.material or soft.material,
+        mechanism=hard.mechanism or entities.mechanism or soft.mechanism,
+        crystal=hard.crystal or entities.crystal or soft.crystal,
         occasion=soft.occasion,
         recipient=hard.gender or entities.gender or soft.recipient,
         attributes=list(soft.attributes or []),
@@ -685,6 +690,8 @@ def sales_to_turn_understanding(
         gender=prefs.recipient if prefs.recipient in {"feminino", "masculino", "unissex"} else None,
         dial_color=prefs.color if exclusive else None,
         material=prefs.material if exclusive else None,
+        mechanism=prefs.mechanism,
+        crystal=prefs.crystal,
         budget_min=prefs.budget_min,
         budget_max=prefs.budget_max,
         exact_only=exclusive,
@@ -720,6 +727,8 @@ def sales_to_turn_understanding(
         category=subject.product_type,
         dial_color=prefs.color,
         material=prefs.material,
+        mechanism=prefs.mechanism,
+        crystal=prefs.crystal,
         gender=prefs.recipient if prefs.recipient in {"feminino", "masculino", "unissex"} else None,
         budget_min=prefs.budget_min,
         budget_max=prefs.budget_max,

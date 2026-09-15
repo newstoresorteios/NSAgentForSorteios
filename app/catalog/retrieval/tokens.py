@@ -560,6 +560,10 @@ def product_compatible_with_requested_movement(
     text = _product_text(product)
     wants_auto = requests_automatic_movement(model, attributes)
     if wants_auto:
+        from app.catalog.specs.requirements import feature_evidence, feature_rules
+        automatic = next((r for r in feature_rules() if r["field"] == "mechanism" and r["value"] == "automatic"), None)
+        if automatic and feature_evidence(product, {"mechanism":automatic["value"]})["status"] != "matched":
+            return False
         # Don't substitute GMT siblings for a plain Automatic ask.
         if "gmt" in text and "gmt" not in _fold(model):
             return False
