@@ -60,13 +60,15 @@ async def process_outbox_batch(*, limit: int | None = None) -> dict[str, Any]:
                 if isinstance(send_info.get("provider_response"), dict)
                 else send_info,
             )
+            incoming = None
+            result = None
             try:
                 from app.db import insert_agent_response, has_successful_agent_response
                 from app.ingress.outbox import incoming_from_outbox_row, result_from_outbox_row
                 inbound_id = row.get("inbound_id")
+                incoming = incoming_from_outbox_row(row)
+                result = result_from_outbox_row(row)
                 if inbound_id and not has_successful_agent_response(inbound_id):
-                    incoming = incoming_from_outbox_row(row)
-                    result = result_from_outbox_row(row)
                     insert_agent_response({
                         "inbound_id": inbound_id, "channel": incoming.channel,
                         "sender_key": incoming.sender_key, "sender_phone": incoming.sender_phone,
@@ -77,6 +79,14 @@ async def process_outbox_batch(*, limit: int | None = None) -> dict[str, Any]:
                     })
             except Exception as exc:
                 log_exception("outbox.response_persist_failed", exc, {"outbox_id": outbox_id})
+            if incoming is not None and result is not None:
+                from app.ingress.worker import _sync_remarketing_after_delivery
+
+                _sync_remarketing_after_delivery(
+                    incoming,
+                    result,
+                    row.get("inbound_id"),
+                )
             sent += 1
             details.append({"id": outbox_id, "status": "sent"})
             continue

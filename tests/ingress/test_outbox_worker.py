@@ -67,6 +67,11 @@ async def test_retry_failure_then_recovery_records_one_success(monkeypatch):
     monkeypatch.setattr(db, "has_successful_agent_response", lambda _inbound_id: False)
     persisted = Mock()
     monkeypatch.setattr(db, "insert_agent_response", persisted)
+    synced = Mock()
+    monkeypatch.setattr(
+        "app.ingress.worker._sync_remarketing_after_delivery",
+        synced,
+    )
 
     first = await outbox_worker.process_outbox_batch()
     second = await outbox_worker.process_outbox_batch()
@@ -94,6 +99,8 @@ async def test_retry_failure_then_recovery_records_one_success(monkeypatch):
     persisted.assert_called_once()
     assert persisted.call_args.args[0]["provider_send_ok"] is True
     assert persisted.call_args.args[0]["reply_text"] == "Resposta aceita e imutavel"
+    synced.assert_called_once()
+    assert synced.call_args.args[2] == 91
 
 
 @pytest.mark.asyncio

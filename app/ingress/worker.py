@@ -151,6 +151,33 @@ async def _send_reply(incoming: IncomingMessage, result: AgentResult) -> dict[st
     }
 
 
+def _sync_remarketing_after_delivery(
+    incoming: IncomingMessage,
+    result: AgentResult,
+    inbound_id: int | None,
+) -> None:
+    """Apply the same remarketing lifecycle used by synchronous webhooks."""
+    try:
+        from app.learning.remarketing import sync_remarketing_interaction
+
+        sync_remarketing_interaction(
+            incoming,
+            inbound_id=inbound_id,
+            response_metadata=result.response_metadata,
+            handoff_required=result.handoff_required,
+        )
+        log_event(
+            "remarketing.async_synced",
+            {"inbound_id": inbound_id, "channel": incoming.channel},
+        )
+    except Exception as exc:  # noqa: BLE001
+        log_exception(
+            "remarketing.async_sync_failed",
+            exc,
+            {"inbound_id": inbound_id, "channel": incoming.channel},
+        )
+
+
 async def process_inbox_row(row: dict[str, Any], *, lock_held: bool = False) -> dict[str, Any]:
     """Serialize every worker entrance, including cron and Meta delivery."""
     from app.ops.conversation_lock import (
@@ -343,6 +370,7 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
             "send": send_info,
         }
 
+    _sync_remarketing_after_delivery(incoming, result, inbound_id)
     _mark_group_processed(grouped_inbox_ids, inbound_id)
     log_event(
         "inbox.agent_turn_completed",

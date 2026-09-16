@@ -171,6 +171,14 @@ def test_inbox_conversation_key_fills_missing_conversation_id(monkeypatch):
     )
     monkeypatch.setattr(worker_mod, "_send_reply", fake_send)
     monkeypatch.setattr(worker_mod, "insert_agent_response", lambda *_a, **_k: None)
+    remarketing_syncs: list[tuple[int | None, str]] = []
+    monkeypatch.setattr(
+        worker_mod,
+        "_sync_remarketing_after_delivery",
+        lambda incoming, _result, inbound_id: remarketing_syncs.append(
+            (inbound_id, incoming.channel)
+        ),
+    )
     monkeypatch.setattr(worker_mod, "mark_inbox_processed", lambda *_a, **_k: None)
     monkeypatch.setattr(worker_mod, "mark_inbox_failed", lambda *_a, **_k: None)
     enqueue_order: list[str] = []
@@ -207,6 +215,7 @@ def test_inbox_conversation_key_fills_missing_conversation_id(monkeypatch):
     assert captured["conversation_id"] == "wa-thread-history"
     assert captured["enforce"] is True
     assert enqueue_order[:2] == ["enqueue", "send"]
+    assert remarketing_syncs == [(11, "whatsapp")]
 
 
 def test_complete_duplicate_skips_inbox(monkeypatch):
