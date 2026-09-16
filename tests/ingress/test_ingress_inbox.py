@@ -4,6 +4,47 @@ from app.ingress.inbox import build_idempotency_key
 from app.ingress.reconstruct import incoming_from_inbox_payload
 
 
+def test_message_burst_merges_image_and_followup_text():
+    from app.ingress.worker import _merge_burst_messages
+    from app.models import IncomingMessage
+
+    merged = _merge_burst_messages(
+        [
+            IncomingMessage(
+                provider="brevo", channel="whatsapp", text="Image",
+                image_url="https://storage.googleapis.com/bucket/watch.jpg",
+                message_id="image-1", sender_key="whatsapp:55",
+            ),
+            IncomingMessage(
+                provider="brevo", channel="whatsapp", text="quero esse",
+                message_id="text-2", sender_key="whatsapp:55",
+            ),
+            IncomingMessage(
+                provider="brevo", channel="whatsapp", text="tem pronta entrega?",
+                message_id="text-3", sender_key="whatsapp:55",
+            ),
+        ],
+        [41, 42, 43],
+    )
+
+    assert merged.text == "quero esse\ntem pronta entrega?"
+    assert merged.image_url.endswith("watch.jpg")
+    assert merged.message_id == "text-3"
+    assert merged.channel_metadata["grouped_message_count"] == 3
+    assert merged.channel_metadata["grouped_inbox_ids"] == [41, 42, 43]
+
+
+def test_message_burst_preserves_order_and_deduplicates_exact_lines():
+    from app.ingress.worker import _merge_burst_messages
+    from app.models import IncomingMessage
+
+    merged = _merge_burst_messages(
+        [IncomingMessage(text="oi"), IncomingMessage(text="oi"), IncomingMessage(text="qual o valor?")],
+        [1, 2, 3],
+    )
+    assert merged.text == "oi\nqual o valor?"
+
+
 def test_idempotency_prefers_message_id():
     key = build_idempotency_key(
         provider="brevo",

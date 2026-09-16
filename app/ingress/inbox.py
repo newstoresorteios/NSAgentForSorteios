@@ -222,6 +222,70 @@ def claim_pending_inbox(
     return claimed
 
 
+def claim_conversation_burst(
+    anchor_inbox_id: int,
+    *,
+    window_ms: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Lease newer pending rows that belong to the anchor's short message burst."""
+    settings = get_settings()
+    if not settings.database_url or window_ms <= 0 or limit <= 1:
+        return []
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH anchor AS (
+                  SELECT * FROM public.ai_inbound_inbox WHERE id = %(anchor_id)s
+                ), candidates AS (
+                  SELECT followup.id
+                  FROM public.ai_inbound_inbox AS followup, anchor
+                  WHERE followup.id <> anchor.id
+                    AND followup.provider = anchor.provider
+                    AND followup.channel = anchor.channel
+                    AND followup.status = 'pending'
+                    AND followup.created_at >= anchor.created_at
+                    AND followup.created_at <= anchor.created_at
+                        + make_interval(secs => %(window_ms)s / 1000.0)
+                    AND (
+                      (anchor.conversation_key IS NOT NULL
+                        AND followup.conversation_key = anchor.conversation_key)
+                      OR (anchor.sender_key IS NOT NULL
+                        AND followup.sender_key = anchor.sender_key)
+                    )
+                  ORDER BY followup.created_at ASC, followup.id ASC
+                  FOR UPDATE OF followup SKIP LOCKED
+                  LIMIT %(followup_limit)s
+                )
+                UPDATE public.ai_inbound_inbox AS inbox
+                SET status = 'leased',
+                    lease_owner = anchor.lease_owner,
+                    lease_expires_at = anchor.lease_expires_at,
+                    attempts = inbox.attempts + 1,
+                    updated_at = now()
+                FROM candidates, anchor
+                WHERE inbox.id = candidates.id
+                RETURNING inbox.id, inbox.provider, inbox.channel, inbox.message_id,
+                  inbox.idempotency_key, inbox.conversation_key, inbox.visitor_id,
+                  inbox.sender_key, inbox.event_name, inbox.payload_json,
+                  inbox.attempts, inbox.created_at
+                """,
+                {
+                    "anchor_id": anchor_inbox_id,
+                    "window_ms": max(1, min(int(window_ms), 15000)),
+                    "followup_limit": max(1, min(int(limit) - 1, 24)),
+                },
+            )
+            rows = cur.fetchall() or []
+    columns = (
+        "id", "provider", "channel", "message_id", "idempotency_key",
+        "conversation_key", "visitor_id", "sender_key", "event_name",
+        "payload_json", "attempts", "created_at",
+    )
+    return [dict(row) if isinstance(row, dict) else dict(zip(columns, row)) for row in rows]
+
+
 def mark_inbox_processed(
     inbox_id: int,
     *,

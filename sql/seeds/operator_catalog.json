@@ -7008,5 +7008,39 @@
     "description": "Resposta quando a foto foi analisada, mas marca e linha não ficaram legíveis.",
     "maxLength": 1200,
     "default": "Não consegui ler marca e modelo com segurança nessa foto. Pode enviar uma imagem mais nítida do mostrador ou me dizer a marca?"
+  },
+  {
+    "key": "trustedInboundMediaHosts",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Dom?nios confi?veis para m?dia recebida",
+    "group": "Interpreta??o de imagens",
+    "description": "Lista JSON de dom?nios HTTPS autorizados para baixar imagens e ?udios recebidos. A valida??o de DNS p?blico, tamanho e tipo do arquivo continua obrigat?ria.",
+    "maxLength": 4000,
+    "default": "[\"storage.googleapis.com\"]"
+  },
+  {
+    "key": "inboundBurstWindowMs",
+    "target": "policy",
+    "type": "integer",
+    "label": "Janela para agrupar mensagens",
+    "group": "Conversas",
+    "description": "Tempo em milissegundos para reunir mensagens consecutivas do mesmo contato em um ?nico turno e uma ?nica resposta.",
+    "min": 0,
+    "max": 15000,
+    "step": 250,
+    "default": 2500
+  },
+  {
+    "key": "inboundBurstMaxMessages",
+    "target": "policy",
+    "type": "integer",
+    "label": "M?ximo de mensagens por grupo",
+    "group": "Conversas",
+    "description": "Quantidade m?xima de mensagens consecutivas reunidas no mesmo turno.",
+    "min": 1,
+    "max": 25,
+    "step": 1,
+    "default": 8
   }
 ]

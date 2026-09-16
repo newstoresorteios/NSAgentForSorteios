@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import ipaddress
+import json
+import re
 import socket
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
 from app.config import get_settings
+from app.configuration.runtime import ConfigurationUnavailable, policy
 
 DEFAULT_ALLOWED_SUFFIXES = (
     "fbcdn.net",
@@ -21,6 +24,11 @@ DEFAULT_ALLOWED_SUFFIXES = (
     "brevo.com",
     "sendinblue.com",
     "sibpages.com",
+)
+
+_HOST_SUFFIX_RE = re.compile(
+    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
 )
 
 
@@ -48,6 +56,43 @@ def _allowed_host(host: str, suffixes: tuple[str, ...]) -> bool:
         if host_l == suffix or host_l.endswith("." + suffix):
             return True
     return False
+
+
+def operator_allowed_media_suffixes() -> tuple[str, ...]:
+    """Return sanitized, operator-published media hosts.
+
+    An unavailable catalog does not widen network access. Values may be stored as
+    a JSON array or as newline/comma-separated text for easier operator editing.
+    """
+    try:
+        raw = policy("trustedInboundMediaHosts")
+    except ConfigurationUnavailable:
+        return ()
+    values: list[object]
+    if isinstance(raw, list):
+        values = raw
+    elif isinstance(raw, str):
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError:
+            decoded = re.split(r"[,\n]", raw)
+        values = decoded if isinstance(decoded, list) else []
+    else:
+        values = []
+    valid: list[str] = []
+    for value in values:
+        suffix = str(value or "").strip().casefold().strip(".")
+        if not suffix or not _HOST_SUFFIX_RE.fullmatch(suffix):
+            continue
+        try:
+            ipaddress.ip_address(suffix)
+        except ValueError:
+            pass
+        else:
+            continue
+        if suffix not in valid:
+            valid.append(suffix)
+    return tuple(valid)
 
 
 def resolve_public_host_ips(host: str, *, resolver=None) -> list[str]:
@@ -121,7 +166,7 @@ async def download_trusted_media(
         for part in extras.split(",")
         if part.strip()
     )
-    allowed = suffixes + extra_suffixes
+    allowed = tuple(dict.fromkeys(suffixes + extra_suffixes + operator_allowed_media_suffixes()))
     current = validate_remote_media_url(url, allowed_suffixes=allowed)
     seen: set[str] = set()
     prefix = "audio/" if kind == "audio" else "image/"
