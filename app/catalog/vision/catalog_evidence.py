@@ -30,8 +30,12 @@ async def resolve_catalog_photo(incoming, identified) -> AgentResult:
         distance_max = int(policy('imageStorefrontPerceptualDistanceMax'))
         margin_min = int(policy('imageStorefrontPerceptualMinMargin'))
         color_max = float(policy('imageStorefrontColorErrorMax'))
+        exact_distance_max = int(policy('imageStorefrontExactDistanceMax'))
+        exact_color_max = float(policy('imageStorefrontExactColorErrorMax'))
         queries = image_search_queries(identified) if enabled else []
         seen = set()
+        search_incomplete = False
+        candidates_compared = False
         for query in queries[:max_queries]:
             hits = await search_storefront(query, max_pages=pages, limit=limit)
             # Compare the entire bounded candidate pool, including siblings.
@@ -39,19 +43,34 @@ async def resolve_catalog_photo(incoming, identified) -> AgentResult:
             if not ranked:
                 log_event('image.catalog_candidates', {'query': query, 'count': len(hits), 'ranked': 0})
                 continue
-            if len(hits) >= limit or len(ranked) < len(hits):
-                log_event('image.catalog_comparison_incomplete', {'query': query, 'count': len(hits), 'ranked': len(ranked)})
-                continue
+            candidates_compared = True
             best_distance, hit = ranked[0]
-            margin = ranked[1][0] - best_distance if len(ranked) > 1 else margin_min
             color_error = hit.get('_image_color_error')
+            exact_visual = (
+                best_distance <= exact_distance_max
+                and color_error is not None
+                and color_error <= exact_color_max
+            )
+            complete = bool(getattr(hits, 'complete', len(hits) < limit))
+            if not complete or len(ranked) < len(hits):
+                search_incomplete = True
+                log_event('image.catalog_comparison_incomplete', {'query': query, 'count': len(hits), 'ranked': len(ranked)})
+                # An identical official image remains conclusive even if a broad
+                # textual search has more pages. Approximate matches still wait
+                # for a complete competitor set.
+                if not exact_visual or len(ranked) < len(hits):
+                    continue
+            margin = ranked[1][0] - best_distance if len(ranked) > 1 else margin_min
             log_event('image.catalog_candidates', {
                 'query': query, 'count': len(hits), 'ranked': len(ranked),
                 'best_id': hit.get('product_id'), 'distance': best_distance,
                 'margin': margin, 'color_error': color_error,
                 'candidate_limit_reached': len(hits) >= limit,
             })
-            if best_distance > distance_max or margin < margin_min or color_error is None or color_error > color_max:
+            if not exact_visual and (
+                best_distance > distance_max or margin < margin_min
+                or color_error is None or color_error > color_max
+            ):
                 continue
             pid = str(hit.get('product_id') or '')
             if not pid or pid in seen:
@@ -81,7 +100,10 @@ async def resolve_catalog_photo(incoming, identified) -> AgentResult:
             )
     except (ConfigurationUnavailable, httpx.HTTPError, OSError, ValueError, TypeError) as exc:
         log_event('image.catalog_resolution_failed', {'error_type': type(exc).__name__})
-    return AgentResult(reply_text=copy('image_catalog_unconfirmed'), intent='commerce',
-                       safety_reason='image_catalog_unconfirmed',
+    reason = ('image_catalog_search_incomplete' if search_incomplete
+              else 'image_catalog_unconfirmed')
+    return AgentResult(reply_text=copy(reason), intent='commerce',
+                       safety_reason=reason,
                        commercial_data={'products': [], 'match_status': 'unresolved'},
-                       response_metadata=base)
+                       response_metadata={**base, 'catalog_search_incomplete': search_incomplete,
+                                          'catalog_candidates_compared': candidates_compared})

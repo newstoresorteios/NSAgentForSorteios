@@ -13,6 +13,14 @@ from app.catalog.media.storefront_evidence import json_policy
 
 from app.ops.observability import log_event
 
+
+class StorefrontSearchResults(list):
+    """List-compatible search result that records whether pagination ended."""
+
+    def __init__(self, values=(), *, complete: bool = True):
+        super().__init__(values)
+        self.complete = complete
+
 _ITEM_RE = re.compile(
     r'"item_id"\s*:\s*"(\d+)"\s*,\s*"item_name"\s*:\s*"((?:\\.|[^"\\])*)"',
     re.IGNORECASE,
@@ -137,6 +145,84 @@ def perceptual_image_hash(image_bytes: bytes) -> int:
     return value
 
 
+def _center_crop_to_aspect(image, aspect: float):
+    width, height = image.size
+    current = width / height
+    if abs(current - aspect) < 0.01:
+        return image
+    if current > aspect:
+        crop_width = max(2, round(height * aspect))
+        left = (width - crop_width) // 2
+        return image.crop((left, 0, left + crop_width, height))
+    crop_height = max(2, round(width / aspect))
+    top = (height - crop_height) // 2
+    return image.crop((0, top, width, top + crop_height))
+
+
+def _comparison_views(image_bytes: bytes, *, extra_aspects=()):
+    """Generate centered views so detail photos can match a full catalog image."""
+    from PIL import Image
+
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    width, height = image.size
+    bases = [image]
+    for aspect in extra_aspects:
+        adjusted = _center_crop_to_aspect(image, aspect)
+        if adjusted.size != image.size:
+            bases.append(adjusted)
+    views = []
+    for base in bases:
+        width, height = base.size
+        views.append(base)
+        for ratio in (0.85, 0.70, 0.55, 0.40):
+            crop_width = max(2, round(width * ratio))
+            crop_height = max(2, round(height * ratio))
+            left = (width - crop_width) // 2
+            top = (height - crop_height) // 2
+            views.append(base.crop((left, top, left + crop_width, top + crop_height)))
+    return views
+
+
+def _view_metrics(left, right) -> tuple[int, float]:
+    from PIL import ImageChops, ImageStat
+
+    left_small = left.resize((32, 32))
+    right_small = right.resize((32, 32))
+    left_stream = BytesIO()
+    right_stream = BytesIO()
+    left_small.save(left_stream, format="PNG")
+    right_small.save(right_stream, format="PNG")
+    distance = (
+        perceptual_image_hash(left_stream.getvalue())
+        ^ perceptual_image_hash(right_stream.getvalue())
+    ).bit_count()
+    error = sum(
+        ImageStat.Stat(ImageChops.difference(left_small, right_small)).mean
+    ) / (3 * 255)
+    return distance, error
+
+
+def best_image_view_metrics(left_bytes: bytes, right_bytes: bytes) -> tuple[int, float, int, int]:
+    """Return the best full-frame or centered-crop comparison."""
+    from PIL import Image
+
+    left_image = Image.open(BytesIO(left_bytes))
+    right_image = Image.open(BytesIO(right_bytes))
+    left_aspect = left_image.width / left_image.height
+    right_aspect = right_image.width / right_image.height
+    rows = (
+        (distance, error, left_index, right_index)
+        for left_index, left_view in enumerate(
+            _comparison_views(left_bytes, extra_aspects=(right_aspect,))
+        )
+        for right_index, right_view in enumerate(
+            _comparison_views(right_bytes, extra_aspects=(left_aspect,))
+        )
+        for distance, error in [_view_metrics(left_view, right_view)]
+    )
+    return min(rows, key=lambda row: (row[0], row[1]))
+
+
 async def rank_storefront_hits_by_image(
     image_url: str,
     hits: list[dict[str, str]],
@@ -153,9 +239,6 @@ async def rank_storefront_hits_by_image(
     if not image_url or not candidates:
         return []
     source, _ = await download_image_file(image_url)
-    source_hash = perceptual_image_hash(source)
-    from PIL import Image, ImageChops, ImageStat
-    source_rgb = Image.open(BytesIO(source)).convert('RGB').resize((32, 32))
     semaphore = asyncio.Semaphore(max(1, min(8, int(policy('imageStorefrontDownloadConcurrency')))))
 
     async def _distance(hit: dict[str, str]):
@@ -167,9 +250,15 @@ async def rank_storefront_hits_by_image(
                     timeout_seconds=10,
                     allowed_suffixes=tuple(json_policy('storefrontImageHosts')),
                 )
-            rgb = Image.open(BytesIO(content)).convert('RGB').resize((32, 32))
-            error = sum(ImageStat.Stat(ImageChops.difference(source_rgb, rgb)).mean) / (3 * 255)
-            return (source_hash ^ perceptual_image_hash(content)).bit_count(), {**hit, '_image_color_error': error}
+            distance, error, source_view, candidate_view = best_image_view_metrics(
+                source, content
+            )
+            return distance, {
+                **hit,
+                '_image_color_error': error,
+                '_image_source_view': source_view,
+                '_image_candidate_view': candidate_view,
+            }
         except (OSError, ValueError, httpx.HTTPError):
             return None
 
@@ -244,9 +333,11 @@ async def search_storefront(query: str, *, max_pages: int = 1, limit: int = 8) -
                         break
                     hits.extend(fresh)
                     seen.update(h.get('product_id') or h.get('url') for h in fresh)
-                return hits[:limit]
+                has_next = bool(re.search(r'rel=["\']next["\']', response.text))
+                complete = not has_next and len(hits) <= limit
+                return StorefrontSearchResults(hits[:limit], complete=complete)
     log_event("story_storefront_search", {"query": q[:40], "hits": 0})
-    return []
+    return StorefrontSearchResults()
 
 
 async def hydrate_storefront_hits(

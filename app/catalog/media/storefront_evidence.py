@@ -78,8 +78,26 @@ def image_search_queries(identified) -> list[str]:
     brand = fold(identified.brand)
     tokens = re.findall(r'[\w-]+', fold(identified.model))
     core = ' '.join(t for t in tokens if t not in ignored and t not in brand.split())
-    colors = re.findall(r'\w+', fold(identified.color))
-    color = next((aliases[t] for t in colors if t in aliases), '')
+    def translated_colors(*values) -> list[str]:
+        found = []
+        for value in values:
+            for token in re.findall(r'\w+', fold(value)):
+                translated = aliases.get(token)
+                if translated and translated not in found:
+                    found.append(translated)
+        return found
+
+    # Component colors are ordered by identity value.  A bezel color commonly
+    # appears in the catalog name even when the dial is black.
+    colors = translated_colors(
+        getattr(identified, 'bezel_color', None),
+        getattr(identified, 'dial_color', None),
+        identified.color,
+        getattr(identified, 'strap_color', None),
+    )
     # The model is a search hypothesis; never synthesize a SKU or replace a family.
-    candidates = [f'{brand} {core} {color}', f'{brand} {core}', f'{brand} {color}']
+    candidates = []
+    for color in colors:
+        candidates.extend((f'{brand} {core} {color}', f'{brand} {color}'))
+    candidates.extend((f'{brand} {core}', brand))
     return list(dict.fromkeys(' '.join(q.split()) for q in candidates if len(q.strip()) >= 3))

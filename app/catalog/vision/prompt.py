@@ -21,8 +21,15 @@ class ImageProductIdentification(BaseModel):
     brand: str | None = None
     model: str | None = None
     reference: str | None = None
+    # Keep `color` for compatibility with already published prompts.  The
+    # component colors prevent a red bezel from being lost behind a black dial.
     color: str | None = None
+    dial_color: str | None = None
+    bezel_color: str | None = None
+    strap_color: str | None = None
+    strap_type: str | None = None
     case_finish: str | None = None
+    visible_text: list[str] = Field(default_factory=list)
     features: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     notes: str | None = None

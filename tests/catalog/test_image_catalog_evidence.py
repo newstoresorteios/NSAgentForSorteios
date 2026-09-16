@@ -31,6 +31,18 @@ def test_queries_translate_colors_without_reference_overrides(vision, query):
     assert image_search_queries(vision)[0] == query
 
 
+def test_queries_prioritize_bezel_color_without_watch_specific_rules():
+    vision = hypothesis('Christopher Ward', 'C60 Trident', 'black')
+    vision.dial_color = 'black'
+    vision.bezel_color = 'red'
+
+    assert image_search_queries(vision)[:3] == [
+        'christopher ward c60 trident vermelho',
+        'christopher ward vermelho',
+        'christopher ward c60 trident preto',
+    ]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('brand,model,pid,name,ref', [
     ('Hamilton','Khaki Field Automatic','16010','Hamilton Khaki Field Murph Azul H70405740 38 mm','H70405740'),
@@ -87,6 +99,23 @@ async def test_missing_competitor_image_prevents_false_uniqueness(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_identical_image_can_close_match_when_paginated_search_has_more(monkeypatch):
+    from app.catalog.media.storefront_search import StorefrontSearchResults
+    hit={'product_id':'16099','url':'https://www.newstorerj.com.br/relogios/relogio-correto','_image_color_error':0.0004}
+    hits=StorefrontSearchResults([hit],complete=False)
+    monkeypatch.setattr(resolver,'search_storefront',AsyncMock(return_value=hits))
+    monkeypatch.setattr(resolver,'rank_storefront_hits_by_image',AsyncMock(return_value=[(0,hit)]))
+    monkeypatch.setattr(resolver,'fetch_storefront_product',AsyncMock(return_value={
+        'id':'16099','url':hit['url'],'name':'Produto visualmente idêntico',
+        'reference':'REF-16099','model':'Modelo','brand':'Marca','available':True}))
+
+    result=await resolver.resolve_catalog_photo(incoming(),hypothesis())
+
+    assert result.commercial_data['match_status']=='exact'
+    assert result.response_metadata['image_catalog_proof']['product_id']=='16099'
+
+
+@pytest.mark.asyncio
 async def test_image_route_never_calls_keyword_retrieval_to_invent_identity(monkeypatch):
     from app.catalog.vision import image_product_id
     from types import SimpleNamespace
@@ -114,7 +143,9 @@ async def test_link_to_another_product_or_soft404_is_not_returned(monkeypatch):
     from app.catalog.media.product_media import ensure_product_has_live_url, official_product_url
     responses=[httpx.Response(200,text=page_html('999'),request=httpx.Request('GET','https://www.newstorerj.com.br/relogios/relogio-wrong')),
                httpx.Response(200,text='Produto não encontrado',request=httpx.Request('GET','https://www.newstorerj.com.br/sem-resultados-na-busca'))]
-    client=AsyncMock();client.__aenter__.return_value=client;client.get.side_effect=responses
+    client=AsyncMock()
+    client.__aenter__.return_value=client
+    client.get.side_effect=responses
     monkeypatch.setattr(httpx,'AsyncClient',lambda **kwargs:client)
     for _ in range(2):
         product=await ensure_product_has_live_url({'id':'2721','url':'https://www.newstorerj.com.br/relogios/relogio-old'})
@@ -160,13 +191,31 @@ def test_plain_text_is_enforced_after_generation():
     assert '*' not in apply_output_style(result).reply_text
 
 
+def test_incomplete_catalog_search_keeps_accurate_operator_message():
+    result=AgentResult(
+        reply_text='rascunho',
+        intent='commerce',
+        commercial_data={'products': []},
+        response_metadata={
+            'image_evidence_guard': True,
+            'catalog_search_incomplete': True,
+        },
+    )
+
+    fixed=enforce_photo_identity(result)
+
+    assert fixed.safety_reason=='image_catalog_search_incomplete'
+    assert 'busca em todo o cat' in fixed.reply_text
+
+
 @pytest.mark.asyncio
 async def test_catalog_search_reads_next_page_before_declaring_no_match(monkeypatch):
     from app.catalog.media.storefront_search import search_storefront
     def html(pid,next_page=False):
         row={'idProduct':pid,'nameProduct':'Modelo '+pid,'urlProduct':'https://www.newstorerj.com.br/relogios/relogio-'+pid}
         return ('<link rel="next" href="?pg=2">' if next_page else '')+'<script>dataLayer = '+json.dumps([{'listProducts':[row],'filter':{}}])+'</script>'
-    client=AsyncMock();client.__aenter__.return_value=client
+    client=AsyncMock()
+    client.__aenter__.return_value=client
     client.get.side_effect=[httpx.Response(200,text=html('other',True)),httpx.Response(200,text=html('16010'))]
     monkeypatch.setattr(httpx,'AsyncClient',lambda **kwargs:client)
     hits=await search_storefront('familia azul',max_pages=3,limit=36)

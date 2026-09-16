@@ -75,9 +75,14 @@ def enforce_photo_identity(result):
         md.update(presented_products=True, clear_presented_products=False,
                   product_resolution_state='resolved')
     else:
-        result.reply_text = message('image_catalog_unconfirmed')
+        unresolved_key = (
+            'image_catalog_search_incomplete'
+            if md.get('catalog_search_incomplete')
+            else 'image_catalog_unconfirmed'
+        )
+        result.reply_text = message(unresolved_key)
         result.commercial_data = {'products': [], 'match_status': 'unresolved'}
-        result.safety_reason = 'image_catalog_unconfirmed'
+        result.safety_reason = unresolved_key
         md.update(presented_products=False, clear_presented_products=True,
                   product_resolution_state='unresolved')
     md.pop('active_product', None)

@@ -4,6 +4,7 @@ from io import BytesIO
 from PIL import Image
 
 from app.catalog.media.storefront_search import (
+    best_image_view_metrics,
     parse_storefront_search_html,
     perceptual_image_hash,
 )
@@ -65,6 +66,30 @@ def test_perceptual_hash_survives_resize_but_separates_another_image():
 
     assert (source_hash ^ resized_hash).bit_count() <= 6
     assert (source_hash ^ other_hash).bit_count() > 6
+
+
+def test_center_crop_can_match_the_same_catalog_image():
+    image = Image.new("RGB", (240, 320), "white")
+    for x in range(55, 185):
+        for y in range(75, 245):
+            image.putpixel((x, y), (25, 25, 25))
+    for x in range(78, 162):
+        for y in range(118, 202):
+            image.putpixel((x, y), (165, 25, 25))
+    detail = image.crop((48, 88, 192, 232)).resize((300, 300))
+
+    def encoded(value):
+        stream = BytesIO()
+        value.save(stream, format="PNG")
+        return stream.getvalue()
+
+    distance, color_error, source_view, catalog_view = best_image_view_metrics(
+        encoded(detail), encoded(image)
+    )
+
+    assert distance <= 6
+    assert color_error <= 0.035
+    assert source_view != catalog_view
 
 
 def _cand(pid: str, listing: str) -> StoryProductCandidate:

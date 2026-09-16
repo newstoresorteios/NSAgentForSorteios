@@ -6977,7 +6977,7 @@
     "group": "Interpretação de imagens",
     "description": "Prompt visual editável. Preserve a variável {commercial_model_rules}.",
     "maxLength": 12000,
-    "default": "Você identifica relógios em fotos enviadas por clientes da NewStore. Leia primeiro todos os textos e logotipos visíveis no mostrador e extraia o máximo de identidade comercial: marca, modelo ou coleção, referência legível, cor do mostrador, acabamento da caixa e pulseira, e funções visíveis. Não fique apenas em marca e cor. O logotipo de duas bandeiras e o texto SEALANDER/AUTOMATIC devem ser considerados evidência de Christopher Ward, linha Sealander e movimento automático quando estiverem visíveis. Não invente referência: deixe reference nulo quando o código não estiver legível. Em color, registre somente a cor do mostrador. Em case_finish, separe caixa e pulseira. Se houver AUTOMATIC, cronógrafo, diver, GMT ou quartz visível, registre em features. Use a legenda apenas como dica complementar; a imagem é a fonte principal. Use confidence entre 0 e 1 conforme a legibilidade. Famílias comerciais reconhecidas:\n{commercial_model_rules}"
+    "default": "Você identifica relógios em fotos enviadas por clientes da NewStore. Leia primeiro todos os textos e logotipos visíveis no mostrador e extraia o máximo de identidade comercial: marca, modelo ou coleção e referência legível. Descreva as cores por componente: preencha dial_color para o mostrador, bezel_color para o aro ou bisel e strap_color e strap_type para pulseira ou bracelete. Mantenha color igual a dial_color por compatibilidade. Registre em visible_text as palavras e números realmente legíveis. Não fique apenas em marca e cor. O logotipo de duas bandeiras e o texto SEALANDER/AUTOMATIC devem ser considerados evidência de Christopher Ward, linha Sealander e movimento automático quando estiverem visíveis. Não invente referência: deixe reference nulo quando o código não estiver legível. Em case_finish, descreva somente o acabamento da caixa. Se houver AUTOMATIC, cronógrafo, diver, GMT, COSC, chronometer ou quartz visível, registre em features. Use a legenda apenas como dica complementar; a imagem é a fonte principal. Use confidence entre 0 e 1 conforme a legibilidade. Famílias comerciais reconhecidas:\n{commercial_model_rules}"
   },
   {
     "key": "message.image_not_watch",
@@ -7233,6 +7233,32 @@
     "step": 0.005
   },
   {
+    "key": "imageStorefrontExactColorErrorMax",
+    "target": "policy",
+    "type": "number",
+    "default": 0.005,
+    "label": "Erro de cor de imagem idêntica",
+    "description": "Erro RGB máximo para aceitar uma imagem oficial praticamente idêntica em uma consulta paginada.",
+    "group": "Busca por imagem e evidências",
+    "readOnly": false,
+    "min": 0,
+    "max": 0.05,
+    "step": 0.001
+  },
+  {
+    "key": "imageStorefrontExactDistanceMax",
+    "target": "policy",
+    "type": "integer",
+    "default": 2,
+    "label": "Distância de imagem idêntica",
+    "description": "Distância perceptual máxima para aceitar uma imagem oficial praticamente idêntica mesmo quando a consulta ainda possui outras páginas.",
+    "group": "Busca por imagem e evidências",
+    "readOnly": false,
+    "min": 0,
+    "max": 16,
+    "step": 1
+  },
+  {
     "key": "imageSearchColorAliases",
     "target": "policy",
     "type": "textarea",
@@ -7283,10 +7309,21 @@
     "readOnly": false
   },
   {
+    "key": "message.image_catalog_search_incomplete",
+    "target": "message",
+    "type": "textarea",
+    "default": "Não consegui concluir a busca em todo o catálogo agora. Se você tiver, envie a referência ou o link do produto para eu conferir.",
+    "label": "Busca visual incompleta",
+    "description": "Resposta quando ainda existem páginas ou imagens do catálogo que não puderam ser comparadas.",
+    "group": "Busca por imagem e evidências",
+    "readOnly": false,
+    "maxLength": 1200
+  },
+  {
     "key": "message.image_catalog_unconfirmed",
     "target": "message",
     "type": "textarea",
-    "default": "Ainda não consegui confirmar o produto exato dessa foto no catálogo. Pode enviar uma foto mais próxima do mostrador ou a referência, se você tiver?",
+    "default": "Não consegui confirmar a referência exata dessa foto com segurança. Se você tiver, envie a referência ou o link do produto para eu conferir.",
     "label": "Identidade visual não confirmada",
     "description": "Resposta quando a busca não reuniu evidência suficiente para identificar uma variante.",
     "group": "Busca por imagem e evidências",
