@@ -78,6 +78,11 @@ def hard_filter_products(
         excluded_brands = []
 
     selected: list[dict[str, Any]] = []
+    excluded_catalog_tokens = tuple(
+        _fold(token)
+        for token in getattr(interpretation, "_excluded_catalog_tokens", [])
+        if _fold(token)
+    )
     from app.catalog.specs.requirements import technical_requirements, feature_evidence, feature_rules
     requirements = technical_requirements(interpretation)
     mandatory_feature_groups = required_feature_groups(interpretation)
@@ -91,6 +96,11 @@ def hard_filter_products(
         if not isinstance(product, dict) or not product.get("id"):
             continue
         text = _product_text(product)
+        if excluded_catalog_tokens and any(
+            re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text)
+            for token in excluded_catalog_tokens
+        ):
+            continue
         gender_tokens = preference_gender_tokens(interpretation)
         if gender_tokens and not product_matches_gender_tokens(product, gender_tokens):
             continue

@@ -348,6 +348,14 @@ class ProductRetrievalCompiler:
             # A few extra brand pages help surface color variants without
             # blowing the Vercel Hobby wall-clock budget.
             discovery_pages = max(discovery_pages, 8)
+        if str(getattr(interpretation, "_source", "")).startswith("image_"):
+            try:
+                from app.configuration.runtime import policy
+
+                configured_pages = int(policy("imageCatalogDiscoveryMaxPages"))
+                discovery_pages = max(discovery_pages, min(25, max(1, configured_pages)))
+            except (RuntimeError, TypeError, ValueError):
+                pass
 
         return ProductRetrievalPlan(
             mode="exact" if exact else "recommendation",

@@ -7042,5 +7042,44 @@
     "max": 25,
     "step": 1,
     "default": 8
+  },
+  {
+    "key": "imageVisibleFeatureExclusionRules",
+    "target": "policy",
+    "attribute": "imageVisibleFeatureExclusionRules",
+    "default": "[{\"feature\": \"gmt\", \"detectedAliases\": [\"gmt\", \"segundo fuso\", \"ponteiro gmt\", \"24 horas\"], \"candidateAliases\": [\"gmt\"]}]",
+    "label": "Complica??es visuais incompat?veis",
+    "description": "Regras JSON que impedem apresentar variantes com complica??es vis?veis ausentes em uma identifica??o de imagem confi?vel.",
+    "group": "Busca por imagem",
+    "type": "textarea",
+    "readOnly": false
+  },
+  {
+    "key": "imageVisibleFeatureExclusionMinConfidence",
+    "target": "policy",
+    "attribute": "imageVisibleFeatureExclusionMinConfidence",
+    "default": 0.9,
+    "label": "Confian?a para excluir variante visual",
+    "description": "Confian?a m?nima da leitura da imagem para remover variantes incompat?veis com a foto.",
+    "group": "Busca por imagem",
+    "type": "number",
+    "min": 0.5,
+    "max": 1.0,
+    "step": 0.05,
+    "readOnly": false
+  },
+  {
+    "key": "imageCatalogDiscoveryMaxPages",
+    "target": "policy",
+    "attribute": "imageCatalogDiscoveryMaxPages",
+    "default": 15,
+    "label": "P?ginas m?ximas na busca por imagem",
+    "description": "Quantidade m?xima de p?ginas do cat?logo consultadas quando a identifica??o veio de uma foto.",
+    "group": "Busca por imagem",
+    "type": "integer",
+    "min": 1,
+    "max": 25,
+    "step": 1,
+    "readOnly": false
   }
 ]

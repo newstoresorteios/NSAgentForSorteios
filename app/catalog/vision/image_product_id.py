@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
 import unicodedata
 from typing import Any
 
 import httpx
 from openai import APIError
-from app.configuration.runtime import message as operator_message
+from app.configuration.runtime import ConfigurationUnavailable, message as operator_message, policy
 from app.config import get_settings
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.ops.turn_runtime import LLMCallBudgetExceeded
@@ -165,7 +167,53 @@ def interpretation_from_identification(
         purchase_stage="discovery",
     )
     interpretation._source = "image_vision"
+    interpretation._excluded_catalog_tokens = _visible_feature_exclusions(identified)
     return interpretation
+
+
+def _fold_visible_text(value: Any) -> str:
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKD", str(value or "")).lower()
+        if not unicodedata.combining(char)
+    )
+
+
+def _visible_feature_exclusions(
+    identified: ImageProductIdentification,
+) -> list[str]:
+    """Return operator-defined candidate tokens contradicted by a clear photo."""
+    try:
+        threshold = float(policy("imageVisibleFeatureExclusionMinConfidence"))
+        raw_rules = policy("imageVisibleFeatureExclusionRules")
+        rules = json.loads(raw_rules) if isinstance(raw_rules, str) else raw_rules
+    except (ConfigurationUnavailable, TypeError, ValueError):
+        return []
+    if float(identified.confidence or 0.0) < threshold or not isinstance(rules, list):
+        return []
+    evidence = _fold_visible_text(
+        " ".join(
+            str(item or "")
+            for item in [identified.model, identified.notes, *(identified.features or [])]
+        )
+    )
+    excluded: list[str] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        detected = [
+            _fold_visible_text(alias)
+            for alias in rule.get("detectedAliases", [])
+            if str(alias or "").strip()
+        ]
+        if detected and any(alias in evidence for alias in detected):
+            continue
+        excluded.extend(
+            _fold_visible_text(alias)
+            for alias in rule.get("candidateAliases", [])
+            if str(alias or "").strip()
+        )
+    return list(dict.fromkeys(token for token in excluded if token))
 
 
 def soft_line_interpretation_from_identification(
@@ -457,11 +505,21 @@ def filter_products_to_interpretation_family(
         color_tokens=color_tokens,
     )
     feature_tokens = preference_feature_tokens(interpretation)
+    excluded_tokens = tuple(
+        _fold(token)
+        for token in getattr(interpretation, "_excluded_catalog_tokens", [])
+        if _fold(token)
+    )
     kept: list[dict[str, Any]] = []
     for product in products:
         if not isinstance(product, dict):
             continue
         text = _product_text(product)
+        if excluded_tokens and any(
+            re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text)
+            for token in excluded_tokens
+        ):
+            continue
         candidate_brand = _fold(product.get("brand"))
         if brand:
             if candidate_brand and candidate_brand != brand:
@@ -960,6 +1018,15 @@ async def handle_image_product_search(
         "presented_products": True,
         "clear_active_product": True,
         "product_resolution_state": "plausible_matches",
+        "active_preferences": {
+            "subject_brand": interpretation.subject.brand,
+            "subject_model": interpretation.subject.model,
+            "subject_reference": interpretation.subject.reference,
+            "color": interpretation.preferences.color,
+            "material": interpretation.preferences.material,
+            "attributes": list(interpretation.preferences.attributes or []),
+            "image_identify": identified.model_dump(mode="json"),
+        },
     })
     tray_result.response_metadata = meta
     # Skip OpenAI responder here: Vision already spent the critical latency budget.

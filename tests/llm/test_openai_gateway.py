@@ -152,6 +152,38 @@ def test_messages_to_responses_parts_splits_system():
     assert items == [{"role": "user", "content": "oi"}]
 
 
+def test_messages_to_responses_parts_converts_multimodal_chat_blocks():
+    instructions, items = messages_to_responses_parts(
+        [
+            {"role": "system", "content": "persona"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "identifique"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,abc", "detail": "high"},
+                    },
+                ],
+            },
+        ]
+    )
+    assert instructions == "persona"
+    assert items == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "identifique"},
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/jpeg;base64,abc",
+                    "detail": "high",
+                },
+            ],
+        }
+    ]
+
+
 def test_extract_output_text_from_multi_items():
     response = SimpleNamespace(
         output_text="",

@@ -183,6 +183,7 @@ class SalesInterpretation(BaseModel):
     _forbid_near_match: bool = PrivateAttr(default=False)
     _turn_contract_bound: bool = PrivateAttr(default=False)
     _excluded_product_ids: list[str] = PrivateAttr(default_factory=list)
+    _excluded_catalog_tokens: list[str] = PrivateAttr(default_factory=list)
     _turn_understanding: Any = PrivateAttr(default=None)
     _catalog_memory_rehydrate_skipped: bool = PrivateAttr(default=False)
     _prior_catalog_theme: str | None = PrivateAttr(default=None)

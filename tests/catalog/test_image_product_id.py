@@ -51,6 +51,64 @@ def test_parser_persists_image_url_for_whatsapp_photo():
     assert "Imagem recebida" in incoming.text
 
 
+def test_high_confidence_plain_sealander_rejects_gmt_sibling(monkeypatch):
+    import app.catalog.vision.image_product_id as module
+    from app.catalog.retrieval.hard_filter import hard_filter_products
+
+    values = {
+        "imageVisibleFeatureExclusionMinConfidence": 0.9,
+        "imageVisibleFeatureExclusionRules": """[{"feature":"gmt","detectedAliases":["gmt","segundo fuso"],"candidateAliases":["gmt"]}]""",
+    }
+    monkeypatch.setattr(module, "policy", lambda key: values[key])
+    interpretation = interpretation_from_identification(
+        ImageProductIdentification(
+            brand="Christopher Ward",
+            model="Sealander",
+            color="azul claro",
+            features=["automático", "datário"],
+            notes="SEALANDER AUTOMATIC SWISS MADE",
+            confidence=0.98,
+        )
+    )
+    products = [
+        {
+            "id": "8975",
+            "brand": "Christopher Ward",
+            "name": "Relógio Christopher Ward C63 Sealander GMT Automático Azul",
+        },
+        {
+            "id": "11695",
+            "brand": "Christopher Ward",
+            "name": "Relógio Christopher Ward C63 Sealander Automático Azul",
+        },
+    ]
+
+    assert [
+        product["id"]
+        for product in hard_filter_products(products, interpretation, mode="exact")
+    ] == ["11695"]
+
+
+def test_visible_gmt_keeps_gmt_candidates(monkeypatch):
+    import app.catalog.vision.image_product_id as module
+
+    values = {
+        "imageVisibleFeatureExclusionMinConfidence": 0.9,
+        "imageVisibleFeatureExclusionRules": """[{"feature":"gmt","detectedAliases":["gmt"],"candidateAliases":["gmt"]}]""",
+    }
+    monkeypatch.setattr(module, "policy", lambda key: values[key])
+    interpretation = interpretation_from_identification(
+        ImageProductIdentification(
+            brand="Christopher Ward",
+            model="Sealander GMT",
+            features=["GMT", "automático"],
+            confidence=0.98,
+        )
+    )
+
+    assert interpretation._excluded_catalog_tokens == []
+
+
 def test_parser_keeps_caption_with_image():
     incoming = parse_brevo_conversations_payload(_image_payload(with_caption=True))
 

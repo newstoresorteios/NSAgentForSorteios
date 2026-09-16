@@ -403,6 +403,36 @@ def messages_to_responses_parts(
             continue
         if role in {"user", "assistant", "developer"}:
             mapped_role = "user" if role == "developer" else role
+            if isinstance(content, list):
+                converted: list[dict[str, Any]] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    part_type = str(part.get("type") or "").strip()
+                    if part_type == "text":
+                        converted.append({
+                            "type": "output_text" if mapped_role == "assistant" else "input_text",
+                            "text": str(part.get("text") or ""),
+                        })
+                    elif part_type == "image_url" and mapped_role == "user":
+                        image = part.get("image_url")
+                        if isinstance(image, dict):
+                            image_url = image.get("url")
+                            detail = image.get("detail")
+                        else:
+                            image_url = image
+                            detail = None
+                        if image_url:
+                            converted_part = {
+                                "type": "input_image",
+                                "image_url": image_url,
+                            }
+                            if detail:
+                                converted_part["detail"] = detail
+                            converted.append(converted_part)
+                    else:
+                        converted.append(part)
+                content = converted
             input_items.append({"role": mapped_role, "content": content})
     instructions = "\n\n".join(instruction_parts) if instruction_parts else None
     return instructions, input_items
