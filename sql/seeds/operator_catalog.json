@@ -7172,6 +7172,62 @@
     "readOnly": false
   },
   {
+    "key": "catalogStorefrontFallbackEnabled",
+    "target": "policy",
+    "type": "boolean",
+    "default": true,
+    "label": "Fallback textual na vitrine",
+    "description": "Consulta a vitrine oficial quando o índice e a busca exata do Tray não encontram o modelo informado.",
+    "group": "Busca textual no catálogo",
+    "readOnly": false
+  },
+  {
+    "key": "catalogStorefrontFallbackMaxQueries",
+    "target": "policy",
+    "type": "integer",
+    "default": 3,
+    "label": "Consultas textuais na vitrine",
+    "description": "Quantidade máxima de reformulações determinísticas na vitrine oficial.",
+    "group": "Busca textual no catálogo",
+    "readOnly": false,
+    "min": 1,
+    "max": 5
+  },
+  {
+    "key": "catalogStorefrontFallbackMaxPages",
+    "target": "policy",
+    "type": "integer",
+    "default": 3,
+    "label": "Páginas do fallback textual",
+    "description": "Quantidade máxima de páginas consultadas por pesquisa textual na vitrine.",
+    "group": "Busca textual no catálogo",
+    "readOnly": false,
+    "min": 1,
+    "max": 10
+  },
+  {
+    "key": "catalogStorefrontFallbackCandidateLimit",
+    "target": "policy",
+    "type": "integer",
+    "default": 36,
+    "label": "Candidatos do fallback textual",
+    "description": "Quantidade máxima de produtos oficiais considerados por consulta textual.",
+    "group": "Busca textual no catálogo",
+    "readOnly": false,
+    "min": 1,
+    "max": 120
+  },
+  {
+    "key": "catalogStorefrontQueryStopwords",
+    "target": "policy",
+    "type": "textarea",
+    "default": "[\"quero\", \"procuro\", \"gostaria\", \"comprar\", \"um\", \"uma\", \"o\", \"a\", \"de\", \"do\", \"da\"]",
+    "label": "Termos ignorados na busca textual",
+    "description": "Lista JSON de palavras conversacionais removidas antes de pesquisar a frase do cliente na vitrine.",
+    "group": "Busca textual no catálogo",
+    "readOnly": false
+  },
+  {
     "key": "imageStorefrontMaxPages",
     "target": "policy",
     "type": "integer",

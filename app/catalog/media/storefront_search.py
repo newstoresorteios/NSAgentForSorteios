@@ -58,6 +58,24 @@ def _product_from_storefront_hit(hit: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def storefront_products_from_hits(
+    hits: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Convert official search evidence into candidates for later live revalidation."""
+    products = []
+    for hit in hits:
+        product = _product_from_storefront_hit(hit)
+        if not product.get("id") or not product.get("name") or not product.get("url"):
+            continue
+        product.update(
+            _factual_source="storefront_search",
+            _storefront_search_evidence=True,
+            _revalidated=False,
+        )
+        products.append(product)
+    return products
+
+
 def _decode_js_string(raw: str) -> str:
     text = raw.replace(r"\/", "/")
     try:

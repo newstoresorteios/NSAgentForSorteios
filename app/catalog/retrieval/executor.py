@@ -247,6 +247,10 @@ async def _execute_compiled_product_retrieval_unlocked(
 
     await seed_from_catalog_index(session)
     await run_probes(session, probe_requests)
+    if retrieval_plan.mode == "exact" and not session.hard_filtered:
+        from app.catalog.retrieval.storefront import run_storefront_fallback
+
+        await run_storefront_fallback(session)
     await run_discovery(
         session,
         discovery_requests,

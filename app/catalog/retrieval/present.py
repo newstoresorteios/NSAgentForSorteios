@@ -238,6 +238,12 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
             )
 
     final_products = refreshed or selected
+    if plan.mode == "exact" and refreshed and bool(
+        getattr(_runtime.get_settings(), "agent_catalog_index_write_enabled", True)
+    ):
+        from app.catalog.index.catalog_index import index_products_best_effort
+
+        index_products_best_effort(refreshed, factual_source="tray_live")
     try:
         excluded = excluded_brands_from_interpretation(interpretation)
         if excluded and final_products:

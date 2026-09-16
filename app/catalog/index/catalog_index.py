@@ -27,6 +27,7 @@ FactualSource = Literal[
     "catalog_cache",
     "catalog_index",
     "conversation_ref",
+    "storefront_search",
 ]
 
 
