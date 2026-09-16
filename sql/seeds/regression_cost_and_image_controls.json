@@ -1,0 +1,72 @@
+[
+  {
+    "key": "historyEvaluationJudgeObjectiveFailures",
+    "target": "policy",
+    "type": "boolean",
+    "label": "Avaliar falhas objetivas com IA",
+    "group": "Avaliação do histórico",
+    "description": "Quando desativado, uma falha já comprovada por ferramenta, estado ou regra determinística não consome uma segunda chamada do modelo avaliador.",
+    "default": false
+  },
+  {
+    "key": "agent_image_search_detail",
+    "attribute": "agent_image_search_detail",
+    "target": "setting",
+    "type": "text",
+    "label": "Detalhe da leitura de imagem",
+    "group": "Catálogo",
+    "description": "Nível de detalhe enviado ao modelo visual: auto, low ou high. Use high para leitura de marca e linha no mostrador.",
+    "default": "high",
+    "maxLength": 10
+  },
+  {
+    "key": "message.image_analysis_unavailable",
+    "target": "message",
+    "type": "textarea",
+    "label": "Falha técnica na análise de imagem",
+    "group": "Interpretação de imagens",
+    "description": "Resposta quando a imagem chegou, mas não pôde ser processada tecnicamente.",
+    "maxLength": 1200,
+    "default": "Recebi a imagem, mas não consegui processar o arquivo agora. Pode reenviar a foto? Se preferir, envie também a marca e o modelo."
+  },
+  {
+    "key": "message.image_identify_instructions",
+    "target": "message",
+    "type": "textarea",
+    "label": "Instruções de identificação visual",
+    "group": "Interpretação de imagens",
+    "description": "Prompt visual editável. Preserve a variável {commercial_model_rules}, que recebe as famílias comerciais cadastradas.",
+    "maxLength": 12000,
+    "default": "Você identifica relógios em fotos enviadas por clientes da NewStore. Leia primeiro todos os textos e logotipos visíveis no mostrador e extraia o máximo de identidade comercial: marca, modelo ou coleção, referência legível, cor do mostrador, acabamento da caixa e pulseira, e funções visíveis. Não fique apenas em marca e cor. O logotipo de duas bandeiras e o texto SEALANDER/AUTOMATIC devem ser considerados evidência de Christopher Ward, linha Sealander e movimento automático quando estiverem visíveis. Não invente referência: deixe reference nulo quando o código não estiver legível. Em color, registre somente a cor do mostrador. Em case_finish, separe caixa e pulseira. Se houver AUTOMATIC, cronógrafo, diver, GMT ou quartz visível, registre em features. Use a legenda apenas como dica complementar; a imagem é a fonte principal. Use confidence entre 0 e 1 conforme a legibilidade. Famílias comerciais reconhecidas:\n{commercial_model_rules}"
+  },
+  {
+    "key": "message.image_not_watch",
+    "target": "message",
+    "type": "textarea",
+    "label": "Imagem sem relógio reconhecido",
+    "group": "Interpretação de imagens",
+    "description": "Resposta quando a análise visual não reconhece um relógio de pulso.",
+    "maxLength": 1200,
+    "default": "Recebi a imagem, mas ela não parece mostrar um relógio de pulso. Pode enviar outra foto do relógio?"
+  },
+  {
+    "key": "message.image_identity_uncertain_with_hint",
+    "target": "message",
+    "type": "textarea",
+    "label": "Imagem parcialmente identificada",
+    "group": "Interpretação de imagens",
+    "description": "Pede confirmação preservando a marca ou linha que já foi lida. Mantenha a variável {hint}.",
+    "maxLength": 1200,
+    "default": "Pela foto, consegui ler {hint}, mas não confirmei a versão exata. É esse modelo mesmo? Se puder, envie uma foto mais nítida do mostrador ou da referência."
+  },
+  {
+    "key": "message.image_identity_uncertain",
+    "target": "message",
+    "type": "textarea",
+    "label": "Imagem sem identidade suficiente",
+    "group": "Interpretação de imagens",
+    "description": "Resposta quando a foto foi analisada, mas marca e linha não ficaram legíveis.",
+    "maxLength": 1200,
+    "default": "Não consegui ler marca e modelo com segurança nessa foto. Pode enviar uma imagem mais nítida do mostrador ou me dizer a marca?"
+  }
+]

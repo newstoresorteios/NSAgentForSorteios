@@ -8,8 +8,8 @@ from typing import Any
 from app.config import get_settings
 from app.models import IncomingMessage
 from app.catalog.vision.prompt import (
-    IMAGE_IDENTIFY_INSTRUCTIONS,
     ImageProductIdentification,
+    image_identify_instructions,
 )
 
 
@@ -82,14 +82,20 @@ async def identify_product_from_image(
         user_text += f"\nLegenda do cliente: {caption}"
 
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": IMAGE_IDENTIFY_INSTRUCTIONS},
+        {"role": "system", "content": image_identify_instructions()},
         {
             "role": "user",
             "content": [
                 {"type": "text", "text": user_text},
                 {
                     "type": "image_url",
-                    "image_url": {"url": data_url},
+                    "image_url": {
+                        "url": data_url,
+                        "detail": str(
+                            getattr(settings, "agent_image_search_detail", "high")
+                            or "high"
+                        ),
+                    },
                 },
             ],
         },
@@ -100,6 +106,7 @@ async def identify_product_from_image(
         "has_caption": bool(caption),
         "image_bytes": len(image_bytes),
         "content_type": content_type,
+        "detail": str(getattr(settings, "agent_image_search_detail", "high")),
     })
     from app.llm.openai_gateway import parse_structured_output
 

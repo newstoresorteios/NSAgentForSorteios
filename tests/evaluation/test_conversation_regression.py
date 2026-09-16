@@ -141,6 +141,29 @@ async def test_forbidden_operation_remains_critical_when_sandbox_blocks_it():
     assert result['critical_errors']==['forbidden_tool_called:create_order']
 
 
+@pytest.mark.asyncio
+async def test_objective_failure_skips_model_judge_by_cost_policy(monkeypatch):
+    from app.evaluation.regression_judge import grade_turn
+    from app.evaluation.regression_models import RegressionStep
+
+    async def model_must_not_run(**_kwargs):
+        raise AssertionError('model judge must be skipped')
+
+    monkeypatch.setattr(
+        'app.evaluation.regression_judge.parse_structured_output',
+        model_must_not_run,
+    )
+    step=RegressionStep(
+        input='quero esse relógio',
+        expected=Expectations(requirements=['consultar catálogo'],required_tools=['search_products']),
+    )
+    result=await grade_turn(None,step,{'reply':'Preciso da marca.','tools':[]},[],None)
+
+    assert result['outcome']=='failed'
+    assert result['judge_skipped']=='objective_failure'
+    assert result['objective_failures']==['required_tool_missing:search_products']
+
+
 def test_score_counts_unexecuted_cases_and_does_not_weight_easy_category_more():
     from app.evaluation.regression_models import RegressionSuite
     from app.evaluation.regression_score import summarize

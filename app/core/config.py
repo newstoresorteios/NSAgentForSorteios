@@ -719,6 +719,11 @@ class Settings(BaseSettings):
         default="",
         alias="AGENT_IMAGE_SEARCH_MODEL",
     )
+    agent_image_search_detail: str = Field(
+        default="high",
+        alias="AGENT_IMAGE_SEARCH_DETAIL",
+        pattern="^(auto|low|high)$",
+    )
     agent_image_search_min_confidence: float = Field(
         default=0.55,
         alias="AGENT_IMAGE_SEARCH_MIN_CONFIDENCE",

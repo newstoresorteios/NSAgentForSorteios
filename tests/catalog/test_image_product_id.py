@@ -640,12 +640,22 @@ async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
                 part.get("content") if isinstance(part.get("content"), list) else []
             )
         )
+        image_block = next(
+            block
+            for part in messages
+            for block in (
+                part.get("content") if isinstance(part.get("content"), list) else []
+            )
+            if isinstance(block, dict) and block.get("type") == "image_url"
+        )
+        assert image_block["image_url"]["detail"] == "high"
         return SimpleNamespace(parsed=identified, api_mode="chat_completions")
 
     monkeypatch.setattr("app.catalog.vision.identify.get_settings", lambda: SimpleNamespace(
         openai_api_key="sk-test",
         openai_model="gpt-4.1-mini",
         agent_image_search_model="",
+        agent_image_search_detail="high",
         agent_image_download_max_bytes=8_000_000,
     ))
     monkeypatch.setattr("app.catalog.vision.identify.download_image_file", fake_download)
@@ -654,6 +664,63 @@ async def test_identify_product_from_image_uses_vision_parse(monkeypatch):
     result = await identify_product_from_image(message)
     assert result.brand == "Christopher Ward"
     assert result.confidence == 0.88
+
+
+def test_sealander_image_identity_preserves_visible_dial_evidence():
+    from app.catalog.vision.image_product_id import interpretation_from_identification
+
+    identified = ImageProductIdentification(
+        is_watch=True,
+        brand="Christopher Ward",
+        model="Sealander Automatic",
+        color="azul claro",
+        case_finish="aço com pulseira preta",
+        features=["automático"],
+        confidence=0.94,
+    )
+
+    interpretation = interpretation_from_identification(identified)
+
+    assert interpretation.subject.brand == "Christopher Ward"
+    assert "Sealander" in interpretation.subject.model
+    assert interpretation.preferences.color == "azul claro"
+    assert "Automático" in interpretation.preferences.attributes
+    assert interpretation.ready_for_retrieval is True
+
+
+@pytest.mark.asyncio
+async def test_image_failure_uses_operator_message_and_preserves_diagnostic(monkeypatch):
+    from app.catalog.vision import image_product_id as module
+
+    message = IncomingMessage(
+        channel="whatsapp",
+        text="quero esse relógio",
+        input_modality="text_with_image",
+        attachment_type="image",
+        image_url="https://example.com/sealander.jpg",
+        image_mime_type="image/jpeg",
+    )
+
+    async def fail_identification(_message):
+        raise RuntimeError("vision_unavailable")
+
+    async def no_visual_fallback(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(
+        agent_image_search_enabled=True,
+        agent_image_search_min_confidence=0.55,
+        agent_visual_search_enabled=False,
+        database_url="",
+    ))
+    monkeypatch.setattr(module, "identify_product_from_image", fail_identification)
+    monkeypatch.setattr(module, "_try_visual_fallback", no_visual_fallback)
+
+    result = await module.handle_image_product_search(message)
+
+    assert result.safety_reason == "image_identify_failed"
+    assert "processar o arquivo" in result.reply_text
+    assert result.response_metadata["image_search"] is True
 
 
 @pytest.mark.asyncio
@@ -901,7 +968,8 @@ async def test_handle_image_product_search_asks_when_confidence_low(monkeypatch)
     result = await handle_image_product_search(message)
     assert result is not None
     assert result.safety_reason == "image_identify_low_confidence"
-    assert "não consegui" in result.reply_text.casefold() or "confirma" in result.reply_text.casefold()
+    assert "certina" in result.reply_text.casefold()
+    assert "foto" in result.reply_text.casefold()
 
 
 def test_parser_detects_image_from_url_extension_without_type():
@@ -1133,12 +1201,15 @@ def test_vision_prompt_uses_commercial_line_table():
         COMMERCIAL_LINES,
         vision_commercial_model_rules,
     )
-    from app.catalog.vision.prompt import IMAGE_IDENTIFY_INSTRUCTIONS
+    from app.catalog.vision.prompt import image_identify_instructions
 
     rules = vision_commercial_model_rules()
     assert "Prospex Sea Samurai" in rules
     assert "Promaster Sky Pilot" in rules
-    assert rules in IMAGE_IDENTIFY_INSTRUCTIONS
+    prompt = image_identify_instructions()
+    assert rules in prompt
+    assert "Sealander" in prompt
+    assert "Christopher Ward" in prompt
     models = {line.catalog_model for line in COMMERCIAL_LINES}
     assert "Prospex Sea Samurai" in models
     assert "Promaster Sky Pilot" in models

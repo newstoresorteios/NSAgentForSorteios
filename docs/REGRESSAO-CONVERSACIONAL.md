@@ -28,6 +28,14 @@ Critérios de conclusão:
 
 Tempo de resposta, chamadas, tokens e falhas de integração são relatados separadamente. Uma resposta correta que demora demais deve aparecer como limitação operacional, mesmo quando passa no critério funcional.
 
+## Execução econômica
+
+- O executor usa um worker, uma repetição e no máximo 24 turnos remotos por invocação por padrão.
+- Use `--max-turns 0` somente para uma rodada final deliberadamente ilimitada.
+- Falhas já comprovadas por regras determinísticas não chamam o juiz generativo quando `historyEvaluationJudgeObjectiveFailures` estiver desativado.
+- O checkpoint permanece no manifesto para retomar o lote sem repetir turnos concluídos.
+- Casos com imagem devem validar leitura visual, preservação da identidade detectada e busca no catálogo. A análise usa o nível configurado em `agent_image_search_detail`.
+
 ## Dados e resultados esperados
 
 A coleta inicial encontrou 645 turnos entregues em 243 conversas. A base preserva empresa, canal, conta e contexto anterior. Respostas antigas servem como evidência de comportamento, nunca como gabarito automático.

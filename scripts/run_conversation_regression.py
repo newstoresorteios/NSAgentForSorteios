@@ -46,8 +46,10 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--split',choices=['development','validation','all'],default='development')
     parser.add_argument('--scenario',action='append')
-    parser.add_argument('--workers',type=int,choices=range(1,9),default=2)
+    parser.add_argument('--workers',type=int,choices=range(1,9),default=1)
     parser.add_argument('--repetitions',type=int,choices=[1,2,3],default=1)
+    parser.add_argument('--max-turns',type=int,default=24,
+                        help='Maximum remote turns in this invocation; 0 means unlimited')
     args=parser.parse_args()
     if args.vercel_cli and not args.vercel_auth_dir: parser.error('--vercel-auth-dir is required')
     client=Client(args)
@@ -70,10 +72,12 @@ def main():
                     for s in cases for r in range(args.repetitions)]}
     mutex=Lock()
     provider_blocked=Event()
+    remaining_turns=max(0,args.max_turns)
     def save():
         path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     save()
     def run(item):
+        nonlocal remaining_turns
         if provider_blocked.is_set():
             return
         scenario=next(s for s in cases if s['key']==item['scenario'])
@@ -92,6 +96,11 @@ def main():
                 if provider_blocked.is_set():
                     return
                 with mutex:
+                    if args.max_turns and remaining_turns <= 0:
+                        if item['status'] != 'pending': item.update(status='paused_budget',step=step)
+                        save()
+                        return
+                    if args.max_turns: remaining_turns -= 1
                     item.update(status='running',step=step);save()
                 report=client.request('/api/admin/regression/turn',{'workspace_id':args.workspace,
                     'suite_id':suite['id'],'scenario_key':scenario['key'],'run_id':item['run_id'],'step_index':step})

@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 from openai import APIError
+from app.configuration.runtime import message as operator_message
 from app.config import get_settings
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.ops.turn_runtime import LLMCallBudgetExceeded
@@ -264,26 +265,16 @@ def _clarification_result(
     identified: ImageProductIdentification | None = None,
 ) -> AgentResult:
     if identified and not identified.is_watch:
-        text = (
-            "Recebi a imagem, mas não parece ser a foto de um relógio. "
-            "Pode enviar a foto do relógio ou me dizer a marca e o modelo?"
-        )
+        text = operator_message("image_not_watch")
     elif identified and (identified.brand or identified.model):
         hint = " ".join(
             part
             for part in (identified.brand, identified.model)
             if part
         ).strip()
-        text = (
-            f"Não consegui confirmar o modelo com segurança pela foto"
-            f"{f' ({hint})' if hint else ''}. "
-            "Me confirma a marca e o modelo, ou envia uma foto mais nítida do mostrador?"
-        )
+        text = operator_message("image_identity_uncertain_with_hint", hint=hint)
     else:
-        text = (
-            "Recebi a imagem, mas não consegui ler marca/modelo com segurança. "
-            "Pode me dizer a marca e o modelo, ou enviar uma foto mais nítida?"
-        )
+        text = operator_message("image_identity_uncertain")
     return AgentResult(
         reply_text=text,
         intent="commerce",
@@ -633,10 +624,17 @@ async def handle_image_product_search(
             ),
         ):
             raise
-        print("[sales.image.identify.error]", {
-            "error_type": type(exc).__name__,
-            "error": str(exc)[:240],
-        })
+        from app.ops.observability import log_exception
+
+        log_exception(
+            "sales.image.identify.error",
+            exc,
+            {
+                "image_url_present": bool((message.image_url or "").strip()),
+                "image_mime_type": message.image_mime_type,
+                "attachment_type": message.attachment_type,
+            },
+        )
         visual = await _try_visual_fallback(
             message,
             identified=None,
@@ -645,10 +643,7 @@ async def handle_image_product_search(
         if visual is not None:
             return visual
         return AgentResult(
-            reply_text=(
-                "Recebi a imagem, mas não consegui analisar agora. "
-                "Pode me dizer a marca e o modelo do relógio?"
-            ),
+            reply_text=operator_message("image_analysis_unavailable"),
             intent="commerce",
             handoff_required=False,
             safety_reason="image_identify_failed",

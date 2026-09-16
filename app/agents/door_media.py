@@ -89,6 +89,17 @@ async def try_media_routes(
             )
 
     if not skip_generic_image and door.image_search_eligible(message):
+        from app.llm.llm_call_policy import build_llm_call_budget
+        from app.ops.runtime_context import get_current_turn
+
+        runtime = get_current_turn()
+        if runtime is not None:
+            image_budget = build_llm_call_budget(
+                execution_path="complex",
+                risk_signals=["image"],
+            )
+            runtime.promote_budget(int(image_budget.get("max_calls") or 0))
+            runtime.execution_path = "complex"
         image_result = await door.handle_image_product_search(message)
         if image_result is not None:
             return door._annotate_agent_result(

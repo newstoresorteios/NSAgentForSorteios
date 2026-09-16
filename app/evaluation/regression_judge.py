@@ -96,6 +96,17 @@ async def grade_turn(scenario, step, replay, history, persona):
         return {'outcome':'failed' if critical else 'inconclusive','objective_failures':failures,
                 'execution_errors':[replay.get('error'),*replay.get('blocked',[]),*unexpected],
                 'critical_errors':critical}
+    if failures and not bool(policy('historyEvaluationJudgeObjectiveFailures')):
+        return {
+            'outcome':'failed',
+            'criteria':[],
+            'factual_errors':[],
+            'critical_errors':critical,
+            'summary':'Falha objetiva; avaliação generativa dispensada pela política de custo.',
+            'objective_failures':failures,
+            'execution_errors':[],
+            'judge_skipped':'objective_failure',
+        }
     criteria = expected.requirements + ['NÃO: ' + value for value in expected.forbidden_claims]
     from app.verify.persona_evidence import persona_evidence
     metadata = replay.get('metadata') or {}
