@@ -8,6 +8,7 @@ import pytest
 from app.models import BrevoSendResult, IncomingMessage
 from app.learning.remarketing import (
     _build_remarketing_message,
+    _product_name,
     _remarketing_stage,
     is_remarketing_opt_out,
     remarketing_identity_key,
@@ -36,6 +37,20 @@ def test_stage_prioritizes_payment_checkout_and_cart():
     assert _remarketing_stage({"purchase_stage": "shipping"}) == "checkout"
     assert _remarketing_stage({"cart_session_id": "cart-1"}) == "cart"
     assert _remarketing_stage({"active_product": {"name": "Relógio"}}) == "product_selection"
+
+
+def test_abandoned_purchase_target_remains_available_to_remarketing():
+    state = {
+        "active_product": None,
+        "last_presented_products": [],
+        "purchase_target": {
+            "product_id": "12343",
+            "name": "Hamilton Khaki Field Murph",
+        },
+    }
+
+    assert _remarketing_stage(state) == "product_selection"
+    assert _product_name(state) == "Hamilton Khaki Field Murph"
 
 
 def test_message_is_stage_specific_and_always_contains_opt_out():

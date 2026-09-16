@@ -248,6 +248,91 @@ def test_checkout_with_active_product_creates_cart_before_preparing_order():
     assert repaired.stop_clarification is True
 
 
+def test_checkout_recovers_recent_purchase_target_without_visible_shortlist():
+    from datetime import datetime, timezone
+    from app.sales.purchase_selection import recover_purchase_target_for_checkout
+
+    now = datetime(2026, 9, 16, 18, 17, tzinfo=timezone.utc)
+    state = _presented_state(
+        active_product=None,
+        last_presented_products=[],
+        forget_shortlist=True,
+        purchase_target={
+            "product_id": "12343",
+            "name": "Hamilton Khaki Field Murph",
+            "reference": "H70405130",
+        },
+        purchase_target_selected_at=datetime(2026, 9, 16, 18, 1, tzinfo=timezone.utc),
+    )
+    interpretation = _interp(goal="buy", checkout_action="prepare_order")
+
+    recovered = recover_purchase_target_for_checkout(
+        interpretation,
+        message_text="quero seguir para o checkout",
+        state=state,
+        now=now,
+    )
+    repaired = repair_presented_purchase_selection(
+        interpretation,
+        message_text="quero seguir para o checkout",
+        state=recovered,
+    )
+
+    assert recovered.active_product is not None
+    assert recovered.active_product.product_id == "12343"
+    assert repaired.purchase_action == "create_cart"
+    assert repaired.reference_type == "current_product"
+
+
+def test_expired_purchase_target_is_not_recovered():
+    from datetime import datetime, timezone
+    from app.sales.purchase_selection import recover_purchase_target_for_checkout
+
+    state = _presented_state(
+        active_product=None,
+        last_presented_products=[],
+        purchase_target={"product_id": "old", "name": "Produto antigo"},
+        purchase_target_selected_at=datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc),
+    )
+
+    recovered = recover_purchase_target_for_checkout(
+        _interp(goal="buy", checkout_action="prepare_order"),
+        message_text="quero seguir para o checkout",
+        state=state,
+        now=datetime(2026, 9, 17, 8, 10, tzinfo=timezone.utc),
+    )
+
+    assert recovered.active_product is None
+    assert recovered.purchase_target is None
+
+
+def test_named_new_product_does_not_recover_previous_purchase_target():
+    from datetime import datetime, timezone
+    from app.sales.purchase_selection import recover_purchase_target_for_checkout
+
+    state = _presented_state(
+        active_product=None,
+        last_presented_products=[],
+        purchase_target={"product_id": "12343", "name": "Hamilton Murph"},
+        purchase_target_selected_at=datetime(2026, 9, 16, 18, 0, tzinfo=timezone.utc),
+    )
+    interpretation = _interp(
+        goal="buy",
+        checkout_action="prepare_order",
+        subject={"brand": "Seiko", "model": "Prospex"},
+    )
+
+    recovered = recover_purchase_target_for_checkout(
+        interpretation,
+        message_text="quero checkout do Seiko Prospex",
+        state=state,
+        now=datetime(2026, 9, 16, 18, 10, tzinfo=timezone.utc),
+    )
+
+    assert recovered.active_product is None
+    assert recovered.purchase_target.product_id == "12343"
+
+
 def test_repair_fechar_a_compra_binds_active_inspected_sku():
     state = _seiko_shortlist_state(
         active_product={

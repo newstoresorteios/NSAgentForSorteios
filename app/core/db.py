@@ -1324,7 +1324,7 @@ def _load_commerce_states_for_filter(
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT response.provider_response
+                SELECT response.provider_response, response.created_at
                 FROM public.ai_agent_responses AS response
                 JOIN public.ai_inbound_messages AS inbound
                   ON inbound.id = response.inbound_id
@@ -1346,6 +1346,17 @@ def _load_commerce_states_for_filter(
         provider_response = row.get("provider_response") if isinstance(row, dict) else None
         state = _commerce_state_from_provider_response(provider_response)
         if state:
+            # Backfill the bounded purchase target for responses written
+            # before purchase_target became part of the JSON commerce state.
+            active = state.get("active_product")
+            if isinstance(active, dict) and active.get("product_id"):
+                state = dict(state)
+                state.setdefault("purchase_target", active)
+                stamp = row.get("created_at") if isinstance(row, dict) else None
+                if stamp is not None and not state.get("purchase_target_selected_at"):
+                    state["purchase_target_selected_at"] = (
+                        stamp.isoformat() if hasattr(stamp, "isoformat") else stamp
+                    )
             states.append(state)
     return states
 

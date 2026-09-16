@@ -116,6 +116,8 @@ _ORDER_RECOVERY_KEYS = (
     "cart_session_id",
     "cart_url",
     "checkout_draft",
+    "purchase_target",
+    "purchase_target_selected_at",
 )
 
 

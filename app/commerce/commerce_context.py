@@ -143,6 +143,12 @@ class CommerceConversationState(BaseModel):
     active_domain: Literal["commerce", "raffle"] | None = None
     active_topic: str | None = None
     active_product: CommerceProductReference | None = None
+    # Last product that the customer explicitly advanced toward purchase.
+    # It is intentionally separate from active_product: generic clarification
+    # and thread changes may clear the visible browse state, while a bounded
+    # checkout continuation can still recover the selected SKU.
+    purchase_target: CommerceProductReference | None = None
+    purchase_target_selected_at: datetime | None = None
     last_presented_products: list[PresentedCommerceProduct] = Field(default_factory=list)
     # Explicit “start over”: persist/load must not revive the last shortlist.
     forget_shortlist: bool = False
@@ -731,6 +737,8 @@ def evolve_commerce_state(
     if metadata.get("dialogue_phase_reset"):
         state.last_presented_products = []
         state.active_product = None
+        state.purchase_target = None
+        state.purchase_target_selected_at = None
     elif state.cart_session_id and (
         pending_action in _CHECKOUT_PENDING_ACTIONS
         or purchase_stage in _CHECKOUT_PURCHASE_STAGES
@@ -923,6 +931,9 @@ def evolve_commerce_state(
     if isinstance(resolved, dict):
         try:
             state.active_product = CommerceProductReference.model_validate(resolved)
+            state.purchase_target = state.active_product.model_copy(deep=True)
+            from datetime import timezone
+            state.purchase_target_selected_at = datetime.now(timezone.utc)
             # A newly confirmed SKU is fresh browse evidence. It must revive
             # the sale even if an older turn left a shortlist tombstone.
             state.forget_shortlist = False
@@ -968,6 +979,9 @@ def evolve_commerce_state(
         state.active_product = CommerceProductReference.model_validate(
             compact_products[0].model_dump(exclude={"position"})
         )
+        state.purchase_target = state.active_product.model_copy(deep=True)
+        from datetime import timezone
+        state.purchase_target_selected_at = datetime.now(timezone.utc)
     resolution_state = metadata.get("product_resolution_state")
     if isinstance(resolution_state, str) and resolution_state.strip():
         state.product_resolution_state = resolution_state.strip()

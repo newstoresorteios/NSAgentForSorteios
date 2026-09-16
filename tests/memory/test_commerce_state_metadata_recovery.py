@@ -83,3 +83,33 @@ def test_confirmed_active_product_revives_sale_after_old_tombstone():
     assert updated.active_product is not None
     assert updated.active_product.product_id == "12343"
     assert updated.forget_shortlist is False
+    assert updated.purchase_target is not None
+    assert updated.purchase_target.product_id == "12343"
+    assert updated.purchase_target_selected_at is not None
+
+
+def test_purchase_target_survives_later_clarification_tombstone():
+    selected = {
+        "purchase_target": {
+            "product_id": "12343",
+            "name": "Hamilton Khaki Field Murph",
+            "reference": "H70405130",
+        },
+        "purchase_target_selected_at": "2026-09-16T18:01:00+00:00",
+        "active_product": {"product_id": "12343"},
+        "dialogue_phase": "buy",
+    }
+    clarification = {
+        "forget_shortlist": True,
+        "active_product": None,
+        "last_presented_products": [],
+        "dialogue_phase": "discovery",
+    }
+
+    from app.memory.context_resume import merge_commerce_states
+
+    merged = merge_commerce_states(clarification, selected)
+
+    assert merged["active_product"] is None
+    assert merged["forget_shortlist"] is True
+    assert merged["purchase_target"]["product_id"] == "12343"

@@ -110,6 +110,12 @@ async def handle_sales_message_inner(
     )
     interpretation = normalize_identity(interpretation)
     state = commerce_state or CommerceConversationState()
+    from app.sales.purchase_selection import recover_purchase_target_for_checkout
+    state = recover_purchase_target_for_checkout(
+        interpretation,
+        message_text=message.text,
+        state=state,
+    )
     from app.sales.contextual_questions import (normalize_followup, try_contextual_question,
         normalize_ready_requirement, recover_mentioned_product, try_availability_question)
     interpretation, state = normalize_followup(message.text, interpretation, state, recent_turns)

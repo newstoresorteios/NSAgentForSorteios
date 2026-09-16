@@ -334,6 +334,13 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
     )
     if browse_reset_this_turn:
         commerce_state = reset_browse_memory_keep_orders(commerce_state)
+        from app.sales.dialogue_phase import is_commerce_continuation
+
+        if not is_commerce_continuation(incoming.text):
+            # A new browse must not inherit a previously abandoned SKU. The
+            # remarketing snapshot remains independent in its own tables.
+            commerce_state.purchase_target = None
+            commerce_state.purchase_target_selected_at = None
         if inbound_id is not None:
             commerce_state.history_cut_inbound_id = inbound_id
     # New product photo starts a fresh identification — never price the

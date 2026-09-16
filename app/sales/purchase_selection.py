@@ -404,6 +404,65 @@ def skips_discovery_clarification(
     return False
 
 
+def recover_purchase_target_for_checkout(
+    interpretation: SalesInterpretation | None,
+    *,
+    message_text: str | None,
+    state: CommerceConversationState,
+    now=None,
+) -> CommerceConversationState:
+    """Restore a recently selected SKU only for an unqualified checkout ask."""
+    if state.active_product is not None or state.purchase_target is None:
+        return state
+    checkout_requested = bool(
+        is_checkout_utterance(message_text)
+        or (
+            interpretation is not None
+            and interpretation.checkout_action in {"prepare_order", "create_order"}
+        )
+    )
+    if not checkout_requested:
+        return state
+
+    # A named brand/model/reference is a new request and must never be pinned
+    # to the previous selection.
+    if interpretation is not None:
+        from app.sales.conversation_repair import has_explicit_lookup_identity
+
+        if has_explicit_lookup_identity(message_text, interpretation):
+            return state
+
+    from datetime import datetime, timezone
+    from app.configuration.runtime import policy
+
+    selected_at = state.purchase_target_selected_at
+    if selected_at is None:
+        return state
+    if selected_at.tzinfo is None:
+        selected_at = selected_at.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    max_age = int(policy("browseContextMaxAgeSeconds"))
+    if (current - selected_at).total_seconds() >= max_age:
+        expired = state.model_copy(deep=True)
+        expired.purchase_target = None
+        expired.purchase_target_selected_at = None
+        return expired
+
+    recovered = state.model_copy(deep=True)
+    recovered.active_product = recovered.purchase_target.model_copy(deep=True)
+    recovered.forget_shortlist = False
+    recovered.closed_by_farewell = False
+    recovered.dialogue_phase = "buy"
+    recovered.purchase_stage = "selection"
+    print("[sales.purchase.target_recovered]", {
+        "product_id": recovered.active_product.product_id,
+        "max_age_seconds": max_age,
+    })
+    return recovered
+
+
 def repair_presented_purchase_selection(
     interpretation: SalesInterpretation | None,
     *,
@@ -457,9 +516,6 @@ def repair_presented_purchase_selection(
         and interpretation.purchase_action != "create_cart"
     ):
         return interpretation
-    if not presented:
-        return interpretation
-
     checkout_requested = bool(
         interpretation.checkout_action in {"prepare_order", "create_order"}
         or re.search(r"\bcheckout\b", _fold(message_text))
@@ -476,6 +532,9 @@ def repair_presented_purchase_selection(
             reference_type="current_product",
             extra={"product_id": state.active_product.product_id},
         )
+
+    if not presented:
+        return interpretation
 
     named = match_presented_product_from_text(
         message_text,

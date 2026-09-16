@@ -90,7 +90,11 @@ def _remarketing_stage(state: dict[str, Any]) -> str:
         return "checkout"
     if state.get("cart_session_id") or purchase_stage == "cart_created":
         return "cart"
-    if state.get("active_product") or state.get("last_presented_products"):
+    if (
+        state.get("active_product")
+        or state.get("purchase_target")
+        or state.get("last_presented_products")
+    ):
         return "product_selection"
     return "commercial_interest"
 
@@ -99,6 +103,9 @@ def _product_name(state: dict[str, Any]) -> str | None:
     active = state.get("active_product")
     if isinstance(active, dict) and active.get("name"):
         return str(active["name"])[:300]
+    target = state.get("purchase_target")
+    if isinstance(target, dict) and target.get("name"):
+        return str(target["name"])[:300]
     presented = state.get("last_presented_products")
     if isinstance(presented, list) and presented and isinstance(presented[0], dict):
         name = presented[0].get("name")
