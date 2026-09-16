@@ -1,0 +1,72 @@
+[
+  {
+    "key": "conversationFollowupRules",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Continuidade, correções e perguntas sobre produtos",
+    "group": "Decisão comercial",
+    "description": "JSON com expressões aplicadas ao texto sem acentos. Separa correções de busca, endereço da loja e consultas ao produto conhecido de ações de compra.",
+    "maxLength": 12000,
+    "default": "{\"deniesBrand\": \"\\\\b(?:(?:nao (?:disse|pedi|falei|escolhi)).{0,35}marca|(?:quem|que) disse que (?:era|e))\\\\b\", \"correctsSearch\": \"\\\\b(?:corrigindo|esses nao sao|essas nao sao|nao foi essa cor)\\\\b\", \"freshSearch\": \"\\\\b(?:quero|queria|procuro|busco|me mostra|me mostre).{0,20}(?:um|uma|relogios|opcoes)\\\\b\", \"storeLink\": \"\\\\b(?:link|endereco|site) (?:da|de|dessa|de sua|da sua) loja\\\\b\", \"productMedia\": \"\\\\b(?:link|foto|fotos|imagem|imagens)\\\\b\", \"productPhoto\": \"\\\\b(?:foto|fotos|imagem|imagens)\\\\b\", \"deictic\": \"\\\\b(?:esse|essa|desse|dessa|dele|dela|primeiro|segundo|sugeriu|mencionou|link|foto|fotos)\\\\b\"}"
+  },
+  {
+    "key": "message.store_link_reply",
+    "target": "message",
+    "type": "textarea",
+    "label": "Endereço oficial da loja",
+    "group": "Mensagens comerciais",
+    "description": "Entrega o endereço configurado em business.store_url sem requalificação.",
+    "maxLength": 4000,
+    "default": "O endereço oficial da loja é: {url}"
+  },
+  {
+    "key": "message.shipping_catalog_estimate",
+    "target": "message",
+    "type": "textarea",
+    "label": "Prazo disponível no catálogo",
+    "group": "Frete e entrega",
+    "description": "Orientação de prazo; regras de preço e entrega vêm da persona publicada.",
+    "maxLength": 4000,
+    "default": "Para {name}, o catálogo informa: {availability}. Confira o prazo final para seu CEP no checkout: {url}"
+  },
+  {
+    "key": "message.shipping_catalog_checkout",
+    "target": "message",
+    "type": "textarea",
+    "label": "Consultar entrega no checkout",
+    "group": "Frete e entrega",
+    "description": "Usada quando ainda não há estimativa confirmada para o endereço.",
+    "maxLength": 4000,
+    "default": "Para {name}, consulte o prazo informando seu CEP no checkout: {url}. Ainda não tenho uma estimativa confirmada para seu endereço."
+  },
+  {
+    "key": "message.instructions.shipping_leadtime_guidance.6e088df59a",
+    "target": "message",
+    "type": "textarea",
+    "label": "Orientação geral de entrega",
+    "group": "Frete e entrega",
+    "description": "Consulta de prazo sem contradizer a política comercial de entrega incluída.",
+    "maxLength": 4000,
+    "default": "O prazo depende do produto e do CEP. Você pode consultá-lo no checkout do site, antes de finalizar a compra. Se precisar de ajuda para localizar o produto, me diga o modelo."
+  },
+  {
+    "key": "conversationPreflightRules",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Rotas prioritárias de atendimento",
+    "group": "Decisão comercial",
+    "description": "Lista JSON de expressões sem acentos, ação reply ou handoff e chave de mensagem. Executada antes de seleção de produto.",
+    "maxLength": 12000,
+    "default": "[{\"pattern\": \"\\\\b(?:cvv|cvc|numero(?: completo)? (?:do|de) (?:meu )?cartao)\\\\b\", \"action\": \"reply\", \"message\": \"secure_card_checkout\"}, {\"pattern\": \"\\\\b(?:recebi.{0,50}defeito|quero devolver|pedir reembolso|solicitar devolucao)\\\\b\", \"action\": \"handoff\", \"message\": \"after_sales_handoff\"}]"
+  },
+  {
+    "key": "comparisonQuestionPattern",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Pedidos de comparação de produtos",
+    "group": "Decisão comercial",
+    "description": "Expressão aplicada ao texto sem acentos para comparação entre referências ou itens já listados.",
+    "maxLength": 2000,
+    "default": "\\b(?:compare|comparar|comparacao|qual dos dois|diferenca entre|ambos)\\b"
+  }
+]

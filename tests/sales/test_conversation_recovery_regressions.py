@@ -60,6 +60,28 @@ def test_model_normalization_is_idempotent():
         assert item.subject.model == "Open Heart"
 
 
+def test_explicit_product_switch_does_not_reintroduce_previous_model_and_color():
+    item=interpretation()
+    item.domain_change_explicit=True
+    normalized=normalize_sales_interpretation(item,message_text='agora quero Orient Open Heart preto',
+        context_text='Quero Tissot PRX azul com caixa de 35mm')
+    assert normalized.subject.model=='Open Heart'
+    assert normalized.preferences.color=='preto'
+    assert not any('35mm' in a for a in normalized.preferences.attributes)
+
+
+@pytest.mark.asyncio
+async def test_named_current_product_price_does_not_wait_for_missing_photo():
+    item=interpretation()
+    item.subject.model='Kamasu'
+    state=CommerceConversationState(active_product=CommerceProductReference(
+        product_id='123',name='Orient Kamasu',brand='Orient'))
+    result=await resolve_catalog_reference(message=IncomingMessage(text='Qual o preço desse Kamasu?'),
+        interpretation=item,plan={},state=state)
+    assert result.early_result is None
+    assert result.resolved_product.product_id=='123'
+
+
 @pytest.mark.asyncio
 async def test_complaint_searches_known_model_and_repeat_escalates(monkeypatch):
     query = AsyncMock(return_value=AgentResult(reply_text="Resultado verificado", intent="commerce",
@@ -79,7 +101,8 @@ async def test_complaint_searches_known_model_and_repeat_escalates(monkeypatch):
     assert state.conversation_repair_attempts == 1
     again = await repair_conversation(incoming=IncomingMessage(text="ta entendendo nada"),
         interpretation=interpretation("acknowledge"), state=state)
-    assert again.handoff_required
+    assert not again.handoff_required
+    assert again.response_metadata['handoff']['offer']
     assert query.await_count == 1
     assert again.response_metadata["active_preferences"]["color"] == "preto"
 
@@ -118,7 +141,8 @@ async def test_council_rejected_fallback_cannot_requalify(monkeypatch):
     state = CommerceConversationState(active_preferences={"subject_brand":"Orient", "subject_model":"Open Heart"})
     result, decision, _ = await apply_answer_council_with_retry(original,
         incoming=IncomingMessage(text="quero o orient open heart preto"), interpretation=interp, commerce_state=state)
-    assert result.handoff_required
+    assert not result.handoff_required
+    assert result.response_metadata['handoff']['offer']
     assert result.response_metadata["interpretation"]["subject"]["model"] == "Open Heart"
     contract = build_turn_contract(message_text="quero o orient open heart preto", interpretation=interp, commerce_state=state)
     assert "requalify_after_sku" not in check_pedido(result, contract).issues

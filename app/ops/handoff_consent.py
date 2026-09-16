@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import unicodedata
 
 from app.core.turn_cache import cached_turn_read
 
 CONFIRMED_REASONS = frozenset({"customer_requested_human", "customer_accepted_handoff_offer"})
-DEFAULT_OFFER = "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?"
+
+
+def consent_rules():
+    from app.configuration.runtime import policy
+    return json.loads(policy('handoffConsentRules'))
 
 
 def fold(text: str | None) -> str:
@@ -18,24 +23,16 @@ def fold(text: str | None) -> str:
 
 def customer_requests_human(text: str | None) -> bool:
     text = fold(text)
-    if re.search(r"\b(?:(?:nao|nem) (?:quero|precis\w*|gostaria|desejo|(?:me )?(?:transf\w*|encaminh\w*|cham\w*))|sem (?:um |uma )?(?:atendente|humano)|dispenso|depois|mais tarde)\b", text):
+    rules = consent_rules()
+    if re.search(rules['negative'], text):
         return False
-    human = r"(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)"
-    return bool(
-        re.fullmatch(rf"(?:um |uma )?{human}[.!?]*", text)
-        or re.search(rf"\b(?:quero|preciso|gostaria|prefiro|posso|poderia|pode|tem como|desejo)\b.{{0,45}}\b(?:falar|conversar|atendimento|chamar|chame|chama|transferir|transfira|encaminhar|encaminhe)\b.{{0,30}}\b{human}\b", text)
-        or re.search(rf"\b(?:quero|preciso de|chame|chama) (?:um |uma |o |a )?{human}\b", text)
-        or re.search(rf"\b(?:me passa|me passe|me transfere|me transfira|me encaminha|me encaminhe).{{0,25}}\b{human}\b", text)
-        or re.fullmatch(rf"(?:por favor )?falar com (?:um |uma |o |a )?{human}(?: por favor)?[.!?]*", text)
-    )
+    return any(re.fullmatch(p,text) for p in rules['directFull']) or any(re.search(p,text) for p in rules['directSearch'])
 
 
 def acceptance_text(text: str | None) -> bool:
     text = re.sub(r"[!?.,;]", " ", fold(text))
     text = " ".join(text.split())
-    return bool(re.fullmatch(
-        r"(?:(?:sim|si|yes|ok|okay|certo|beleza|blz|pode|pode ser|isso|uhum|uhu|quero|quero sim|por favor|pf|pfv|faz favor|manda|pode mandar|pode encaminhar|pode transferir|pode chamar|encaminha|encaminhe)"
-        r"(?: (?:por favor|pf|pfv|pode encaminhar|pode transferir|pode chamar|pode mandar|pode ser))?)", text))
+    return bool(re.fullmatch(consent_rules()['acceptance'], text))
 
 
 def last_assistant_offered_handoff(turns: list[dict] | None) -> bool:
@@ -48,13 +45,21 @@ def last_assistant_offered_handoff(turns: list[dict] | None) -> bool:
         return True
     text = fold(last.get("content"))
     # Mentioning the team or forwarding a product link is not a transfer offer.
-    return bool(re.search(r"\b(?:posso|quer|gostaria|se quiser)\b", text)
-                and re.search(r"\b(?:encaminh\w*|transfer\w*|passar|coloco|falar|chamar)\b", text)
-                and re.search(r"\b(?:atendente|equipe|humano|vendedor|vendas|joao)\b", text))
+    return all(re.search(pattern,text) for pattern in consent_rules()['offerAll'])
 
 
 def is_handoff_acceptance(text: str | None, recent_turns: list[dict] | None) -> bool:
     return acceptance_text(text) and last_assistant_offered_handoff(recent_turns)
+
+
+def is_handoff_decline(text: str | None, recent_turns: list[dict] | None) -> bool:
+    normalized=' '.join(re.sub(r'[!?.,;]',' ',fold(text)).split())
+    return bool(re.fullmatch(consent_rules()['decline'],normalized)
+                and last_assistant_offered_handoff(recent_turns))
+
+
+def promises_handoff(text: str | None) -> bool:
+    return bool(re.search(consent_rules()['transferPromise'],fold(text)))
 
 
 @cached_turn_read
@@ -120,6 +125,5 @@ def consent_reason(incoming, recent_turns: list[dict] | None = None) -> str | No
 
 
 def offer_text() -> str:
-    from app.configuration.runtime import current_bundle
-    template = (current_bundle().get("values") or {}).get("message.handoff_offer")
-    return template.strip() if isinstance(template, str) and template.strip() else DEFAULT_OFFER
+    from app.configuration.runtime import message
+    return message('handoff_offer')

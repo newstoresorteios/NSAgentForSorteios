@@ -19,6 +19,10 @@ def _door():
 
 def try_entry_gates(message: IncomingMessage) -> AgentResult | None:
     door = _door()
+    from app.sales.conversation_preflight import preflight_reply
+    priority = preflight_reply(message.text)
+    if priority is not None:
+        return priority
     blocked_reason = door.detect_blocked_request(message.text)
     if blocked_reason:
         return door._annotate_agent_result(
@@ -62,6 +66,12 @@ def try_accepted_handoff(
     recovery_turns: list[dict[str, Any]] | None,
 ) -> AgentResult | None:
     door = _door()
+    from app.ops.handoff_consent import is_handoff_decline
+    if is_handoff_decline(message.text,recovery_turns):
+        from app.configuration.runtime import message as copy
+        return AgentResult(reply_text=copy('handoff_declined_continue'),intent='general',
+            response_metadata={'response_source':'published_handoff_policy','handoff':{
+                'required':False,'offer':False,'declined':True,'provider_action':'continue_bot'}})
     accepted = door.should_request_human_handoff(
         message,
         recent_turns=recovery_turns,

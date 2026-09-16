@@ -565,7 +565,12 @@ def _map_api_error(exc: Exception) -> OpenAIGatewayError:
     if isinstance(exc, (APITimeoutError, asyncio.TimeoutError)):
         return OpenAITimeoutGatewayError(str(exc)[:240])
     if isinstance(exc, RateLimitError):
-        return OpenAIRateLimitGatewayError(str(exc)[:240])
+        body = getattr(exc, 'body', None)
+        error = body.get('error', body) if isinstance(body, dict) else {}
+        quota = (isinstance(error, dict) and error.get('code', error.get('type')) == 'insufficient_quota')
+        quota = quota or 'no credits remaining' in str(exc).lower()
+        return OpenAIRateLimitGatewayError(str(exc)[:240],
+            code='openai_quota_exhausted' if quota else 'openai_rate_limit')
     if isinstance(exc, APIError):
         return OpenAIGatewayError(str(exc)[:240], code="openai_api_error")
     return OpenAIGatewayError(str(exc)[:240])
@@ -1175,7 +1180,7 @@ class FallbackOpenAIGateway:
             )
             result.api_mode = "responses"
             return result
-        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, LLMCallBudgetExceeded):
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, OpenAIRateLimitGatewayError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             if not self._fallback_enabled():
@@ -1227,7 +1232,7 @@ class FallbackOpenAIGateway:
             )
             result.api_mode = "responses"
             return result
-        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, LLMCallBudgetExceeded):
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, OpenAIRateLimitGatewayError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             if not self._fallback_enabled():
@@ -1359,7 +1364,7 @@ class CanaryOpenAIGateway:
                 "latency_ms": result.latency_ms,
             })
             return result
-        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, LLMCallBudgetExceeded):
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, OpenAIRateLimitGatewayError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             if mode_label != "canary_responses" or not self._fallback_enabled():
@@ -1415,7 +1420,7 @@ class CanaryOpenAIGateway:
                 "latency_ms": result.latency_ms,
             })
             return result
-        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, LLMCallBudgetExceeded):
+        except (OpenAIRefusalError, OpenAIIncompleteError, OpenAISchemaError, OpenAIRateLimitGatewayError, LLMCallBudgetExceeded):
             raise
         except Exception as exc:
             if mode_label != "canary_responses" or not self._fallback_enabled():

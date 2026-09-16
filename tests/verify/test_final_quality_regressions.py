@@ -115,7 +115,8 @@ async def test_last_enrichment_cannot_restore_hidden_products(monkeypatch, appro
         return result
     monkeypatch.setattr(pipeline,"enrich_agent_result",enrich)
     result = await pipeline.process_incoming_message(IncomingMessage(text=ASK),{})
-    assert result.handoff_required
+    assert not result.handoff_required
+    assert result.response_metadata['handoff']['offer']
     assert result.response_metadata["commerce_state"]["last_presented_products"] == []
     assert not result.response_metadata["presented_products"]
     assert result.response_metadata["final_response_validation"]["delivered_product_ids"] == []

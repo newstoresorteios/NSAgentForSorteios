@@ -100,27 +100,76 @@ async def handle_sales_message_inner(
     if inbound_audio_failed(message):
         return audio_transcription_failed_result()
 
+    from app.sales.conversation_preflight import preflight_reply, normalize_identity
+    priority = preflight_reply(message.text)
+    if priority is not None:
+        return priority
+
     interpretation = sales._hydrate_sales_interpretation(
         semantic_plan, message, recent_turns, commerce_state=commerce_state
     )
+    interpretation = normalize_identity(interpretation)
     state = commerce_state or CommerceConversationState()
+    from app.sales.contextual_questions import (normalize_followup, try_contextual_question,
+        normalize_ready_requirement, recover_mentioned_product, try_availability_question)
+    interpretation, state = normalize_followup(message.text, interpretation, state, recent_turns)
+    interpretation = normalize_ready_requirement(message.text, interpretation, state, recent_turns)
+    from app.sales.contextual_questions import try_name_answer
+    name_answer = try_name_answer(message, interpretation, state)
+    if name_answer is not None:
+        return name_answer
+    prior_target = state.active_product
+    state = await recover_mentioned_product(message, state, recent_turns, interpretation)
+    if interpretation and not prior_target and state.active_product:
+        from app.sales.conversation_repair import has_explicit_lookup_identity
+        if (interpretation.references_previous_context
+                and not has_explicit_lookup_identity(message.text, interpretation)):
+            interpretation=interpretation.model_copy(deep=True)
+            interpretation.reference_type='current_product'
+            interpretation.reference_position=None
+    if interpretation and not prior_target and state.active_product and interpretation.goal is None:
+        # Restore a pending read-only media request after an acknowledgement or
+        # complaint, only when the history yielded one live-verified product.
+        import json, re
+        from app.configuration.runtime import policy
+        from app.catalog.retrieval.text import fold_text
+        rules = json.loads(policy('conversationFollowupRules'))
+        topic = fold_text(interpretation.active_topic or '')
+        if re.search(rules['productMedia'], topic):
+            interpretation = interpretation.model_copy(deep=True)
+            interpretation.goal = 'inspect'
+            interpretation.answer_strategy = 'search_catalog'
+            interpretation.image_request = bool(re.search(rules['productPhoto'], topic))
+            interpretation.product_action = None if interpretation.image_request else 'get_product_link'
     if interpretation is not None:
         from app.sales.conversation_repair import repair_conversation
-        repair = await repair_conversation(incoming=message, interpretation=interpretation, state=state)
+        repair = await repair_conversation(incoming=message, interpretation=interpretation, state=state, recent_turns=recent_turns)
         if repair is not None:
             return repair
+    if interpretation is not None and interpretation.resolved_answer_strategy() == "handoff":
+        from app.ops.handoff_service import build_human_handoff_result
+
+        # The interpreter has already applied the published persona policy.
+        # A model mentioned in an appraisal request does not authorize catalog retrieval.
+        return build_human_handoff_result(reason="persona_policy_handoff")
+    from app.sales.product_comparison import try_product_comparison
+    comparison = await try_product_comparison(message, interpretation, state, recent_turns)
+    if comparison is not None:
+        return comparison
+    availability = await try_availability_question(message, interpretation, state, recent_turns)
+    if availability is not None:
+        return availability
+    question = await try_contextual_question(message, interpretation, state, recent_turns)
+    if question is not None:
+        return question
+    if interpretation is not None:
+        from app.sales.purchase_selection import repair_presented_purchase_selection
+        interpretation = repair_presented_purchase_selection(
+            interpretation, message_text=message.text, state=state, recent_turns=recent_turns)
     resume = try_commerce_resume(message, interpretation, state)
     if resume is not None:
         return resume
     if interpretation is not None:
-        from app.sales.purchase_selection import repair_presented_purchase_selection
-
-        interpretation = repair_presented_purchase_selection(
-            interpretation,
-            message_text=message.text,
-            state=state,
-            recent_turns=recent_turns,
-        )
         from app.sales.answer_council import apply_turn_contract_for_search
 
         interpretation = apply_turn_contract_for_search(

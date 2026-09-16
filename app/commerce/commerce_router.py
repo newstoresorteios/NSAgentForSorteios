@@ -379,7 +379,9 @@ def _pix_cash_price(product: dict[str, Any], payment: dict[str, Any] | None) -> 
     percent = _pix_discount_percent()
     if percent <= 0 or percent >= 100:
         return None
-    return round(list_price * (100 - percent) / 100.0, 2)
+    from decimal import Decimal, ROUND_HALF_UP
+    return float((Decimal(str(list_price)) * (Decimal(100) - Decimal(percent)) / Decimal(100))
+                 .quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 
 def _installment_lines(

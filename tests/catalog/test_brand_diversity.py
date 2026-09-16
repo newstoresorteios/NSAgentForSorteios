@@ -83,8 +83,9 @@ def test_relax_soft_color_keeps_budget_when_pool_would_be_empty():
         preferences={"color": "dourado", "style": "social", "budget_max": 2500}
     )
     hard = hard_filter_products(products, interpretation, mode="recommendation")
-    # Recommendation color is already soft locally; budget still drops the 4800.
-    assert {item["id"] for item in hard} == {"1", "2"}
+    # Confirmed recommendations respect color. Alternatives are a separate,
+    # explicit relaxation and must still preserve the customer's budget.
+    assert hard == []
     relaxed = relax_soft_filters_for_empty_pool(
         products,
         interpretation,

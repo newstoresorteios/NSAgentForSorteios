@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from typing import Any, Literal
 
@@ -147,7 +146,8 @@ def product_availability_state(
 
 
 def ready_to_ship_category_ids() -> set[str]:
-    raw = os.getenv("TRAY_READY_TO_SHIP_CATEGORY_IDS", "403")
+    from app.configuration.runtime import policy
+    raw = policy("readyToShipCategoryIds")
     return {part.strip() for part in str(raw).replace(";", ",").split(",") if part.strip()}
 
 

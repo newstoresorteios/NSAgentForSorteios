@@ -122,6 +122,25 @@ async def quote_shipping(
 ) -> AgentResult:
     has_cart = bool(state.cart_items or state.cart_session_id)
     if not has_cart:
+        target=state.active_product
+        if target is None and len(state.last_presented_products)==1:
+            target=state.last_presented_products[0]
+        if target is not None:
+            product=await execute('get_product',{'product_id':target.product_id})
+            if not product.get('error'):
+                name=str(product.get('name') or target.name or target.reference or '')
+                availability=str(product.get('availability') or '').strip()
+                url=str(product.get('product_url') or product.get('url') or '').strip()
+                if availability and url:
+                    reply=operator_message('shipping_catalog_estimate',name=name,availability=availability,url=url)
+                elif url:
+                    reply=operator_message('shipping_catalog_checkout',name=name,url=url)
+                else:
+                    reply=SHIPPING_LEADTIME_GUIDANCE()
+                return AgentResult(reply_text=reply,intent='commerce',safety_reason='shipping_guidance_without_cart',
+                    commercial_data={'success':True,'stage':'shipping_guidance','products':[product],
+                                     'shipping':{'quote_performed':False,'catalog_leadtime':availability or None}},
+                    response_metadata={'domain':'commerce','used_tray':True})
         return AgentResult(
             reply_text=SHIPPING_LEADTIME_GUIDANCE(),
             intent="commerce",

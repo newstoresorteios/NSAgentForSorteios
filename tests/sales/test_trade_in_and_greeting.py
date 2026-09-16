@@ -26,11 +26,10 @@ def test_trade_in_triggers_handoff_with_policy_message():
     )
     assert should_request_human_handoff(incoming) == "trade_in_or_appraisal"
     result = build_human_handoff_result(reason="trade_in_or_appraisal")
-    assert result.handoff_required is True
-    assert "avalia" in result.reply_text.lower()
-    from app.persona.store_knowledge import trade_in_policy_text
-    assert "permuta" in result.reply_text.lower()
-    assert result.reply_text == trade_in_policy_text()
+    assert result.handoff_required is False
+    assert result.response_metadata['handoff']['offer'] is True
+    from app.ops.handoff_consent import offer_text
+    assert result.reply_text == offer_text()
 
 
 def test_fast_critique_rewrites_trade_in_denial():
@@ -51,8 +50,8 @@ def test_fast_critique_rewrites_trade_in_denial():
         recent_turns=[],
     )
     assert skip == "fast_trade_in_handoff"
-    assert fixed.handoff_required is True
-    assert "avalia" in fixed.reply_text.lower()
+    assert fixed.handoff_required is False
+    assert fixed.response_metadata['handoff']['offer'] is True
     assert verdict is not None
     assert "trade_in_policy_violation" in verdict.issues
 

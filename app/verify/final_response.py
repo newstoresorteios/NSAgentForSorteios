@@ -43,13 +43,27 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
     from app.sales.answer_council import build_turn_contract, check_pedido, check_fatos
 
     metadata = result.response_metadata
-    interpretation = interpretation or result_interpretation(result)
+    interpretation = result_interpretation(result) or interpretation
+    from app.sales.contextual_questions import normalize_followup
+    interpretation, previous_state = normalize_followup(incoming.text, interpretation, previous_state)
     issues = list((metadata.get("final_response_validation") or {}).get("rejected_issues") or [])
     products = [p for p in (result.commercial_data or {}).get("products", []) if isinstance(p, dict)]
+    if interpretation and 'ready_to_ship' in interpretation.preferences.attributes and products:
+        from app.catalog.retrieval.availability import commercial_availability_facts
+        unconfirmed = [p for p in products if commercial_availability_facts(p)['immediate_delivery_supported'] is not True]
+        if unconfirmed:
+            from app.configuration.runtime import message
+            result.reply_text = '\n\n'.join(message('catalog_ready_unconfirmed',
+                name=p.get('name', ''), availability=p.get('availability') or message('catalog_ready_unknown_note'),
+                url=p.get('product_url') or p.get('url') or '') for p in unconfirmed)
+            result.response_metadata['response_source'] = 'published_availability_policy'
     # "Is the first one automatic?" asks for a fact about that SKU; it does not
     # require replacing a quartz watch with a new automatic recommendation.
     inspect_reference = bool(interpretation and interpretation.goal == 'inspect' and interpretation.reference_type)
-    requirements = normalize_requirements(interpretation, incoming.text) if interpretation and not inspect_reference else {}
+    # Comparison and inspection describe existing SKUs, including negative facts.
+    # A question about sapphire must not filter out the compared Hardlex watch.
+    recommends = bool(interpretation and interpretation.goal in {'find', 'recommend', 'discover'})
+    requirements = normalize_requirements(interpretation, incoming.text) if recommends else {}
     if requirements and products and not result.handoff_required:
         evidence = [feature_evidence(p, requirements) for p in products]
         if any(e["status"] != "matched" for e in evidence) or len(hard_filter_products(products, interpretation, mode="recommendation")) != len(products):
@@ -79,7 +93,23 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
             result.reply_text = message("critique_handoff")
             result.handoff_required = True
             result.safety_reason = "final_response_validation_failed"
-    delivered = [] if result.handoff_required else [p for p in products if recommendation_identifies_candidate(result.reply_text, [p])]
+    bound_id = None
+    if inspect_reference and not result.handoff_required:
+        from app.commerce.commerce_context import resolve_commerce_reference
+        bound, _ = resolve_commerce_reference(interpretation, previous_state)
+        bound_id = bound.product_id if bound else None
+    if interpretation and interpretation.goal=='inspect' and not bound_id and not result.handoff_required:
+        # An exact reference in the current request identifies the SKU even
+        # when a concise negative answer does not repeat its full title.
+        exact = [p for p in products if interpretation.subject.reference
+                 and str(p.get('reference','')).casefold()==interpretation.subject.reference.casefold()]
+        if len(exact)==1:
+            bound_id=str(exact[0].get('id'))
+    # A contextual answer such as "ele tem 40 mm" need not repeat the full
+    # catalog name. Keep its verified SKU so the next question stays coherent.
+    delivered = [] if result.handoff_required else [p for p in products
+        if recommendation_identifies_candidate(result.reply_text, [p])
+        or (bound_id and str(p.get('id')) == bound_id and result.reply_text.strip())]
     # If a later review removed every option, do not keep the generated shortlist.
     clear = result.handoff_required or bool(metadata.get("clear_presented_products")) or (bool(products) and not delivered)
     if clear:

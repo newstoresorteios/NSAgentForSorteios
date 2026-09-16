@@ -430,6 +430,12 @@ def repair_presented_purchase_selection(
         inspected.preferences = interpretation.preferences.model_copy(update={
             field: (state.active_preferences or {}).get(field) for field in ('mechanism', 'crystal')
         })
+        inspected.ready_for_retrieval = True
+        inspected.answer_strategy = 'search_catalog'
+        inspected.needs_clarification = False
+        inspected.clarification_question = None
+        if 'catalog' not in inspected.information_needed:
+            inspected.information_needed = [*inspected.information_needed, 'catalog']
         if position is not None:
             inspected.reference_type = "list_position"
             inspected.reference_position = position
@@ -456,6 +462,23 @@ def repair_presented_purchase_selection(
         presented,
         active_product=state.active_product,
     )
+    from app.sales.conversation_repair import has_explicit_lookup_identity
+    from app.catalog.product_retrieval import required_model_tokens
+    from app.catalog.specs.preference_normalize import message_states_color
+    from app.catalog.product_retrieval import product_conflicts_dial_color
+    color_refinement = bool(interpretation.preferences.color and message_states_color(message_text))
+    conflicts_color = color_refinement and all(product_conflicts_dial_color(p.model_dump(),
+        (interpretation.preferences.color,)) for p in presented)
+    if has_explicit_lookup_identity(message_text, interpretation) or conflicts_color:
+        tokens = required_model_tokens(interpretation.subject.model)
+        if conflicts_color or (tokens and not any(all(token in _fold(' '.join(filter(None,[p.name,p.reference]))) for token in tokens)
+                              for p in presented)):
+            # Naming a new model of the same brand does not select an old SKU.
+            return interpretation.model_copy(update={
+                'goal':'find','purchase_action':None,'purchase_items':[],
+                'confirmation':'none',
+                'reference_type':None,'reference_position':None,'needs_clarification':False,
+                'clarification_question':None,'ready_for_retrieval':True,'answer_strategy':'search_catalog'})
     closing = is_checkout_utterance(message_text) or is_bare_purchase_closing(
         message_text
     )

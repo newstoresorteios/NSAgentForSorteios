@@ -33,6 +33,7 @@ def observations_from_result(
         "openai_calls": int(openai_calls),
         "factual_valid": validation.get("valid", True) is not False,
         "handoff_required": bool(getattr(result, "handoff_required", False)),
+        "handoff_offer": (metadata.get('handoff') or {}).get('offer') is True,
         "invented_claim": invented,
         "intent": getattr(result, "intent", None),
         "safety_reason": getattr(result, "safety_reason", None),

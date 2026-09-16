@@ -51,7 +51,7 @@ def test_product_with_blue_matches_azul_preference():
     assert product_matches_color_tokens(product, tokens) is True
 
 
-def test_recommendation_keeps_brand_pool_for_llm_even_without_literal_azul():
+def test_recommendation_resolves_color_alias_without_requiring_llm_reranker():
     interpretation = _interp()
     products = [
         {
@@ -74,7 +74,7 @@ def test_recommendation_keeps_brand_pool_for_llm_even_without_literal_azul():
     filtered = hard_filter_products(products, interpretation, mode="recommendation")
     ids = {product["id"] for product in filtered}
     assert "blue-1" in ids
-    assert "black-1" in ids  # pool kept; LLM/reranker picks blue
+    assert "black-1" not in ids
 
 
 def test_exact_mode_still_requires_color_match_with_aliases():

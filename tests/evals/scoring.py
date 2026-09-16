@@ -12,6 +12,7 @@ def score_eval_case(
     openai_calls: int = 0,
     factual_valid: bool = True,
     handoff_required: bool = False,
+    handoff_offer: bool = False,
     invented_claim: bool = False,
 ) -> dict[str, Any]:
     expected = case.get("expected") or {}
@@ -35,6 +36,8 @@ def score_eval_case(
     else:
         checks["factual_support"] = True
     checks["handoff"] = bool(handoff_required) == bool(expected.get("handoff_required"))
+    if 'handoff_offer' in expected:
+        checks['handoff_offer'] = handoff_offer == expected['handoff_offer']
     for needle in expected.get("must_include") or []:
         checks[f"include:{needle}"] = needle.casefold() in reply.casefold()
     for needle in expected.get("must_not_include") or []:

@@ -17,6 +17,7 @@ from app.ops.observability import log_event
 def technical_miss(interpretation, *, unknown: bool, evidence: list | None = None) -> AgentResult:
     reason = "catalog_requirements_unknown" if unknown else "catalog_requirements_no_match"
     reply = message(reason, criteria=criteria_label(interpretation))
+    mentioned = None
     for item in evidence or []:
         commercial = item.get("commercial") or {}
         if (item.get("stage") == "live_detail" and item.get("status") == "matched"
@@ -25,12 +26,20 @@ def technical_miss(interpretation, *, unknown: bool, evidence: list | None = Non
                         else "catalog_requirements_price_missing")
             reply = message(template, product=item["product_name"],
                             criteria=criteria_label(interpretation))
+            if item.get('product_url'):
+                mentioned = {'product_id':item['product_id'], 'name':item['product_name'],
+                             'product_url':item['product_url'], 'reference':item.get('reference'),
+                             'brand':item.get('brand')}
             break
     return AgentResult(reply_text=reply, intent="commerce",
         safety_reason=reason, commercial_data={"products": []}, response_metadata={
             "presented_products":False, "product_resolution_state":"technical_unknown" if unknown else "technical_mismatch",
             "clear_active_product":True, "clear_presented_products":True,
             "technical_requirements":technical_requirements(interpretation), "technical_evidence":evidence or [],
+            # Mentioning an item with no confirmed price still establishes a
+            # conversational reference. It does not make it a buyable option.
+            **({'active_product':mentioned, 'clear_active_product':False,
+                'clear_presented_products':False, 'mentioned_product_only':True} if mentioned else {}),
         })
 
 
@@ -88,6 +97,8 @@ async def retrieve_technical_products(session) -> AgentResult:
             availability = product_availability_state(current)
             price = resolve_commercial_price(current, require_positive=True).amount
             evidence.append({"product_id":current["id"], "product_name":current.get("name"),
+                'product_url':current.get('url') or current.get('product_url'),
+                'reference':current.get('reference'), 'brand':current.get('brand'),
                 "stage":"live_detail", **verdict, "commercial":{
                     "availability":availability, "price":float(price) if price is not None else None,
                     "upon_request":any(_truth_state(source.get("upon_request")) is True
@@ -110,6 +121,12 @@ async def retrieve_technical_products(session) -> AgentResult:
     log_event("catalog.technical.confirmation", {"requirements":required, "candidate_count":len(unique),
               "detail_calls":attempted, "confirmed":len(accepted), "unknown":unknown, "evidence":evidence})
     if not accepted:
+        reference = str(interpretation.subject.reference or '').strip().casefold()
+        if reference and not any(str(p.get('reference') or '').strip().casefold() == reference for p in unique.values()):
+            # A missing identity is not proof that a technical feature mismatched.
+            return AgentResult(reply_text=message('commerce.commerce_router._product_result.7cc54b8858'),
+                intent='commerce',safety_reason='product_not_found',commercial_data={'products':[]},
+                response_metadata={'technical_evidence':evidence,'requested_reference':interpretation.subject.reference})
         return technical_miss(interpretation, unknown=unknown, evidence=evidence)
     from app.catalog.index.catalog_index import build_allowed_id_sets, index_products_best_effort
     accepted = apply_persona_presentation_order(accepted)[:customer_result_limit()]

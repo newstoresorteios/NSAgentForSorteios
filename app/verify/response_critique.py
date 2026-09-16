@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.identity.greeting_policy import is_generic_greeting_reply
 from app.verify import log_swallowed
 from app.verify.guardrails import detect_trade_in_or_appraisal_request
+from app.verify.persona_evidence import persona_evidence
 from app.ops.handoff_service import build_human_handoff_result
 from app.models import AgentResult, IncomingMessage
 from app.verify.quality_judge import (
@@ -40,7 +41,7 @@ from app.ops.turn_runtime import LLMCallBudgetExceeded
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 def critique_system_prompt() -> str:
-    return operator_message("critique_system") + '\n' + operator_message('critique_availability_evidence')
+    return operator_message("critique_system") + '\n' + operator_message('critique_availability_evidence') + '\n' + operator_message('judge_commercial_policy')
 
 
 class ShippingQuoteProductArgument(BaseModel):
@@ -400,6 +401,7 @@ async def run_critique_judge(
         unavailable = CritiqueVerdict(pass_check=False)
         unavailable._execution_error = "openai_not_configured"
         return unavailable
+    from app.verify.persona_evidence import persona_evidence
     payload = {
         "customer_message": incoming.text,
         "agent_reply": result.reply_text,
@@ -420,6 +422,7 @@ async def run_critique_judge(
         "available_apis": catalog.get("apis"),
         "retryable_apis": catalog.get("retryable_apis"),
         "policy": catalog.get("policy"),
+        "published_persona": persona_evidence((result.commercial_data or {}).get('products')),
     }
     from app.evaluation.context import current_evaluation
     evaluation = current_evaluation()
@@ -707,8 +710,25 @@ def apply_search_products_to_result(
     )
     if products is None:
         return result
+    interpretation = (result.response_metadata or {}).get('interpretation') or {}
+    from app.verify.final_response import result_interpretation
+    parsed = result_interpretation(result)
+    from app.catalog.retrieval.hard_filter import hard_filter_products
+    existing = list((result.commercial_data or {}).get('products') or [])
+    matching_existing = hard_filter_products(existing, parsed, mode='exact') if parsed else existing
+    if interpretation.get('goal') == 'inspect' and matching_existing:
+        # The customer is asking about a known SKU. An optional alternative
+        # search must not erase its verified sheet, including negative answers.
+        return result
     budget_max = _budget_ceiling_for_critique(result, commerce_state)
     products = _filter_critique_search_by_budget(products, budget_max)
+    if parsed:
+        # A supplemental search may return fewer rows; it cannot erase an
+        # already verified match just because its query was too restrictive.
+        products = hard_filter_products(products, parsed, mode='exact' if parsed.goal == 'inspect' else 'recommendation')
+        retained = hard_filter_products(existing, parsed, mode='exact' if parsed.goal == 'inspect' else 'recommendation')
+        seen = {str(p.get('id')) for p in products}
+        products.extend(p for p in retained if p.get('_revalidated') and str(p.get('id')) not in seen)
     updated = result.model_copy(deep=True)
     commercial = dict(updated.commercial_data or {})
     commercial["products"] = products
@@ -786,6 +806,16 @@ def _merge_payment_and_order_facts(
         key: ("error" not in value) if isinstance(value, dict) else True
         for key, value in api_facts.items()
     }
+    detail = api_facts.get('get_product')
+    if isinstance(detail, dict) and not detail.get('error') and (detail.get('id') or detail.get('product_id')):
+        pid = str(detail.get('id') or detail.get('product_id'))
+        products = list(commercial.get('products') or [])
+        products = [p for p in products if str(p.get('id') or p.get('product_id')) != pid]
+        from datetime import datetime, timezone
+        products.append({**detail, 'id': pid, '_revalidated':True, '_factual_source':'tray_live',
+            '_freshness_at':datetime.now(timezone.utc).isoformat(),
+            '_field_sources':{key:'tray_live' for key in detail if not key.startswith('_')}})
+        commercial['products'] = products
     payment_url = None
     for payload in api_facts.values():
         if not isinstance(payload, dict):
@@ -802,7 +832,9 @@ def _merge_payment_and_order_facts(
         if commerce_state is not None:
             commerce_state.order_payment_url = str(payment_url)
     order_id = None
-    for payload in api_facts.values():
+    for tool_name, payload in api_facts.items():
+        if tool_name not in {'get_order', 'get_order_complete', 'get_order_payment'}:
+            continue
         if isinstance(payload, dict) and (
             payload.get("order_id") or payload.get("id")
         ):
@@ -842,6 +874,9 @@ async def _regenerate_reply(
             commerce_state=commerce_state,
             search_query=search_query,
         )
+        working = working.model_copy(deep=True)
+        working.commercial_data = _merge_payment_and_order_facts(
+            working.commercial_data or {}, api_facts, commerce_state)
         products = (working.commercial_data or {}).get("products")
         search_ran = "search_products" in (api_facts or {})
         empty_search = (
@@ -875,6 +910,7 @@ async def _regenerate_reply(
                         "commercial_data": working.commercial_data or {},
                         "search_products_empty": empty_search,
                         "api_facts": api_facts,
+                        "published_persona": persona_evidence((working.commercial_data or {}).get('products')),
                     },
                     ensure_ascii=False,
                     default=str,
@@ -1182,6 +1218,11 @@ async def _run_response_critique_loop(
                     report.applied_handoff = True
             break
 
+        if runtime is not None:
+            from app.llm.llm_call_policy import resolve_turn_llm_budget
+            # Repair plus a second review is a complex turn, even if discovery
+            # initially fitted the normal budget. Respect the operator's cap.
+            runtime.promote_budget(resolve_turn_llm_budget(complex_turn=True)["max_calls"])
         if runtime is not None and not runtime.llm_budget.can_afford(["response_composition", "judge"]):
             runtime.register_avoided_llm_call("repair_requires_composition_and_review", intended_call_type="response_composition")
             current = _handle_unavailable_review(current, report, "repair_budget_unavailable")

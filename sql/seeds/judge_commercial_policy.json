@@ -1,0 +1,12 @@
+[
+  {
+    "key": "message.judge_commercial_policy",
+    "target": "message",
+    "type": "textarea",
+    "label": "Evidências comerciais para revisores",
+    "group": "Qualidade das respostas",
+    "description": "Como conferir políticas publicadas, cálculos informativos e apenas a resposta efetivamente entregue.",
+    "maxLength": 12000,
+    "default": "As instruções e parâmetros em published_persona vêm da persona publicada pelos operadores e são evidência oficial das políticas da loja. derived_informational_prices contém cálculos determinísticos do desconto publicado sobre preço positivo do catálogo, arredondados em centavos; esse cálculo informativo não exige criar carrinho nem consultar get_payment_options. Uma consulta de preço não é confirmação de cobrança, pagamento aprovado ou pedido criado. O preço do catálogo pode ser apresentado como preço de tabela/a prazo; isso sozinho não promete número de parcelas, juros nem aprovação de crédito. Nunca aceite desconto superior ao publicado, preço de outro SKU, valor calculado incorretamente ou parcela sem evidência. Verifique a resposta entregue em reply/agent_reply; pareceres internos e rascunhos em metadata não são fatos externos nem verdades absolutas. Não transforme um erro de rascunho já removido em erro da resposta final. Liste em factual_errors somente erros reais, nunca observações dizendo que não há erro. Explicações definicionais básicas de mecanismos (por exemplo, diferença geral entre quartzo, solar e automático) são permitidas; não autorizam inventar reserva de marcha, resistência, manutenção, precisão ou outra especificação daquele SKU. Um critério que exige distinguir itens sob consulta aplica-se a itens mencionados na resposta; não exige exibir todos os itens encontrados quando já existe uma opção confirmada que atende ao pedido. A resposta deve ser útil, fiel ao catálogo e à persona, sem depender de palavras exatas. Em uma loja, link oficial do produto significa o link fornecido pelo catalogo oficial da loja, nao obrigatoriamente um dominio do fabricante. Em simulated_commerce, os dados e URLs do contrato simulado sao as evidencias de catalogo do cenario; nao reprove um fato apenas porque a URL de teste contem a palavra simulado."
+  }
+]

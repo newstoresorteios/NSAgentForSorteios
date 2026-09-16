@@ -16,6 +16,8 @@ from app.catalog.retrieval.tokens import (
     product_matches_required_feature_groups,
     required_feature_groups,
     required_model_tokens,
+    preference_gender_tokens,
+    product_matches_gender_tokens,
 )
 
 def hard_filter_products(
@@ -89,6 +91,13 @@ def hard_filter_products(
         if not isinstance(product, dict) or not product.get("id"):
             continue
         text = _product_text(product)
+        gender_tokens = preference_gender_tokens(interpretation)
+        if gender_tokens and not product_matches_gender_tokens(product, gender_tokens):
+            continue
+        if mode == "recommendation" and "ready_to_ship" in preferences.attributes:
+            from app.catalog.retrieval.availability import commercial_availability_facts
+            if commercial_availability_facts(product)["immediate_delivery_supported"] is not True:
+                continue
         evidence = feature_evidence(product, requirements) if requirements else None
         if evidence and (evidence["status"] == "mismatch" or (evidence["status"] == "unknown" and not allow_unknown_features)):
             continue
@@ -119,10 +128,10 @@ def hard_filter_products(
         color_tokens = preference_color_tokens(interpretation)
         if hard_color:
             color_tokens = tuple(dict.fromkeys((*color_tokens, hard_color)))
-        # Exact identity searches still require color evidence (with aliases).
-        # Recommendation keeps brand/category pool intact so the LLM/reranker
-        # can match "azul" ↔ "blue" — unless the customer said "somente"/exact_only.
-        require_color = mode == "exact" or (exact_only and bool(color_tokens or hard_color))
+        # Color aliases are resolved deterministically. A reranker may be skipped
+        # by the call budget, so a confirmed shortlist cannot depend on it to
+        # remove products that contradict the customer's stated color.
+        require_color = bool(color_tokens or hard_color)
         if (
             require_color
             and color_tokens

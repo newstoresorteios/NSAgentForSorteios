@@ -514,6 +514,12 @@ def test_golden_joao_escape_certina_sticky_on_chrono_other_brands():
             unlocked,
             mode="recommendation",
         )
+        if not filtered:
+            # Gray is still a requested constraint. A separate alternatives
+            # pool may relax color, but must never restore the rejected brand.
+            from app.catalog.retrieval.hard_filter import relax_soft_filters_for_empty_pool
+            filtered = relax_soft_filters_for_empty_pool(
+                _catalog_pool_certina_and_others(), unlocked, mode='recommendation')
         brands = {str(item.get("brand")) for item in filtered}
         assert "Certina" not in brands
         assert brands & {"Tissot", "Seiko", "Bulova"}
@@ -532,6 +538,9 @@ def test_golden_joao_escape_certina_sticky_on_chrono_other_brands():
             rejected,
             mode="recommendation",
         )
+        if not filtered_c:
+            filtered_c = relax_soft_filters_for_empty_pool(
+                _catalog_pool_certina_and_others(), rejected, mode='recommendation')
         assert all(str(item.get("brand")) != "Certina" for item in filtered_c)
         assert filtered_c
     finally:

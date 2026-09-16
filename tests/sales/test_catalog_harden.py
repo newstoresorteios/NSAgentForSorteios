@@ -255,7 +255,8 @@ async def test_dead_product_link_does_not_offer_human_handoff(monkeypatch):
 
     assert result is not None
     text = result.reply_text.casefold()
-    assert "não consegui o link agora" in text
+    assert "não consegui obter o link oficial agora" in text
+    assert "procurar a referência no site" in text
     assert "srpd53" in text
     assert "1890" in result.reply_text
     assert "atendimento" not in text

@@ -1,0 +1,32 @@
+[
+  {
+    "key": "message.conversation_identity_contract",
+    "target": "message",
+    "type": "textarea",
+    "label": "Identidade e continuidade da resposta",
+    "group": "Continuidade e disponibilidade",
+    "description": "Instrução de redação aplicada junto da persona, sem substituir fatos do catálogo.",
+    "maxLength": 12000,
+    "default": "Use o nome do cliente apenas quando confirmado por ele no histórico ou em STATE_FACTS.active_preferences.qualification_slots.customer_name. Nunca use nomes de atendentes, exemplos ou da persona como nome do cliente. Se o nome não estiver confirmado, omita o vocativo. Não peça novamente um nome já conhecido. Uma consulta de link, foto ou característica de um produto identificado deve manter esse produto; uma correção na redação não justifica buscar modelos diferentes. Diferencie cores de mostrador, luneta e pulseira: não infira que todas são iguais. Preserve os critérios explícitos do cliente, inclusive orçamento, ao retomar a conversa."
+  },
+  {
+    "key": "handoffConsentRules",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Pedido e aceite de atendimento humano",
+    "group": "Continuidade e disponibilidade",
+    "description": "Expressões sobre texto sem acentos. Recusas bloqueiam transferência; aceite exige oferta imediatamente anterior.",
+    "maxLength": 12000,
+    "default": "{\"negative\": \"\\\\b(?:(?:nao|nem) (?:quero|precis\\\\w*|gostaria|desejo|(?:me )?(?:transf\\\\w*|encaminh\\\\w*|cham\\\\w*))|sem (?:um |uma )?(?:atendente|humano)|dispenso|depois|mais tarde)\\\\b\", \"directFull\": [\"(?:um |uma )?(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)[.!?]*\", \"(?:por favor )?falar com (?:um |uma |o |a )?(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)(?: por favor)?[.!?]*\"], \"directSearch\": [\"\\\\b(?:quero|preciso|gostaria|prefiro|posso|poderia|pode|tem como|desejo)\\\\b.{0,45}\\\\b(?:falar|conversar|atendimento|chamar|chame|chama|transferir|transfira|encaminhar|encaminhe)\\\\b.{0,30}\\\\b(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)\\\\b\", \"\\\\b(?:quero|preciso de|chame|chama) (?:um |uma |o |a )?(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)\\\\b\", \"\\\\b(?:me passa|me passe|me transfere|me transfira|me encaminha|me encaminhe).{0,25}\\\\b(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)\\\\b\"], \"acceptance\": \"(?:(?:sim|si|yes|ok|okay|certo|beleza|blz|pode|pode ser|isso|uhum|uhu|quero|quero sim|por favor|pf|pfv|faz favor|manda|pode mandar|pode encaminhar|pode transferir|pode chamar|encaminha|encaminhe)(?: (?:por favor|pf|pfv|pode encaminhar|pode transferir|pode chamar|pode mandar|pode ser))?)\", \"offerAll\": [\"\\\\b(?:posso|quer|gostaria|se quiser)\\\\b\", \"\\\\b(?:encaminh\\\\w*|transfer\\\\w*|passar|coloco|falar|chamar)\\\\b\", \"\\\\b(?:atendente|equipe|humano|vendedor|vendas|joao)\\\\b\"]}"
+  },
+  {
+    "key": "message.handoff_offer",
+    "target": "message",
+    "type": "textarea",
+    "label": "Oferta de transferência para atendente",
+    "group": "Continuidade e disponibilidade",
+    "description": "Oferece atendimento humano sem afirmar transferência já realizada. A fila só é acionada após pedido ou aceite explícito.",
+    "maxLength": 12000,
+    "default": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?"
+  }
+]

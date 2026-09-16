@@ -40,6 +40,9 @@ def get_conn() -> Iterator[psycopg.Connection]:
         register_database_call()
         with psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=10,
                              options="-c default_transaction_read_only=on") as conn:
+            # Transaction poolers can ignore startup session options. Psycopg's
+            # read_only flag emits BEGIN READ ONLY for every transaction.
+            conn.read_only = True
             yield conn
         return
     register_database_call()

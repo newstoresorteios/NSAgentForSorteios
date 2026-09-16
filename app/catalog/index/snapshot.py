@@ -144,6 +144,9 @@ class ProductSnapshotCache:
         entity_id: str,
         allow_stale: bool = False,
     ) -> _CacheEntry | None:
+        from app.evaluation.context import current_evaluation
+        if current_evaluation() is not None:
+            return None
         key = self._key(tenant_id=tenant_id, kind=kind, entity_id=str(entity_id))
         now = time.monotonic()
         with self._lock:
@@ -174,6 +177,9 @@ class ProductSnapshotCache:
         entity_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> None:
+        from app.evaluation.context import current_evaluation
+        if current_evaluation() is not None:
+            return
         key = self._key(
             tenant_id=snapshot.tenant_id,
             kind=kind,
@@ -301,4 +307,7 @@ def cache_ttl_for_kind(kind: str) -> float:
 
 
 def product_cache_enabled() -> bool:
+    from app.evaluation.context import current_evaluation
+    if current_evaluation() is not None:
+        return False
     return bool(getattr(get_settings(), "agent_product_cache_enabled", True))

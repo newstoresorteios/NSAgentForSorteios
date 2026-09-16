@@ -302,8 +302,10 @@ class TrayAdapterClient:
         json_body: dict[str, Any] | None = None,
     ) -> Any:
         from app.evaluation.context import current_evaluation, prohibit_side_effect
-        if current_evaluation() is not None and (
-            method.upper() != "GET" or not path.startswith(("/internal/products", "/internal/categories", "/internal/brands"))
+        evaluation = current_evaluation()
+        if evaluation is not None and (
+            evaluation.simulator is not None or method.upper() != "GET"
+            or not path.startswith(("/internal/products", "/internal/categories", "/internal/brands"))
         ):
             prohibit_side_effect("tray:" + method.upper() + ":" + path.split("?")[0])
         if not self.base_url or not self.token:

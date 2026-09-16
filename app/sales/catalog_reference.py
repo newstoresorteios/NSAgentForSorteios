@@ -244,11 +244,20 @@ async def resolve_catalog_reference(
         )
     # Brevo often splits photo+caption: text "qual o preço desse?" arrives
     # without image_url and would price the previous SKU (CW Rosa → Beaubleu).
+    from app.sales.purchase_selection import match_presented_product_from_text, _presented_from_state
+    named_context = match_presented_product_from_text(
+        message.text, _presented_from_state(state), active_product=state.active_product)
     if (
         not has_inbound_image
         and not interpretation.image_request
         and is_deictic_product_price_request(message.text)
         and not explicit_lookup
+        and named_context is None
+        and not (
+            resolved_product is not None
+            and interpretation.subject.model
+            and interpretation.subject.model.casefold() in (message.text or '').casefold()
+        )
         and interpretation.reference_type in vague_refs
         and interpretation.goal in {"inspect", "find"}
     ):

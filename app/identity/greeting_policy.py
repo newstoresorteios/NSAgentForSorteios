@@ -167,7 +167,11 @@ def is_generic_greeting_reply(text: str | None) -> bool:
     from app.persona.persona_runtime import get_persona_runtime
     runtime = get_persona_runtime()
     name = _fold(runtime.agent_display_name if runtime else policy("business.agent_name"))
-    if name and f"sou o {name}" in folded and len(cleaned) <= 220:
+    if name and re.fullmatch(r"(?:ola[,! ]+)?(?:eu )?sou o " + re.escape(name) +
+                            r"(?:[, ]+assistente[^.!?]*)?[.!? ]*", folded):
+        return True
+    if (name and f'sou o {name}' in folded and len(cleaned) <= 220
+            and re.search(r'(?:como|em que) posso (?:te )?ajudar[!? .]*$', folded)):
         return True
     return bool(_GREETING_BODY_RE.match(cleaned))
 

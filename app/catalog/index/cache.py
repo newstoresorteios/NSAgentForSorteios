@@ -59,6 +59,9 @@ def _memory_put(cache_key: str, products: list[dict[str, Any]]) -> None:
 
 
 def load_catalog_cache(cache_key: str) -> list[dict[str, Any]] | None:
+    from app.evaluation.context import current_evaluation
+    if current_evaluation() is not None:
+        return None
     memorized = _memory_get(cache_key)
     if memorized is not None:
         return memorized
@@ -99,6 +102,9 @@ def load_catalog_cache(cache_key: str) -> list[dict[str, Any]] | None:
 
 
 def store_catalog_cache(cache_key: str, products: list[dict[str, Any]]) -> None:
+    from app.evaluation.context import current_evaluation
+    if current_evaluation() is not None:
+        return
     compact = [
         item
         for item in (compact_catalog_product(product) for product in products)

@@ -18,6 +18,7 @@ class EvaluationContext:
     max_tool_calls: int = 30
     started_tool_calls: int = 0
     review_inputs: list[dict] = field(default_factory=list)
+    simulator: Any = None
 
 
 _context: ContextVar[EvaluationContext | None] = ContextVar("evaluation_context", default=None)

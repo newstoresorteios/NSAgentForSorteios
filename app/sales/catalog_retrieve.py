@@ -33,6 +33,24 @@ async def retrieve_catalog_or_clarify(
     sales = _sales()
     from .intent_router import route_sales_intent
 
+    # A store-policy answer has no SKU/lookup/mutation requirement. A broad
+    # "buy" goal from the interpreter must not turn it into product selection.
+    if (interpretation is not None
+            and interpretation.resolved_answer_strategy() == 'answer_directly'
+            and not interpretation.information_needed
+            and not any((interpretation.purchase_action, interpretation.payment_action,
+                         interpretation.checkout_action, interpretation.shipping_action,
+                         interpretation.order_action, interpretation.product_action))
+            and not any((interpretation.subject.model, interpretation.subject.reference,
+                         interpretation.subject.ean))):
+        policy_result = AgentResult(reply_text='', intent='commerce',
+                                    response_metadata={'domain':'commerce','used_tray':False})
+        response = await sales._sales_response_with_openai(
+            message, {**plan,'intent':'policy','goal':'information'}, policy_result,
+            interpretation, state=state, recent_turns=recent_turns)
+        if response is not None:
+            return response
+
     intent_route = route_sales_intent(
         interpretation=interpretation,
         plan=plan,
@@ -312,6 +330,13 @@ async def retrieve_catalog_or_clarify(
         })
         if resolved_product is not None:
             tray_result.response_metadata["active_product"] = resolved_product.model_dump(mode="json")
+    if (interpretation is not None and 'ready_to_ship' in interpretation.preferences.attributes
+            and not (tray_result.commercial_data or {}).get('products')
+            and tray_result.safety_reason in {'product_not_found', 'catalog_requirements_no_match'}):
+        tray_result.reply_text = operator_message('catalog_ready_no_match')
+        return sales._mark_sales_result(tray_result, interpretation=interpretation,
+            goal=interpretation.goal, response_source='published_availability_policy',
+            used_openai_responder=False, used_tray=True)
     if (
         plan.get("intent") in {"purchase_intent", "recommendation", "clarification"}
         and tray_result.safety_reason == "product_not_found"

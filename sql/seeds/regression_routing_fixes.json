@@ -1,0 +1,82 @@
+[
+  {
+    "key": "conversationPreflightRules",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Rotas prioritárias de atendimento",
+    "group": "Decisão comercial",
+    "description": "Lista JSON de expressões sem acentos, ação reply ou handoff e chave de mensagem. Executada antes de seleção de produto.",
+    "maxLength": 12000,
+    "default": "[{\"pattern\": \"\\\\b(?:cvv|cvc|numero(?: completo)? (?:do|de) (?:meu )?cartao)\\\\b\", \"action\": \"reply\", \"message\": \"secure_card_checkout\"}, {\"pattern\": \"\\\\b(?:recebi.{0,50}defeito|quero devolver|pedir reembolso|solicitar devolucao)\\\\b\", \"action\": \"handoff\", \"message\": \"after_sales_handoff\"}]"
+  },
+  {
+    "key": "message.secure_card_checkout",
+    "target": "message",
+    "type": "textarea",
+    "label": "Proteção de dados do cartão",
+    "group": "Pagamento",
+    "description": "Não solicita nem repete dados sensíveis no chat.",
+    "maxLength": 4000,
+    "default": "Não envie número do cartão, validade ou CVV por aqui. Informe os dados de pagamento somente no checkout seguro do site. Posso ajudar a localizar o produto para você seguir por lá."
+  },
+  {
+    "key": "message.after_sales_handoff",
+    "target": "message",
+    "type": "textarea",
+    "label": "Encaminhamento de defeito e devolução",
+    "group": "Atendimento humano",
+    "description": "Encaminha a reclamação sem prometer reembolso ou aprovação já realizados.",
+    "maxLength": 4000,
+    "default": "Sinto muito pelo problema com o relógio. Vou encaminhar seu pedido de atendimento à equipe para analisar o defeito e orientar sobre a devolução. Se tiver o número do pedido, informe para facilitar a localização da compra."
+  },
+  {
+    "key": "message.handoff_requested",
+    "target": "message",
+    "type": "textarea",
+    "label": "Solicitação de atendimento humano",
+    "group": "Atendimento humano",
+    "description": "Comunica o encaminhamento sem alegar ação externa já concluída.",
+    "maxLength": 4000,
+    "default": "Vou encaminhar seu atendimento à equipe. Aguarde a continuidade por um atendente."
+  },
+  {
+    "key": "message.instructions.out_of_scope_reply.3b2b6ef6d6",
+    "target": "message",
+    "type": "textarea",
+    "label": "Resposta fora do escopo",
+    "group": "Mensagens gerais",
+    "description": "Redireciona ao atendimento da loja sem divulgar informações internas.",
+    "maxLength": 4000,
+    "default": "Posso ajudar com produtos, compras, pedidos e informações da loja."
+  },
+  {
+    "key": "catalogIdentityAliases",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Correções conhecidas de marca e modelo",
+    "group": "Consulta de catálogo",
+    "description": "Mapa JSON de aliases de marca/modelo, editável pelos operadores. Corrige somente identidades cadastradas.",
+    "maxLength": 12000,
+    "default": "{\"brand\":{\"oriente\":\"Orient\"},\"model\":{\"kamazu\":\"Kamasu\",\"kingturtle\":\"King Turtle\"}}"
+  },
+  {
+    "key": "comparisonQuestionPattern",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Pedidos de comparação de produtos",
+    "group": "Decisão comercial",
+    "description": "Expressão aplicada ao texto sem acentos para comparação entre referências ou itens já listados.",
+    "maxLength": 2000,
+    "default": "\\b(?:compare|comparar|comparacao|qual dos dois|diferenca entre|ambos)\\b"
+  },
+  {
+    "key": "productQuestionRules",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Perguntas e autorização de compra",
+    "group": "Decisão comercial",
+    "description": "Expressões normalizadas sem acentos. Uma referência numérica em uma pergunta não autoriza criar carrinho. Condições de compra exigem resolver a dúvida primeiro.",
+    "default": "{\"questionPatterns\": [\"\\\\b(?:eh|tem|possui|usa|funciona|mede|pesa|custa|aceita|vem com)\\\\b\", \"\\\\b(?:qual|quais|quanto|quantos|como)\\\\b\", \"\\\\b(?:saber|duvida|confirma|confirmar|me diga|me fala)\\\\b\", \"\\\\be\\\\s+(?:automatico|manual|solar|original|novo|usado|quartz|quartzo|mineral|safira|resistente|de\\\\s+safira)\\\\b\"], \"commitPatterns\": [\"\\\\b(?:quero comprar|vou levar|pode fechar|pode montar|gere o carrinho|gerar o carrinho|adicione|adicionar|coloque|colocar)\\\\b\", \"\\\\bcomo\\\\s+(?:posso|podes|voce|voces|faz|fazer).{0,40}fechar\\\\b\"], \"conditionalPatterns\": [\"\\\\b(?:se|caso|antes de|so depois|depende|mas antes)\\\\b\", \"\\\\bnao\\\\s+(?:quero|vou|pode|adicione|coloque)\\\\b\"]}",
+    "maxLength": 6000
+  }
+]

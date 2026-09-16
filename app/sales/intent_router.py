@@ -131,7 +131,7 @@ def classify_sales_route_kind(
         "checkout_question",
     }:
         return "close"
-    if interpretation is not None and interpretation.reference_position is not None:
+    if interpretation is not None and interpretation.reference_position is not None and interpretation.goal == 'buy':
         return "close"
     if skip_catalog_fanout:
         if interpretation is not None and interpretation.goal == "inspect":

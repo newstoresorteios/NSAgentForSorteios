@@ -88,6 +88,12 @@ async def execute_contextual_product_lookup(
         if value is not None
     }
     product.update(current)
+    # The successful detail response is the evidence for this turn, including
+    # an unavailable item's literal availability note.
+    from datetime import datetime, timezone
+    product.update(_revalidated=True, _factual_source='tray_live',
+        _freshness_at=datetime.now(timezone.utc).isoformat(),
+        _field_sources={key:'tray_live' for key in current if not key.startswith('_')})
     inventory: dict[str, Any] | None = None
     if "inventory" in interpretation.information_needed:
         inventory = await tool("check_inventory", {"product_id": product_id})

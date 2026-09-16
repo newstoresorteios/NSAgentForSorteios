@@ -425,10 +425,13 @@ def repair_dial_and_case_preferences(
     return preferences
 
 
-_MODEL_LINE_RE = re.compile(
-    r"\b(mk\s*2|mk2|mr\s*0?1|aquascaphe|speedtimer|king\s+turtle|samurai|open\s*heart)\b",
-    flags=re.IGNORECASE,
-)
+def _model_line(text):
+    import json
+    from app.configuration.runtime import policy
+    for rule in json.loads(policy('catalogModelFamilyRules')):
+        if re.search(rule['pattern'],text or '',re.I):
+            return rule
+    return None
 _SINGLE_MM_RE = re.compile(r"\b(3[0-9]|4[0-5])\s*mm\b", re.IGNORECASE)
 
 
@@ -463,19 +466,15 @@ def repair_specific_model_tokens(
         return
 
     brand_fold = _fold(subject.brand)
-    if "baltic" in folded and not brand_fold:
-        subject.brand = "Baltic"
-        brand_fold = "baltic"
-
     model_fold = _fold(subject.model)
-    current_line_match = _MODEL_LINE_RE.search(message_text or "")
-    line_match = current_line_match or _MODEL_LINE_RE.search(combined)
+    current_line_match = _model_line(message_text)
+    line_match = current_line_match or _model_line(combined)
     if line_match:
-        token = _fold(line_match.group(1)).replace(" ", "")
-        if token in {"mk2", "mk02"}:
-            token = "mk2"
-        elif token == "openheart":
-            token = "Open Heart"
+        token = line_match['model']
+        if (not brand_fold and line_match.get('brand') and line_match.get('brandPattern')
+                and re.search(line_match['brandPattern'],combined,re.I)):
+            subject.brand=line_match['brand']
+            brand_fold=_fold(subject.brand)
         if (
             current_line_match
             and model_fold
@@ -483,11 +482,20 @@ def repair_specific_model_tokens(
         ):
             # A model family named in the current turn replaces a stale model
             # carried from the previous shortlist (Kanno -> Open Heart).
-            subject.model = "Aquascaphe mk2" if token == "mk2" else token
+            subject.model = token
         elif not model_fold or model_fold in {brand_fold, "relogio", "watch"}:
-            subject.model = "Aquascaphe mk2" if token == "mk2" else token
+            subject.model = token
         elif token.casefold() not in model_fold:
             subject.model = f"{subject.model} {token}".strip()
+
+    if current_line_match and subject.model:
+        # Remove a family borrowed from history when the current message names
+        # a different one (e.g. "Open Heart PRX" after leaving a PRX shortlist).
+        named = _fold(message_text)
+        words = str(subject.model).split()
+        current_words = [word for word in words if _fold(word) in named.split()]
+        if current_words and len(current_words) < len(words):
+            subject.model = " ".join(current_words)
 
     mm_match = _SINGLE_MM_RE.search(combined)
     try:
@@ -570,6 +578,11 @@ def normalize_sales_interpretation(
     Catalog must not import ``app.sales``.
     """
     del recent_turns, conversation_id, include_other_threads
+    # An explicit topic/product replacement must not re-extract model, color or
+    # size from the previous customer's requests. Structured preferences already
+    # carry any constraints that the interpreter intentionally preserved.
+    if interpretation.domain_change_explicit or not interpretation.references_previous_context:
+        context_text = None
     preferences = interpretation.preferences
     subject = interpretation.subject
     subject.model = normalize_model_identity(subject.model)

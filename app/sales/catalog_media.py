@@ -477,6 +477,7 @@ async def try_catalog_media(
             plan,
             link_result,
             interpretation,
+            state=state,
         )
         if final:
             return final

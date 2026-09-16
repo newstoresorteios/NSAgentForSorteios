@@ -1,0 +1,12 @@
+[
+  {
+    "key": "catalogAvailabilityRules",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Exigência de pronta entrega",
+    "group": "Continuidade e disponibilidade",
+    "description": "JSON para preservar e retirar a exigência do cliente de pronta entrega.",
+    "maxLength": 12000,
+    "default": "{\"require\": \"\\\\b(?:a pronta entrega|somente pronta entrega|so pronta entrega|preciso.{0,25}pronta entrega)\\\\b\", \"release\": \"\\\\b(?:pode ser|aceito|pode vir).{0,25}(?:encomenda|sem pressa)\\\\b\", \"historyTurns\": 12, \"question\": \"(?:\\\\b(?:qual.{0,20}prazo|prazo de entrega|pronta entrega ou|sob encomenda|quanto tempo.{0,20}(?:chega|entrega))\\\\b)|(?:\\\\b(?:disponiv(?:el|eis)|disponibilidade|em estoque)\\\\b)\"}"
+  }
+]

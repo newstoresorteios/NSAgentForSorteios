@@ -43,12 +43,15 @@ async def replay_case(case, persona, *, fixtures=None):
     from app.message_pipeline import process_incoming_message
     from app.models import IncomingMessage
 
-    conversation_id = 'evaluation:' + uuid4().hex
+    conversation_id = case.get('evaluation_conversation_id') or 'evaluation:' + uuid4().hex
     history = [{**turn, 'conversation_id': conversation_id} for turn in case['history']]
     state = replay_state(case)
     state['last_conversation_id'] = conversation_id
     context = EvaluationContext(case['workspace_id'], persona, history=history, state=state,
                                 fixtures=fixtures, max_tool_calls=bounded('historyEvaluationMaxTools', 1, 60))
+    if case.get('environment') == 'simulated_commerce':
+        from app.evaluation.simulator import CommerceSimulator
+        context.simulator = CommerceSimulator(case.get('simulation') or {}, case.get('simulation_state'))
     runtime = TurnRuntimeContext(trace_id=conversation_id, llm_budget=LLMCallBudget(max_calls=10, enforce=True))
     token = bind_evaluation(context)
     runtime_token = set_current_turn(runtime)
@@ -75,6 +78,9 @@ async def replay_case(case, persona, *, fixtures=None):
         'integration_errors': [call.get('error_type') or 'tool_error' for call in (c['result'] for c in context.tool_calls) if call.get('error')],
         'real_model_calls': sum(1 for call in runtime.openai_calls if call.get('ok')),
         'generative_exercised': any(call.get('ok') for call in runtime.openai_calls),
+        'commercial_data': result.commercial_data if result else {},
+        'next_state': context.state,
+        'simulation_state': context.simulator.state if context.simulator else None,
         'elapsed_ms': round((time.perf_counter() - started) * 1000, 2),
     }
     return report, context.captured

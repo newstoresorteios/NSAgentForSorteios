@@ -57,6 +57,10 @@ def fetch_primary_index_candidates(
 
     Never raises — repository errors become an empty pool so Tray refresh runs.
     """
+    from app.evaluation.context import current_evaluation
+    evaluation = current_evaluation()
+    if evaluation is not None and evaluation.simulator is not None:
+        return evaluation.simulator.index_candidates(interpretation, limit or 30), 'simulation_catalog'
     settings = _runtime.get_settings()
     if not bool(getattr(settings, "agent_catalog_index_read_enabled", True)):
         return [], None

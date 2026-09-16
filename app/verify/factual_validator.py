@@ -45,7 +45,7 @@ _ORDER_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _STOCK_POSITIVE_RE = re.compile(
-    r"\b(em estoque|dispon[ií]vel|pronto para envio)\b",
+    r"\b(em estoque|dispon[ií]vel(?!\s+(?:sob|para)\s+consulta)|pronto para envio)\b",
     flags=re.IGNORECASE,
 )
 _STOCK_NEGATIVE_RE = re.compile(
@@ -742,7 +742,12 @@ def validate_factual_response(
     for raw_url in _URL_RE.findall(text):
         url = _clean_url(raw_url)
         report.checked_claims += 1
-        if url in pack.trusted_urls or _trusted_domain(url, domains):
+        # An official hostname does not prove an invented product path exists.
+        product_url_requires_evidence = (decision.domain == 'commerce'
+                                         and bool(pack.product_ids or (result.commercial_data or {}).get('products')
+                                                  or (result.commercial_data or {}).get('product_link'))
+                                         and urlparse(url).path.strip('/'))
+        if url in pack.trusted_urls or (_trusted_domain(url, domains) and not product_url_requires_evidence):
             report.supported_claims.append(
                 FactClaim(kind="url", claim=url, reason="url_supported")
             )
@@ -873,10 +878,12 @@ def validate_factual_response(
     stock_text = text
     for product in (result.commercial_data or {}).get('products') or []:
         availability = product.get('availability') if isinstance(product, dict) else None
-        if isinstance(availability, str) and availability and product.get('_revalidated'):
+        if (isinstance(availability, str) and availability
+                and (product.get('_revalidated') or product.get('_grounded'))):
             # Quoting a verified catalog note is not an assertion that an
             # inactive product can currently be purchased.
-            stock_text = stock_text.replace('“' + availability + '”', '')
+            for left, right in [('“','”'), ('"','"'), ("'","'"), ('‘','’')]:
+                stock_text = stock_text.replace(left + availability + right, '')
     if pack.stock_available is not None and decision.domain == "commerce":
         if _STOCK_POSITIVE_RE.search(stock_text):
             report.checked_claims += 1
@@ -1067,6 +1074,9 @@ def apply_factual_validation(
         "recommendation_budget_miss",
         "answer_council_blocked",
     }
+    if report.valid and result.safety_reason == 'factual_validation_failed':
+        result.response_metadata['factual_validation_repaired'] = True
+        result.safety_reason = None
     if (
         mode == "enforce"
         and report.fallback_required
@@ -1086,6 +1096,16 @@ def apply_factual_validation(
         result.reply_audio_url = None
         result.safety_reason = "factual_validation_failed"
         report.fallback_applied = True
+        if fallback and (result.commercial_data or {}).get("products"):
+            repaired = validate_factual_response(
+                result, decision=decision, mode=mode,
+                trusted_domains=trusted_domains, commerce_state=commerce_state,
+            )
+            if repaired.valid and repaired.checked_claims:
+                result.response_metadata["rejected_draft_factual_validation"] = report.model_dump(mode="json")
+                result.response_metadata["factual_validation_repaired"] = True
+                result.safety_reason = None
+                report = repaired
 
     # Authorize commercial products for any downstream composer / metrics.
     products = (result.commercial_data or {}).get("products")

@@ -4,6 +4,7 @@ from app.verify.factual_validator import (
     validate_factual_response,
 )
 from app.models import AgentResult, IncomingMessage
+import pytest
 
 
 def _decision(result: AgentResult):
@@ -70,6 +71,14 @@ def test_invented_external_url_is_rejected():
 
     assert report.valid is False
     assert report.violations[0].kind == "url"
+
+
+def test_invented_path_on_official_domain_is_rejected():
+    result=AgentResult(reply_text='Veja https://www.newstorerj.com.br/slug-inventado',intent='commerce',
+        commercial_data={'products':[{'id':'1','product_url':'https://www.newstorerj.com.br/slug-cadastrado'}]},
+        response_metadata={'domain':'commerce','response_source':'openai'})
+    report=validate_factual_response(result,decision=_decision(result),mode='shadow')
+    assert not report.valid and any(v.kind=='url' for v in report.violations)
 
 
 def test_official_pronta_entrega_catalog_url_is_accepted():
@@ -168,16 +177,23 @@ def test_budget_in_mil_is_supported_alongside_grounded_products():
         },
     )
 
-    report = validate_factual_response(
-        result,
-        decision=_decision(result),
-        mode="enforce",
-    )
 
+    report = validate_factual_response(result,decision=_decision(result),mode='enforce')
     assert report.valid is True
-    money = {claim.claim for claim in report.supported_claims if claim.kind == "money"}
-    assert {"20000.00", "19000.00"}.issubset(money)
+    money = {claim.claim for claim in report.supported_claims if claim.kind == 'money'}
+    assert {'20000.00','19000.00'}.issubset(money)
 
+
+@pytest.mark.parametrize('quote',[('“','”'),('"','"'),("'","'"),('‘','’')])
+def test_live_availability_note_is_not_a_claim_of_buyable_stock(quote):
+    left,right=quote
+    result=AgentResult(reply_text=f'A ficha diz {left}Disponível em 30 dias úteis{right}, mas o produto está indisponível para compra.',
+        intent='commerce',commercial_data={'products':[{'id':'1','available':'0','available_for_purchase':'0',
+            'stock':38,'availability':'Disponível em 30 dias úteis','_revalidated':True}]},
+        response_metadata={'domain':'commerce'})
+    assert validate_factual_response(result,decision=_decision(result)).valid
+    result.reply_text += ' Ele está disponível para compra agora.'
+    assert not validate_factual_response(result,decision=_decision(result)).valid
 
 def test_bare_twenty_reais_is_not_mistaken_for_twenty_thousand_budget():
     result = AgentResult(

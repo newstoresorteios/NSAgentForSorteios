@@ -287,14 +287,18 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
     if recipient and not _is_plausible_name(recipient):
         needle = " ".join(recipient.strip().split()).casefold()
         hay = (reply or "").casefold()
-        if needle and needle in hay:
+        # A catalog title may legitimately contain a recipient/gender label.
+        # Only reject addressing the customer by that phrase as a name.
+        if needle and re.search(r"(?:^|\n)\s*(?:oi[,! ]+|olá[,! ]+)?" + re.escape(needle) + r"\s*[,!?:]", hay):
             issues.append("commerce_phrase_used_as_name")
     if contract.purchase_close and products and len(products) >= 2:
         if (result.response_metadata or {}).get("guided_near_match") or _FRESH_LIST_RE.search(
             reply
         ):
             issues.append("reopened_discovery_on_purchase_close")
-    if (contract.sku_lock or contract.live_shortlist) and _REQUALIFY_RE.search(reply):
+    name_ack = bool((result.response_metadata or {}).get('qualification_name_acknowledged')
+                    and not products and not contract.live_checkout)
+    if (contract.sku_lock or contract.live_shortlist) and _REQUALIFY_RE.search(reply) and not name_ack:
         issues.append("requalify_after_sku")
     from .qualification_slots import is_shipping_city_prompt
 
@@ -907,6 +911,24 @@ def _recompose_catalog_reply(
     products = _presented(result)
     metadata = dict(result.response_metadata or {})
     validation = metadata.get("factual_validation") or {}
+    link = (result.commercial_data or {}).get('product_link') or {}
+    if (not products and link.get('product_id') and link.get('product_url_dead')
+            and not link.get('product_url') and not result.handoff_required):
+        repaired=result.model_copy(deep=True)
+        repaired.reply_text=operator_message('sales.catalog_media._dead_product_link_reply.986a0a5b2b')
+        repaired.safety_reason='product_link_not_available'
+        repaired.response_metadata['answer_council_recomposed']=True
+        if check_pedido(repaired,contract).pass_check and check_fatos(repaired,contract).pass_check:
+            return repaired
+    if (not products and link.get('product_url') and not link.get('product_url_dead')
+            and not result.safety_reason and not result.handoff_required
+            and not validation.get('violations') and validation.get('valid') is not False):
+        repaired = result.model_copy(deep=True)
+        repaired.reply_text = operator_message('sales.catalog_media.try_catalog_media.4fff6f82c4',
+                                               product_url=link['product_url'])
+        repaired.response_metadata['answer_council_recomposed'] = True
+        if check_pedido(repaired, contract).pass_check and check_fatos(repaired, contract).pass_check:
+            return repaired
     if (
         not products
         or contract.purchase_close
@@ -1006,6 +1028,11 @@ def _finish_council(
     final_checks = [check_pedido(result, contract), check_fatos(result, contract)]
     final_issues = [issue for check in final_checks for issue in check.issues]
     if final_issues:
+        from app.evaluation.context import current_evaluation
+        evaluation=current_evaluation()
+        if evaluation is not None:
+            evaluation.review_inputs.append({'stage':'answer_council','agent_reply':result.reply_text,
+                'issues':final_issues,'contract':contract.model_dump(mode='json')})
         from app.ops.handoff_service import build_human_handoff_result
         prior_metadata = result.response_metadata or {}
         result = build_human_handoff_result(
@@ -1074,6 +1101,12 @@ async def apply_answer_council_with_retry(
                 "restart": decision.restart,
             },
         )
+        if not decision.approved:
+            from app.evaluation.context import current_evaluation
+            evaluation = current_evaluation()
+            if evaluation is not None:
+                evaluation.review_inputs.append({'stage':'answer_council_attempt','agent_reply':current.reply_text,
+                    'issues':decision.issues,'facts':current.commercial_data,'contract':contract.model_dump(mode='json')})
         if decision.approved:
             return _finish_council(
                 current, decision, current_interp, contract, commerce_state
@@ -1083,6 +1116,7 @@ async def apply_answer_council_with_retry(
         prose_issues = {
             "stale_occasion_claimed", "re_greet_instead_of_commerce",
             "commerce_phrase_used_as_name", "asked_delivery_without_sku",
+            "requalify_after_sku",
         }
         if set(decision.issues) <= prose_issues:
             repaired = _recompose_catalog_reply(current, contract, current_interp)

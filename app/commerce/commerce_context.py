@@ -446,6 +446,11 @@ def resolve_commerce_reference(
         return (match, "product_id" if match else "none")
     if reference_type == "current_product" and state.active_product:
         return state.active_product, "product_id"
+    if reference_type == 'current_product' and len(state.last_presented_products) == 1:
+        # A single delivered candidate is an unambiguous referent even before
+        # purchase selection activates it. Never infer a winner from a list.
+        only=state.last_presented_products[0]
+        return CommerceProductReference.model_validate(only.model_dump(exclude={'position'})), 'product_id'
     return None, "none"
 
 

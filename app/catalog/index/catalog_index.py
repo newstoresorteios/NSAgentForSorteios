@@ -825,6 +825,9 @@ def filter_products_to_allowed(
 
 def upsert_canonical_items(items: list[CanonicalCatalogItem]) -> int:
     """Best-effort durable index write (no-op without database)."""
+    from app.evaluation.context import current_evaluation
+    if current_evaluation() is not None:
+        return 0
     if not items:
         return 0
     try:

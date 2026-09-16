@@ -83,21 +83,21 @@ def _infer_identity_from_presented(
         folded = [_fold_identity(item) for item in brands]
         if folded and all(item == folded[0] for item in folded):
             common_brand = brands[0]
-    blob = " ".join(part for part in names if part)
-    if not blob:
+    if not names:
         return common_brand, None
     from ..models import ProductPreferences, ProductSubject
     from app.catalog.specs.preference_normalize import repair_specific_model_tokens
 
-    subject = ProductSubject(brand=common_brand)
-    prefs = ProductPreferences()
-    repair_specific_model_tokens(
-        subject,
-        prefs,
-        message_text=blob,
-        context_text=blob,
-    )
-    return subject.brand or common_brand, subject.model
+    # A family mentioned by one alternative does not describe the whole list.
+    models = []
+    for name in names:
+        subject = ProductSubject(brand=common_brand)
+        repair_specific_model_tokens(subject, ProductPreferences(), message_text=name)
+        models.append(subject.model)
+    common_model = models[0] if models and models[0] and all(
+        _fold_identity(value) == _fold_identity(models[0]) for value in models
+    ) else None
+    return common_brand, common_model
 
 
 def locked_identity_from_state(
@@ -417,7 +417,8 @@ def inbound_from_memory(
     locked_brand, locked_model = locked_identity_from_state(commerce_state)
     if not brand and not _explicit_no_brand(interpretation, commerce_state):
         brand = locked_brand
-    if not model and not _explicit_no_brand(interpretation, commerce_state):
+    explicit_identifier = bool(interpretation and (interpretation.subject.reference or interpretation.subject.ean))
+    if not model and not explicit_identifier and not _explicit_no_brand(interpretation, commerce_state):
         model = locked_model
     occasion = None
     if interpretation is not None:

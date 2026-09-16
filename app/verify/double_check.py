@@ -55,7 +55,7 @@ _PRICE_ASK_RE = re.compile(
     re.IGNORECASE,
 )
 def _phase1_system() -> str:
-    return operator_message("double_check_system")
+    return operator_message("double_check_system") + '\n' + operator_message('judge_commercial_policy')
 _ENFORCE_PAYMENT_CODES = frozenset(
     {"pix_denied", "greeting_in_checkout", "pix"}
 )
@@ -522,6 +522,10 @@ def _phase1_packet(
                 log_swallowed("double_check.phase1_price", exc)
         products.append(
             {
+                **{key:item[key] for key in ('brand','model','reference','ean','url','product_url',
+                    'current_price','promotional_price','upon_request','available','available_in_store',
+                    'available_for_purchase','availability','availability_days','order_days_availability',
+                    'stock','properties','description','commercial_availability') if key in item},
                 "id": str(item.get("id") or item.get("product_id") or ""),
                 "name": str(item.get("name") or "")[:80],
                 "price": price,
@@ -566,6 +570,7 @@ async def run_phase1_double_check(
 
     from app.llm.openai_gateway import parse_structured_output
     from app.llm.openai_models import resolve_openai_model
+    from app.verify.persona_evidence import persona_evidence
 
     parse_result = await parse_structured_output(
         model=resolve_openai_model("fast"),
@@ -575,12 +580,12 @@ async def run_phase1_double_check(
             {
                 "role": "user",
                 "content": json.dumps(
-                    _phase1_packet(
+                    {**_phase1_packet(
                         incoming=incoming,
                         result=result,
                         commerce_state=commerce_state,
                         signals=signals,
-                    ),
+                    ), 'published_persona':persona_evidence((result.commercial_data or {}).get('products'))},
                     ensure_ascii=False,
                 ),
             },

@@ -1,0 +1,52 @@
+[
+  {
+    "key": "handoffConsentRules",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Pedido e aceite de atendimento humano",
+    "group": "Continuidade e disponibilidade",
+    "description": "Expressões sobre texto sem acentos. Recusas bloqueiam transferência; aceite exige oferta imediatamente anterior.",
+    "maxLength": 12000,
+    "default": "{\"negative\": \"\\\\b(?:(?:nao|nem) (?:quero|precis\\\\w*|gostaria|desejo|(?:me )?(?:transf\\\\w*|encaminh\\\\w*|cham\\\\w*))|sem (?:um |uma )?(?:atendente|humano)|dispenso|depois|mais tarde)\\\\b\", \"directFull\": [\"(?:um |uma )?(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)[.!?]*\", \"(?:por favor )?falar com (?:um |uma |o |a )?(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)(?: por favor)?[.!?]*\"], \"directSearch\": [\"\\\\b(?:quero|preciso|gostaria|prefiro|posso|poderia|pode|tem como|desejo)\\\\b.{0,45}\\\\b(?:falar|conversar|atendimento|chamar|chame|chama|transferir|transfira|encaminhar|encaminhe)\\\\b.{0,30}\\\\b(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)\\\\b\", \"\\\\b(?:quero|preciso de|chame|chama) (?:um |uma |o |a )?(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)\\\\b\", \"\\\\b(?:me passa|me passe|me transfere|me transfira|me encaminha|me encaminhe).{0,25}\\\\b(?:atendente|atendimento humano|humano|ser humano|pessoa|alguem|equipe|vendedor|vendas)\\\\b\"], \"acceptance\": \"(?:(?:sim|si|yes|ok|okay|certo|beleza|blz|pode|pode ser|isso|uhum|uhu|quero|quero sim|por favor|pf|pfv|faz favor|manda|pode mandar|pode encaminhar|pode transferir|pode chamar|encaminha|encaminhe)(?: (?:por favor|pf|pfv|pode encaminhar|pode transferir|pode chamar|pode mandar|pode ser))?)\", \"offerAll\": [\"\\\\b(?:posso|quer|gostaria|se quiser)\\\\b\", \"\\\\b(?:encaminh\\\\w*|transfer\\\\w*|passar|coloco|falar|chamar)\\\\b\", \"\\\\b(?:atendente|equipe|humano|vendedor|vendas|joao)\\\\b\"], \"decline\": \"(?:nao(?: obrigado| obrigada| precisa| quero)?|prefiro continuar por aqui|quero continuar por aqui)(?: (?:obrigado|obrigada|quero continuar por aqui|prefiro continuar por aqui|podemos continuar por aqui))?\", \"transferPromise\": \"(?<!nao )\\\\b(?:vou|irei|estou|ja (?:te )?(?:encaminhei|transferi))\\\\b.{0,22}\\\\b(?:passar|encaminhar|transferir|transferindo|encaminhando)\\\\b.{0,38}\\\\b(?:equipe|atendente|humano|pessoa|joao)\\\\b\"}"
+  },
+  {
+    "key": "message.judge_commercial_policy",
+    "target": "message",
+    "type": "textarea",
+    "label": "Evidências comerciais para revisores",
+    "group": "Qualidade das respostas",
+    "description": "Como conferir políticas publicadas, cálculos informativos e apenas a resposta efetivamente entregue.",
+    "maxLength": 12000,
+    "default": "As instruções e parâmetros em published_persona vêm da persona publicada pelos operadores e são evidência oficial das políticas da loja. derived_informational_prices contém cálculos determinísticos do desconto publicado sobre preço positivo do catálogo, arredondados em centavos; esse cálculo informativo não exige criar carrinho nem consultar get_payment_options. Uma consulta de preço não é confirmação de cobrança, pagamento aprovado ou pedido criado. O preço do catálogo pode ser apresentado como preço de tabela/a prazo; isso sozinho não promete número de parcelas, juros nem aprovação de crédito. Nunca aceite desconto superior ao publicado, preço de outro SKU, valor calculado incorretamente ou parcela sem evidência. Verifique a resposta entregue em reply/agent_reply; pareceres internos e rascunhos em metadata não são fatos externos nem verdades absolutas. Não transforme um erro de rascunho já removido em erro da resposta final. Liste em factual_errors somente erros reais, nunca observações dizendo que não há erro. Explicações definicionais básicas de mecanismos (por exemplo, diferença geral entre quartzo, solar e automático) são permitidas; não autorizam inventar reserva de marcha, resistência, manutenção, precisão ou outra especificação daquele SKU. Um critério que exige distinguir itens sob consulta aplica-se a itens mencionados na resposta; não exige exibir todos os itens encontrados quando já existe uma opção confirmada que atende ao pedido. A resposta deve ser útil, fiel ao catálogo e à persona, sem depender de palavras exatas. Em uma loja, link oficial do produto significa o link fornecido pelo catalogo oficial da loja, nao obrigatoriamente um dominio do fabricante. Em simulated_commerce, os dados e URLs do contrato simulado sao as evidencias de catalogo do cenario; nao reprove um fato apenas porque a URL de teste contem a palavra simulado. O campo upon_request indica preço sob consulta. Mesmo com available_for_purchase=1 e estoque positivo, preço ausente ou zero não permite concluir a compra automática; não confunda essa limitação com ausência física de estoque. O texto availability pode ser citado como observação da ficha, sem garantir entrega ou possibilidade de compra. Uma menção atribuída à ficha, junto da limitação de preço, não confirma disponibilidade imediata. Uma resposta de link ou foto não precisa repetir todos os alertas de preço quando não faz uma nova promessa comercial."
+  },
+  {
+    "key": "conversationFollowupRules",
+    "target": "policy",
+    "type": "textarea",
+    "label": "Continuidade, correções e perguntas sobre produtos",
+    "group": "Decisão comercial",
+    "description": "JSON com expressões aplicadas ao texto sem acentos. Separa correções de busca, endereço da loja e consultas ao produto conhecido de ações de compra.",
+    "maxLength": 12000,
+    "default": "{\"deniesBrand\": \"\\\\b(?:(?:nao (?:disse|pedi|falei|escolhi)).{0,35}marca|(?:quem|que) disse que (?:era|e))\\\\b\", \"correctsSearch\": \"\\\\b(?:corrigindo|esses nao sao|essas nao sao|nao foi essa cor)\\\\b\", \"freshSearch\": \"\\\\b(?:quero|queria|procuro|busco|me mostra|me mostre).{0,20}(?:um|uma|relogios|opcoes)\\\\b\", \"storeLink\": \"\\\\b(?:link|endereco|site) (?:da|de|dessa|de sua|da sua) loja\\\\b\", \"productMedia\": \"\\\\b(?:link|foto|fotos|imagem|imagens)\\\\b\", \"productPhoto\": \"\\\\b(?:foto|fotos|imagem|imagens)\\\\b\", \"deictic\": \"\\\\b(?:esse|essa|desse|dessa|dele|dela|primeiro|segundo|sugeriu|mencionou|link|foto|fotos)\\\\b\", \"interestOnly\": \"(?:me interessei|tenho interesse|gostei)(?:\\\\s+(?:nesse|neste|desse|deste|dele|dela|dessa|nessa|nele|nela)(?:\\\\s+(?:modelo|relogio|produto))?)?[.!?]*\", \"alternativeSearch\": \"\\\\b(?:outro|outra|outros|outras|alternativas?)\\\\b\", \"resumeMediaReference\": \"\\\\b(?:esse|essa|este|esta|desse|dessa)\\\\b.{0,35}\\\\b(?:sugeriu|mencionou|mostrou|indicou)\\\\b\", \"purchaseCommit\": \"\\\\b(?:comprar|compra|carrinho|pagar|pagamento|fechar|levar|pedido)\\\\b\"}"
+  },
+  {
+    "key": "message.handoff_declined_continue",
+    "target": "message",
+    "type": "textarea",
+    "label": "Continuidade após recusa de transferência",
+    "group": "Continuidade e disponibilidade",
+    "description": "Respeita a recusa, explica os limites e mantém o atendimento automático ativo.",
+    "maxLength": 12000,
+    "default": "Tudo bem, seguimos por aqui. Posso esclarecer as informações e políticas disponíveis. Solicitações que dependem da equipe, como avaliação, devolução ou reembolso, precisam de um atendente para execução; não consigo concluir essas ações pelo chat automático."
+  },
+  {
+    "key": "message.named_customer_known_request",
+    "target": "message",
+    "type": "textarea",
+    "label": "Nome recebido com opções conhecidas",
+    "group": "Continuidade e disponibilidade",
+    "description": "Reconhece o nome sem assumir intenção de compra nem escolher uma opção da lista.",
+    "maxLength": 12000,
+    "default": "Obrigado, {name}. Seguimos com seu pedido de {topic}."
+  }
+]

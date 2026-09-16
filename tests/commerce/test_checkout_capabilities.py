@@ -98,7 +98,8 @@ def test_cart_pay_link_copy_tells_customer_to_open_link_and_pay():
     )
     folded = copy.casefold()
     assert "https://loja.example/checkout/SRPG15" in copy
-    assert "reservado" in folded
+    assert "adicionei os itens ao carrinho" in folded
+    assert "reservado" not in folded
     assert "paga" in folded
     assert "joão" not in folded
     assert "joao" not in folded

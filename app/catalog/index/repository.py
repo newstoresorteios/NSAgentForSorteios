@@ -428,6 +428,12 @@ class CatalogIndexRepository:
         *,
         swallow: bool = False,
     ) -> list[dict[str, Any]]:
+        from app.evaluation.context import current_evaluation
+        evaluation = current_evaluation()
+        if evaluation is not None and evaluation.simulator is not None:
+            # Primary candidates and live details come from the isolated catalog.
+            # A secondary lookup must never mix in production catalog records.
+            return []
         if not str(params.get("tenant_id") or "").strip():
             raise ValueError("tenant_id required")
         started = time.perf_counter()

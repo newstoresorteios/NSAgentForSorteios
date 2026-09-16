@@ -33,6 +33,7 @@ async def test_offline_eval_replay_honest(case, monkeypatch):
         openai_calls=obs["openai_calls"],
         factual_valid=obs["factual_valid"],
         handoff_required=obs["handoff_required"],
+        handoff_offer=obs['handoff_offer'],
         invented_claim=obs["invented_claim"],
     )
     failed = [name for name, ok in result["checks"].items() if not ok]

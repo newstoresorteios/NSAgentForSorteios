@@ -133,9 +133,9 @@ async def test_technical_match_with_missing_live_price_keeps_partial_evidence(pr
     result = await retrieve_technical_products(session)
     assert result.commercial_data['products'] == []
     assert 'Modelo de teste' in result.reply_text
-    assert ('sem preço válido' if upon_request == '1' else 'não trouxe um preço válido') in result.reply_text
+    assert ('preço sob consulta' if upon_request == '1' else 'não trouxe um preço válido') in result.reply_text
     if upon_request == '1':
-        assert 'disponibilidade sob consulta' in result.reply_text
+        assert 'preço sob consulta' in result.reply_text
     assert result.response_metadata['technical_evidence'][-1]['commercial']['price_status'] == 'missing'
     original = result.reply_text
     result.reply_text = 'Se quiser eu busco.'

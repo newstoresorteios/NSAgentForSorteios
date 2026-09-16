@@ -138,7 +138,7 @@ def deterministic_tray_copy_ready(
     intent = str(plan.get("intent") or "")
     goal = str(plan.get("goal") or "")
     presented = bool((tray_result.response_metadata or {}).get("presented_products"))
-    if intent in {"recommendation", "product_comparison"} or goal in {"recommend", "compare"}:
+    if intent in {"recommendation", "product_comparison"} or goal in {"recommend", "compare", "inspect"}:
         return False
     if intent == "product_search":
         return True
@@ -397,6 +397,7 @@ async def sales_response_with_openai(
         "recommendation_no_match",
         "recommendation_budget_miss",
         "product_unavailable",
+        "shipping_guidance_without_cart",
     }:
         return None
     if (tray_result.commercial_data or {}).get("input_template"):
@@ -468,7 +469,7 @@ async def sales_response_with_openai(
         )
         from app.memory.history_window import HISTORY_TIME_POLICY
 
-        responder_instructions = f"{responder_instructions}\n\n{HISTORY_TIME_POLICY}\n\n{operator_message('catalog_retrieval_response_contract')}"
+        responder_instructions = f"{responder_instructions}\n\n{HISTORY_TIME_POLICY}\n\n{operator_message('catalog_retrieval_response_contract')}\n\n{operator_message('conversation_identity_contract')}"
         if memory_sidechannel:
             from app.memory.memory_policy import MEMORY_POLICY_PROMPT
 

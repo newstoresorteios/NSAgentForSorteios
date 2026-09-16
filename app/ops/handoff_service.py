@@ -10,7 +10,7 @@ from app.persona.site_knowledge import (
 
 from app.ops.handoff_consent import (
     CONFIRMED_REASONS, consent_reason, offer_text,
-    is_handoff_acceptance, last_assistant_offered_handoff,
+    is_handoff_acceptance, last_assistant_offered_handoff, promises_handoff,
 )
 
 
@@ -75,7 +75,7 @@ def enrich_handoff_metadata(
     previous = metadata.get("handoff") if isinstance(metadata.get("handoff"), dict) else {}
     reason = result.safety_reason or previous.get("reason") or confirmed
     proposed = bool(result.handoff_required or previous.get("required") or previous.get("offer")
-                    or result.safety_reason in _INTEGRATION_HANDOFF_REASONS)
+                    or result.safety_reason in _INTEGRATION_HANDOFF_REASONS or promises_handoff(result.reply_text))
     if not proposed and not confirmed:
         return result
     if confirmed:
