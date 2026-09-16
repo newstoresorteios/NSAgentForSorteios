@@ -220,10 +220,32 @@ def _seiko_shortlist_state(**overrides) -> CommerceConversationState:
 def test_checkout_utterance_covers_fechar_a_compra():
     assert is_checkout_utterance("como podes fazer pra fechar a compra?")
     assert is_checkout_utterance("fechar a compra")
+    assert is_checkout_utterance("quero seguir para o checkout")
     assert is_checkout_utterance("como posso fechar o negócio?")
     assert not is_checkout_utterance("quero comprar um relógio")
     assert not is_checkout_utterance("procuro um seiko")
     assert not is_checkout_utterance("Eu quero o relógio seiko")
+
+
+def test_checkout_with_active_product_creates_cart_before_preparing_order():
+    state = _presented_state(
+        active_product={
+            "product_id": "sb01",
+            "name": "Baltic Classic SB01",
+            "brand": "Baltic",
+        },
+        purchase_stage="details",
+    )
+    repaired = repair_presented_purchase_selection(
+        _interp(goal="buy", checkout_action="prepare_order"),
+        message_text="quero seguir para o checkout",
+        state=state,
+    )
+
+    assert repaired.purchase_action == "create_cart"
+    assert repaired.checkout_action is None
+    assert repaired.reference_type == "current_product"
+    assert repaired.stop_clarification is True
 
 
 def test_repair_fechar_a_compra_binds_active_inspected_sku():

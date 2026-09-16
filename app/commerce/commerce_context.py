@@ -923,6 +923,10 @@ def evolve_commerce_state(
     if isinstance(resolved, dict):
         try:
             state.active_product = CommerceProductReference.model_validate(resolved)
+            # A newly confirmed SKU is fresh browse evidence. It must revive
+            # the sale even if an older turn left a shortlist tombstone.
+            state.forget_shortlist = False
+            state.closed_by_farewell = False
         except (TypeError, ValueError):
             pass
 

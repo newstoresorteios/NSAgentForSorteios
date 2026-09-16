@@ -69,6 +69,8 @@ _CHECKOUT_UTTERANCE_RE = re.compile(
     r"montar\s+o\s+pedido|"
     r"gerar\s+(o\s+)?(pedido|carrinho)|"
     r"link\s+(de|do)\s+pagamento|"
+    r"(?:quero\s+)?seguir\s+(?:para|pro|ao)\s+(?:o\s+)?checkout|"
+    r"(?:ir|vamos)\s+(?:para|pro|ao)\s+(?:o\s+)?checkout|"
     r"fechar\s+por\s+aqui|"
     r"continuar\s+pelo\s+site|"
     r"quero\s+(esse|este|essa|esta)\b"
@@ -336,6 +338,7 @@ def _create_cart_repair(
     updates = {
         "goal": "buy",
         "purchase_action": "create_cart",
+        "checkout_action": None,
         "purchase_stage": "selection",
         "reference_type": reference_type,
         "reference_position": position,
@@ -456,6 +459,23 @@ def repair_presented_purchase_selection(
         return interpretation
     if not presented:
         return interpretation
+
+    checkout_requested = bool(
+        interpretation.checkout_action in {"prepare_order", "create_order"}
+        or re.search(r"\bcheckout\b", _fold(message_text))
+    )
+    if (
+        checkout_requested
+        and state.active_product is not None
+        and not state.cart_session_id
+    ):
+        return _create_cart_repair(
+            interpretation,
+            mode="checkout_active_product",
+            position=None,
+            reference_type="current_product",
+            extra={"product_id": state.active_product.product_id},
+        )
 
     named = match_presented_product_from_text(
         message_text,
