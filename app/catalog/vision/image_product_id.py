@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import unicodedata
@@ -436,6 +437,119 @@ async def _try_visual_fallback(
     )
 
 
+async def _try_storefront_image_match(
+    message: IncomingMessage,
+    *,
+    identified: ImageProductIdentification,
+) -> AgentResult | None:
+    """Resolve exact official listings omitted from the active Tray catalog."""
+    model = str(identified.model or "").strip()
+    if not model or not (message.image_url or "").strip():
+        return None
+    try:
+        if not bool(policy("imageStorefrontSearchEnabled")):
+            return None
+    except ConfigurationUnavailable:
+        return None
+    from app.catalog.media.storefront_search import (
+        _product_from_storefront_hit,
+        rank_storefront_hits_by_image,
+        search_storefront,
+        storefront_product_available,
+    )
+
+    query = " ".join(
+        part
+        for part in (identified.brand, model, identified.color)
+        if str(part or "").strip()
+    ).strip()
+    try:
+        max_distance = int(policy("imageStorefrontPerceptualDistanceMax"))
+        min_margin = int(policy("imageStorefrontPerceptualMinMargin"))
+        hits = await search_storefront(query)
+        ranked = await rank_storefront_hits_by_image(
+            str(message.image_url).strip(),
+            hits,
+        )
+    except (
+        ConfigurationUnavailable,
+        httpx.HTTPError,
+        OSError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        print("[sales.image.storefront.error]", {
+            "error_type": type(exc).__name__,
+            "query": query[:80],
+        })
+        return None
+    if not ranked:
+        return None
+    best_distance, best_hit = ranked[0]
+    runner_up_distance = ranked[1][0] if len(ranked) > 1 else None
+    margin = (
+        runner_up_distance - best_distance
+        if runner_up_distance is not None
+        else min_margin
+    )
+    print("[sales.image.storefront.match]", {
+        "query": query[:80],
+        "hit_count": len(hits),
+        "best_product_id": best_hit.get("product_id"),
+        "best_distance": best_distance,
+        "runner_up_distance": runner_up_distance,
+        "margin": margin,
+    })
+    if best_distance > max_distance or margin < min_margin:
+        return None
+
+    product = _product_from_storefront_hit(best_hit)
+    available = await storefront_product_available(str(product.get("url") or ""))
+    product["available"] = available
+    product["available_for_purchase"] = available
+    name = str(product.get("name") or model)
+    reference = str(product.get("reference") or "").strip()
+    url = str(product.get("url") or "").strip()
+    message_key = (
+        "image_storefront_exact_available"
+        if available is True
+        else "image_storefront_exact_unavailable"
+    )
+    return AgentResult(
+        reply_text=operator_message(
+            message_key,
+            name=name,
+            reference=reference,
+            url=url,
+        ),
+        intent="commerce",
+        handoff_required=False,
+        safety_reason=None,
+        commercial_data={
+            "products": [product],
+            "match_status": "exact",
+            "storefront_visual_match": True,
+        },
+        response_metadata={
+            "domain": "commerce",
+            "image_search": True,
+            "storefront_visual_match": True,
+            "presented_products": True,
+            "product_resolution_state": "resolved",
+            "clear_active_product": True,
+            "image_identify": identified.model_dump(mode="json"),
+            "active_preferences": {
+                "subject_brand": identified.brand,
+                "subject_model": identified.model,
+                "subject_reference": reference or None,
+                "color": identified.color,
+                "attributes": list(identified.features or []),
+                "image_identify": identified.model_dump(mode="json"),
+            },
+        },
+    )
+
+
 def products_match_required_features(
     products: list[dict[str, Any]],
     features: list[str],
@@ -767,7 +881,15 @@ async def handle_image_product_search(
     })
 
     retrieve = resolve_compiled_retrieval()
-    tray_result = await retrieve(interpretation)
+    tray_result, storefront_match = await asyncio.gather(
+        retrieve(interpretation),
+        _try_storefront_image_match(
+            message,
+            identified=identified,
+        ),
+    )
+    if storefront_match is not None:
+        return storefront_match
     if tray_result is None:
         visual = await _try_visual_fallback(
             message,

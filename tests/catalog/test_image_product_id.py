@@ -109,6 +109,67 @@ def test_visible_gmt_keeps_gmt_candidates(monkeypatch):
     assert interpretation._excluded_catalog_tokens == []
 
 
+@pytest.mark.asyncio
+async def test_storefront_visual_match_closes_reference_for_inactive_product(monkeypatch):
+    from app.catalog.vision import image_product_id as module
+    from app.catalog.media import storefront_search
+
+    values = {
+        "imageStorefrontSearchEnabled": True,
+        "imageStorefrontPerceptualDistanceMax": 6,
+        "imageStorefrontPerceptualMinMargin": 4,
+    }
+    monkeypatch.setattr(module, "policy", lambda key: values[key])
+    monkeypatch.setattr(
+        module,
+        "operator_message",
+        lambda key, **values: f"{key}:{values['reference']}",
+    )
+    hit = {
+        "product_id": "16010",
+        "name": "Relógio Hamilton Khaki Field Murph Automático Azul H70405740 38 mm",
+        "reference": "H70405740",
+        "model": "Hamilton Khaki Field Murph",
+        "url": "https://www.newstorerj.com.br/relogios/murph-h70405740",
+        "image_url": "https://images.example/murph.jpg",
+        "price": "8599.99",
+    }
+
+    async def fake_search(_query):
+        return [hit, {**hit, "product_id": "15988", "reference": "H70405140"}]
+
+    async def fake_rank(_image_url, hits):
+        return [(0, hits[0]), (12, hits[1])]
+
+    async def fake_availability(_url):
+        return False
+
+    monkeypatch.setattr(storefront_search, "search_storefront", fake_search)
+    monkeypatch.setattr(storefront_search, "rank_storefront_hits_by_image", fake_rank)
+    monkeypatch.setattr(storefront_search, "storefront_product_available", fake_availability)
+    result = await module._try_storefront_image_match(
+        IncomingMessage(
+            channel="whatsapp",
+            text="quero esse",
+            input_modality="image",
+            attachment_type="image",
+            image_url="https://example.com/inbound.jpg",
+        ),
+        identified=ImageProductIdentification(
+            brand="Hamilton",
+            model="Khaki Field Murph",
+            color="azul",
+            features=["automático"],
+            confidence=0.96,
+        ),
+    )
+
+    assert result is not None
+    assert result.commercial_data["products"][0]["reference"] == "H70405740"
+    assert result.commercial_data["products"][0]["available"] is False
+    assert result.reply_text == "image_storefront_exact_unavailable:H70405740"
+
+
 def test_parser_keeps_caption_with_image():
     incoming = parse_brevo_conversations_payload(_image_payload(with_caption=True))
 

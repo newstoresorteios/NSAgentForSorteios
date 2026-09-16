@@ -1,5 +1,12 @@
 from app.stories.instagram_story_models import StoryProductCandidate, StoryVisualUnderstanding
-from app.catalog.media.storefront_search import parse_storefront_search_html
+from io import BytesIO
+
+from PIL import Image
+
+from app.catalog.media.storefront_search import (
+    parse_storefront_search_html,
+    perceptual_image_hash,
+)
 from app.stories.story_match_decider import try_resolve_tied_candidates
 from app.stories.story_product_matcher import _candidate_core_listing_key, classify_match
 
@@ -15,6 +22,48 @@ def test_parse_storefront_search_html_reads_item_ids_and_rocks_name():
     assert [hit["product_id"] for hit in hits] == ["15494", "14804"]
     assert "rocks" in hits[0]["name"].casefold()
     assert "C63-36A3H1-S00A0-B1" in hits[0]["reference"].upper()
+
+
+def test_parse_storefront_search_html_reads_rich_tray_product_data():
+    html = r'''<script>dataLayer = [{"listProducts":[
+      {"idProduct":"16010","nameProduct":"Rel\u00f3gio Hamilton Khaki Field Murph Autom\u00e1tico Azul H70405740 38 mm","sellPrice":"8599.99","reference":"H70405740","model":"Hamilton Khaki Field Murph","urlImage":"https:\/\/images.example\/murph.jpg","urlProduct":"http:\/\/www.newstorerj.com.br\/relogios\/murph-h70405740"}
+    ],"filter":{}}]</script>'''
+
+    hits = parse_storefront_search_html(html)
+
+    assert hits == [{
+        "product_id": "16010",
+        "name": "Relógio Hamilton Khaki Field Murph Automático Azul H70405740 38 mm",
+        "reference": "H70405740",
+        "model": "Hamilton Khaki Field Murph",
+        "url": "https://www.newstorerj.com.br/relogios/murph-h70405740",
+        "image_url": "https://images.example/murph.jpg",
+        "price": "8599.99",
+    }]
+
+
+def test_perceptual_hash_survives_resize_but_separates_another_image():
+    source = Image.new("RGB", (80, 80), "white")
+    for x in range(15, 45):
+        for y in range(20, 65):
+            source.putpixel((x, y), (10, 40, 160))
+    resized = source.resize((160, 160))
+    other = Image.new("RGB", (80, 80), "white")
+    for x in range(45, 70):
+        for y in range(5, 35):
+            other.putpixel((x, y), (160, 40, 10))
+
+    def encoded(image):
+        stream = BytesIO()
+        image.save(stream, format="JPEG", quality=85)
+        return stream.getvalue()
+
+    source_hash = perceptual_image_hash(encoded(source))
+    resized_hash = perceptual_image_hash(encoded(resized))
+    other_hash = perceptual_image_hash(encoded(other))
+
+    assert (source_hash ^ resized_hash).bit_count() <= 6
+    assert (source_hash ^ other_hash).bit_count() > 6
 
 
 def _cand(pid: str, listing: str) -> StoryProductCandidate:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from io import BytesIO
+import json
 import re
 from typing import Any
 from urllib.parse import quote_plus
@@ -20,6 +22,10 @@ _HREF_RE = re.compile(
 )
 _REF_RE = re.compile(r"(c\d{2}-\d{2}[a-z0-9-]+)", re.IGNORECASE)
 _SKU_RE = re.compile(r"\b(96[a-z]\d{3})\b", re.IGNORECASE)
+_LIST_PRODUCTS_RE = re.compile(
+    r'"listProducts"\s*:\s*(\[.*?\])\s*,\s*"filter"\s*:',
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _product_from_storefront_hit(hit: dict[str, str]) -> dict[str, Any]:
@@ -51,8 +57,12 @@ def _product_from_storefront_hit(hit: dict[str, str]) -> dict[str, Any]:
         "name": name,
         "title": name,
         "url": url or None,
+        "image_url": str(hit.get("image_url") or "").strip() or None,
         "reference": reference or None,
+        "model": str(hit.get("model") or "").strip() or None,
         "brand": brand or None,
+        "price": hit.get("price"),
+        "current_price": hit.get("price"),
         "storefront_only": True,
     }
 
@@ -66,6 +76,34 @@ def _decode_js_string(raw: str) -> str:
 
 
 def parse_storefront_search_html(html: str) -> list[dict[str, str]]:
+    rich = _LIST_PRODUCTS_RE.search(html or "")
+    if rich:
+        try:
+            rows = json.loads(rich.group(1))
+        except (json.JSONDecodeError, TypeError):
+            rows = []
+        hits = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            product_id = str(row.get("idProduct") or "").strip()
+            name = str(row.get("nameProduct") or "").strip()
+            if not product_id or not name:
+                continue
+            raw_url = str(row.get("urlProduct") or "").replace(r"\/", "/").strip()
+            if raw_url.startswith("http://"):
+                raw_url = "https://" + raw_url[7:]
+            hits.append({
+                "product_id": product_id,
+                "name": name,
+                "reference": str(row.get("reference") or "").strip(),
+                "model": str(row.get("model") or "").strip(),
+                "url": raw_url,
+                "image_url": str(row.get("urlImage") or "").replace(r"\/", "/").strip(),
+                "price": str(row.get("sellPrice") or row.get("price") or "").strip(),
+            })
+        if hits:
+            return hits
     hits: list[dict[str, str]] = []
     seen: set[str] = set()
     for match in _ITEM_RE.finditer(html or ""):
@@ -99,6 +137,81 @@ def parse_storefront_search_html(html: str) -> list[dict[str, str]]:
             }
         )
     return hits
+
+
+def perceptual_image_hash(image_bytes: bytes) -> int:
+    """Compact difference hash; stable across WhatsApp resizing/recompression."""
+    from PIL import Image
+
+    image = Image.open(BytesIO(image_bytes)).convert("L").resize((17, 16))
+    pixels = list(image.get_flattened_data())
+    value = 0
+    for y in range(16):
+        for x in range(16):
+            if pixels[y * 17 + x] > pixels[y * 17 + x + 1]:
+                value |= 1 << (y * 16 + x)
+    return value
+
+
+async def rank_storefront_hits_by_image(
+    image_url: str,
+    hits: list[dict[str, str]],
+    *,
+    limit: int = 8,
+) -> list[tuple[int, dict[str, str]]]:
+    """Rank official storefront candidates against the inbound customer image."""
+    import asyncio
+    import httpx
+
+    candidates = [hit for hit in hits[: max(1, limit)] if hit.get("image_url")]
+    if not image_url or not candidates:
+        return []
+    timeout = httpx.Timeout(10.0, connect=3.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        source_response = await client.get(image_url)
+        source_response.raise_for_status()
+        source_hash = perceptual_image_hash(source_response.content)
+
+        async def _distance(hit: dict[str, str]):
+            try:
+                response = await client.get(str(hit["image_url"]))
+                response.raise_for_status()
+                return (source_hash ^ perceptual_image_hash(response.content)).bit_count(), hit
+            except (httpx.HTTPError, OSError, ValueError):
+                return None
+
+        rows = await asyncio.gather(*[_distance(hit) for hit in candidates])
+    ranked = [row for row in rows if row is not None]
+    ranked.sort(key=lambda row: row[0])
+    return ranked
+
+
+async def storefront_product_available(url: str) -> bool | None:
+    """Read the official product page availability without treating it as purchasable."""
+    from html import unescape
+    import httpx
+    import unicodedata
+
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=3.0),
+            follow_redirects=True,
+            headers={"User-Agent": "NSAgentForSorteios/storefront-product-status"},
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.HTTPError:
+        return None
+    folded = "".join(
+        char
+        for char in unicodedata.normalize("NFKD", unescape(response.text)).casefold()
+        if not unicodedata.combining(char)
+    )
+    if "produto indisponivel" in folded:
+        return False
+    return True
 
 
 async def search_storefront(query: str) -> list[dict[str, str]]:
