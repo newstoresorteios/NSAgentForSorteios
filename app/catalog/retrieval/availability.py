@@ -232,6 +232,7 @@ def commercial_availability_facts(product: dict[str, Any]) -> dict[str, Any]:
 
 def unavailable_product_reply(products: list[dict[str, Any]]) -> str:
     """Describe a catalog hit without implying that it is ready for dispatch."""
+    from app.configuration.runtime import message
     product = products[0] if products else {}
     facts = product.get("commercial_availability")
     if not isinstance(facts, dict):
@@ -242,18 +243,11 @@ def unavailable_product_reply(products: list[dict[str, Any]]) -> str:
         _truth_state(source.get("upon_request")) is True
         for source in (product, settings)
     )
-    lead_time_days = facts.get("lead_time_days")
-    if upon_request or facts.get("has_lead_time"):
-        lead_time = (
-            f", com prazo estimado de {lead_time_days} dias úteis"
-            if isinstance(lead_time_days, int) and lead_time_days > 0
-            else ""
-        )
-        return (
-            "Encontrei esse modelo no catálogo, mas ele está disponível somente "
-            f"sob encomenda{lead_time}; não é uma peça para envio imediato."
-        )
-    return (
-        "Encontrei esse modelo no catálogo, mas ele está indisponível no momento. "
-        "Posso procurar outras versões dele ou modelos semelhantes."
-    )
+    # Lead time alone does not authorize selling an inactive product on order.
+    # Preserve the provider's wording; a number alone cannot imply business days.
+    availability = str(product.get('availability') or settings.get('availability') or '').strip()
+    if upon_request:
+        return message('catalog_unavailable_on_request', availability=availability)
+    if availability:
+        return message('catalog_unavailable_with_note', availability=availability)
+    return message('catalog_unavailable')

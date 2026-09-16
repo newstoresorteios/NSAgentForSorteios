@@ -75,6 +75,31 @@ class MemoryProposal(BaseModel):
     ttl_days: int | None = None
     use_in_instructions: bool = False
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        # This hook must run on the nested model: a parent hook executes before
+        # Pydantic attaches $defs, leaving free-form objects open to API rejection.
+        schema = handler(core_schema)
+        schema['properties']['value'] = {
+            'description': 'Use a scalar, a list of strings, or JSON text for a structured object.',
+            'anyOf': [{'type':'string'}, {'type':'number'}, {'type':'boolean'},
+                      {'type':'array','items':{'type':'string'}}, {'type':'null'}],
+        }
+        return apply_openai_strict_schema(schema)
+
+    @field_validator('value', mode='before')
+    @classmethod
+    def _decode_structured_wire_value(cls, value):
+        import json
+        if isinstance(value, str) and value.strip().startswith('{'):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    return parsed
+            except ValueError:
+                pass
+        return value
+
     @field_validator("key")
     @classmethod
     def _trim_key(cls, value: str) -> str:

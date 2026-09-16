@@ -122,6 +122,8 @@ async def _mp_request(
     idempotency_key: str | None = None,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
+    from app.evaluation.context import prohibit_side_effect
+    prohibit_side_effect("payment_provider_access")
     cfg = settings or get_settings()
     token = _ensure_token(cfg)
     url = f"{_mp_base_url(cfg)}{path}"

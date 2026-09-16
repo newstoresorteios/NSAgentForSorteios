@@ -77,7 +77,9 @@ def feature_evidence(product: dict[str, Any], requirements: dict[str, str]) -> d
                     and not _denied(source, r, "catalogFeatureNegationPhrases")}
         wanted_rule = next((r for r in choices if r["value"] == wanted), None)
         denied = bool(wanted_rule and _denied(source, wanted_rule, "catalogFeatureNegationPhrases"))
-        status = "matched" if observed == {wanted} and not denied else "mismatch" if observed or denied else "unknown"
+        compatible = set((wanted_rule or {}).get('compatibleValues') or [])
+        supported = wanted in observed and observed <= ({wanted} | compatible)
+        status = "matched" if supported and not denied else "mismatch" if observed or denied else "unknown"
         facts.append({"field":field, "required":wanted, "observed":sorted(observed), "status":status,
                       "source":"structured" if structured else "product_description", "product_id":str(product.get("id") or "")})
     status = "mismatch" if any(f["status"] == "mismatch" for f in facts) else "unknown" if any(f["status"] == "unknown" for f in facts) else "matched"

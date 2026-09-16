@@ -89,6 +89,32 @@ def test_bare_purchase_closing_phrases():
     assert not is_bare_purchase_closing("Quero o Baltic")
 
 
+@pytest.mark.parametrize('text', [
+    'O 1. É automático?', 'O primeiro tem safira', 'Qual o tamanho do segundo?',
+    'Quero saber se o 1 é automático', 'Se o 1 for automático quero comprar. É?',
+    'O Baltic Aquascaphe é automático?',
+])
+def test_product_questions_cannot_be_promoted_to_purchase(text):
+    assert parse_list_position_selection(text) is None
+    assert not is_checkout_utterance(text)
+    repaired = repair_presented_purchase_selection(
+        _interp(goal='buy', purchase_action='create_cart', confirmation='confirm'),
+        message_text=text, state=_presented_state(pending_action='create_cart'),
+    )
+    assert repaired.goal == 'inspect'
+    assert repaired.purchase_action is None
+    assert repaired.confirmation == 'none'
+    if text.startswith('O 1.'):
+        assert repaired.reference_type == 'list_position'
+        assert repaired.reference_position == 1
+
+
+def test_explicit_purchase_with_operational_question_keeps_authorization():
+    repaired = repair_presented_purchase_selection(_interp(),
+        message_text='Quero comprar o 1, pode gerar o carrinho?', state=_presented_state())
+    assert repaired.purchase_action == 'create_cart'
+
+
 def test_repair_comprar_o_2_forces_create_cart():
     repaired = repair_presented_purchase_selection(
         _interp(),

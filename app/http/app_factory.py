@@ -60,6 +60,8 @@ def create_app() -> FastAPI:
     application.include_router(cron_router)
     application.include_router(story_admin_router)
     application.include_router(debug_router)
+    from app.evaluation.api import router as evaluation_router
+    application.include_router(evaluation_router)
 
     @application.middleware("http")
     async def turn_runtime_middleware(request: Request, call_next):

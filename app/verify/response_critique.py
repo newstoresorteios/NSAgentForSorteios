@@ -40,7 +40,7 @@ from app.ops.turn_runtime import LLMCallBudgetExceeded
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 def critique_system_prompt() -> str:
-    return operator_message("critique_system")
+    return operator_message("critique_system") + '\n' + operator_message('critique_availability_evidence')
 
 
 class ShippingQuoteProductArgument(BaseModel):
@@ -406,6 +406,9 @@ async def run_critique_judge(
         "intent": result.intent,
         "safety_reason": result.safety_reason,
         "commercial_data": result.commercial_data or {},
+        "grounded_commerce_evidence": result.response_metadata.get('grounded_commerce_evidence') or {},
+        "retrieval_result": {key: result.response_metadata.get(key) for key in (
+            'technical_requirements', 'technical_evidence', 'product_resolution_state')},
         "working_memory": (
             result.response_metadata.get("working_memory")
             or {}
@@ -418,6 +421,10 @@ async def run_critique_judge(
         "retryable_apis": catalog.get("retryable_apis"),
         "policy": catalog.get("policy"),
     }
+    from app.evaluation.context import current_evaluation
+    evaluation = current_evaluation()
+    if evaluation is not None:
+        evaluation.review_inputs.append(payload)
     try:
         from app.llm.openai_errors import OpenAIGatewayError
         from app.llm.openai_gateway import parse_structured_output
@@ -1076,7 +1083,17 @@ def _handle_unavailable_review(result: AgentResult, report: CritiqueLoopReport, 
         return result
     if policy("critiqueUnavailableAction") == "grounded_fallback":
         if result.safety_reason in {"catalog_requirements_unknown", "catalog_requirements_no_match"}:
-            return result
+            from app.verify.final_response import result_interpretation
+            from app.catalog.retrieval.technical import technical_miss
+            interpretation = result_interpretation(result)
+            if interpretation is not None and result.response_metadata.get('technical_requirements'):
+                grounded = technical_miss(interpretation,
+                    unknown=result.safety_reason == 'catalog_requirements_unknown',
+                    evidence=result.response_metadata.get('technical_evidence'))
+                result.reply_text = grounded.reply_text
+                result.response_metadata.update(response_source='grounded_fallback', used_openai_responder=False)
+                report.applied_factual_fallback = True
+                return result
         fallback = grounded_catalog_fallback(result)
         if fallback is not None:
             report.applied_factual_fallback = True

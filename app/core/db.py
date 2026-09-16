@@ -35,6 +35,13 @@ def get_conn() -> Iterator[psycopg.Connection]:
     settings = get_settings()
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
+    from app.evaluation.context import current_evaluation
+    if current_evaluation() is not None:
+        register_database_call()
+        with psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=10,
+                             options="-c default_transaction_read_only=on") as conn:
+            yield conn
+        return
     register_database_call()
     if getattr(settings, "database_pool_enabled", False):
         from app.core.connection_pool import connection_pool
@@ -60,6 +67,8 @@ def get_sorteio_conn() -> Iterator[psycopg.Connection]:
     url = resolved_sorteio_database_url()
     if not url:
         raise RuntimeError("SORTEIO_DATABASE_URL (or DATABASE_URL fallback) is not configured")
+    from app.evaluation.context import prohibit_side_effect
+    prohibit_side_effect("raffle_database_access")
     register_database_call()
     conn = psycopg.connect(url, row_factory=dict_row, connect_timeout=10)
     try:
@@ -1161,6 +1170,11 @@ def load_recent_conversation_turns(
     SQL row fetch (inbound messages). Use a higher limit for commerce handle
     recovery so payment links from earlier in the thread still surface.
     """
+    from app.evaluation.context import current_evaluation
+    evaluation = current_evaluation()
+    if evaluation is not None:
+        from copy import deepcopy
+        return deepcopy(evaluation.history[-max(1, int(limit)):])
     settings = get_settings()
     if not settings.database_url:
         return []
@@ -1473,6 +1487,11 @@ def load_commerce_conversation_state(
     sender_key: str | None = None,
 ) -> dict[str, Any]:
     """Load delivered commerce state, recovering order context across identities."""
+    from app.evaluation.context import current_evaluation
+    evaluation = current_evaluation()
+    if evaluation is not None:
+        from copy import deepcopy
+        return deepcopy(evaluation.state)
     from app.memory.context_resume import (
         commerce_state_resumable_score,
         merge_commerce_states,

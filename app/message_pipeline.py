@@ -142,6 +142,11 @@ def _persist_commerce_session(
     result: AgentResult,
 ) -> AgentResult:
     result = _attach_commerce_metadata(incoming, commerce_state, result)
+    from app.evaluation.context import current_evaluation
+    evaluation = current_evaluation()
+    if evaluation is not None:
+        evaluation.state = commerce_state.model_dump(mode="json")
+        return result
     upsert_customer_identity_links(incoming, commerce_state)
     persist_customer_commerce_session(
         person_keys=resolve_person_key_candidates(
@@ -220,15 +225,17 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     configuration_tokens = owned_token = persona_token = None
     try:
         from app.configuration.workspace import resolve_conversation_workspace
-        workspace_id = await asyncio.to_thread(resolve_conversation_workspace, incoming.conversation_id, incoming.channel)
-        loaded_persona = await asyncio.to_thread(load_persona_runtime, workspace_id=workspace_id) if workspace_id else await asyncio.to_thread(load_persona_runtime)
+        from app.evaluation.context import current_evaluation
+        evaluation = current_evaluation()
+        workspace_id = evaluation.workspace_id if evaluation else await asyncio.to_thread(resolve_conversation_workspace, incoming.conversation_id, incoming.channel)
+        loaded_persona = evaluation.persona if evaluation else (await asyncio.to_thread(load_persona_runtime, workspace_id=workspace_id) if workspace_id else await asyncio.to_thread(load_persona_runtime))
         bundle = loaded_persona.configuration_bundle
         configuration_tokens = bind_bundle(bundle, settings_from_bundle(get_settings(), bundle)) if bundle else None
         owned_token = _ensure_live_turn_budget(incoming)
         persona_token = set_persona_runtime(loaded_persona)
         from app.configuration.workspace import stamp_inbound_workspace
         resolved_workspace = loaded_persona.flow_params_dict().get("workspace_id")
-        if resolved_workspace and getattr(get_settings(), "database_url", None):
+        if not evaluation and resolved_workspace and getattr(get_settings(), "database_url", None):
             await asyncio.to_thread(stamp_inbound_workspace, (incoming.raw or {}).get("inbound_id"), resolved_workspace)
         if bundle and get_current_turn() is not None:
             from app.llm.llm_call_policy import resolve_turn_llm_budget

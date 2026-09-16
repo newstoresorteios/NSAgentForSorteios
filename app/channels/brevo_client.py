@@ -317,6 +317,8 @@ async def _send_whatsapp_transactional_reply(incoming: IncomingMessage, text: st
 
 async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str) -> BrevoSendResult:
     """Send a reply back to the user through Brevo."""
+    from app.evaluation.context import prohibit_side_effect
+    prohibit_side_effect("channel_send")
     settings = get_settings()
     text = result.reply_text if isinstance(result, AgentResult) else str(result)
     image_urls = _outbound_image_urls(result)

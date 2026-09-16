@@ -5,8 +5,9 @@ import asyncio
 from datetime import datetime, timezone
 
 from app.catalog.retrieval.hard_filter import hard_filter_products
+from app.catalog.retrieval.price import resolve_commercial_price
 from app.catalog.retrieval.limits import customer_result_limit
-from app.catalog.retrieval.availability import product_availability_state, apply_persona_presentation_order
+from app.catalog.retrieval.availability import product_availability_state, apply_persona_presentation_order, _truth_state
 from app.catalog.specs.requirements import technical_requirements, feature_evidence, feature_rules, criteria_label
 from app.configuration.runtime import policy, message
 from app.models import AgentResult
@@ -15,7 +16,17 @@ from app.ops.observability import log_event
 
 def technical_miss(interpretation, *, unknown: bool, evidence: list | None = None) -> AgentResult:
     reason = "catalog_requirements_unknown" if unknown else "catalog_requirements_no_match"
-    return AgentResult(reply_text=message(reason, criteria=criteria_label(interpretation)), intent="commerce",
+    reply = message(reason, criteria=criteria_label(interpretation))
+    for item in evidence or []:
+        commercial = item.get("commercial") or {}
+        if (item.get("stage") == "live_detail" and item.get("status") == "matched"
+                and commercial.get("price_status") == "missing" and item.get("product_name")):
+            template = ("catalog_requirements_price_on_request" if commercial.get("upon_request")
+                        else "catalog_requirements_price_missing")
+            reply = message(template, product=item["product_name"],
+                            criteria=criteria_label(interpretation))
+            break
+    return AgentResult(reply_text=reply, intent="commerce",
         safety_reason=reason, commercial_data={"products": []}, response_metadata={
             "presented_products":False, "product_resolution_state":"technical_unknown" if unknown else "technical_mismatch",
             "clear_active_product":True, "clear_presented_products":True,
@@ -74,14 +85,21 @@ async def retrieve_technical_products(session) -> AgentResult:
             if current.get("name") is None:
                 current["name"] = prior.get("name")
             verdict = feature_evidence(current, required)
-            evidence.append({"product_id":current["id"], "stage":"live_detail", **verdict})
+            availability = product_availability_state(current)
+            price = resolve_commercial_price(current, require_positive=True).amount
+            evidence.append({"product_id":current["id"], "product_name":current.get("name"),
+                "stage":"live_detail", **verdict, "commercial":{
+                    "availability":availability, "price":float(price) if price is not None else None,
+                    "upon_request":any(_truth_state(source.get("upon_request")) is True
+                        for source in (current, current.get("ProductSettings")) if isinstance(source, dict)),
+                    "price_status":"known" if price is not None else "missing"}})
             unknown |= verdict["status"] == "unknown"
-            if verdict["status"] != "matched" or product_availability_state(current) != "available":
+            if verdict["status"] != "matched" or availability != "available":
+                continue
+            if price is None:
+                unknown = True
                 continue
             if not hard_filter_products([current], interpretation, mode=session.retrieval_plan.mode):
-                continue
-            if not any(current.get(k) is not None for k in ("price", "current_price", "promotional_price")):
-                unknown = True
                 continue
             current.update(_revalidated=True, _freshness_at=datetime.now(timezone.utc).isoformat(),
                            _factual_source="tray_live", _field_sources={k:"tray_live" for k in current if not k.startswith("_")},

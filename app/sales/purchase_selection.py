@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.configuration.runtime import message as operator_message
 
 import re
+import json
 import unicodedata
 from typing import Any
 
@@ -130,8 +131,26 @@ def _fold(value: Any) -> str:
     return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 
+def is_product_information_question(text: str | None) -> bool:
+    from app.configuration.runtime import policy
+
+    folded = _fold(text)
+    rules = json.loads(policy('productQuestionRules'))
+    conditional = any(re.search(pattern, folded) for pattern in rules['conditionalPatterns'])
+    committed = any(re.search(pattern, folded) for pattern in rules['commitPatterns'])
+    question = '?' in folded or any(re.search(pattern, folded) for pattern in rules['questionPatterns'])
+    return bool(question and (conditional or not committed))
+
+
 def parse_list_position_selection(text: str | None) -> int | None:
-    """Return 1-based list position when the customer picks from a shortlist."""
+    """A reference inside a question does not authorize purchasing the item."""
+    if is_product_information_question(text):
+        return None
+    return parse_list_position_reference(text)
+
+
+def parse_list_position_reference(text: str | None) -> int | None:
+    """Return a list reference, independently of purchase authorization."""
     raw = str(text or "").strip()
     if not raw:
         return None
@@ -161,7 +180,7 @@ def parse_list_position_selection(text: str | None) -> int | None:
 def is_bare_purchase_closing(text: str | None) -> bool:
     """True for short close-the-deal lines without a fresh catalog browse."""
     raw = str(text or "").strip()
-    if not raw:
+    if not raw or is_product_information_question(raw):
         return False
     if parse_list_position_selection(raw):
         return True
@@ -173,7 +192,7 @@ def is_bare_purchase_closing(text: str | None) -> bool:
 def is_checkout_utterance(text: str | None) -> bool:
     """Customer asked to close, cart, or pay — not a generic 'quero um relógio'."""
     raw = str(text or "").strip()
-    if not raw:
+    if not raw or is_product_information_question(raw):
         return False
     folded = _fold(raw)
     if _NEW_BROWSE_RE.search(folded) and not _CHECKOUT_UTTERANCE_RE.search(folded):
@@ -394,6 +413,34 @@ def repair_presented_purchase_selection(
         return interpretation
     if interpretation.domain != "commerce":
         return interpretation
+    presented = _presented_from_state(state)
+    refers_to_product = bool(
+        parse_list_position_reference(message_text)
+        or interpretation.reference_type
+        or interpretation.purchase_action
+        or match_presented_product_from_text(message_text, presented, active_product=state.active_product)
+    )
+    if presented and refers_to_product and is_product_information_question(message_text):
+        position = parse_list_position_reference(message_text)
+        inspected = interpretation.model_copy(update={
+            "goal": "inspect", "purchase_action": None, "purchase_items": [],
+            "checkout_action": None, "checkout_data": None, "confirmation": "none",
+            "purchase_stage": "details",
+        })
+        inspected.preferences = interpretation.preferences.model_copy(update={
+            field: (state.active_preferences or {}).get(field) for field in ('mechanism', 'crystal')
+        })
+        if position is not None:
+            inspected.reference_type = "list_position"
+            inspected.reference_position = position
+            inspected.references_previous_context = True
+            inspected.needs_clarification = False
+            inspected.clarification_question = None
+            inspected.ready_for_retrieval = True
+            inspected.answer_strategy = "search_catalog"
+            if "catalog" not in inspected.information_needed:
+                inspected.information_needed = [*inspected.information_needed, "catalog"]
+        return inspected
     if interpretation.image_request:
         return interpretation
     if (
@@ -401,7 +448,6 @@ def repair_presented_purchase_selection(
         and interpretation.purchase_action != "create_cart"
     ):
         return interpretation
-    presented = _presented_from_state(state)
     if not presented:
         return interpretation
 

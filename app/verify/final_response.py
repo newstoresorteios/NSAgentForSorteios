@@ -46,7 +46,10 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
     interpretation = interpretation or result_interpretation(result)
     issues = list((metadata.get("final_response_validation") or {}).get("rejected_issues") or [])
     products = [p for p in (result.commercial_data or {}).get("products", []) if isinstance(p, dict)]
-    requirements = normalize_requirements(interpretation, incoming.text) if interpretation else {}
+    # "Is the first one automatic?" asks for a fact about that SKU; it does not
+    # require replacing a quartz watch with a new automatic recommendation.
+    inspect_reference = bool(interpretation and interpretation.goal == 'inspect' and interpretation.reference_type)
+    requirements = normalize_requirements(interpretation, incoming.text) if interpretation and not inspect_reference else {}
     if requirements and products and not result.handoff_required:
         evidence = [feature_evidence(p, requirements) for p in products]
         if any(e["status"] != "matched" for e in evidence) or len(hard_filter_products(products, interpretation, mode="recommendation")) != len(products):

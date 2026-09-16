@@ -599,6 +599,19 @@ def build_fact_pack(
         if state_payment is not None and pack.payment_confirmed is None:
             pack.payment_confirmed = state_payment
 
+    # Derived nested fields such as has_stock=True describe presence of data,
+    # not permission to sell. Their traversal order cannot override live flags.
+    from app.catalog.retrieval.availability import product_availability_state
+    for product in (result.commercial_data or {}).get('products') or []:
+        if not isinstance(product, dict):
+            continue
+        availability = product_availability_state(product)
+        product_id = str(product.get('id') or product.get('product_id') or '')
+        if product_id and availability != 'unknown':
+            pack.stock_by_product_id[product_id] = availability == 'available'
+    stock_values = list(pack.stock_by_product_id.values())
+    if stock_values:
+        pack.stock_available = True if all(stock_values) else False if not any(stock_values) else None
     pack.evidence = filter_commerce_safe_evidence(pack.evidence)
     return pack
 
@@ -857,8 +870,15 @@ def validate_factual_response(
                 reason="promo_without_promotional_price_evidence",
             )
 
+    stock_text = text
+    for product in (result.commercial_data or {}).get('products') or []:
+        availability = product.get('availability') if isinstance(product, dict) else None
+        if isinstance(availability, str) and availability and product.get('_revalidated'):
+            # Quoting a verified catalog note is not an assertion that an
+            # inactive product can currently be purchased.
+            stock_text = stock_text.replace('“' + availability + '”', '')
     if pack.stock_available is not None and decision.domain == "commerce":
-        if _STOCK_POSITIVE_RE.search(text):
+        if _STOCK_POSITIVE_RE.search(stock_text):
             report.checked_claims += 1
             if pack.stock_available:
                 report.supported_claims.append(
@@ -882,7 +902,7 @@ def validate_factual_response(
                         reason="stock_claim_conflicts_with_evidence",
                     )
                 )
-        if _STOCK_NEGATIVE_RE.search(text):
+        if _STOCK_NEGATIVE_RE.search(stock_text):
             report.checked_claims += 1
             if not pack.stock_available:
                 report.supported_claims.append(

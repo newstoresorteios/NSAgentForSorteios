@@ -21,3 +21,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 .tox/
+
+# Local evaluations contain customer conversation history.
+docs/audits/**/history-evaluation-*
+docs/audits/**/pytest-history*.txt

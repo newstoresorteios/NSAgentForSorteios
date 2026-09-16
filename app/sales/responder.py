@@ -468,7 +468,7 @@ async def sales_response_with_openai(
         )
         from app.memory.history_window import HISTORY_TIME_POLICY
 
-        responder_instructions = f"{responder_instructions}\n\n{HISTORY_TIME_POLICY}"
+        responder_instructions = f"{responder_instructions}\n\n{HISTORY_TIME_POLICY}\n\n{operator_message('catalog_retrieval_response_contract')}"
         if memory_sidechannel:
             from app.memory.memory_policy import MEMORY_POLICY_PROMPT
 
@@ -504,6 +504,13 @@ async def sales_response_with_openai(
                         "AVAILABLE_CAPABILITIES": build_capability_catalog(),
                         "RESPONSE_CONTRACT": responder_contract(state),
                         "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},
+                        "RETRIEVAL_RESULT": {
+                            "status": tray_result.safety_reason,
+                            "summary": tray_result.reply_text,
+                            "technical_requirements": tray_result.response_metadata.get('technical_requirements'),
+                            "technical_evidence": tray_result.response_metadata.get('technical_evidence'),
+                            "product_resolution_state": tray_result.response_metadata.get('product_resolution_state'),
+                        },
                     },
                     ensure_ascii=False,
                 ),

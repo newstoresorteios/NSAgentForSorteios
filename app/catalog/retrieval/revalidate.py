@@ -47,6 +47,8 @@ async def revalidate_products(
                 "promotional_price",
                 "stock",
                 "available",
+                "availability", "available_in_store", "available_for_purchase",
+                "upon_request", "availability_days", "order_days_availability",
                 "url",
             }
         )

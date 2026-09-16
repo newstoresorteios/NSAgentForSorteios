@@ -936,7 +936,7 @@ def test_product_upon_request_in_settings_is_unavailable():
     assert state == "unavailable"
 
 
-def test_upon_request_reply_states_lead_time_and_no_immediate_dispatch():
+def test_upon_request_requires_confirmation_and_does_not_invent_business_days():
     reply = unavailable_product_reply([
         {
             "id": "4871",
@@ -946,9 +946,9 @@ def test_upon_request_reply_states_lead_time_and_no_immediate_dispatch():
         }
     ])
 
-    assert "sob encomenda" in reply
-    assert "30 dias úteis" in reply
-    assert "envio imediato" in reply
+    assert "sob consulta" in reply
+    assert "confirmar" in reply
+    assert "30 dias úteis" not in reply
 
 
 @pytest.mark.parametrize("upon_request_value", ["0", 0, False, None])

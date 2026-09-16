@@ -895,6 +895,15 @@ async def _execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapte
             )
         return result
 async def execute_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
+    from app.evaluation.context import current_evaluation
+    evaluation = current_evaluation()
+    if evaluation is not None:
+        from app.evaluation.tools import evaluate_tool
+        return await evaluate_tool(evaluation, name, arguments, lambda: _execute_observed_tool(name, arguments, client))
+    return await _execute_observed_tool(name, arguments, client)
+
+
+async def _execute_observed_tool(name: str, arguments: dict[str, Any], client: TrayAdapterClient | None = None) -> dict[str, Any]:
     from app.ops.observability import record_tray_observation
 
     started = time.perf_counter()
