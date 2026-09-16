@@ -66,6 +66,7 @@ def _interp(**overrides) -> SalesInterpretation:
     "text,expected",
     [
         ("Quero comprar o 2", 2),
+        ("sim, quero o modelo 2", 2),
         ("quero o 2", 2),
         ("o segundo", 2),
         ("opção 3", 3),

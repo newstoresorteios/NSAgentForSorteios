@@ -1289,13 +1289,18 @@ def load_recent_conversation_turns(
 
 
 def _commerce_state_from_provider_response(provider_response: Any) -> dict[str, Any]:
-    agent_context = (
-        provider_response.get("_agent_context")
-        if isinstance(provider_response, dict)
-        else None
-    )
-    state = agent_context.get("commerce_state") if isinstance(agent_context, dict) else None
-    return state if isinstance(state, dict) else {}
+    if not isinstance(provider_response, dict):
+        return {}
+    for container_name in ("_agent_context", "_agent_metadata"):
+        container = provider_response.get(container_name)
+        state = (
+            container.get("commerce_state")
+            if isinstance(container, dict)
+            else None
+        )
+        if isinstance(state, dict) and state:
+            return state
+    return {}
 
 
 def _load_commerce_states_for_filter(
@@ -1326,7 +1331,10 @@ def _load_commerce_states_for_filter(
                 WHERE {conversation_filter}
                   {before_filter}
                   AND response.provider_send_ok = true
-                  AND response.provider_response ? '_agent_context'
+                  AND (
+                    response.provider_response ? '_agent_context'
+                    OR response.provider_response ? '_agent_metadata'
+                  )
                 ORDER BY response.id DESC
                 LIMIT %(limit)s
                 """,
@@ -1381,6 +1389,24 @@ def load_customer_commerce_sessions(
                 )
             sessions.append(state)
     return sessions
+
+
+def _merge_durable_commerce_state(
+    merged: dict[str, Any],
+    durable: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge durable memory without erasing a newer delivered shortlist."""
+    from app.memory.context_resume import merge_commerce_states
+
+    if not durable:
+        return merged
+    merged_has_fresh_browse = bool(
+        merged.get("last_presented_products")
+        or merged.get("active_product")
+    )
+    if durable.get("forget_shortlist") and not merged_has_fresh_browse:
+        return merge_commerce_states(durable, merged)
+    return merge_commerce_states(merged, durable)
 
 
 def persist_customer_commerce_session(
@@ -1572,10 +1598,10 @@ def load_commerce_conversation_state(
         else {}
     )
     if durable:
-        if durable.get("forget_shortlist"):
-            merged = merge_commerce_states(durable, merged)
-        else:
-            merged = merge_commerce_states(merged, durable)
+        # A delivered response is newer evidence than a stale durable
+        # tombstone. Keep its numbered shortlist so the next "2" can be
+        # resolved without asking the same question again.
+        merged = _merge_durable_commerce_state(merged, durable)
 
     print("[sales.context.state] loaded", {
         "candidates": len(collected),
