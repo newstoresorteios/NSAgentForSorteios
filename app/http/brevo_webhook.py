@@ -818,13 +818,13 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             },
         )
 
-    if agent_result.handoff_required and provider_send_ok:
+    if handoff_payload and provider_send_ok:
         try:
             from app.ops.handoff_queue import mark_conversa_for_human_handoff
 
             mark_conversa_for_human_handoff(
                 incoming,
-                reason=agent_result.safety_reason or "handoff_required",
+                reason=handoff_payload["consent_reason"],
             )
         except Exception as exc:
             log_exception(

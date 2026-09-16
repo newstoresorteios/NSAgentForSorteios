@@ -696,3 +696,26 @@ async def test_instagram_unviewable_media_skipped_when_channel_disabled(monkeypa
     assert response.status_code == 200
     assert response.json()["reason"] == "agent_message"
     get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('confirmed,delivered', [(False,True),(True,True),(True,False)])
+async def test_human_queue_requires_consent_and_successful_delivery(monkeypatch,confirmed,delivered):
+    import api.index as index
+    from app.ops.handoff_service import build_human_handoff_result
+    queued = []
+    async def process(incoming, customer_context):
+        return build_human_handoff_result(reason='customer_accepted_handoff_offer' if confirmed else 'integration_failure')
+    async def send(*args):
+        return BrevoSendResult(ok=delivered,dry_run=True,provider_response={'accepted':delivered})
+    monkeypatch.setattr(index,'inbound_message_exists',lambda *args:False)
+    monkeypatch.setattr(index,'claim_inbound_message',lambda message:(True,303))
+    monkeypatch.setattr(index,'is_latest_inbound_message',lambda *args:True)
+    monkeypatch.setattr(index,'find_customer_profile_by_phone',lambda phone:{})
+    monkeypatch.setattr(index,'process_incoming_message',process)
+    monkeypatch.setattr(index,'send_brevo_reply',send)
+    monkeypatch.setattr(index,'insert_agent_response',lambda data:None)
+    monkeypatch.setattr('app.ops.handoff_queue.mark_conversa_for_human_handoff',lambda incoming,reason:queued.append(reason))
+    response = await _post_webhook(index,_fragment_payload())
+    assert response.status_code == 200
+    assert queued == (['customer_accepted_handoff_offer'] if confirmed and delivered else [])

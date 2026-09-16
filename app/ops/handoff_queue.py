@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 def mark_conversa_for_human_handoff(incoming: IncomingMessage, *, reason: str) -> list[str]:
+    from app.ops.handoff_consent import CONFIRMED_REASONS
+    if reason not in CONFIRMED_REASONS:
+        return []
     # Phone numbers identify contacts, not conversations or ownership.
     thread = str(incoming.conversation_id or "").strip()
     channel = str(incoming.channel or "").strip()
@@ -61,7 +64,7 @@ def mark_conversa_for_human_handoff(incoming: IncomingMessage, *, reason: str) -
                 before = cur.fetchone()
                 if not before or before["status"] == "closed":
                     return []
-                if before.get("bot_activated") is False and before.get("status") == "waiting":
+                if before.get("handoff_requested_at") and before.get("status") == "waiting":
                     return [str(before["id"])]
                 snapshot = dict(before)
                 snapshot["_handoff"] = {"reason": reason, "inbound_id": inbound_id}
@@ -74,11 +77,12 @@ def mark_conversa_for_human_handoff(incoming: IncomingMessage, *, reason: str) -
                 cur.execute("""
                     UPDATE public.conversas SET
                         status=CASE WHEN nullif(assigned_to,'') IS NULL THEN 'waiting' ELSE status END,
-                        bot_activated=false, updated_at=%s
+                        bot_activated=false, updated_at=%s,
+                        handoff_requested_at=%s, handoff_reason=%s
                     WHERE id=%s::uuid AND workspace_id=%s::uuid AND channel=%s
                       AND merged_into IS NULL AND status IS DISTINCT FROM 'closed'
                     RETURNING id
-                """, (datetime.now(timezone.utc), *scope))
+                """, (datetime.now(timezone.utc), datetime.now(timezone.utc), reason, *scope))
                 updated_ids = [str(row["id"]) for row in cur.fetchall()]
             conn.commit()
     except Exception as exc:
