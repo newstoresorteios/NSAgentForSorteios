@@ -33,3 +33,16 @@ def stamp_inbound_workspace(inbound_id: int | None, workspace_id: str | None) ->
             cur.execute("""UPDATE public.ai_inbound_messages SET workspace_id=%s::uuid
                 WHERE id=%s AND workspace_id IS NULL""", (workspace_id, inbound_id))
         conn.commit()
+
+
+def ingress_settings(incoming, base):
+    """Read published grouping controls before choosing direct vs queued ingress."""
+    if not getattr(base, 'database_url', None) or not getattr(base, 'agent_db_persona_enabled', False):
+        return base
+    from app.persona.persona_runtime import load_persona_runtime
+    from app.configuration.runtime import settings_from_bundle
+    workspace = resolve_conversation_workspace(incoming.conversation_id, incoming.channel)
+    persona = load_persona_runtime(workspace_id=workspace) if workspace else load_persona_runtime()
+    if not persona.configuration_bundle:
+        raise RuntimeError('ingress_configuration_unavailable')
+    return settings_from_bundle(base, persona.configuration_bundle)

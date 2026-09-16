@@ -35,6 +35,7 @@ def test_parse_storefront_search_html_reads_rich_tray_product_data():
         "product_id": "16010",
         "name": "Relógio Hamilton Khaki Field Murph Automático Azul H70405740 38 mm",
         "reference": "H70405740",
+        "brand": "",
         "model": "Hamilton Khaki Field Murph",
         "url": "https://www.newstorerj.com.br/relogios/murph-h70405740",
         "image_url": "https://images.example/murph.jpg",

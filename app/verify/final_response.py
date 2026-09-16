@@ -38,6 +38,15 @@ def grounded_catalog_fallback(result):
 
 
 def finalize_response(result, *, incoming, interpretation, previous_state):
+    from app.verify.catalog_delivery import enforce_photo_identity, apply_output_style
+    if result.response_metadata.get('image_evidence_guard'):
+        result = apply_output_style(enforce_photo_identity(result))
+        state = evolve_commerce_state(previous_state, result)
+        result.response_metadata['final_response_validation'] = {
+            'passed': True, 'authority': 'image_catalog_proof',
+            'delivered_product_ids': [str(p['id']) for p in (result.commercial_data or {}).get('products', [])],
+        }
+        return result, state
     from app.sales.responder import recommendation_identifies_candidate
     from app.catalog.retrieval.technical import technical_miss
     from app.sales.answer_council import build_turn_contract, check_pedido, check_fatos
@@ -143,4 +152,4 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
     metadata["final_response_validation"] = {"passed":not remaining, "corrected":bool(issues), "rejected_issues":issues,
                                                "remaining_issues":remaining,
                                                "delivered_product_ids":[str(p.get("id")) for p in delivered] if not clear else []}
-    return result, state
+    return apply_output_style(result), state

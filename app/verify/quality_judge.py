@@ -84,6 +84,8 @@ def is_low_risk_judge_skip(
     """Paths that must not spend a judge LLM call (Phase 9)."""
     if result is None:
         return False, None
+    if (result.response_metadata or {}).get('image_evidence_guard'):
+        return True, 'deterministic_image_evidence'
     if result.handoff_required:
         return True, "human_handoff"
     source = _response_source(result)

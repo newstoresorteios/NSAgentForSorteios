@@ -692,6 +692,8 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         max_reply_chars=max_reply_chars,
     )
     from app.verify.final_response import finalize_response
+    from app.verify.catalog_delivery import validate_catalog_delivery
+    result = await validate_catalog_delivery(result)
     result, commerce_state = finalize_response(result, incoming=incoming, interpretation=interpretation,
                                                previous_state=commerce_state_before_evolve)
     result = _attach_commerce_metadata(incoming, commerce_state, result)
@@ -868,6 +870,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             enriched,
             max_reply_chars=max_reply_chars,
         )
+        result = await validate_catalog_delivery(result)
         result, commerce_state = finalize_response(
             result, incoming=incoming, interpretation=interpretation,
             previous_state=commerce_state_before_evolve,

@@ -102,23 +102,25 @@ def normalize_storefront_brand_path(url: str | None) -> str | None:
 
 def official_product_url(product: dict[str, Any]) -> str | None:
     """Normalize the current string contract and the legacy protocol map."""
+    if product.get("_product_url_dead"):
+        return None
     value = product.get("url")
     direct_https = _https_url(value)
     if direct_https:
-        return normalize_storefront_brand_path(direct_https)
+        return direct_https
     if isinstance(value, dict):
         for key in ("https", "url", "link"):
             found = _https_url(value.get(key))
             if found:
-                return normalize_storefront_brand_path(found)
+                return found
         direct_http = _http_url(value.get("http"))
         if direct_http:
-            return normalize_storefront_brand_path(direct_http)
+            return direct_http
         for key in ("url", "link"):
             found = _http_url(value.get(key))
             if found:
-                return normalize_storefront_brand_path(found)
-    return normalize_storefront_brand_path(_http_url(value))
+                return found
+    return _http_url(value)
 
 
 def _is_probeable_storefront(url: str) -> bool:
@@ -260,7 +262,7 @@ def storefront_url_candidates(url: str) -> list[str]:
     return variants
 
 
-async def resolve_live_product_url(url: str | None) -> str | None:
+async def resolve_live_product_url(url: str | None, *, expected_product_id: str | None = None) -> str | None:
     """Return a storefront URL that does not soft-404, or None if all candidates fail."""
     if not isinstance(url, str) or not url.strip():
         return None
@@ -270,16 +272,26 @@ async def resolve_live_product_url(url: str | None) -> str | None:
 
     import httpx
 
-    candidates = storefront_url_candidates(primary)
+    # Never repair a URL by changing its reference/bracelet: that is another SKU.
+    # Follow the catalog URL and validate the destination's product identity.
+    from app.catalog.media.storefront_evidence import product_page_evidence
+    candidates = [primary]
     timeout = httpx.Timeout(6.0, connect=2.5)
     async with httpx.AsyncClient(
         timeout=timeout,
-        follow_redirects=False,
+        follow_redirects=True,
         headers={"User-Agent": "NSAgentForSorteios/product-link"},
     ) as client:
         for candidate in candidates:
-            if await _probe_storefront_candidate(client, candidate):
-                return candidate
+            try:
+                response = await client.get(candidate)
+            except httpx.HTTPError:
+                continue
+            if response.status_code != 200 or _is_dead_storefront_location(str(response.url)):
+                continue
+            evidence = product_page_evidence(response.text, expected_id=expected_product_id)
+            if evidence and urlparse(evidence['url']).hostname == urlparse(str(response.url)).hostname:
+                return str(response.url)
     return None
 
 
@@ -287,7 +299,7 @@ async def ensure_product_has_live_url(product: dict[str, Any]) -> dict[str, Any]
     """Mutate a copy with a working storefront URL when Tray's slug is stale."""
     patched = dict(product)
     raw = official_product_url(patched)
-    live = await resolve_live_product_url(raw)
+    live = await resolve_live_product_url(raw, expected_product_id=str(product.get('id') or '') or None)
     if live:
         patched["url"] = live
         if live != raw:
@@ -295,6 +307,9 @@ async def ensure_product_has_live_url(product: dict[str, Any]) -> dict[str, Any]
             patched["_product_url_original"] = raw
     else:
         patched["_product_url_dead"] = True
+        patched["_product_url_original"] = raw
+        patched["url"] = None
+        patched["product_url"] = None
     return patched
 
 

@@ -329,6 +329,7 @@ async def test_lock_timeout_retry_processes_same_inbound(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_database_lock_unavailable_falls_back_to_local_lock(monkeypatch):
+    monkeypatch.setattr('app.configuration.workspace.ingress_settings', lambda incoming, settings: settings)
     import api.index as index
     from app.ops.conversation_lock import ConversationLockUnavailable
     from types import SimpleNamespace
@@ -475,6 +476,33 @@ async def test_async_ingress_enqueues_normalized_payload(monkeypatch):
     assert normalized["message_id"] == "message-1"
     assert "normalized" in captured["payload"]
     assert "raw" in captured["payload"]
+
+
+@pytest.mark.asyncio
+async def test_published_workspace_grouping_wins_over_deployment_default(monkeypatch):
+    import api.index as index
+    from app.config import get_settings
+    base = get_settings().model_copy(update={'agent_async_ingress_enabled': False})
+    published = base.model_copy(update={'agent_async_ingress_enabled': True})
+    monkeypatch.setattr(index, 'get_settings', lambda: base)
+    monkeypatch.setattr('app.configuration.workspace.ingress_settings', lambda incoming, settings: published)
+    monkeypatch.setattr('app.ingress.inbox.enqueue_inbound', lambda **kwargs:(True, 99))
+    monkeypatch.setattr(index, 'inbound_message_exists', lambda *args:False)
+    monkeypatch.setattr(index, 'claim_inbound_message', lambda *args:pytest.fail('Direct processing bypassed grouping'))
+    response = await _post_webhook(index, _fragment_payload())
+    assert response.status_code == 200
+    assert response.json()['queued'] is True
+
+
+@pytest.mark.asyncio
+async def test_missing_ingress_configuration_is_retried_without_direct_processing(monkeypatch):
+    import api.index as index
+    def unavailable(*args):
+        raise RuntimeError('temporary DB outage')
+    monkeypatch.setattr('app.configuration.workspace.ingress_settings', unavailable)
+    monkeypatch.setattr(index, 'claim_inbound_message', lambda *args:pytest.fail('Must not process with wrong workspace controls'))
+    response = await _post_webhook(index, _fragment_payload())
+    assert response.status_code == 503
 
 
 @pytest.mark.asyncio

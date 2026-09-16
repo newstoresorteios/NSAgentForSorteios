@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from io import BytesIO
+import httpx
 import json
 import re
 from typing import Any
 from urllib.parse import quote_plus
+from app.configuration.runtime import policy
+from app.catalog.media.storefront_evidence import json_policy
 
 from app.ops.observability import log_event
 
-_STORE_CODE = "687890"
-_HOSTS = ("www.newstorerj.com.br", "www.newstorerj.com")
 _ITEM_RE = re.compile(
     r'"item_id"\s*:\s*"(\d+)"\s*,\s*"item_name"\s*:\s*"((?:\\.|[^"\\])*)"',
     re.IGNORECASE,
@@ -21,7 +22,6 @@ _HREF_RE = re.compile(
     re.IGNORECASE,
 )
 _REF_RE = re.compile(r"(c\d{2}-\d{2}[a-z0-9-]+)", re.IGNORECASE)
-_SKU_RE = re.compile(r"\b(96[a-z]\d{3})\b", re.IGNORECASE)
 _LIST_PRODUCTS_RE = re.compile(
     r'"listProducts"\s*:\s*(\[.*?\])\s*,\s*"filter"\s*:',
     re.IGNORECASE | re.DOTALL,
@@ -34,24 +34,7 @@ def _product_from_storefront_hit(hit: dict[str, str]) -> dict[str, Any]:
     name = str(hit.get("name") or "").strip()
     url = str(hit.get("url") or "").strip()
     reference = str(hit.get("reference") or "").strip()
-    if not reference:
-        sku_match = _SKU_RE.search(name.replace(" ", " "))
-        if sku_match:
-            reference = sku_match.group(1).upper()
-    brand = ""
-    lowered = name.casefold()
-    for candidate in (
-        "baltic",
-        "bulova",
-        "tissot",
-        "christopher ward",
-        "citizen",
-        "hamilton",
-        "seiko",
-    ):
-        if candidate in lowered:
-            brand = candidate.title() if candidate != "christopher ward" else "Christopher Ward"
-            break
+    brand = str(hit.get("brand") or "").strip()
     return {
         "id": product_id,
         "name": name,
@@ -97,6 +80,7 @@ def parse_storefront_search_html(html: str) -> list[dict[str, str]]:
                 "product_id": product_id,
                 "name": name,
                 "reference": str(row.get("reference") or "").strip(),
+                "brand": str(row.get("brand") or "").strip(),
                 "model": str(row.get("model") or "").strip(),
                 "url": raw_url,
                 "image_url": str(row.get("urlImage") or "").replace(r"\/", "/").strip(),
@@ -161,26 +145,35 @@ async def rank_storefront_hits_by_image(
 ) -> list[tuple[int, dict[str, str]]]:
     """Rank official storefront candidates against the inbound customer image."""
     import asyncio
-    import httpx
+    from app.catalog.vision.identify import download_image_file
+    from app.core.remote_media import download_trusted_media
+    from app.config import get_settings
 
     candidates = [hit for hit in hits[: max(1, limit)] if hit.get("image_url")]
     if not image_url or not candidates:
         return []
-    timeout = httpx.Timeout(10.0, connect=3.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        source_response = await client.get(image_url)
-        source_response.raise_for_status()
-        source_hash = perceptual_image_hash(source_response.content)
+    source, _ = await download_image_file(image_url)
+    source_hash = perceptual_image_hash(source)
+    from PIL import Image, ImageChops, ImageStat
+    source_rgb = Image.open(BytesIO(source)).convert('RGB').resize((32, 32))
+    semaphore = asyncio.Semaphore(max(1, min(8, int(policy('imageStorefrontDownloadConcurrency')))))
 
-        async def _distance(hit: dict[str, str]):
-            try:
-                response = await client.get(str(hit["image_url"]))
-                response.raise_for_status()
-                return (source_hash ^ perceptual_image_hash(response.content)).bit_count(), hit
-            except (httpx.HTTPError, OSError, ValueError):
-                return None
+    async def _distance(hit: dict[str, str]):
+        try:
+            async with semaphore:
+                content, _ = await download_trusted_media(
+                    str(hit['image_url']), kind='image',
+                    max_bytes=int(get_settings().agent_image_download_max_bytes),
+                    timeout_seconds=10,
+                    allowed_suffixes=tuple(json_policy('storefrontImageHosts')),
+                )
+            rgb = Image.open(BytesIO(content)).convert('RGB').resize((32, 32))
+            error = sum(ImageStat.Stat(ImageChops.difference(source_rgb, rgb)).mean) / (3 * 255)
+            return (source_hash ^ perceptual_image_hash(content)).bit_count(), {**hit, '_image_color_error': error}
+        except (OSError, ValueError, httpx.HTTPError):
+            return None
 
-        rows = await asyncio.gather(*[_distance(hit) for hit in candidates])
+    rows = await asyncio.gather(*[_distance(hit) for hit in candidates])
     ranked = [row for row in rows if row is not None]
     ranked.sort(key=lambda row: row[0])
     return ranked
@@ -188,10 +181,6 @@ async def rank_storefront_hits_by_image(
 
 async def storefront_product_available(url: str) -> bool | None:
     """Read the official product page availability without treating it as purchasable."""
-    from html import unescape
-    import httpx
-    import unicodedata
-
     if not url:
         return None
     try:
@@ -204,17 +193,12 @@ async def storefront_product_available(url: str) -> bool | None:
             response.raise_for_status()
     except httpx.HTTPError:
         return None
-    folded = "".join(
-        char
-        for char in unicodedata.normalize("NFKD", unescape(response.text)).casefold()
-        if not unicodedata.combining(char)
-    )
-    if "produto indisponivel" in folded:
-        return False
-    return True
+    from app.catalog.media.storefront_evidence import product_page_evidence
+    evidence = product_page_evidence(response.text)
+    return evidence['available'] if evidence else None
 
 
-async def search_storefront(query: str) -> list[dict[str, str]]:
+async def search_storefront(query: str, *, max_pages: int = 1, limit: int = 8) -> list[dict[str, str]]:
     """Return product ids/names from the official storefront search."""
     q = str(query or "").strip()
     if len(q) < 3:
@@ -227,9 +211,9 @@ async def search_storefront(query: str) -> list[dict[str, str]]:
         follow_redirects=True,
         headers={"User-Agent": "NSAgentForSorteios/storefront-search"},
     ) as client:
-        for host in _HOSTS:
+        for host in json_policy('storefrontHosts'):
             url = (
-                f"https://{host}/loja/busca.php?loja={_STORE_CODE}"
+                f"https://{host}/loja/busca.php?loja={policy('storefrontStoreCode')}"
                 f"&palavra_busca={quote_plus(q)}"
             )
             try:
@@ -244,7 +228,23 @@ async def search_storefront(query: str) -> list[dict[str, str]]:
                     "story_storefront_search",
                     {"host": host, "query": q[:40], "hits": len(hits)},
                 )
-                return hits[:8]
+                seen = {hit.get('product_id') or hit.get('url') for hit in hits}
+                for page in range(2, max_pages + 1):
+                    if len(hits) >= limit or not re.search(r'rel=[\"\']next[\"\']', response.text):
+                        break
+                    try:
+                        response = await client.get(url + f'&pg={page}')
+                    except httpx.HTTPError:
+                        break
+                    if response.status_code != 200:
+                        break
+                    fresh = [h for h in parse_storefront_search_html(response.text)
+                             if (h.get('product_id') or h.get('url')) not in seen]
+                    if not fresh:
+                        break
+                    hits.extend(fresh)
+                    seen.update(h.get('product_id') or h.get('url') for h in fresh)
+                return hits[:limit]
     log_event("story_storefront_search", {"query": q[:40], "hits": 0})
     return []
 

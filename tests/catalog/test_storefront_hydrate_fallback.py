@@ -24,12 +24,12 @@ async def test_hydrate_storefront_hits_falls_back_when_get_product_fails():
     assert products[0].get("storefront_only") is True
 
 
-def test_product_from_storefront_hit_extracts_brand_and_sku():
+def test_product_from_storefront_hit_does_not_invent_brand_or_sku():
     hit = {
         "product_id": "999",
         "name": "Relógio Bulova Breton Automático 96B332",
         "reference": "",
     }
     product = _product_from_storefront_hit(hit)
-    assert product["brand"] == "Bulova"
-    assert product["reference"] == "96B332"
+    assert product["brand"] is None
+    assert product["reference"] is None

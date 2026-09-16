@@ -338,6 +338,15 @@ async def handle_brevo_conversations_webhook(request: Request) -> JSONResponse:
             reason="no_text",
         )
 
+    # Operator grouping controls must be loaded before selecting ingress. Loading
+    # them only inside the turn allowed the same photo to take both entry paths.
+    from app.configuration.workspace import ingress_settings
+    import asyncio
+    try:
+        settings = await asyncio.to_thread(ingress_settings, incoming, settings)
+    except Exception as exc:
+        log_exception('brevo.webhook.ingress_configuration_failed', exc, {})
+        return JSONResponse({'ok': False, 'error': 'ingress_configuration_unavailable'}, status_code=503)
     # FASE 2: optional durable enqueue — HTTP 200 before agent turn.
     if bool(getattr(settings, "agent_async_ingress_enabled", False)):
         from app.ingress.inbox import enqueue_inbound

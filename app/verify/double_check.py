@@ -157,6 +157,8 @@ def _should_skip(
     result: AgentResult,
     commerce_state: CommerceConversationState | None = None,
 ) -> str | None:
+    if (result.response_metadata or {}).get('image_evidence_guard'):
+        return 'image_catalog_evidence'
     if result.handoff_required:
         return "human_handoff"
     safety_reason = str(result.safety_reason or "").strip()

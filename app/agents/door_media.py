@@ -102,6 +102,7 @@ async def try_media_routes(
             runtime.execution_path = "complex"
         image_result = await door.handle_image_product_search(message)
         if image_result is not None:
+            image_result.response_metadata['image_evidence_guard'] = True
             return door._annotate_agent_result(
                 image_result,
                 domain="commerce",

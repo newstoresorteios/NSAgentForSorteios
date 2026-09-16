@@ -257,7 +257,7 @@ async def test_handle_image_visual_fallback_on_low_confidence(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handle_image_visual_fallback_when_text_not_found(monkeypatch):
+async def test_invented_model_does_not_activate_semantic_neighbor(monkeypatch):
     from app.catalog.vision import image_product_id as module
     from app.catalog.vision.image_product_id import ImageProductIdentification, handle_image_product_search
     from app.models import AgentResult
@@ -325,7 +325,9 @@ async def test_handle_image_visual_fallback_when_text_not_found(monkeypatch):
         fake_retrieval,
     )
 
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr('app.catalog.vision.catalog_evidence.search_storefront', AsyncMock(return_value=[]))
     result = await handle_image_product_search(message)
     assert result is not None
-    assert result.safety_reason == "visual_nearest_neighbor"
-    assert result.commercial_data["products"][0]["id"] == "9001"
+    assert result.safety_reason == "image_catalog_unconfirmed"
+    assert result.commercial_data["products"] == []
