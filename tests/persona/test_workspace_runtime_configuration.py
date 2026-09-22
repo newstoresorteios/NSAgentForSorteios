@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from app.catalog.retrieval.limits import candidate_pool_limit, rerank_selection_limit
+from app.catalog.retrieval.limits import (
+    candidate_pool_limit,
+    customer_result_limit,
+    rerank_selection_limit,
+)
 from app.memory.history_window import resolve_model_history_limit
 from app.ops.observability import full_obs_enabled
 from app.persona.persona_runtime import (
@@ -54,5 +58,14 @@ def test_workspace_overrides_are_clamped_by_runtime_guards():
         assert resolve_model_history_limit(settings) == 80
         assert candidate_pool_limit() == 80
         assert rerank_selection_limit() == 5
+    finally:
+        reset_persona_runtime(token)
+
+
+def test_catalog_shortlist_runtime_variable_limits_specific_match_to_one():
+    runtime = PersonaRuntimeConfig(max_catalog_options=1)
+    token = set_persona_runtime(runtime)
+    try:
+        assert customer_result_limit() == 1
     finally:
         reset_persona_runtime(token)

@@ -38,7 +38,7 @@
     "step": 1,
     "target": "setting",
     "attribute": "agent_revalidate_top_n",
-    "default": 3,
+    "default": 1,
     "readOnly": false
   },
   {
