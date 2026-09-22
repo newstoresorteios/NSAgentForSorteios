@@ -342,6 +342,14 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
             issues.append("ignored_gender")
         if contract.style and _presented_conflicts_style(products, contract.style):
             issues.append("ignored_style")
+        if contract.material_from_this_message and contract.material:
+            from app.catalog.retrieval.hard_filter import product_matches_required_strap_material
+
+            if any(
+                not product_matches_required_strap_material(item, contract.material)
+                for item in products
+            ):
+                issues.append("ignored_strap_material")
     return CheckerReport(name="pedido", pass_check=not issues, issues=issues)
 
 
@@ -372,6 +380,14 @@ def check_fatos(result: AgentResult, contract: TurnContract) -> CheckerReport:
             issues.append("fact_gender_mismatch")
         if contract.style and _presented_conflicts_style(products, contract.style):
             issues.append("fact_style_mismatch")
+        if contract.material_from_this_message and contract.material:
+            from app.catalog.retrieval.hard_filter import product_matches_required_strap_material
+
+            if any(
+                not product_matches_required_strap_material(item, contract.material)
+                for item in products
+            ):
+                issues.append("fact_strap_material_mismatch")
     if contract.must_not_claim_stale_checkout:
         data = result.commercial_data or {}
         if data.get("cart") or data.get("checkout"):
@@ -414,6 +430,9 @@ def judge_council(
         codes.append("enforce_gender")
     if "ignored_style" in issues or "fact_style_mismatch" in issues:
         codes.append("enforce_style")
+    if "ignored_strap_material" in issues or "fact_strap_material_mismatch" in issues:
+        codes.append("enforce_material")
+        codes.append("forbid_near_match")
     if "claimed_stale_checkout" in issues or "fact_stale_checkout" in issues:
         codes.append("drop_stale_checkout")
     if "handoff_on_live_cart" in issues:
@@ -453,6 +472,13 @@ def apply_corrections(
         prefs.color = None
     if "drop_stale_style" in codes:
         prefs.style = None
+    if "drop_stale_material" in codes:
+        prefs.material = None
+        prefs.attributes = [
+            item
+            for item in (prefs.attributes or [])
+            if not str(item).casefold().startswith("required_strap_material:")
+        ]
     if "drop_stale_gender" in codes:
         from app.catalog.specs.preference_normalize import detect_gender_label
 
@@ -469,6 +495,15 @@ def apply_corrections(
         prefs.color = contract.color
     if "enforce_style" in codes and contract.style:
         prefs.style = contract.style
+    if "enforce_material" in codes and contract.material:
+        prefs.material = contract.material
+        attrs = [
+            item
+            for item in (prefs.attributes or [])
+            if not str(item).casefold().startswith("required_strap_material:")
+        ]
+        attrs.append(f"required_strap_material:{contract.material}")
+        prefs.attributes = attrs
     if "enforce_gender" in codes and contract.gender:
         from app.catalog.specs.preference_normalize import detect_gender_label
 
@@ -596,6 +631,11 @@ def pre_search_correction_codes(
         codes.append("drop_stale_style")
     elif contract.style:
         codes.append("enforce_style")
+    if "material" in contract.stale_fields:
+        codes.append("drop_stale_material")
+    elif contract.material_from_this_message and contract.material:
+        codes.append("enforce_material")
+        codes.append("forbid_near_match")
     if "gender" in contract.stale_fields:
         codes.append("drop_stale_gender")
     elif contract.gender:

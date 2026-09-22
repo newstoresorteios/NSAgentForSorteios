@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.commerce.commerce_context import CommerceConversationState
-from app.models import AgentResult, IncomingMessage
+from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.ops.turn_runtime import TurnRuntimeContext, LLMCallBudget
 from app.ops.runtime_context import set_current_turn, reset_current_turn
 from app.verify.response_critique import CritiqueVerdict, apply_response_critique_loop
@@ -100,6 +100,42 @@ def test_only_products_identified_in_sent_text_enter_memory():
     final, state = finalize_response(result, incoming=IncomingMessage(text=ASK), interpretation=interpretation(), previous_state=CommerceConversationState())
     assert [p.product_id for p in state.last_presented_products] == ["ok"]
     assert final.response_metadata["final_response_validation"]["delivered_product_ids"] == ["ok"]
+
+
+def test_catalog_name_without_generic_watch_prefix_enters_memory():
+    interp = SalesInterpretation(
+        domain='commerce', goal='inspect', confidence=.99,
+        needs_clarification=False,
+        references_previous_context=False,
+        subject={'brand':'Baltic','model':'MK2','product_type':'relógio'},
+        preferences={'attributes':['case_size:37-37mm']},
+    )
+    product = {
+        'id':'14738', 'brand':'Baltic',
+        'name':'Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm',
+        'price':7199.99, 'available':True, '_revalidated':True,
+        '_factual_source':'tray_live',
+    }
+    result = AgentResult(
+        reply_text='Encontrei o Baltic Aquascaphe MK2 Automático Cinza 37mm.',
+        intent='commerce', commercial_data={'products':[product]},
+        response_metadata={
+            'interpretation':interp.model_dump(mode='json'),
+            'presented_products':True,
+            'product_resolution_state':'found_available',
+            'domain':'commerce',
+        },
+    )
+
+    final, state = finalize_response(
+        result,
+        incoming=IncomingMessage(text='Quero saber o preço do Baltic MK2 37mm'),
+        interpretation=interp,
+        previous_state=CommerceConversationState(),
+    )
+
+    assert final.response_metadata['final_response_validation']['delivered_product_ids'] == ['14738']
+    assert state.last_presented_products[0].product_id == '14738'
 
 
 @pytest.mark.asyncio

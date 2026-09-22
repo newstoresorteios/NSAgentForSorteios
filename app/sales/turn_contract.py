@@ -17,9 +17,11 @@ from app.catalog.specs.preference_normalize import (
     _extract_budget_max,
     extract_stated_color,
     extract_stated_gender,
+    extract_stated_strap_material,
     extract_stated_style,
     message_states_color,
     message_states_gender,
+    message_states_strap_material,
     message_states_style,
     preference_gender_label,
 )
@@ -328,6 +330,7 @@ class InboundView(BaseModel):
     color: str | None = None
     gender: str | None = None
     style: str | None = None
+    material: str | None = None
     is_greeting: bool = False
     asks_price_range: bool = False
     commerce_browse: bool = False
@@ -352,9 +355,11 @@ class TurnContract(BaseModel):
     color: str | None = None
     gender: str | None = None
     style: str | None = None
+    material: str | None = None
     color_from_this_message: bool = False
     gender_from_this_message: bool = False
     style_from_this_message: bool = False
+    material_from_this_message: bool = False
     must_not_re_greet: bool = False
     must_not_claim_stale_occasion: bool = False
     must_not_claim_stale_checkout: bool = False
@@ -397,6 +402,14 @@ def inbound_from_message(
         and message_states_style(text)
     ):
         style = interpretation.preferences.style
+    material = extract_stated_strap_material(text)
+    if (
+        material is None
+        and interpretation is not None
+        and interpretation.preferences.material
+        and message_states_strap_material(text)
+    ):
+        material = interpretation.preferences.material
     return InboundView(
         source="message",
         brand=brand,
@@ -410,6 +423,7 @@ def inbound_from_message(
         color=color,
         gender=gender,
         style=style,
+        material=material,
         is_greeting=bool(_GREETING_RE.match(text)),
         asks_price_range=bool(_RANGE_ASK_RE.search(text)),
         commerce_browse=bool(
@@ -467,14 +481,18 @@ def inbound_from_memory(
     color = None
     gender = None
     style = None
+    material = None
     if interpretation is not None:
         color = interpretation.preferences.color
         style = interpretation.preferences.style
+        material = interpretation.preferences.material
         gender = preference_gender_label(interpretation)
     if not color:
         color = _packed_pref(prefs.get("color"))
     if not style:
         style = _packed_pref(prefs.get("style"))
+    if not material:
+        material = _packed_pref(prefs.get("material"))
     if not gender:
         gender = _packed_pref(prefs.get("gender"))
     presented = getattr(commerce_state, "last_presented_products", None) or []
@@ -500,6 +518,7 @@ def inbound_from_memory(
         color=str(color).strip() if color else None,
         gender=str(gender).strip() if gender else None,
         style=str(style).strip() if style else None,
+        material=str(material).strip() if material else None,
         live_shortlist=live_shortlist,
         live_checkout=live_checkout,
         bound_sale_target=has_bound_sale_target(commerce_state),
@@ -520,15 +539,26 @@ def merge_inbound_views(
 
     brand_unlock = message_requests_other_brands(message_text)
     budget_from_message = message_view.budget_max is not None or message_view.asks_price_range
-    continuing_shortlist_refinement = bool(
+    same_shortlist_brand = bool(
+        not message_view.brand
+        or not memory_view.brand
+        or _fold_identity(message_view.brand) == _fold_identity(memory_view.brand)
+    )
+    continuing_variant_refinement = bool(
         memory_view.live_shortlist
         and (
-            message_view.brand
-            or message_view.model
+            message_view.model
             or message_view.color
             or message_view.gender
             or message_view.style
+            or message_view.material
         )
+        and same_shortlist_brand
+    )
+    continuing_shortlist_refinement = bool(
+        memory_view.live_shortlist
+        and same_shortlist_brand
+        and (message_view.brand or continuing_variant_refinement)
     )
     if (brand_unlock or continuing_shortlist_refinement) and budget is None:
         budget = memory_view.budget_max
@@ -587,6 +617,7 @@ def merge_inbound_views(
     color_from_message = bool(message_view.color) or message_states_color(message_text)
     gender_from_message = bool(message_view.gender) or message_states_gender(message_text)
     style_from_message = bool(message_view.style) or message_states_style(message_text)
+    material_from_message = bool(message_view.material) or message_states_strap_material(message_text)
     color = _merge_pref(
         message_value=message_view.color,
         memory_value=memory_view.color,
@@ -604,6 +635,12 @@ def merge_inbound_views(
         memory_value=memory_view.style,
         stated=style_from_message,
         field="style",
+    )
+    material = _merge_pref(
+        message_value=message_view.material,
+        memory_value=memory_view.material,
+        stated=material_from_message,
+        field="material",
     )
 
     from app.catalog.specs.catalog_specs import message_requests_other_brands
@@ -624,7 +661,7 @@ def merge_inbound_views(
     else:
         brand = message_view.brand or memory_view.brand
     model = message_view.model
-    if message_view.commerce_browse:
+    if message_view.commerce_browse and not continuing_variant_refinement:
         model = message_view.model
         if memory_view.model and not message_view.model:
             stale.append("model")
@@ -651,6 +688,8 @@ def merge_inbound_views(
         codes.append("gender_lock")
     if style:
         codes.append("style_lock")
+    if material:
+        codes.append("material_lock")
 
     sku_lock = False
     if interpretation is not None:
@@ -695,7 +734,7 @@ def merge_inbound_views(
         )
     except Exception:
         browse_reset = message_view.commerce_browse
-    if browse_reset and not (
+    if browse_reset and not continuing_shortlist_refinement and not (
         interpretation is not None and _specific_product_lock(interpretation)
     ):
         model = message_view.model
@@ -758,9 +797,11 @@ def merge_inbound_views(
         color=color,
         gender=gender,
         style=style,
+        material=material,
         color_from_this_message=color_from_message,
         gender_from_this_message=gender_from_message,
         style_from_this_message=style_from_message,
+        material_from_this_message=material_from_message,
         must_not_re_greet=must_not_re_greet,
         must_not_claim_stale_occasion="occasion" in stale,
         must_not_claim_stale_checkout="checkout" in stale,

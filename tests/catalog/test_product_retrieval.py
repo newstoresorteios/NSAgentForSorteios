@@ -498,7 +498,22 @@ def test_compact_product_lines_include_cash_and_installments():
     assert "Link: https://www.newstorerj.com.br/relogios/relogio-seiko-king-turtle-srpe05k1" in compact
     assert "Estoque:" not in compact
     reply = _product_result("product_search", products).reply_text
-    assert "1. Relógio Seiko King Turtle SRPE05\nRef.: SRPE05K1\nA prazo:" in reply
+    assert "Relógio Seiko King Turtle SRPE05\nRef.: SRPE05K1\nA prazo:" in reply
+    assert "1. Relógio" not in reply
+
+
+def test_multiple_product_result_keeps_positions_for_customer_selection():
+    from app.commerce.commerce_router import _product_result
+
+    products = [
+        {"id": "1", "name": "Relógio A", "current_price": 1000},
+        {"id": "2", "name": "Relógio B", "current_price": 2000},
+    ]
+
+    reply = _product_result("product_search", products).reply_text
+
+    assert "1. Relógio A" in reply
+    assert "2. Relógio B" in reply
 
 
 def test_compact_product_lines_derive_pix_when_payment_details_missing():

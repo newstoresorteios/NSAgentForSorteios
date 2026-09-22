@@ -25,6 +25,63 @@ def test_variant_fragment_refines_search_without_authorizing_purchase():
     assert state.active_product is not None
 
 
+def test_short_material_answer_keeps_baltic_model_and_refines_variant():
+    from app.sales.contextual_questions import normalize_followup
+
+    request = SalesInterpretation(
+        domain='commerce', goal='buy', confidence=.99, needs_clarification=False,
+        references_previous_context=True, reference_type='last_presented_product',
+        subject={'brand':'Baltic','model':'Aquascaphe MK2'},
+        preferences={'material':'aço inoxidável','attributes':['case_size:37-37mm']},
+        answer_strategy='acknowledge',
+    )
+    state = CommerceConversationState(last_presented_products=[{
+        'product_id':'14738', 'position':1,
+        'name':'Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm',
+        'brand':'Baltic',
+    }])
+
+    updated, memory = normalize_followup('Aço', request, state)
+
+    assert updated.goal == 'find'
+    assert updated.answer_strategy == 'search_catalog'
+    assert updated.subject.model == 'Aquascaphe MK2'
+    assert updated.purchase_action is None
+    assert memory.last_presented_products[0].product_id == '14738'
+
+
+def test_same_brand_strap_refinement_keeps_model_across_conversation_ids():
+    from app.sales.answer_council import build_turn_contract, apply_turn_contract_for_search
+
+    state = CommerceConversationState(
+        last_presented_products=[{
+            'product_id':'14738', 'position':1,
+            'name':'Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm',
+            'brand':'Baltic',
+        }],
+        active_preferences={'subject_brand':'Baltic','subject_model':'Aquascaphe MK2'},
+    )
+    request = interpretation(
+        subject={'brand':'Baltic','product_type':'relógio'},
+        preferences={'material':'aço'},
+    )
+    contract = build_turn_contract(
+        message_text='Quero o Baltic com pulseira de aço',
+        interpretation=request,
+        commerce_state=state,
+    )
+    corrected = apply_turn_contract_for_search(
+        request,
+        message_text='Quero o Baltic com pulseira de aço',
+        commerce_state=state,
+    )
+
+    assert contract.model and 'mk2' in contract.model.casefold()
+    assert contract.material == 'aço'
+    assert corrected.subject.model and 'mk2' in corrected.subject.model.casefold()
+    assert 'required_strap_material:aço' in corrected.preferences.attributes
+
+
 def test_inspecting_list_position_is_not_purchase_routing():
     from app.sales.intent_router import route_sales_intent
     request = SalesInterpretation(domain='commerce',goal='inspect',confidence=.99, needs_clarification=False,

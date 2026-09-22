@@ -11,8 +11,11 @@ from app.sales.responder import recommendation_identifies_candidate
     ("Sugiro a referência BN0151-09L.", True),
     ("Veja https://example.test/watch/citizen-azul", True),
     ("Sugiro BN0151-09LX.", False),
+    ("Encontrei o Baltic Aquascaphe MK2 Automático Cinza 37mm.", True),
 ])
 def test_candidate_identity_requires_catalog_name_reference_or_url(text, valid):
-    products = [{"id": "641", "brand": "Citizen", "name": "Relógio Citizen Azul",
-                 "reference": "BN0151-09L", "product_url": "https://example.test/watch/citizen-azul"}]
+    products = ([{"id": "14738", "brand": "Baltic", "name": "Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm"}]
+                if "Aquascaphe" in text else
+                [{"id": "641", "brand": "Citizen", "name": "Relógio Citizen Azul",
+                  "reference": "BN0151-09L", "product_url": "https://example.test/watch/citizen-azul"}])
     assert recommendation_identifies_candidate(text, products) is valid

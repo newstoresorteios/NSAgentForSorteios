@@ -138,16 +138,28 @@ def normalize_followup(text, interpretation, state, recent_turns=None):
     alternative = bool(re.search(rules['alternativeSearch'], folded)
                        and interpretation.goal in {'find','recommend'})
     from app.sales.purchase_selection import is_product_information_question
-    from app.catalog.specs.preference_normalize import message_states_color
+    from app.catalog.specs.preference_normalize import (
+        message_states_color,
+        message_states_strap_material,
+    )
+    from app.sales.purchase_selection import is_bare_purchase_closing
     # A fragment that narrows the requested variant is a search refinement,
     # even when the interpreter also attaches a previous list position.
+    variant_signal = bool(
+        message_states_color(text)
+        or message_states_strap_material(text)
+        or re.search(r'\b\d{2}(?:[.,]\d+)?\s*mm\b', folded)
+    )
     refines_variant = bool(
-        interpretation.goal == 'inspect' and interpretation.references_previous_context
+        interpretation.goal in {'inspect', 'buy', 'find'}
+        and interpretation.references_previous_context
         and not is_product_information_question(text)
         and not interpretation.image_request and not interpretation.product_action
         and not any((interpretation.purchase_action, interpretation.checkout_action,
                      interpretation.order_action, interpretation.payment_action))
-        and (message_states_color(text) or re.search(r'\b\d{2}(?:[.,]\d+)?\s*mm\b',folded)))
+        and not is_bare_purchase_closing(text)
+        and variant_signal
+    )
     browsing_purchase = bool(interpretation.goal == 'buy' and interpretation.answer_strategy == 'search_catalog'
         and not interpretation.references_previous_context
         and not any((interpretation.purchase_action, interpretation.checkout_action, interpretation.payment_action,
@@ -173,8 +185,9 @@ def normalize_followup(text, interpretation, state, recent_turns=None):
     updated.purchase_action = updated.payment_action = updated.checkout_action = None
     updated.information_needed = ['catalog']
     updated._turn_contract_bound = False
-    state.active_product = None
-    state.last_presented_products = []
+    if not (refines_variant and message_states_strap_material(text)):
+        state.active_product = None
+        state.last_presented_products = []
     state.pending_action = None
     for field in ('brand', 'model', 'reference', 'ean'):
         value = getattr(updated.subject, field)

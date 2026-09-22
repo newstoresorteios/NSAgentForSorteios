@@ -20,6 +20,72 @@ from app.catalog.retrieval.tokens import (
     product_matches_gender_tokens,
 )
 
+
+def _required_strap_material(interpretation: SalesInterpretation) -> str | None:
+    for item in interpretation.preferences.attributes or []:
+        folded = _fold(item)
+        if folded.startswith("required_strap_material:"):
+            return folded.split(":", 1)[1].strip() or None
+    return None
+
+
+_STRAP_TERMS = r"(?:pulseira|bracelete|bracelet|strap)"
+_STRAP_MATERIAL_ALIASES = {
+    "aco": ("aco", "steel", "inox", "metal"),
+    "couro": ("couro", "leather"),
+    "borracha": ("borracha", "rubber"),
+    "silicone": ("silicone",),
+    "titanio": ("titanio", "titanium"),
+}
+
+
+def product_matches_required_strap_material(
+    product: dict[str, Any],
+    material: str | None,
+) -> bool:
+    """Require evidence about the strap, without confusing it with case metal."""
+    wanted = _fold(material)
+    aliases = _STRAP_MATERIAL_ALIASES.get(wanted, (wanted,))
+    text = _product_text(product)
+    structured = _fold(
+        " ".join(
+            str(product.get(key) or "")
+            for key in ("strap_type", "strap_material", "bracelet_material")
+        )
+    )
+    if structured and any(alias in structured for alias in aliases):
+        return True
+    for alias in aliases:
+        if re.search(rf"{_STRAP_TERMS}.{{0,40}}\b{re.escape(alias)}\b", text):
+            return True
+    # Variant labels commonly contain only the option value (for example
+    # "Aço inoxidável"). The variant identity makes that evidence strap-specific.
+    variant_label = _fold(
+        " ".join(
+            str(product.get(key) or "")
+            for key in ("variant_name", "variant_label", "option_name", "name")
+        )
+    )
+    if product.get("variant_id") and any(alias in variant_label for alias in aliases):
+        return True
+    variants = product.get("variants")
+    if isinstance(variants, list):
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            label = _fold(
+                " ".join(
+                    str(variant.get(key) or "")
+                    for key in (
+                        "name", "value", "version", "variation", "option",
+                        "options", "attributes", "properties",
+                    )
+                )
+            )
+            if any(alias in label for alias in aliases):
+                return True
+    return False
+
 def hard_filter_products(
     products: list[dict[str, Any]],
     interpretation: SalesInterpretation,
@@ -86,6 +152,7 @@ def hard_filter_products(
     from app.catalog.specs.requirements import technical_requirements, feature_evidence, feature_rules
     requirements = technical_requirements(interpretation)
     mandatory_feature_groups = required_feature_groups(interpretation)
+    required_strap_material = _required_strap_material(interpretation)
     # Technical fields have a three-state evidence check above. Do not run an
     # older text-only check again and discard candidates awaiting a live sheet.
     covered_terms = {_fold(term) for rule in feature_rules() if rule["field"] in requirements
@@ -133,6 +200,10 @@ def hard_filter_products(
             continue
         if mandatory_feature_groups and not product_matches_required_feature_groups(
             product, mandatory_feature_groups
+        ):
+            continue
+        if required_strap_material and not product_matches_required_strap_material(
+            product, required_strap_material
         ):
             continue
         color_tokens = preference_color_tokens(interpretation)

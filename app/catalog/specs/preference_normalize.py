@@ -164,6 +164,32 @@ _SKELETON_RE = re.compile(r"\b(?:skeleton|esqueleto)\b", re.IGNORECASE)
 _AUTOMATIC_RE = re.compile(r"\bautom[aá]tic[oa]\b", re.IGNORECASE)
 _SAPPHIRE_RE = re.compile(r"\b(?:cristal\s+de\s+)?safira\b|\bsapphire\b", re.IGNORECASE)
 
+_STRAP_MATERIAL_RE = re.compile(
+    r"\b(?:pulseira|bracelete|bracelet|strap)\s+(?:de\s+|em\s+)?"
+    r"(?P<material>a[cç]o(?:\s+inoxid[aá]vel)?|steel|inox|metal|couro|leather|"
+    r"borracha|rubber|silicone|tit[aâ]nio|titanium)\b",
+    re.IGNORECASE,
+)
+_BARE_MATERIAL_RE = re.compile(
+    r"^\s*(?:a[cç]o(?:\s+inoxid[aá]vel)?|steel|inox|metal|couro|leather|"
+    r"borracha|rubber|silicone|tit[aâ]nio|titanium)\s*$",
+    re.IGNORECASE,
+)
+_MATERIAL_CANON = {
+    "aco": "aço",
+    "aco inoxidavel": "aço",
+    "steel": "aço",
+    "inox": "aço",
+    "metal": "aço",
+    "couro": "couro",
+    "leather": "couro",
+    "borracha": "borracha",
+    "rubber": "borracha",
+    "silicone": "silicone",
+    "titanio": "titânio",
+    "titanium": "titânio",
+}
+
 
 def extract_stated_color(text: str | None) -> str | None:
     match = _COLOR_IN_MESSAGE_RE.search(str(text or ""))
@@ -198,6 +224,20 @@ def message_states_style(text: str | None) -> bool:
 
 def message_states_gender(text: str | None) -> bool:
     return extract_stated_gender(text) is not None
+
+
+def extract_stated_strap_material(text: str | None) -> str | None:
+    """Return an explicitly requested strap/bracelet material."""
+    raw = str(text or "")
+    match = _STRAP_MATERIAL_RE.search(raw) or _BARE_MATERIAL_RE.fullmatch(raw)
+    if not match:
+        return None
+    value = match.groupdict().get("material") or match.group(0)
+    return _MATERIAL_CANON.get(_fold(value))
+
+
+def message_states_strap_material(text: str | None) -> bool:
+    return extract_stated_strap_material(text) is not None
 
 
 def preference_gender_label(interpretation: SalesInterpretation) -> str | None:
@@ -625,6 +665,18 @@ def normalize_sales_interpretation(
         message_text=message_text,
         context_text=context_text,
     )
+    strap_material = extract_stated_strap_material(message_text)
+    if strap_material:
+        preferences.material = strap_material
+        preferences.attributes = [
+            item
+            for item in preferences.attributes
+            if not _fold(item).startswith("required_strap_material:")
+        ]
+        _ensure_attribute(
+            preferences,
+            f"required_strap_material:{strap_material}",
+        )
     repair_specific_model_tokens(
         subject,
         preferences,

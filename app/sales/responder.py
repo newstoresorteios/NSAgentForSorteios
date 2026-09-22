@@ -74,7 +74,18 @@ def recommendation_identifies_candidate(text: str, products: list[dict[str, Any]
     for product in products:
         for field in ("name", "reference", "product_url", "url"):
             identity = fold(str(product.get(field) or ""))
-            if identity and len(identity) >= 3 and " " + identity + " " in rendered:
+            identities = [identity]
+            if field == "name" and identity:
+                tokens = identity.split()
+                while tokens and tokens[0] in {"relogio", "relogios", "watch", "watches"}:
+                    tokens.pop(0)
+                compact_name = " ".join(tokens)
+                if compact_name and compact_name != identity:
+                    identities.append(compact_name)
+            if any(
+                candidate and len(candidate) >= 3 and " " + candidate + " " in rendered
+                for candidate in identities
+            ):
                 return True
     return False
 

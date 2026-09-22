@@ -539,13 +539,18 @@ def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
         prefix = "Encontrei algumas possibilidades:"
     else:
         prefix = "Sim, encontrei:" if action != "product_price" else "Encontrei:"
-    numbered_lines = [
-        f"{position}. {line}"
-        for position, line in enumerate(_product_lines(products, compact=True), start=1)
-    ]
+    product_lines = _product_lines(products, compact=True)
+    presented_lines = (
+        product_lines
+        if len(product_lines) == 1
+        else [
+            f"{position}. {line}"
+            for position, line in enumerate(product_lines, start=1)
+        ]
+    )
     suffix = "\n\nÉ algum desses?" if action == "product_disambiguation" else ""
     return AgentResult(
-        reply_text=prefix + "\n\n" + "\n\n".join(numbered_lines) + suffix,
+        reply_text=prefix + "\n\n" + "\n\n".join(presented_lines) + suffix,
         intent="commerce",
         handoff_required=False,
         commercial_data={"products": products},
