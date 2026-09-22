@@ -172,6 +172,29 @@ def test_apply_policy_overrides_clamps_discount():
     assert updated.max_pix_discount_percent == 40
 
 
+def test_progressive_recommendation_policy_is_operator_managed():
+    base = build_persona_runtime(active=_persona())
+    updated = apply_policy_overrides(
+        base,
+        {
+            "qualificationMaxQuestions": 4,
+            "progressiveRecommendationsEnabled": True,
+            "progressiveRecommendationOptions": 1,
+            "maxCatalogOptions": 4,
+            "recommendationListRequestPattern": r"lista|compare",
+            "recommendationNextRequestPattern": r"outro|próximo",
+        },
+        source="workspace_database",
+    )
+
+    assert updated.max_qualification_questions == 4
+    assert updated.progressive_recommendations_enabled is True
+    assert updated.progressive_recommendation_options == 1
+    assert updated.max_catalog_options == 4
+    assert updated.recommendation_list_request_pattern == r"lista|compare"
+    assert updated.recommendation_next_request_pattern == r"outro|próximo"
+
+
 def test_as_prompt_list_logs_invalid_json(capsys):
     assert _as_prompt_list("{not-json") == ["{not-json"]
     output = capsys.readouterr().out

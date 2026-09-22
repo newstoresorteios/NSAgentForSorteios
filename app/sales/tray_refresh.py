@@ -40,6 +40,12 @@ def is_list_denial(message_text: str | None) -> bool:
     return bool(_LIST_DENIAL_RE.search(str(message_text or "")))
 
 
+def is_next_recommendation_request(message_text: str | None) -> bool:
+    from app.catalog.retrieval.limits import requests_next_recommendation
+
+    return requests_next_recommendation(message_text)
+
+
 def constraint_requires_tray_refresh(
     interpretation: SalesInterpretation | None,
     message_text: str | None,
@@ -53,6 +59,8 @@ def constraint_requires_tray_refresh(
     if _CASE_SIZE_RE.search(text):
         return True
     if is_list_denial(text):
+        return True
+    if is_next_recommendation_request(text):
         return True
     if interpretation is not None and _specific_product_lock(interpretation):
         return True
@@ -85,6 +93,8 @@ def should_drop_contextual_resolve(
     if _CASE_SIZE_RE.search(text):
         return True
     if is_list_denial(text):
+        return True
+    if is_next_recommendation_request(text):
         return True
     return False
 
@@ -125,7 +135,7 @@ def excluded_product_ids_for_turn(
         return list(dict.fromkeys(ids))
 
     text = str(message_text or "")
-    if is_list_denial(text):
+    if is_list_denial(text) or is_next_recommendation_request(text):
         ids.extend(_presented_ids(commerce_state))
         return list(dict.fromkeys(ids))
 

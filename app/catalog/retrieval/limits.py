@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import re
 from typing import Any
 
 import app.catalog.retrieval.runtime as _runtime
@@ -31,6 +32,50 @@ def customer_result_limit() -> int:
     except Exception:
         limit = CUSTOMER_RESULT_LIMIT
     return max(1, min(5, limit))
+
+
+def _runtime_pattern_matches(attribute: str, message_text: str | None) -> bool:
+    if not str(message_text or "").strip():
+        return False
+    try:
+        from app.persona.persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        pattern = str(getattr(runtime, attribute, "") or "").strip()
+        return bool(pattern and re.search(pattern, str(message_text), flags=re.IGNORECASE))
+    except (re.error, TypeError, ValueError):
+        return False
+
+
+def requests_recommendation_list(message_text: str | None) -> bool:
+    """Operator-managed signal that the customer explicitly wants several options."""
+    return _runtime_pattern_matches("recommendation_list_request_pattern", message_text)
+
+
+def requests_next_recommendation(message_text: str | None) -> bool:
+    """Operator-managed signal to advance without repeating the current product."""
+    return _runtime_pattern_matches("recommendation_next_request_pattern", message_text)
+
+
+def recommendation_result_limit(
+    interpretation: Any | None = None,
+    message_text: str | None = None,
+) -> int:
+    """Choose progressive or shortlist presentation from published workspace policy."""
+    maximum = customer_result_limit()
+    try:
+        from app.persona.persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        if runtime is None or not bool(runtime.progressive_recommendations_enabled):
+            return maximum
+        goal = str(getattr(interpretation, "goal", "") or "").strip().casefold()
+        if goal == "compare" or requests_recommendation_list(message_text):
+            return maximum
+        progressive = int(runtime.progressive_recommendation_options)
+        return max(1, min(maximum, progressive))
+    except (TypeError, ValueError, AttributeError):
+        return maximum
 
 
 def prefer_ready_stock_enabled() -> bool:

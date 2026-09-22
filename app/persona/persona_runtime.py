@@ -61,7 +61,12 @@ class PersonaRuntimeConfig(BaseModel):
     require_product_before_checkout: bool = True
     require_qualification_before_catalog: bool = True
     qualification_prompts: list[str] = Field(default_factory=list)
+    max_qualification_questions: int = 3
     max_catalog_options: int = 3
+    progressive_recommendations_enabled: bool = True
+    progressive_recommendation_options: int = 1
+    recommendation_list_request_pattern: str = ""
+    recommendation_next_request_pattern: str = ""
     prefer_ready_stock: bool = False
     require_official_catalog_link: bool = True
     justify_recommendations: bool = True
@@ -113,7 +118,10 @@ class PersonaRuntimeConfig(BaseModel):
                 self.require_qualification_before_catalog
             ),
             "qualification_prompt_count": len(self.qualification_prompts),
+            "max_qualification_questions": self.max_qualification_questions,
             "max_catalog_options": self.max_catalog_options,
+            "progressive_recommendations_enabled": self.progressive_recommendations_enabled,
+            "progressive_recommendation_options": self.progressive_recommendation_options,
             "prefer_ready_stock": self.prefer_ready_stock,
             "require_official_catalog_link": self.require_official_catalog_link,
             "justify_recommendations": self.justify_recommendations,
@@ -181,6 +189,9 @@ class PersonaRuntimeConfig(BaseModel):
             f"- require_qualification_before_catalog: "
             f"{self.require_qualification_before_catalog}\n"
             f"- max_catalog_options: {self.max_catalog_options}\n"
+            f"- max_qualification_questions: {self.max_qualification_questions}\n"
+            f"- progressive_recommendations_enabled: {self.progressive_recommendations_enabled}\n"
+            f"- progressive_recommendation_options: {self.progressive_recommendation_options}\n"
             f"- prefer_ready_stock: {self.prefer_ready_stock}\n"
             f"- negotiation_beyond_pix: {self.negotiation_beyond_pix}\n"
             "- Use o perfil ChatBo completo no system prompt "
@@ -200,6 +211,12 @@ class PersonaRuntimeConfig(BaseModel):
             "payment_request_kind=informational e purchase_action=null.\n"
             "- Nunca prometa desconto acima de max_pix_discount_percent.\n"
             "- Nunca liste mais opções do que max_catalog_options.\n"
+            + operator_message(
+                "progressive_recommendation_instruction",
+                progressive_options=str(self.progressive_recommendation_options),
+                max_options=str(self.max_catalog_options),
+            )
+            + "\n"
             f"</persona_runtime_policy>{skills_section}"
         )
 
@@ -228,6 +245,11 @@ class PersonaRuntimeConfig(BaseModel):
                 operator_message('persona.persona_runtime.prompt_policy_block.d0d6392aba', value_1=f"{('exige' if self.require_cart_for_informational_payment else 'não exige')}"),
                 operator_message('persona.persona_runtime.prompt_policy_block.44d521606e', value_1=f"{('pergunte preferências da qualificação ChatBo' if self.require_qualification_before_catalog else 'pode buscar se o cliente pedir opções')}"),
                 operator_message('persona.persona_runtime.prompt_policy_block.8e874a098f', value_1=f'{self.max_catalog_options}'),
+                operator_message(
+                    'progressive_recommendation_instruction',
+                    progressive_options=str(self.progressive_recommendation_options),
+                    max_options=str(self.max_catalog_options),
+                ),
                 operator_message('persona.persona_runtime.prompt_policy_block.5fb731be61', value_1=f'{self.prefer_ready_stock}'),
                 operator_message('persona.persona_runtime.prompt_policy_block.5c5b16523d', negotiation=f'{negotiation}'),
                 operator_message('persona.persona_runtime.prompt_policy_block.a06fb52629'),
@@ -401,6 +423,65 @@ def apply_policy_overrides(
                     ),
                 ),
             ),
+            "max_qualification_questions": max(
+                1,
+                min(
+                    6,
+                    _coerce_int(
+                        policy.get(
+                            "max_qualification_questions",
+                            policy.get("qualificationMaxQuestions", config.max_qualification_questions),
+                        ),
+                        config.max_qualification_questions,
+                    ),
+                ),
+            ),
+            "progressive_recommendations_enabled": _coerce_bool(
+                policy.get(
+                    "progressive_recommendations_enabled",
+                    policy.get(
+                        "progressiveRecommendationsEnabled",
+                        config.progressive_recommendations_enabled,
+                    ),
+                ),
+                config.progressive_recommendations_enabled,
+            ),
+            "progressive_recommendation_options": max(
+                1,
+                min(
+                    5,
+                    _coerce_int(
+                        policy.get(
+                            "progressive_recommendation_options",
+                            policy.get(
+                                "progressiveRecommendationOptions",
+                                config.progressive_recommendation_options,
+                            ),
+                        ),
+                        config.progressive_recommendation_options,
+                    ),
+                ),
+            ),
+            "recommendation_list_request_pattern": str(
+                policy.get(
+                    "recommendation_list_request_pattern",
+                    policy.get(
+                        "recommendationListRequestPattern",
+                        config.recommendation_list_request_pattern,
+                    ),
+                )
+                or config.recommendation_list_request_pattern
+            ).strip(),
+            "recommendation_next_request_pattern": str(
+                policy.get(
+                    "recommendation_next_request_pattern",
+                    policy.get(
+                        "recommendationNextRequestPattern",
+                        config.recommendation_next_request_pattern,
+                    ),
+                )
+                or config.recommendation_next_request_pattern
+            ).strip(),
             "prefer_ready_stock": _coerce_bool(
                 policy.get(
                     "prefer_ready_stock",

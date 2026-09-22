@@ -11,7 +11,11 @@ from app.catalog.retrieval.availability import (
     unavailable_product_reply,
 )
 from app.catalog.retrieval.hard_filter import hard_filter_products
-from app.catalog.retrieval.limits import customer_result_limit, revalidate_top_n
+from app.catalog.retrieval.limits import (
+    customer_result_limit,
+    recommendation_result_limit,
+    revalidate_top_n,
+)
 from app.catalog.retrieval.revalidate import revalidate_products
 from app.catalog.retrieval.scoring import prefer_dial_and_case_matches
 from app.catalog.retrieval.session import RetrievalSession
@@ -32,6 +36,11 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
     interpretation = session.interpretation
     plan = session.retrieval_plan
     hard_filtered = session.hard_filtered
+    result_limit = (
+        recommendation_result_limit(interpretation, session.message_text)
+        if plan.mode == "recommendation"
+        else customer_result_limit()
+    )
 
     if plan.mode == "recommendation":
         if (
@@ -104,10 +113,10 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
             alt = score_catalog_candidates(
                 rank_pool,
                 interpretation,
-                limit=customer_result_limit(),
+                limit=result_limit,
             )
             shadow_compare_rank(
-                live_ids=product_rank_ids(hard_filtered)[: customer_result_limit()],
+                live_ids=product_rank_ids(hard_filtered)[:result_limit],
                 other_ids=product_rank_ids(alt),
                 other_name="score_catalog_candidates",
                 mode="recommendation",
@@ -117,7 +126,7 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
         hard_filtered = prefer_dial_and_case_matches(
             hard_filtered,
             interpretation,
-            limit=max(plan.candidate_limit, customer_result_limit()),
+            limit=max(plan.candidate_limit, result_limit),
         )
         if bool(getattr(_runtime.get_settings(), "agent_catalog_index_write_enabled", True)):
             index_products_best_effort(
@@ -146,7 +155,7 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
     selected = select_diverse_brand_shortlist(
         ranked,
         interpretation,
-        limit=customer_result_limit(),
+        limit=result_limit,
     )
     refreshed, revalidation_failed = await revalidate_products(
         selected,
@@ -167,7 +176,7 @@ async def present_compiled_results(session: RetrievalSession) -> AgentResult:
         ]
         # One bounded refill wave, only after a successful upstream batch.
         # Never amplify a partial failure/rate limit by querying more SKUs.
-        missing = min(customer_result_limit() - len(refreshed), revalidate_top_n())
+        missing = min(result_limit - len(refreshed), revalidate_top_n())
         if missing > 0 and remaining and not revalidation_failed:
             confirmed_ids = {str(product.get("id")) for product in refreshed}
             diverse = select_diverse_brand_shortlist(

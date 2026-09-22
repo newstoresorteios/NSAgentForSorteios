@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.commerce.commerce_context import CommerceConversationState, PresentedCommerceProduct
-from app.models import AgentResult, IncomingMessage, SalesInterpretation
+from app.models import IncomingMessage, SalesInterpretation
 from app.sales.dialogue_phase import (
     blocks_farewell_fast_path,
     blocks_greeting_fast_path,
@@ -14,6 +14,12 @@ from app.sales.tray_refresh import (
     excluded_product_ids_for_turn,
     should_drop_contextual_resolve,
     tray_list_query_extras,
+)
+from app.catalog.retrieval.limits import recommendation_result_limit
+from app.persona.persona_runtime import (
+    PersonaRuntimeConfig,
+    reset_persona_runtime,
+    set_persona_runtime,
 )
 
 
@@ -101,6 +107,44 @@ def test_excluded_ids_drop_hermetique_when_mk2_locked():
         state,
     )
     assert "h1" in ids
+
+
+def test_progressive_recommendation_shows_one_unless_customer_requests_list():
+    runtime = PersonaRuntimeConfig(
+        enabled=True,
+        max_catalog_options=3,
+        progressive_recommendations_enabled=True,
+        progressive_recommendation_options=1,
+        recommendation_list_request_pattern=r"opções|compare|lista",
+        recommendation_next_request_pattern=r"outro|próximo",
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        assert recommendation_result_limit(_interp(), "quero um relógio azul") == 1
+        assert recommendation_result_limit(_interp(), "mostre opções") == 3
+        assert recommendation_result_limit(_interp(goal="compare"), "compare") == 3
+    finally:
+        reset_persona_runtime(token)
+
+
+def test_next_recommendation_excludes_current_product_and_forces_refresh():
+    runtime = PersonaRuntimeConfig(
+        enabled=True,
+        recommendation_next_request_pattern=r"outro|próximo",
+    )
+    state = CommerceConversationState(
+        last_presented_products=[
+            PresentedCommerceProduct(product_id="p1", name="Opção atual", position=1)
+        ]
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        assert constraint_requires_tray_refresh(_interp(), "mostre outro") is True
+        assert excluded_product_ids_for_turn(
+            _interp(), "mostre outro", state
+        ) == ["p1"]
+    finally:
+        reset_persona_runtime(token)
 
 
 def test_tray_extras_send_current_price_range_and_color():

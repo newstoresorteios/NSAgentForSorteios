@@ -6,6 +6,11 @@ from app.catalog.retrieval.hard_filter import hard_filter_products
 from app.catalog.retrieval.present import present_compiled_results
 from app.catalog.retrieval.session import RetrievalSession
 from app.models import SalesInterpretation
+from app.persona.persona_runtime import (
+    PersonaRuntimeConfig,
+    reset_persona_runtime,
+    set_persona_runtime,
+)
 
 
 def interpretation(**preferences):
@@ -99,6 +104,25 @@ async def test_live_price_change_backfills_fourth_ranked_candidate(presentation)
     assert [p["id"] for p in result.commercial_data["products"]] == ["2", "3", "4"]
     assert calls == ["1", "2", "3", "4"]
     assert all(p["_revalidated"] for p in result.commercial_data["products"])
+
+
+@pytest.mark.asyncio
+async def test_progressive_policy_limits_actual_catalog_presentation_to_one(presentation):
+    runtime = PersonaRuntimeConfig(
+        enabled=True,
+        max_catalog_options=3,
+        progressive_recommendations_enabled=True,
+        progressive_recommendation_options=1,
+        recommendation_list_request_pattern=r"opções|compare|lista",
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        result, calls = await present([product(i) for i in range(1, 4)], {})
+    finally:
+        reset_persona_runtime(token)
+
+    assert [p["id"] for p in result.commercial_data["products"]] == ["1"]
+    assert calls == ["1"]
 
 
 @pytest.mark.asyncio

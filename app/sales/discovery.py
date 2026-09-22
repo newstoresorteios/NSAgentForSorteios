@@ -10,7 +10,7 @@ from typing import Any
 
 from ..models import IncomingMessage, SalesInterpretation
 from app.catalog.specs.identity_lock import (
-    mentioned_watch_brands as _mentioned_watch_brands,
+    mentioned_watch_brands as _mentioned_watch_brands,  # noqa: F401 - facade export
     specific_product_lock as _specific_product_lock,
 )
 from app.commerce.commerce_context import CommerceConversationState
@@ -238,7 +238,17 @@ def _persona_requires_qualification() -> bool:
 # (e.g. "dourado", "automático") and must NOT skip Crono's qualification questions.
 _QUAL_STYLE_DIMS = frozenset({"style", "occasion"})
 _QUAL_BUDGET_DIMS = frozenset({"budget"})
-_QUAL_MAX_QUESTIONS = 2
+
+
+def _max_qualification_questions() -> int:
+    try:
+        from app.persona.persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+        value = int(getattr(runtime, "max_qualification_questions", 3) or 3)
+    except (TypeError, ValueError, AttributeError):
+        value = 3
+    return max(1, min(6, value))
 
 
 def _preference_key_set(discovery_state: dict[str, Any]) -> set[str]:
@@ -303,6 +313,7 @@ def build_qualification_snapshot(
     has_style = bool(covered & _QUAL_STYLE_DIMS)
     has_urgency = _has_urgency_signal(interpretation)
     clarification_count = int(discovery_state.get("clarification_count") or 0)
+    max_questions = _max_qualification_questions()
     fulfillment_dims: set[str] = set()
     try:
         from .qualification_slots import (
@@ -344,7 +355,7 @@ def build_qualification_snapshot(
     elif _specific_product_lock(interpretation):
         ready = True
         satisfied_by = "sku_lock"
-    elif clarification_count >= _QUAL_MAX_QUESTIONS:
+    elif clarification_count >= max_questions:
         ready = True
         satisfied_by = "max_questions"
     elif has_brand and has_budget:
@@ -393,7 +404,7 @@ def build_qualification_snapshot(
         "fulfillment_dims": sorted(fulfillment_dims),
         "qualification_dims": sorted(qualification_dims),
         "clarification_count": clarification_count,
-        "max_questions": _QUAL_MAX_QUESTIONS,
+        "max_questions": max_questions,
     }
 
 

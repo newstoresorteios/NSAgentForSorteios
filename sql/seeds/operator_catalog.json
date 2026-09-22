@@ -7394,5 +7394,84 @@
     "description": "Resposta quando o endereço não abre uma página válida do produto consultado.",
     "group": "Busca por imagem e evidências",
     "readOnly": false
+  },
+  {
+    "key": "qualificationMaxQuestions",
+    "target": "policy",
+    "attribute": "qualificationMaxQuestions",
+    "default": 3,
+    "label": "Máximo de perguntas de qualificação",
+    "description": "Limite de perguntas antes de iniciar a busca. Modelo ou referência explícitos continuam liberando a consulta imediatamente.",
+    "group": "Qualificação e recomendações",
+    "type": "integer",
+    "min": 1,
+    "max": 6,
+    "step": 1,
+    "readOnly": false
+  },
+  {
+    "key": "progressiveRecommendationsEnabled",
+    "target": "policy",
+    "attribute": "progressiveRecommendationsEnabled",
+    "default": true,
+    "label": "Recomendação progressiva",
+    "description": "Apresenta poucas opções por vez e usa o retorno do cliente para refinar a próxima indicação.",
+    "group": "Qualificação e recomendações",
+    "type": "boolean",
+    "readOnly": false
+  },
+  {
+    "key": "progressiveRecommendationOptions",
+    "target": "policy",
+    "attribute": "progressiveRecommendationOptions",
+    "default": 1,
+    "label": "Produtos por recomendação progressiva",
+    "description": "Quantidade de produtos apresentada em cada rodada, salvo quando o cliente pedir lista ou comparação.",
+    "group": "Qualificação e recomendações",
+    "type": "integer",
+    "min": 1,
+    "max": 5,
+    "step": 1,
+    "readOnly": false
+  },
+  {
+    "key": "recommendationListRequestPattern",
+    "target": "policy",
+    "attribute": "recommendationListRequestPattern",
+    "default": "\\b(opções|opcoes|alternativas|lista|compare|comparar|comparação|comparacao|mostre\\s+(?:\\d+|várias|varias|algumas)|quais\\s+(?:são|sao)\\s+as\\s+opções)\\b",
+    "label": "Pedidos de lista ou comparação",
+    "description": "Expressão regular editável que permite mostrar uma lista curta quando o cliente pedir várias opções.",
+    "group": "Qualificação e recomendações",
+    "type": "textarea",
+    "maxLength": 2000,
+    "readOnly": false
+  },
+  {
+    "key": "recommendationNextRequestPattern",
+    "target": "policy",
+    "attribute": "recommendationNextRequestPattern",
+    "default": "\\b(outro|outra|próximo|proximo|mais\\s+um|mais\\s+uma|nova\\s+opção|nova\\s+opcao|tem\\s+mais|mostre\\s+mais|ver\\s+outro|ver\\s+outra)\\b",
+    "label": "Pedidos da próxima recomendação",
+    "description": "Expressão regular editável usada para avançar sem repetir os produtos já apresentados.",
+    "group": "Qualificação e recomendações",
+    "type": "textarea",
+    "maxLength": 2000,
+    "readOnly": false
+  },
+  {
+    "key": "message.progressive_recommendation_instruction",
+    "target": "message",
+    "attribute": "progressive_recommendation_instruction",
+    "default": "Em recomendações abertas, apresente {progressive_options} produto por rodada, explique brevemente por que ele atende ao pedido e pergunte o que o cliente achou. Se ele pedir lista ou comparação, mostre até {max_options} opções. Se demonstrar intenção de compra, pare de recomendar e avance para o carrinho ou checkout.",
+    "label": "Instrução de recomendação progressiva",
+    "description": "Regra enviada ao agente. Preserve {progressive_options} e {max_options}.",
+    "group": "Qualificação e recomendações",
+    "type": "textarea",
+    "maxLength": 4000,
+    "readOnly": false,
+    "variables": [
+      "progressive_options",
+      "max_options"
+    ]
   }
 ]
