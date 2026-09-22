@@ -1,3 +1,5 @@
+import pytest
+
 from app.catalog.retrieval.hard_filter import hard_filter_products
 from app.catalog.specs.preference_normalize import normalize_sales_interpretation
 from app.commerce.commerce_context import CommerceConversationState
@@ -124,3 +126,150 @@ def test_full_baltic_mk2_steel_followup_survives_new_conversation_id():
     assert "Aquascaphe MK2" in reply
     assert "MR01" not in reply
     assert "1. Relógio" not in reply
+
+
+def test_bare_characteristic_overrides_wrong_handoff_interpretation():
+    """Production regression: "Aço" must answer the live Baltic variant question."""
+    state = CommerceConversationState(
+        active_domain="commerce",
+        active_product={
+            "product_id": "14738",
+            "brand": "Baltic",
+            "name": "Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm",
+            "model": "Aquascaphe MK2",
+        },
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "14738",
+                "brand": "Baltic",
+                "name": "Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm",
+                "model": "Aquascaphe MK2",
+            }
+        ],
+    )
+    mistaken = SalesInterpretation(
+        domain="commerce",
+        goal=None,
+        confidence=.74,
+        needs_clarification=False,
+        answer_strategy="handoff",
+        references_previous_context=False,
+        subject={"product_type": "relógio"},
+        preferences={},
+    )
+
+    refined, preserved = normalize_followup("Aço", mistaken, state)
+    normalize_sales_interpretation(refined, message_text="Aço")
+    refined = apply_turn_contract_for_search(
+        refined,
+        message_text="Aço",
+        commerce_state=preserved,
+    )
+
+    assert refined.goal == "find"
+    assert refined.answer_strategy == "search_catalog"
+    assert refined.references_previous_context is False
+    assert refined.subject.brand == "Baltic"
+    assert refined.subject.model.casefold() == "aquascaphe mk2"
+    assert "required_strap_material:aço" in refined.preferences.attributes
+    assert preserved.active_product is not None
+    assert [item.product_id for item in preserved.last_presented_products] == ["14738"]
+
+
+def test_short_product_characteristics_keep_the_live_product_context():
+    for text in ("azul", "37 mm", "pulseira de borracha"):
+        state = CommerceConversationState(
+            active_domain="commerce",
+            active_product={
+                "product_id": "14738",
+                "brand": "Baltic",
+                "name": "Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm",
+                "model": "Aquascaphe MK2",
+            },
+            last_presented_products=[
+                {
+                    "position": 1,
+                    "product_id": "14738",
+                    "brand": "Baltic",
+                    "name": "Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm",
+                    "model": "Aquascaphe MK2",
+                }
+            ],
+        )
+        mistaken = SalesInterpretation(
+            domain="commerce",
+            goal=None,
+            confidence=.74,
+            needs_clarification=False,
+            answer_strategy="handoff",
+            references_previous_context=False,
+            subject={"product_type": "relógio"},
+            preferences={},
+        )
+
+        refined, preserved = normalize_followup(text, mistaken, state)
+
+        assert refined.goal == "find", text
+        assert refined.answer_strategy == "search_catalog", text
+        assert preserved.active_product is not None, text
+        assert preserved.last_presented_products, text
+
+
+@pytest.mark.asyncio
+async def test_bare_steel_characteristic_reaches_catalog_instead_of_handoff(monkeypatch):
+    from app.agents.commerce import handle_sales_message
+    import app.sales_agent as sales
+
+    state = CommerceConversationState(
+        active_domain="commerce",
+        active_product={
+            "product_id": "14738",
+            "brand": "Baltic",
+            "name": "Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm",
+            "model": "Aquascaphe MK2",
+        },
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "14738",
+                "brand": "Baltic",
+                "name": "Relógio Baltic Aquascaphe MK2 Automático Cinza 37mm",
+                "model": "Aquascaphe MK2",
+            }
+        ],
+    )
+    mistaken = SalesInterpretation(
+        domain="commerce",
+        goal=None,
+        confidence=.74,
+        needs_clarification=False,
+        answer_strategy="handoff",
+        references_previous_context=False,
+        subject={"product_type": "relógio"},
+        preferences={},
+    )
+    captured = {}
+
+    async def fake_catalog(*args, **kwargs):
+        captured["interpretation"] = kwargs["interpretation"]
+        return AgentResult(
+            reply_text="Baltic Aquascaphe MK2 com pulseira de aço.",
+            intent="commerce",
+            handoff_required=False,
+        )
+
+    monkeypatch.setattr(sales, "_handle_sales_catalog_inner", fake_catalog)
+
+    result = await handle_sales_message(
+        IncomingMessage(text="Aço"),
+        {"primary_intent": "commerce"},
+        {},
+        mistaken,
+        commerce_state=state,
+    )
+
+    assert result is not None and result.handoff_required is False
+    assert "MK2" in result.reply_text
+    assert captured["interpretation"].answer_strategy == "search_catalog"
+    assert captured["interpretation"].subject.model.casefold() == "aquascaphe mk2"

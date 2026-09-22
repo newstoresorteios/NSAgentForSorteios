@@ -150,7 +150,18 @@ def normalize_followup(text, interpretation, state, recent_turns=None):
         or message_states_strap_material(text)
         or re.search(r'\b\d{2}(?:[.,]\d+)?\s*mm\b', folded)
     )
-    refines_variant = bool(
+    # A short characteristic answer belongs to the live product question even
+    # when the semantic interpreter labels the fragment as generic/handoff.
+    # This is common for replies such as "Aço", "azul" and "37 mm".
+    from app.sales.discovery import _mentioned_watch_brands
+    live_product_context = bool(state.active_product or state.last_presented_products)
+    contextual_variant_reply = bool(
+        live_product_context
+        and variant_signal
+        and len(folded.split()) <= 8
+        and not _mentioned_watch_brands(text)
+    )
+    semantic_variant_refinement = bool(
         interpretation.goal in {'inspect', 'buy', 'find'}
         and interpretation.references_previous_context
         and not is_product_information_question(text)
@@ -160,6 +171,16 @@ def normalize_followup(text, interpretation, state, recent_turns=None):
         and not is_bare_purchase_closing(text)
         and variant_signal
     )
+    contextual_variant_recovery = bool(
+        contextual_variant_reply
+        and not semantic_variant_refinement
+        and not is_product_information_question(text)
+        and not interpretation.image_request and not interpretation.product_action
+        and not any((interpretation.purchase_action, interpretation.checkout_action,
+                     interpretation.order_action, interpretation.payment_action))
+        and not is_bare_purchase_closing(text)
+    )
+    refines_variant = semantic_variant_refinement or contextual_variant_recovery
     browsing_purchase = bool(interpretation.goal == 'buy' and interpretation.answer_strategy == 'search_catalog'
         and not interpretation.references_previous_context
         and not any((interpretation.purchase_action, interpretation.checkout_action, interpretation.payment_action,
@@ -185,7 +206,11 @@ def normalize_followup(text, interpretation, state, recent_turns=None):
     updated.purchase_action = updated.payment_action = updated.checkout_action = None
     updated.information_needed = ['catalog']
     updated._turn_contract_bound = False
-    if not (refines_variant and message_states_strap_material(text)):
+    preserve_variant_context = bool(
+        refines_variant
+        and (message_states_strap_material(text) or contextual_variant_recovery)
+    )
+    if not preserve_variant_context:
         state.active_product = None
         state.last_presented_products = []
     state.pending_action = None
