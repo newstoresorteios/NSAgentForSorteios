@@ -7473,5 +7473,23 @@
       "progressive_options",
       "max_options"
     ]
+  },
+  {
+    "key": "message.variant_refinement_sales_reply",
+    "target": "message",
+    "type": "textarea",
+    "label": "Resposta após escolha de característica",
+    "group": "Continuidade e fechamento",
+    "description": "Resposta comercial quando o cliente escolhe uma característica do produto apresentado. Preserve todas as variáveis entre chaves.",
+    "maxLength": 4000,
+    "variables": [
+      "name",
+      "characteristic",
+      "price",
+      "pix_price",
+      "lead_time_days",
+      "url"
+    ],
+    "default": "{name}, na versão {characteristic}:\nA prazo: {price}\nÀ vista no Pix: {pix_price}\nPrazo informado pelo catálogo: {lead_time_days} dias úteis\nLink oficial: {url}\n\nVocê prefere finalizar pelo link oficial ou que eu abra seu pedido por aqui?"
   }
 ]

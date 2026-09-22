@@ -29,6 +29,8 @@ def mark_sales_result(
     if interpretation is not None:
         if interpretation._clear_pending_action:
             marked.response_metadata["clear_pending_action"] = True
+        if interpretation._variant_refinement:
+            marked.response_metadata["variant_refinement"] = True
         marked.response_metadata.setdefault("active_topic", interpretation.active_topic)
         marked.response_metadata.setdefault(
             "purchase_stage", interpretation.purchase_stage

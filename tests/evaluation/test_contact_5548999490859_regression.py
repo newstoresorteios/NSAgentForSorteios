@@ -3,7 +3,7 @@ import pytest
 from app.catalog.retrieval.hard_filter import hard_filter_products
 from app.catalog.specs.preference_normalize import normalize_sales_interpretation
 from app.commerce.commerce_context import CommerceConversationState
-from app.commerce.commerce_router import _product_result
+from app.commerce.commerce_router import _product_result, variant_refinement_sales_reply
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.sales.answer_council import apply_turn_contract_for_search
 from app.sales.contextual_questions import normalize_followup
@@ -21,6 +21,8 @@ MK2 = {
         {"id": "1716", "name": "Aço inoxidável"},
     ],
     "price": 9299.99,
+    "url": "https://www.newstorerj.com.br/relogios/relogios-baltic/relogio-baltic-aquascaphe-mk2-automatico-cinza",
+    "order_days_availability": 30,
     "available": True,
     "_revalidated": True,
     "_factual_source": "tray_live",
@@ -252,12 +254,16 @@ async def test_bare_steel_characteristic_reaches_catalog_instead_of_handoff(monk
     captured = {}
 
     async def fake_catalog(*args, **kwargs):
+        from app.sales.result_utils import mark_sales_result
+
         captured["interpretation"] = kwargs["interpretation"]
-        return AgentResult(
+        return mark_sales_result(AgentResult(
             reply_text="Baltic Aquascaphe MK2 com pulseira de aço.",
             intent="commerce",
             handoff_required=False,
-        )
+        ), interpretation=kwargs["interpretation"], goal="find",
+            response_source="deterministic_fallback", used_openai_responder=False,
+            used_tray=True)
 
     monkeypatch.setattr(sales, "_handle_sales_catalog_inner", fake_catalog)
 
@@ -273,3 +279,18 @@ async def test_bare_steel_characteristic_reaches_catalog_instead_of_handoff(monk
     assert "MK2" in result.reply_text
     assert captured["interpretation"].answer_strategy == "search_catalog"
     assert captured["interpretation"].subject.model.casefold() == "aquascaphe mk2"
+    assert result.response_metadata["variant_refinement"] is True
+
+
+def test_variant_refinement_reply_matches_customer_report():
+    reply = variant_refinement_sales_reply(MK2, message_text="Aço")
+
+    assert reply is not None
+    assert "Aquascaphe MK2" in reply
+    assert "versão aço" in reply
+    assert "A prazo: R$" in reply
+    assert "À vista no Pix: R$" in reply
+    assert "30 dias úteis" in reply
+    assert "Link oficial: https://www.newstorerj.com.br/" in reply
+    assert "finalizar pelo link oficial" in reply
+    assert "abra seu pedido por aqui" in reply

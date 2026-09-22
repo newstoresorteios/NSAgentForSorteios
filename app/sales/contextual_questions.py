@@ -206,6 +206,8 @@ def normalize_followup(text, interpretation, state, recent_turns=None):
     updated.purchase_action = updated.payment_action = updated.checkout_action = None
     updated.information_needed = ['catalog']
     updated._turn_contract_bound = False
+    if refines_variant:
+        updated._variant_refinement = True
     preserve_variant_context = bool(
         refines_variant
         and (message_states_strap_material(text) or contextual_variant_recovery)

@@ -57,6 +57,18 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
     interpretation, previous_state = normalize_followup(incoming.text, interpretation, previous_state)
     issues = list((metadata.get("final_response_validation") or {}).get("rejected_issues") or [])
     products = [p for p in (result.commercial_data or {}).get("products", []) if isinstance(p, dict)]
+    if metadata.get("variant_refinement") is True and len(products) == 1:
+        from app.commerce.commerce_router import variant_refinement_sales_reply
+
+        variant_reply = variant_refinement_sales_reply(
+            products[0], message_text=incoming.text
+        )
+        if variant_reply:
+            result.reply_text = variant_reply
+            metadata.update(
+                response_source="operator_variant_refinement",
+                used_openai_responder=False,
+            )
     if interpretation and 'ready_to_ship' in interpretation.preferences.attributes and products:
         from app.catalog.retrieval.availability import commercial_availability_facts
         unconfirmed = [p for p in products if commercial_availability_facts(p)['immediate_delivery_supported'] is not True]

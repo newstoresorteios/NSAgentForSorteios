@@ -557,6 +557,61 @@ def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
     )
 
 
+def variant_refinement_sales_reply(
+    product: dict[str, Any],
+    *,
+    message_text: str | None,
+) -> str | None:
+    """Render the operator-managed close after a customer chooses a variant."""
+    from app.catalog.retrieval.availability import commercial_availability_facts
+    from app.catalog.specs.preference_normalize import (
+        extract_stated_color,
+        extract_stated_strap_material,
+    )
+    from app.configuration.runtime import ConfigurationUnavailable
+
+    characteristic = (
+        extract_stated_strap_material(message_text)
+        or extract_stated_color(message_text)
+    )
+    if not characteristic:
+        size = re.search(r"\b\d{2}(?:[.,]\d+)?\s*mm\b", message_text or "", re.IGNORECASE)
+        characteristic = size.group(0).strip() if size else None
+    name = str(product.get("name") or "").strip()
+    url = str(
+        product.get("url") or product.get("product_url") or product.get("link") or ""
+    ).strip()
+    price = _price_label(_list_price(product))
+    payment = _payment_details(product)
+    pix_price = _price_label(_pix_cash_price(product, payment))
+    availability = product.get("commercial_availability")
+    if not isinstance(availability, dict):
+        availability = commercial_availability_facts(product)
+    lead_time_days = availability.get("lead_time_days")
+    if (
+        not characteristic
+        or not name
+        or not url
+        or not price
+        or not pix_price
+        or not isinstance(lead_time_days, int)
+        or lead_time_days <= 0
+    ):
+        return None
+    try:
+        return operator_message(
+            "variant_refinement_sales_reply",
+            name=name,
+            characteristic=characteristic,
+            price=price,
+            pix_price=pix_price,
+            lead_time_days=lead_time_days,
+            url=url,
+        )
+    except ConfigurationUnavailable:
+        return None
+
+
 def guided_near_match_result(
     products: list[dict[str, Any]],
     *,
