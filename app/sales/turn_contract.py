@@ -121,6 +121,44 @@ def locked_identity_from_state(
     return _infer_identity_from_presented(presented)
 
 
+def checkout_target_conflicts(
+    interpretation: SalesInterpretation | None,
+    commerce_state: Any | None,
+) -> bool:
+    """True when this turn names a product different from the live cart target."""
+    if interpretation is None or commerce_state is None:
+        return False
+    current = interpretation.subject
+    if not (current.brand or current.model or current.reference or current.ean):
+        return False
+    prefs = getattr(commerce_state, "active_preferences", None)
+    prefs = prefs if isinstance(prefs, dict) else {}
+    old_brand = prefs.get("subject_brand")
+    old_model = prefs.get("subject_model")
+    target = getattr(commerce_state, "purchase_target", None)
+    active = getattr(commerce_state, "active_product", None)
+    bound = target or active
+    old_reference = getattr(bound, "reference", None) if bound is not None else None
+    old_name = getattr(bound, "name", None) if bound is not None else None
+    if current.brand and old_brand:
+        if _fold_identity(current.brand) != _fold_identity(old_brand):
+            return True
+    if current.reference and old_reference:
+        if _fold_identity(current.reference) != _fold_identity(old_reference):
+            return True
+    if current.model and old_model:
+        new_model = _fold_identity(current.model)
+        prior_model = _fold_identity(old_model)
+        if new_model not in prior_model and prior_model not in new_model:
+            return True
+    if current.model and old_name and not old_model:
+        new_model = _fold_identity(current.model)
+        prior_name = _fold_identity(old_name)
+        if new_model not in prior_name:
+            return True
+    return False
+
+
 def next_locked_identity(
     interpretation: SalesInterpretation | None,
     commerce_state: Any | None,

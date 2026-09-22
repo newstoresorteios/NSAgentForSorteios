@@ -148,14 +148,6 @@ async def quote_shipping(
             commercial_data={"success": False, "stage": "shipping_guidance"},
             response_metadata={"domain": "commerce", "used_tray": False},
         )
-    if state.checkout_channel_preference != "whatsapp":
-        return AgentResult(
-            reply_text=operator_message('commerce.shipping_service.quote_shipping.bca9087441'),
-            intent="commerce",
-            safety_reason="whatsapp_order_channel_required",
-            commercial_data={"success": False, "stage": "shipping_quote"},
-            response_metadata={"domain": "commerce", "used_tray": False},
-        )
     normalized_zipcode = normalize_zipcode(zipcode)
     if normalized_zipcode is None:
         return AgentResult(
@@ -164,6 +156,20 @@ async def quote_shipping(
             safety_reason="shipping_zipcode_invalid",
             commercial_data={"success": False, "stage": "shipping_quote"},
             response_metadata={"domain": "commerce", "used_tray": False},
+        )
+    if state.checkout_channel_preference != "whatsapp":
+        draft = state.checkout_draft.model_copy(deep=True)
+        draft.address.zip_code = normalized_zipcode
+        return AgentResult(
+            reply_text=operator_message('commerce.shipping_service.quote_shipping.bca9087441'),
+            intent="commerce",
+            safety_reason="whatsapp_order_channel_required",
+            commercial_data={"success": False, "stage": "shipping_quote"},
+            response_metadata={
+                "domain": "commerce",
+                "used_tray": False,
+                "checkout_state": {"checkout_draft": draft.model_dump(mode="json")},
+            },
         )
     if not state.cart_session_id:
         return AgentResult(

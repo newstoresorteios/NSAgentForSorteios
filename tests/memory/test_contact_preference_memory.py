@@ -507,6 +507,26 @@ def test_continue_prior_theme_fills_catalog_fields():
     assert updated._catalog_memory_rehydrate_skipped is False
 
 
+def test_named_model_does_not_inherit_old_catalog_constraints():
+    interpretation = _interp(
+        subject={"brand": "Certina", "model": "DS Action Diver 38mm titânio"},
+        preferences={},
+        references_previous_context=True,
+    )
+    updated, filled = rehydrate_interpretation_from_memories(
+        interpretation,
+        _catalog_memories(),
+        message_text="qual o preço do Certina DS Action Diver 38mm em titânio?",
+    )
+    assert updated.subject.brand == "Certina"
+    assert updated.subject.model == "DS Action Diver 38mm titânio"
+    assert updated.preferences.color is None
+    assert updated.preferences.style is None
+    assert updated.preferences.budget_max is None
+    assert filled == []
+    assert updated._catalog_memory_rehydrate_skipped is True
+
+
 def test_persist_skips_unstated_catalog_after_new_browse(monkeypatch):
     InMemoryMemoryStore().install(monkeypatch)
     import app.memory.contact_memory_repository as mem_repo

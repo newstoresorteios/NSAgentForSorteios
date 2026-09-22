@@ -477,6 +477,12 @@ def should_skip_catalog_memory_rehydrate(
         _log_optional("skip_other_brands", exc)
     if confirms_prior_catalog_theme(message_text):
         return False
+    # A named model/reference is a self-contained catalog request. Durable
+    # tastes from another shopping session (price, color, style) must not be
+    # silently AND-ed into it, even when the model marks the turn as contextual.
+    subject = interpretation.subject
+    if subject.model or subject.reference or subject.ean:
+        return True
     if not bool(getattr(interpretation, "references_previous_context", False)):
         return True
     try:

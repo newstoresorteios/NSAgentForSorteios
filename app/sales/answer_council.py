@@ -23,6 +23,7 @@ from ..models import AgentResult, IncomingMessage, SalesInterpretation
 from app.catalog.product_retrieval import effective_price
 from .turn_contract import (
     TurnContract,
+    checkout_target_conflicts,
     inbound_from_memory,
     inbound_from_message,
     merge_inbound_views,
@@ -101,6 +102,21 @@ def build_turn_contract(
 ) -> TurnContract:
     message_view = inbound_from_message(message_text, interpretation)
     memory_view = inbound_from_memory(interpretation, commerce_state)
+    if checkout_target_conflicts(interpretation, commerce_state):
+        memory_view = memory_view.model_copy(
+            update={
+                "brand": None,
+                "model": None,
+                "budget_max": None,
+                "occasion": None,
+                "color": None,
+                "gender": None,
+                "style": None,
+                "live_shortlist": False,
+                "live_checkout": False,
+                "bound_sale_target": False,
+            }
+        )
     return merge_inbound_views(
         message_view=message_view,
         memory_view=memory_view,

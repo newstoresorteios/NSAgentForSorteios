@@ -51,6 +51,18 @@ _CITY_PRODUCT_TOKENS = frozenset(
         "casio",
         "omega",
         "open heart",
+        "preco",
+        "valor",
+        "quanto",
+        "tambem",
+        "tbm",
+        "referencia",
+        "prazo",
+        "frete",
+        "cep",
+        "comprar",
+        "checkout",
+        "carrinho",
     }
 )
 

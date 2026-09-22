@@ -45,6 +45,47 @@ def test_contract_nessa_faixa_keeps_memory_budget_and_omega_brand():
     assert contract.must_not_claim_stale_occasion is True
 
 
+def test_named_product_switch_drops_old_checkout_and_preferences():
+    interp = SalesInterpretation(
+        domain="commerce",
+        goal="find",
+        subject={"brand": "Certina", "model": "DS Action Diver 38mm titânio"},
+        preferences={},
+        information_needed=["catalog", "price"],
+        references_previous_context=True,
+        enough_information_to_search=True,
+        ready_for_retrieval=True,
+        needs_clarification=False,
+        confidence=0.98,
+    )
+    state = CommerceConversationState(
+        dialogue_phase="checkout",
+        purchase_stage="awaiting_payment",
+        cart_session_id="708808",
+        cart_product_id="hamilton-1",
+        purchase_target={"product_id": "hamilton-1", "name": "Hamilton Khaki Field Murph"},
+        active_preferences={
+            "subject_brand": "Hamilton",
+            "subject_model": "Khaki Field Murph",
+            "budget_max": 10000,
+            "color": "preto",
+        },
+    )
+
+    contract = build_turn_contract(
+        message_text="qual o preço do Certina DS Action Diver 38mm em titânio?",
+        interpretation=interp,
+        commerce_state=state,
+    )
+
+    assert contract.brand == "Certina"
+    assert contract.model == "DS Action Diver 38mm titânio"
+    assert contract.budget_max is None
+    assert contract.color is None
+    assert contract.live_checkout is False
+    assert contract.has_bound_sale_target is False
+
+
 def test_fresh_alternative_browse_drops_stale_brand_model_and_shortlist():
     interp = _interpretation()
     interp.subject.brand = "Hamilton"

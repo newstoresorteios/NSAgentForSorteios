@@ -1117,6 +1117,20 @@ def _handle_unavailable_review(result: AgentResult, report: CritiqueLoopReport, 
     report.unavailable_reason = reason
     if report.mode == "shadow":
         return result
+    metadata = result.response_metadata or {}
+    validation = metadata.get("factual_validation") or {}
+    products = [
+        item
+        for item in (result.commercial_data or {}).get("products", [])
+        if isinstance(item, dict)
+    ]
+    # An unavailable prose review must not erase an answer already grounded by
+    # the factual validator and live catalog evidence. The review can retry on a
+    # later turn; sending a generic handoff here loses the customer's subject.
+    if validation.get("valid") is True and products and not result.handoff_required:
+        report.approved = None
+        report.review_status = "unavailable"
+        return result
     if policy("critiqueUnavailableAction") == "grounded_fallback":
         if result.safety_reason in {"catalog_requirements_unknown", "catalog_requirements_no_match"}:
             from app.verify.final_response import result_interpretation

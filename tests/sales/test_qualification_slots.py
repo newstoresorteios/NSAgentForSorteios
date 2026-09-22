@@ -620,6 +620,8 @@ def test_city_uf_suffixes_are_plausible_slot_answers():
     assert is_qualification_slot_answer(turns, "Conselheiro mairinck - pR") is True
     assert _is_plausible_city("o orient open heart preto") is False
     assert is_qualification_slot_answer(turns, "o orient open heart preto") is False
+    assert _is_plausible_city("E o preço tbm") is False
+    assert is_qualification_slot_answer(turns, "E o preço tbm") is False
 
 
 def test_city_slot_answer_holds_retrieval_without_tray():

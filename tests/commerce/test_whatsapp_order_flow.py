@@ -1364,6 +1364,7 @@ async def test_site_channel_cannot_start_whatsapp_shipping():
     state = _whatsapp_state(checkout_channel_preference="site")
     result = await quote_shipping(state=state, zipcode="19900000", execute=never)
     assert result.safety_reason == "whatsapp_order_channel_required"
+    assert result.response_metadata["checkout_state"]["checkout_draft"]["address"]["zip_code"] == "19900000"
 
 
 @pytest.mark.asyncio

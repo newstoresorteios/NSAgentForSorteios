@@ -132,6 +132,30 @@ def test_cart_expiry_never_erases_real_order():
     assert reconcile_checkout_context(state, now=now).cart_session_id == "old"
 
 
+def test_terminal_order_releases_checkout_but_keeps_order_facts():
+    state = CommerceConversationState(
+        order_id="25596",
+        order_status="ENVIADO",
+        order_status_group="shipped",
+        cart_session_id="708808",
+        cart_product_id="hamilton-1",
+        dialogue_phase="checkout",
+        purchase_stage="awaiting_payment",
+        pending_action="choose_checkout_channel",
+        active_preferences={"subject_brand": "Hamilton", "color": "preto"},
+    )
+
+    cleaned = reconcile_checkout_context(state)
+
+    assert cleaned.order_id == "25596"
+    assert cleaned.order_status_group == "shipped"
+    assert cleaned.cart_session_id is None
+    assert cleaned.pending_action is None
+    assert cleaned.dialogue_phase == "discovery"
+    assert cleaned.active_preferences == {}
+    assert cleaned.context_repairs == ["terminal_order_checkout_cleared"]
+
+
 @pytest.mark.asyncio
 async def test_council_rejected_fallback_cannot_requalify(monkeypatch):
     from app.sales.answer_council import apply_answer_council_with_retry, check_pedido, build_turn_contract

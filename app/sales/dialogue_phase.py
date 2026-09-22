@@ -59,6 +59,21 @@ _BUY_PENDING_ACTIONS = frozenset({
     "show_nearby_line",
 })
 
+_TERMINAL_ORDER_GROUPS = frozenset({
+    "shipped",
+    "delivered",
+    "cancelled",
+    "canceled",
+    "completed",
+    "refunded",
+})
+
+
+def is_terminal_order_state(state: CommerceConversationState | None) -> bool:
+    if state is None:
+        return False
+    return _fold(getattr(state, "order_status_group", None)) in _TERMINAL_ORDER_GROUPS
+
 _NEW_BROWSE_RE = re.compile(
     r"\b("
     r"outras?\s+op(?:ç|c)(?:õ|o)es|outra\s+marca|outras?\s+marcas|"
@@ -159,6 +174,25 @@ def reconcile_checkout_context(state: CommerceConversationState, *, now: datetim
     model = updated.active_preferences.get("subject_model")
     if isinstance(model, str):
         updated.active_preferences["subject_model"] = normalize_model_identity(model)
+    if is_terminal_order_state(updated):
+        from app.commerce.cart_service import _clear_cart_session_state
+        from app.commerce.commerce_context import CheckoutDraft
+
+        for field, value in _clear_cart_session_state(updated).items():
+            setattr(updated, field, value)
+        updated.active_product = None
+        updated.purchase_target = None
+        updated.last_presented_products = []
+        updated.active_preferences = _scrub_catalog_preferences(updated.active_preferences)
+        updated.checkout_draft = CheckoutDraft()
+        updated.pending_action = None
+        updated.pending_action_product_ids = []
+        updated.shipping_quotes = []
+        updated.selected_shipping = None
+        updated.dialogue_phase = "discovery"
+        updated.purchase_stage = "selection"
+        updated.context_repairs = ["terminal_order_checkout_cleared"]
+        return updated
     if updated.order_id or updated.order_lookup_id or updated.order_payment_url or updated.order_creation_ambiguous:
         return updated
     orphaned = bool((updated.cart_session_id or updated.dialogue_phase == "checkout")
@@ -333,6 +367,8 @@ def session_in_checkout_phase(
     """True when the customer is past shortlist selection into checkout."""
     if state is None:
         return False
+    if is_terminal_order_state(state):
+        return False
     if state.cart_session_id:
         active_id = (
             str(state.active_product.product_id)
@@ -363,6 +399,8 @@ def is_open_sale_state(state: CommerceConversationState | None) -> bool:
     """Phone-level continuity: a live shortlist, lock, cart, or checkout."""
     if state is None:
         return False
+    if is_terminal_order_state(state):
+        return bool(state.last_presented_products)
     if state.dialogue_phase in {"shortlist", "buy", "checkout"}:
         return True
     if state.last_presented_products:

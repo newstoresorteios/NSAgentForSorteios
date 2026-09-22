@@ -231,6 +231,10 @@ async def try_commerce_checkout_routes(
             state=sales.evolve_commerce_state(state, checkout_result),
         )
     if interpretation is not None and interpretation.shipping_action == "quote":
+        from app.sales.turn_contract import checkout_target_conflicts
+
+        if checkout_target_conflicts(interpretation, state):
+            return None
         shipping_result = await sales.quote_shipping(
             state=state,
             zipcode=interpretation.shipping_zipcode or "",

@@ -45,6 +45,25 @@ def test_fill_api_arguments_uses_order_seed():
     assert args == {"order_id": "25400"}
 
 
+def test_unavailable_critique_keeps_factually_valid_catalog_answer():
+    from app.verify.response_critique import CritiqueLoopReport, _handle_unavailable_review
+
+    result = AgentResult(
+        reply_text="Encontrei opções verificadas no catálogo.",
+        intent="commerce",
+        commercial_data={"products": [{"id": "1", "name": "Certina DS Action"}]},
+        response_metadata={"factual_validation": {"valid": True, "evidence_count": 3}},
+    )
+    report = CritiqueLoopReport(mode="enforce")
+
+    final = _handle_unavailable_review(result, report, "repair_budget_unavailable")
+
+    assert final.reply_text == result.reply_text
+    assert final.handoff_required is False
+    assert report.review_status == "unavailable"
+    assert report.applied_handoff is False
+
+
 @pytest.mark.asyncio
 async def test_similar_search_relaxes_strict_tokens_once_and_keeps_budget():
     verdict = CritiqueVerdict(
