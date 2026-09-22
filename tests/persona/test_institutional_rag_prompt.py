@@ -18,6 +18,55 @@ def test_fetch_institutional_knowledge_matches_trade_in_cues():
     assert "Troca e avaliação" in titles
 
 
+@pytest.mark.parametrize(
+    ("question", "expected_slug", "expected_fact"),
+    [
+        (
+            "Tenho quantos dias para devolver o relógio?",
+            "trocas-e-devolucoes",
+            "30 dias corridos",
+        ),
+        (
+            "Qual o prazo de uma peça sob encomenda?",
+            "frete-e-entrega",
+            "25 a 35 dias úteis",
+        ),
+        (
+            "Os produtos são originais e têm procedência?",
+            "faq-comercial",
+            "produtos originais",
+        ),
+        (
+            "Posso pagar no cartão e parcelar?",
+            "pagamento-e-compra-segura",
+            "checkout oficial",
+        ),
+        (
+            "A garantia cobre bateria e vidro?",
+            "garantia-e-cuidados",
+            "Não são cobertos bateria, vidro",
+        ),
+    ],
+)
+def test_official_policy_documents_are_retrieved_by_subject(
+    question, expected_slug, expected_fact
+):
+    items = fetch_institutional_knowledge(question).as_relevant_knowledge()
+
+    document = next(item for item in items if item.get("slug") == expected_slug)
+    assert expected_fact in document["body"]
+    assert document["source_url"].startswith("https://www.newstorerj.com.br/")
+
+
+def test_official_policy_source_is_rendered_in_prompt():
+    block = format_institutional_knowledge_block(
+        "Como funciona a devolução por arrependimento?"
+    )
+
+    assert "Fonte oficial: https://www.newstorerj.com.br/" in block
+    assert "politica-de-troca-e-devolucao-new-store" in block
+
+
 def test_fetch_institutional_knowledge_includes_persona_metadata():
     package = fetch_institutional_knowledge(
         "Como funciona a revisão técnica dos seminovos?",

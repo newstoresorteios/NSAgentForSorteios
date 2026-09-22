@@ -48,6 +48,12 @@ AGENT_DB_PERSONA_ENABLED=true        # tom/identidade do banco; fallback = contr
 Sem persona ativa/ falha de DB → usa contrato operacional em código + `<fixed_safety_policy>`.
 Persona **não** pode embutir preço/estoque/link de checkout voláteis.
 
+Políticas institucionais ficam em `business.institutional_knowledge`, dentro da
+configuração versionada do workspace. O agente recupera somente os documentos
+relacionados à pergunta atual. As fontes editáveis usadas no seed ficam em
+`knowledge/newstore/`; preço, estoque, frete cotado, pedido e pagamento continuam
+vindo das integrações em tempo real.
+
 Admin (Bearer `ADMIN_API_TOKEN`):
 
 ```txt

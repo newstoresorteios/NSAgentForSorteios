@@ -356,13 +356,16 @@ def format_relevant_knowledge_block(items: list[Any]) -> str:
         if isinstance(item, dict):
             title = str(item.get("title") or item.get("slug") or f"doc_{idx}")
             body = str(item.get("body") or item.get("content") or item.get("text") or "")
+            source_url = str(item.get("source_url") or item.get("sourceUrl") or "").strip()
         else:
             title = f"doc_{idx}"
             body = str(item)
+            source_url = ""
         body = body.strip()
         if not body:
             continue
-        lines.append(f"### {title}\n{body}")
+        source_line = f"\nFonte oficial: {source_url}" if source_url else ""
+        lines.append(f"### {title}\n{body}{source_line}")
     if len(lines) <= 2:
         return ""
     lines.append(

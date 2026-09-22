@@ -75,7 +75,17 @@ def _persona_institutional_items(
         title = str(entry.get("title") or entry.get("slug") or "institucional").strip()
         if not (query_tokens & retrieval_tokens(f"{title} {body}")):
             continue
-        items.append({"title": title, "body": body})
+        item = {"title": title, "body": body}
+        source_url = str(entry.get("sourceUrl") or entry.get("source_url") or "").strip()
+        slug = str(entry.get("slug") or "").strip()
+        reviewed_at = str(entry.get("reviewedAt") or entry.get("reviewed_at") or "").strip()
+        if source_url:
+            item["source_url"] = source_url
+        if slug:
+            item["slug"] = slug
+        if reviewed_at:
+            item["reviewed_at"] = reviewed_at
+        items.append(item)
     return items
 
 
@@ -98,7 +108,17 @@ def fetch_institutional_knowledge(
         if not body or title.casefold() in seen_titles:
             continue
         seen_titles.add(title.casefold())
-        items.append({"title": title, "body": body})
+        item = {"title": title, "body": body}
+        source_url = str(entry.get("sourceUrl") or entry.get("source_url") or "").strip()
+        slug = str(entry.get("slug") or "").strip()
+        reviewed_at = str(entry.get("reviewedAt") or entry.get("reviewed_at") or "").strip()
+        if source_url:
+            item["source_url"] = source_url
+        if slug:
+            item["slug"] = slug
+        if reviewed_at:
+            item["reviewed_at"] = reviewed_at
+        items.append(item)
 
     for entry in _persona_institutional_items(
         persona_metadata,
