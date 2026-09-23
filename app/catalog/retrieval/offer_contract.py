@@ -14,6 +14,12 @@ from pydantic import BaseModel, Field
 def commercial_snapshot(products):
     """Ignore audit enrichment while retaining identity, specifications and price."""
     from .price import resolve_commercial_price
+    if products and all(p.get('_revalidated') for p in products):
+        # The factual authorizer legitimately removes unapproved presentation
+        # fields (image lists, category labels, payment blurbs). Compare the same
+        # authorized projection on both sides, not a full sheet to its projection.
+        from app.verify.fact_authority import authorize_products_for_responder
+        products, _ = authorize_products_for_responder(products)
     rows = []
     for product in products:
         facts = {k:v for k,v in product.items()

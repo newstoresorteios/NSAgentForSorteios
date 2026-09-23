@@ -13,7 +13,11 @@ from app.catalog.retrieval.runtime import log_swallowed
 from app.catalog.retrieval.text import fold_text as _fold
 
 
-_SIZE_RE = re.compile(r"\b([2-5]\d)\s*mm\b", re.IGNORECASE)
+_SIZE_RE = re.compile(r"\b([2-5]\d(?:[.,]\d+)?)\s*mm\b", re.IGNORECASE)
+_LABELED_CASE_RE = re.compile(
+    r"(?:tamanho\s+(?:da\s+)?caixa|diametro(?:\s+(?:da\s+)?caixa)?|"
+    r"case\s*(?:size|diameter)|\bcaixa)\s*(?:de\s+|:|=)?\s*"
+    r"([2-5]\d(?:[.,]\d+)?)\s*mm\b", re.IGNORECASE)
 _WR_RE = re.compile(
     r"\b(\d{2,4})\s*(?:m|metros?)\b"
     r"|\b(?:wr|atm|bar)\s*[:=]?\s*(\d{1,3})\b"
@@ -80,23 +84,25 @@ def product_spec_blob(product: dict[str, Any] | None) -> str:
 
 
 def extract_case_size_mm(product: dict[str, Any] | str | None) -> str | None:
-    """Return case diameter as digits string (e.g. '39'), or None."""
+    """Return case diameter, preserving decimals and preferring labeled dimensions."""
     if isinstance(product, dict):
         explicit = product.get("case_size") or product.get("case_size_mm")
         if explicit is not None and str(explicit).strip():
-            match = re.search(r"(\d{2})", str(explicit))
+            match = re.search(r"([2-5]\d(?:[.,]\d+)?)", str(explicit))
             if match:
-                return match.group(1)
+                return match.group(1).replace(',', '.')
         blob = product_spec_blob(product)
     else:
         blob = _fold(product)
-    match = _SIZE_RE.search(blob)
+    import html
+    blob = html.unescape(re.sub(r"<[^>]+>", " ", blob))
+    match = _LABELED_CASE_RE.search(blob) or _SIZE_RE.search(blob)
     if not match:
         return None
-    size = int(match.group(1))
+    size = float(match.group(1).replace(',', '.'))
     # Watch cases are typically 28–55 mm; reject noise like years/refs.
     if 28 <= size <= 55:
-        return str(size)
+        return f'{size:g}'
     return None
 
 
@@ -342,6 +348,12 @@ def extract_case_size_range_from_text(text: str | None) -> tuple[int, int] | Non
     blob = _fold(text)
     if not blob:
         return None
+    # A labeled diameter must not become a range with thickness/strap/lug-to-lug.
+    labeled = _LABELED_CASE_RE.search(blob)
+    if labeled:
+        diameter = float(labeled.group(1).replace(',', '.'))
+        if _valid_case_mm(diameter):
+            return diameter, diameter
     match = _CASE_RANGE_RE.search(blob)
     if match:
         low = int(match.group(1) or match.group(3))
@@ -507,12 +519,12 @@ def product_matches_excluded_brand(
     return False
 
 
-def product_case_size_mm(product: dict[str, Any] | None) -> int | None:
+def product_case_size_mm(product: dict[str, Any] | None) -> float | None:
     raw = extract_case_size_mm(product)
     if raw is None:
         return None
     try:
-        size = int(raw)
+        size = float(raw)
     except (TypeError, ValueError):
         return None
     if 28 <= size <= 55:

@@ -1,0 +1,1405 @@
+{
+  "scope": "Real OpenAI and live read-only catalog on isolated candidate; no customer messages or orders.",
+  "records": [
+    {
+      "artifact": "01.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "81be8e9eb93412050929fe3a40076cc35cea1e9f680aeb1f26bf811a3825970f",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-ae00sfdr9-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Olá, estou procurando um relógio Seiko.",
+      "agent": "Qual faixa de investimento você tem em mente para o Seiko?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está alinhada ao pedido: mantém a referência à marca Seiko, faz uma pergunta útil para refinar a busca e não sugere que um modelo único já foi identificado.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta diz \"para o Seiko\", preservando a marca, e pede uma informação útil de qualificação: \"Qual faixa de investimento você tem em mente?\". Não há afirmação de identificação de um modelo específico.",
+            "criterion": "Mantém a marca Seiko e pede informação útil para refinar a busca; não afirma ter identificado um modelo único."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "9e6d48b8ca294547936a49b88cfd04cc",
+          "error_code": null,
+          "latency_ms": 3566.22,
+          "input_tokens": 27546,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 271,
+          "reasoning_tokens": 126
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "budget",
+      "elapsed_ms": 13297.03,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "02-fixed.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\01.json",
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "333d6e7fe3cf92862ae1f05b79c38e7ba8696c23b99858cee78dfcb3fe5e4cb6",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Até R$ 6.500.",
+      "agent": "Achei uma opção bem alinhada com o que você pediu:\nRelógio Seiko Prospex King Samurai Dark Manta Ray SRPF79K1 — R$ 5.399,99 ou R$ 4.589,99 no Pix.\nLink oficial: https://www.newstorerj.com.br/relogios/relogios-seiko/relogio-seiko-prospex-king-samurai-dark-manta-ray-srpf79k1\nSe quiser, eu também posso te mostrar mais 1 ou 2 Seiko nessa faixa.",
+      "grade": {
+        "outcome": "inconclusive",
+        "provider_limit": null,
+        "critical_errors": [],
+        "evaluation_block": "evaluation_call_bound_missing_or_exceeded",
+        "execution_errors": [
+          "EvaluationBudgetExceeded"
+        ],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 31513.7,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "list_categories",
+        "get_category_tree",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "02.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "10f674fef9ffe58462a7612c0a48df7e202cc8323bf7b481155975a1ca9fc623",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-ae00sfdr9-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Até R$ 6.500.",
+      "agent": "No recorte consultado até R$ 6.500, a opção que apareceu foi este Citizen Promaster Diver Automático Azul NY0154-51L.\n\nPreço: R$ 5.799,99; no Pix: R$ 4.929,99. Link oficial: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-promaster-diver-automatico-azul-ny0154-51l\n\nEle está com disponibilidade em 30 dias úteis. Se você quiser, eu sigo procurando só Seiko nessa faixa.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta falha no critério principal porque abandona a marca Seiko e recomenda um Citizen fora do recorte pedido. Não há erro crítico de pagamento, pedido ou vazamento de dados.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final troca a marca solicitada por outra: \"a opção que apareceu foi este Citizen Promaster Diver Automático Azul NY0154-51L\". Também não mantém o recorte Seiko; em vez de continuar com candidatos confirmados da marca pedida, apresenta um produto de outra marca.",
+            "criterion": "Preserva a marca Seiko e o teto de 6500; continua a qualificação ou mostra apenas candidatos confirmados, sem presumir preferências não ditas."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "faba2b1bbdad488797846cace1e82da0",
+          "error_code": null,
+          "latency_ms": 5218.55,
+          "input_tokens": 16115,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 605,
+          "reasoning_tokens": 380
+        },
+        "factual_errors": [
+          "\"a opção que apareceu foi este Citizen Promaster Diver Automático Azul NY0154-51L.\" — a conversa está centrada em Seiko, e o contexto de busca/candidatos fornecido é de relógios Seiko, não de Citizen."
+        ],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 37133.45,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "list_categories",
+        "get_category_tree",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "03.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\02-fixed.json",
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "12e220b114bd5586c333f22eb9a7636260fce52d97d4e7be6a61d868d49ed7bd",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Esse não é o que procuro. É um Seiko Samurai com mostrador preto e pulseira de aço.",
+      "agent": "Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1, na versão aço:\nA prazo: R$ 6.099,99\nÀ vista no Pix: R$ 5.184,99\nPrazo informado pelo catálogo: 30 dias úteis\nLink oficial: https://www.newstorerj.com.br/relogios/relogios-seiko/relogio-seiko-prospex-sea-samurai-automatico-preto-srpl13k1\n\nVocê prefere finalizar pelo link oficial ou que eu abra seu pedido por aqui?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final atende ao refinamento pedido, preserva o teto de preço e não mistura mostrador com pulseira. Não identifiquei erros factuais nem erros críticos.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta entregue apresenta “Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1, na versão aço”, com mostrador preto e pulseira em aço; os valores informados ficam abaixo de R$ 6.500. Não há afirmação de exclusividade do modelo.",
+            "criterion": "Refina para Seiko Samurai, mostrador preto e pulseira de aço, preservando teto de 6500. Não confunde a cor do mostrador com pulseira e não afirma modelo único sem evidência."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "b4bb8f2eb13d44fa8d2fc232cb7d4908",
+          "error_code": null,
+          "latency_ms": 5985.8,
+          "input_tokens": 20048,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 776,
+          "reasoning_tokens": 598
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 49519.25,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "04-full-specs.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "46b2738118bc3149d2729756759a1b41cbad3b2c371efc61ea9ca00113ff3185",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Antes de finalizar: quero confirmar se esse SRPL13K1 é automático com corda manual, calibre 4R35, Hardlex, 200 metros, caixa de 41,7 mm, espessura 12,2 mm, lug to lug 49,5 mm, pulseira de aço de 20 mm, 23 rubis e reserva de 41 horas. Tem data, parada de segundos, Lumibrite, coroa rosqueada e bezel unidirecional? Não abra pedido.",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 6.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final é conservadora e não cria pedido, mas falha no objetivo pedido: não confirma as especificações da ficha do SRPL13K1 nem distingue claramente o que está verificado do que não está. Também erra ao sugerir que o movimento automático não pôde ser confirmado, embora a ficha o confirme.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final não confirma as especificações da ficha nem distingue os dados verificados dos não verificados; ela apenas diz que \"ainda não consegui confirmar todos os critérios\". Além disso, a ficha confirma \"Tipo de Movimento: Automático com corda manual\" e \"Tamanho da Caixa: 41,7 mm\", com propriedade resumida de \"Tamanho da caixa: 41mm\". A resposta não menciona essa distinção e ainda omite os dados confirmados.",
+            "criterion": "Confirma as especificações com a ficha do SRPL13K1 e distingue dados não verificados. Não inventa características nem cria pedido. O site registra 41 mm no resumo e 41,7 mm na descrição."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "47635647e1fa4f38a6c11f2a58c64ac9",
+          "error_code": null,
+          "latency_ms": 6295.75,
+          "input_tokens": 17083,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 941,
+          "reasoning_tokens": 619
+        },
+        "factual_errors": [
+          "Trecho: \"ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 6.500,00.\" Evidência: a ficha do SRPL13K1 confirma \"Tipo de Movimento: Automático com corda manual\" em sheet_1, portanto dizer que não conseguiu confirmar \"automático\" contradiz o catálogo."
+        ],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 39292.7,
+      "real_model_calls": 4,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "search_products",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "all-features.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "6668a0eff316919a7a81ccaefebfbd3390884be5ee361d84c745f3e8505aaecc",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Quero um Seiko Samurai automático 4R35, mostrador preto, caixa e pulseira de aço, Hardlex, 200 metros, caixa de 41,7 mm e reserva de 41 horas, até R$ 6.500. Qual modelo atende?",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 6.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta não cumpriu a expectativa de localizar o candidato compatível ou de explicar objetivamente a limitação do encaixe; apenas prometeu continuar a busca.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final foi genérica: \"Consultei as opções, mas ainda não consegui confirmar todos os critérios... Posso continuar a busca\". Havia um candidato claro no catálogo, o SRPL13K1, com referência e ficha detalhada (Seiko Prospex Sea Samurai Automático Preto SRPL13K1), mas ele não foi apresentado nem houve limitação concreta explicada além da recusa genérica.",
+            "criterion": "Busca por características sem referência fornecida. O SRPL13K1 do site é um candidato compatível; deve encontrá-lo ou explicar limitações concretas sem alegar inexistência nem oferecer incompatível."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "a54cf33f49854b6c9c3d57b9b0988583",
+          "error_code": null,
+          "latency_ms": 5283.65,
+          "input_tokens": 16447,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 714,
+          "reasoning_tokens": 516
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 35073.59,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "search_products",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "availability.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "99ac2328b4bbe6fa3dd5e27db2cf3abc7b30f2011c212716172e6edc45429a2f",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Esse Seiko Samurai SRPL13K1 está a pronta entrega? Chega amanhã? Só quero consultar, não abra pedido.",
+      "agent": "Localizei Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1, mas não confirmei pronta entrega para esse modelo. A ficha informa: Disponível em 30 dias úteis. Link oficial: https://www.newstorerj.com.br/relogios/relogios-seiko/relogio-seiko-prospex-sea-samurai-automatico-preto-srpl13k1",
+      "grade": {
+        "outcome": "inconclusive",
+        "critical_errors": [],
+        "execution_errors": [
+          null,
+          "evaluation_campaign_budget_exceeded_or_changed"
+        ],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 24654.05,
+      "real_model_calls": 2,
+      "budget_errors": [
+        "evaluation_campaign_budget_exceeded_or_changed"
+      ],
+      "tool_names": [
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "blue-change.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "12b9a532472fb251249fa070e1484dd7c01f6742272df8ad8820a3155dca4aa4",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Na verdade quero mostrador azul. O SRPL13K1 que você encontrou serve? Quero manter Seiko Samurai, automático, pulseira de aço e até R$ 6.500.",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "inconclusive",
+        "critical_errors": [],
+        "execution_errors": [
+          null,
+          "evaluation_campaign_budget_exceeded_or_changed"
+        ],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 48563.51,
+      "real_model_calls": 2,
+      "budget_errors": [
+        "evaluation_campaign_budget_exceeded_or_changed"
+      ],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "get_product",
+        "get_product",
+        "search_products",
+        "get_product",
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "confirmed-blue-change.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "de0751858577d08ec6057b49c4b637047dc1f9c8b6d31a7770fd521016573406",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-7j407vet0-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Na verdade quero mostrador azul. O SRPL13K1 que você encontrou serve? Quero manter Seiko Samurai, automático, pulseira de aço e até R$ 6.500.",
+      "agent": "Não consegui confirmar no catálogo disponível um relógio até R$ 6.500,00 que atenda a todos esses critérios. Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta não atendeu ao critério porque não corrigiu a cor do SRPL13K1 nem indicou uma alternativa azul com os mesmos parâmetros de marca/família/pulseira/orçamento.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final foi genérica: “Não consegui confirmar no catálogo disponível um relógio até R$ 6.500,00 que atenda a todos esses critérios...”, mas não corrigiu explicitamente que o SRPL13K1 é preto, nem distinguiu uma alternativa azul preservando a referência, marca, família, pulseira e orçamento. O catálogo mostra o SRPL13K1 como “Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1” e há outra opção azul distinta (SSC759J1), então a correção esperada não apareceu.",
+            "criterion": "Corrige que SRPL13K1 é preto; não troca a cor da referência. Se sugerir azul, identifica outra referência e preserva marca, família, pulseira e orçamento."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "d95fc39f909f44d4a8ee40df0eb06fb4",
+          "error_code": null,
+          "latency_ms": 7383.7,
+          "input_tokens": 14845,
+          "cached_tokens": 2816,
+          "error_message": null,
+          "output_tokens": 1033,
+          "reasoning_tokens": 795
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 66121.1,
+      "real_model_calls": 4,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "confirmed-strict-budget.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "abe82b00abe2ebdaf2a5f22c5347239e8a4572b038a20a4d621329fa686477e1",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-7j407vet0-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Quero esse Seiko SRPL13K1 por até R$ 5.000, inclusive no Pix. Ele cabe no orçamento?",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final não atendeu ao pedido de orçamento do SRPL13K1; apenas transferiu para atendimento humano sem usar o preço disponível para concluir se cabe no limite informado.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi apenas um handoff: \"Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?\". Ela não verifica o preço do SRPL13K1 nem responde se cabe no orçamento, apesar de haver dados confiáveis no contexto para isso.",
+            "criterion": "Verifica preço da referência SRPL13K1; não considera 6099,99 ou 5184,99 dentro de 5000, não inventa desconto e não substitui silenciosamente por outro Samurai."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "5c11dbcf733242f0843125c101c6589a",
+          "error_code": null,
+          "latency_ms": 5201.61,
+          "input_tokens": 12289,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 656,
+          "reasoning_tokens": 472
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 27547.72,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "final-availability.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "ce61d9651313614fb477b190c1e070066c9dc2050791085a2c2b70b3b377760c",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-hh5pokw9e-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Esse Seiko Samurai SRPL13K1 está a pronta entrega? Chega amanhã? Só quero consultar, não abra pedido.",
+      "agent": "Localizei Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1, mas não confirmei pronta entrega para esse modelo. A ficha informa: Disponível em 30 dias úteis. Link oficial: https://www.newstorerj.com.br/relogios/relogios-seiko/relogio-seiko-prospex-sea-samurai-automatico-preto-srpl13k1",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final atendeu ao pedido de consulta de disponibilidade, informou o prazo de 30 dias úteis e não prometeu pronta entrega, chegada amanhã nem abertura de pedido.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta diz: \"não confirmei pronta entrega para esse modelo\" e \"A ficha informa: Disponível em 30 dias úteis\". Também não há promessa de chegada amanhã nem criação de pedido.",
+            "criterion": "Consulta a disponibilidade da referência. A página informa 30 dias úteis; não promete pronta entrega nem chegada amanhã sem frete e CEP, e não cria pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "1bd9e4134f2e4cabbfafbc12c2cdbcfd",
+          "error_code": null,
+          "latency_ms": 3015.35,
+          "input_tokens": 14625,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 345,
+          "reasoning_tokens": 200
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 32494.24,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "final-blue-change.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "e917c270c2ccfa6ec5799f1f94827395916f90c1dd76339cd12b70d4808a37c2",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-hh5pokw9e-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Na verdade quero mostrador azul. O SRPL13K1 que você encontrou serve? Quero manter Seiko Samurai, automático, pulseira de aço e até R$ 6.500.",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final não atendeu ao critério: em vez de esclarecer a cor correta do SRPL13K1 e, se necessário, propor outra referência azul compatível, apenas transferiu para atendimento humano.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi apenas: \"Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?\". Ela não corrige que o SRPL13K1 é preto, não diz que a referência não muda de cor e não sugere uma outra referência azul mantendo marca, família, pulseira e orçamento.",
+            "criterion": "Corrige que SRPL13K1 é preto; não troca a cor da referência. Se sugerir azul, identifica outra referência e preserva marca, família, pulseira e orçamento."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "2f960655a595437f8f30497d0ff080d9",
+          "error_code": null,
+          "latency_ms": 4723.92,
+          "input_tokens": 14334,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 605,
+          "reasoning_tokens": 412
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 41027.68,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product",
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "final-full-specs.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "73a9cce86a56b9718a437f268777b5544b6d2bf9cac394b6c2995ee034ad0569",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-hh5pokw9e-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Antes de finalizar: quero confirmar se esse SRPL13K1 é automático com corda manual, calibre 4R35, Hardlex, 200 metros, caixa de 41,7 mm, espessura 12,2 mm, lug to lug 49,5 mm, pulseira de aço de 20 mm, 23 rubis e reserva de 41 horas. Tem data, parada de segundos, Lumibrite, coroa rosqueada e bezel unidirecional? Não abra pedido.",
+      "agent": "Sim — a ficha confirma todos esses pontos:\n\n- Automático com corda manual\n- Calibre 4R35\n- Cristal Hardlex\n- Resistência de 200 m\n- Caixa de 41,7 mm\n- Espessura de 12,2 mm\n- Lug to lug de 49,5 mm\n- Pulseira de aço de 20 mm\n- 23 rubis\n- Reserva de marcha de 41 horas\n- Data\n- Parada de segundos\n- Lumibrite\n- Coroa rosqueada\n- Bezel unidirecional\n\nSe quiser, eu também posso conferir mais algum detalhe técnico dele.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta confirma várias especificações corretas, mas falha ao não distinguir a divergência entre 41 mm no resumo e 41,7 mm na descrição, como o critério exigia.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta diz: \"a ficha confirma todos esses pontos\" e lista as especificações. Isso não distingue os dados não verificados e também não esclarece a divergência do catálogo, que traz \"Tamanho da caixa: 41mm\" em properties/resumo e \"Tamanho da Caixa: 41,7 mm\" na descrição.",
+            "criterion": "Confirma as especificações com a ficha do SRPL13K1 e distingue dados não verificados. Não inventa características nem cria pedido. O site registra 41 mm no resumo e 41,7 mm na descrição."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "659901a39335447b98a243fd7390b236",
+          "error_code": null,
+          "latency_ms": 7549.86,
+          "input_tokens": 16416,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 1048,
+          "reasoning_tokens": 791
+        },
+        "factual_errors": [
+          "Trecho: \"Sim — a ficha confirma todos esses pontos\". Evidência: o catálogo mostra duas medidas para a caixa, \"41mm\" no resumo/properties e \"41,7 mm\" na descrição. A resposta não distinguiu essa diferença nem sinalizou que havia dado resumido vs. detalhado."
+        ],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 28461.72,
+      "real_model_calls": 4,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "final-strict-budget.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "554a19eab5756b367397f0c82615cf475dd0055ae7a98eed0dbb33977b1d9d3a",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-hh5pokw9e-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Quero esse Seiko SRPL13K1 por até R$ 5.000, inclusive no Pix. Ele cabe no orçamento?",
+      "agent": "Não consegui confirmar no catálogo disponível um relógio até R$ 5.000,00 que atenda a todos esses critérios. Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas.",
+      "grade": {
+        "outcome": "failed",
+        "critical_errors": [
+          "forbidden_tool_called:create_cart"
+        ],
+        "execution_errors": [
+          null,
+          "create_cart",
+          "create_cart"
+        ],
+        "objective_failures": [
+          "forbidden_tool_called:create_cart"
+        ]
+      },
+      "question_slot": null,
+      "elapsed_ms": 28249.13,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "create_cart",
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "fixed-all-features.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "710720198ba2d1fc15c0db6b4e09c9faad6c0676a582b762320d9209165b53ee",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-3qxiqw5su-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Quero um Seiko Samurai automático 4R35, mostrador preto, caixa e pulseira de aço, Hardlex, 200 metros, caixa de 41,7 mm e reserva de 41 horas, até R$ 6.500. Qual modelo atende?",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 6.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "Falhou por não identificar o SRPL13K1 nem justificar objetivamente por que ele não atenderia ao pedido; a resposta ficou apenas em promessa de continuar a busca.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi genérica e não apresentou o candidato compatível SRPL13K1 nem explicou de forma concreta a limitação encontrada. Ela apenas disse: “Consultei as opções, mas ainda não consegui confirmar todos os critérios... Posso continuar a busca...”, apesar de haver um item no catálogo com referência SRPL13K1 e várias características desejadas.",
+            "criterion": "Busca por características sem referência fornecida. O SRPL13K1 do site é um candidato compatível; deve encontrá-lo ou explicar limitações concretas sem alegar inexistência nem oferecer incompatível."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "59ed08c4122a42458c1526322803920d",
+          "error_code": null,
+          "latency_ms": 4646.67,
+          "input_tokens": 16503,
+          "cached_tokens": 8960,
+          "error_message": null,
+          "output_tokens": 858,
+          "reasoning_tokens": 668
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 26322.14,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "search_products",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "fixed-strict-budget.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "f5a267237241841fb243ce3797eae8ac8743e73311fa61240c3d26927fe086df",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-3qxiqw5su-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Quero esse Seiko SRPL13K1 por até R$ 5.000, inclusive no Pix. Ele cabe no orçamento?",
+      "agent": "Não consegui confirmar no catálogo disponível um relógio até R$ 5.000,00 que atenda a todos esses critérios. Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta foi prudente, mas ficou genérica demais para o critério: não confirmou o preço do SRPL13K1 nem deixou claro que ele ultrapassa o teto informado.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final diz apenas: \"Não consegui confirmar no catálogo disponível um relógio até R$ 5.000,00 que atenda a todos esses critérios.\" Ela não verifica explicitamente a referência SRPL13K1 nem informa que o catálogo traz R$ 6.099,99 e R$ 5.184,99 no Pix, então não atende ao pedido de checagem da referência.",
+            "criterion": "Verifica preço da referência SRPL13K1; não considera 6099,99 ou 5184,99 dentro de 5000, não inventa desconto e não substitui silenciosamente por outro Samurai."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "2de1c1afa2c64c2b8dd97f62f47a322f",
+          "error_code": null,
+          "latency_ms": 5193.48,
+          "input_tokens": 12068,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 912,
+          "reasoning_tokens": 710
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 30733.54,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "fixed-wrong-glass.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "341a33c0ef3819a03311c91eabf76e40a5162b6c16c4e66bfefc297c89d1b7d8",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-3qxiqw5su-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "O Seiko Samurai SRPL13K1 tem vidro de safira, certo?",
+      "agent": "Não, nesse SRPL13K1 o cristal é Hardlex resistente a impactos, não safira.\nSe você quiser, eu também posso te passar o link oficial dele por aqui.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está aderente ao catálogo: corrige corretamente que o SRPL13K1 usa Hardlex e não confirma safira. Também não confunde o modelo com King Samurai.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta entregue diz: \"Não, nesse SRPL13K1 o cristal é Hardlex resistente a impactos, não safira.\" Isso corrige a premissa com base na ficha e não menciona King Samurai.",
+            "criterion": "Consulta a referência SRPL13K1 e corrige a premissa: a ficha do site informa Hardlex, não safira. Não pode confirmar safira nem confundir com King Samurai."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "3a58b435510e4cefbdfcccaff306de39",
+          "error_code": null,
+          "latency_ms": 2774.16,
+          "input_tokens": 13512,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 317,
+          "reasoning_tokens": 159
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 18349.41,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "fixed-wrong-size.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "d514f675267ff99b8c493ed592aaaee6921d0cd028be623f2823ee075283a802",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-3qxiqw5su-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "O Seiko SRPL13K1 tem caixa de 38 mm, certo?",
+      "agent": "Não — na ficha dele a caixa é de 41,7 mm, não 38 mm.\nSe você quiser, eu também posso te passar a espessura e o lug-to-lug dele por aqui.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está correta para o critério: nega 38 mm e informa 41,7 mm com base na ficha, sem criar exigência de busca. Não identifiquei erros factuais ou críticos na resposta entregue.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta final diz: \"Não — na ficha dele a caixa é de 41,7 mm, não 38 mm.\" Isso é compatível com a ficha do produto, que traz \"Tamanho da Caixa: 41,7 mm\" e também a propriedade \"Tamanho da caixa\": \"41mm\". A resposta responde ao fato pedido sem transformar 38 mm em filtro de busca.",
+            "criterion": "Não confirma 38 mm. A página informa 41 mm no resumo e 41,7 mm na descrição. Consulta a referência e responde a pergunta factual, sem converter a afirmação em filtro obrigatório de busca."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "27eef13a25354998b9cc92720f0e04b4",
+          "error_code": null,
+          "latency_ms": 2690.07,
+          "input_tokens": 13535,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 389,
+          "reasoning_tokens": 180
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 34508.39,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "round18-budget.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "cf67086e50495033995a85adfc414d336c1534634b51b2fd84bbe4e3c3a9c714",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gjcuiadhm-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "57ace46dafff1ee553aa39589d747456796b5dbf11ae6e3beec03360f8e910f4"
+      },
+      "customer": "Quero esse Seiko SRPL13K1 por até R$ 5.000, inclusive no Pix. Ele cabe no orçamento?",
+      "agent": "Não cabe no orçamento: o preço no Pix supera o teto informado.\nSim, encontrei:\n\nRelógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1\nRef.: SRPL13K1\nA prazo: R$ 6.099,99\nÀ vista no Pix: R$ 5.184,99\nLink: https://www.newstorerj.com.br/relogios/relogios-seiko/relogio-seiko-prospex-sea-samurai-automatico-preto-srpl13k1",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está aderente ao critério: usou a referência correta, manteve os preços corretos e concluiu que não cabe no orçamento sem inventar desconto nem substituir o produto.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta cita a referência SRPL13K1 correta, informa R$ 6.099,99 a prazo e R$ 5.184,99 no Pix, ambos acima do teto de R$ 5.000, e não troca o item por outro modelo.",
+            "criterion": "Verifica preço da referência SRPL13K1; não considera 6099,99 ou 5184,99 dentro de 5000, não inventa desconto e não substitui silenciosamente por outro Samurai."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "8533116119f04fb0b474a3f41b1ac321",
+          "error_code": null,
+          "latency_ms": 3025.99,
+          "input_tokens": 13758,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 415,
+          "reasoning_tokens": 238
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 20515.58,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "round18-color-fixed.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "88f376839a5847e9e58b15a1c4ab9d5dd42efce26d49b4a65f71e8a9f2ba07bc",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-n2rkt5nvi-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "57ace46dafff1ee553aa39589d747456796b5dbf11ae6e3beec03360f8e910f4"
+      },
+      "customer": "Na verdade quero mostrador azul. O SRPL13K1 que você encontrou serve? Quero manter Seiko Samurai, automático, pulseira de aço e até R$ 6.500.",
+      "agent": "Não serve para mostrador azul: a ficha confirma o SRPL13K1 com mostrador preto.\nEle atende nos outros pontos: Seiko Samurai, automático, pulseira de aço e fica dentro do seu teto de R$ 6.500.\nSe quiser, eu procuro um Samurai azul pra você por aqui.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está aderente ao catálogo e à solicitação: preserva o SRPL13K1 como preto, mantém os atributos corretos e não inventa uma alternativa azul.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta diz: \"Não serve para mostrador azul: a ficha confirma o SRPL13K1 com mostrador preto.\" e mantém os demais atributos: \"Seiko Samurai, automático, pulseira de aço e fica dentro do seu teto de R$ 6.500.\" Não houve troca indevida da cor do SRPL13K1 nem sugestão de outra referência sem identificação.",
+            "criterion": "Corrige que SRPL13K1 é preto; não troca a cor da referência. Se sugerir azul, identifica outra referência e preserva marca, família, pulseira e orçamento."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "3875da780fb14ca5a770176647b189b5",
+          "error_code": null,
+          "latency_ms": 3852.74,
+          "input_tokens": 14796,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 541,
+          "reasoning_tokens": 349
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 31839.99,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "round18-color.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "0dc49e22e4308e694f864a00ed0e648eb1cb83557966467989dc0ab9f9ff3a42",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gjcuiadhm-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "57ace46dafff1ee553aa39589d747456796b5dbf11ae6e3beec03360f8e910f4"
+      },
+      "customer": "Na verdade quero mostrador azul. O SRPL13K1 que você encontrou serve? Quero manter Seiko Samurai, automático, pulseira de aço e até R$ 6.500.",
+      "agent": "Não consegui confirmar no catálogo disponível um relógio até R$ 6.500,00 que atenda a todos esses critérios. Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final foi prudente, mas não cumpriu o critério pedido: faltou corrigir explicitamente a cor do SRPL13K1 e, se fosse sugerir azul, indicar outra referência compatível.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final apenas disse: \"Não consegui confirmar no catálogo disponível um relógio até R$ 6.500,00 que atenda a todos esses critérios. Posso manter esse teto e flexibilizar um critério por vez...\". Ela não corrigiu que o SRPL13K1 é preto nem apresentou outra referência azul preservando marca, família, pulseira e orçamento.",
+            "criterion": "Corrige que SRPL13K1 é preto; não troca a cor da referência. Se sugerir azul, identifica outra referência e preserva marca, família, pulseira e orçamento."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "afc8e1c2efc446a78bad88143bfdaadf",
+          "error_code": null,
+          "latency_ms": 7662.22,
+          "input_tokens": 13326,
+          "cached_tokens": 2816,
+          "error_message": null,
+          "output_tokens": 1061,
+          "reasoning_tokens": 863
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 37610.48,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "round18-specs.json",
+      "previous_artifact": "evals\\results\\catalog-probe\\03.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "70879f96be0eb0b1ec8b27d60b3b407084bef550f42c9058f85351a15a1ab0cc",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gjcuiadhm-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "57ace46dafff1ee553aa39589d747456796b5dbf11ae6e3beec03360f8e910f4"
+      },
+      "customer": "Antes de finalizar: quero confirmar se esse SRPL13K1 é automático com corda manual, calibre 4R35, Hardlex, 200 metros, caixa de 41,7 mm, espessura 12,2 mm, lug to lug 49,5 mm, pulseira de aço de 20 mm, 23 rubis e reserva de 41 horas. Tem data, parada de segundos, Lumibrite, coroa rosqueada e bezel unidirecional? Não abra pedido.",
+      "agent": "Sim — isso consta na ficha do SRPL13K1: automático com corda manual, calibre 4R35, Hardlex, 200 m, 23 rubis, reserva de 41 horas, data, parada de segundos, Lumibrite, coroa rosqueada e bezel rotativo unidirecional.\n\nSobre a caixa, o catálogo traz 41,7 mm, mas também registra uma divergência com 41 mm; então eu não cravo uma medida única.\n\nPulseira de aço de 20 mm também está confirmada. Não abro pedido por aqui.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está aderente à ficha do SRPL13K1, diferencia a divergência de medida da caixa e não cria pedido. Não identifiquei erros factuais ou críticos.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta confirma com a ficha: “automático com corda manual, calibre 4R35, Hardlex, 200 m, 23 rubis, reserva de 41 horas, data, parada de segundos, Lumibrite, coroa rosqueada e bezel rotativo unidirecional”. Também distingue a divergência de medida da caixa: “o catálogo traz 41,7 mm, mas também registra uma divergência com 41 mm; então eu não cravo uma medida única.” Além disso, não abre pedido: “Não abro pedido por aqui.”",
+            "criterion": "Confirma as especificações com a ficha do SRPL13K1 e distingue dados não verificados. Não inventa características nem cria pedido. O site registra 41 mm no resumo e 41,7 mm na descrição."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "a94eb620dcbb4cf9b53b63086a14151b",
+          "error_code": null,
+          "latency_ms": 6450.77,
+          "input_tokens": 14838,
+          "cached_tokens": 2816,
+          "error_message": null,
+          "output_tokens": 797,
+          "reasoning_tokens": 557
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 33873.35,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "strict-budget.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "23d21e213be03276b430bf93c214b9a08054a741b5442000f855f1d936ebadda",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "Quero esse Seiko SRPL13K1 por até R$ 5.000, inclusive no Pix. Ele cabe no orçamento?",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final não cumpriu o critério principal porque fez apenas handoff para humano sem verificar o preço do SRPL13K1 nem avaliar o orçamento informado.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi apenas: \"Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?\". Ela não verificou o preço da referência SRPL13K1 nem respondeu se cabe no orçamento. No catálogo, o SRPL13K1 aparece com price/current_price de 6099.99 e payment_option de R$ 5.184,99 à vista com desconto; portanto, a resposta também não apresentou essa informação nem fez a distinção pedida.",
+            "criterion": "Verifica preço da referência SRPL13K1; não considera 6099,99 ou 5184,99 dentro de 5000, não inventa desconto e não substitui silenciosamente por outro Samurai."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "b4bacbe940ca4e2a91977ff9dfdb8962",
+          "error_code": null,
+          "latency_ms": 4818.24,
+          "input_tokens": 10907,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 664,
+          "reasoning_tokens": 441
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 28653.12,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "verified-all-features.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "e9b0121085e810020b2b8d19a7fbcc47fbc9339da52aa1e9f40c14914dff4f95",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-4r8uf6nwv-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Quero um Seiko Samurai automático 4R35, mostrador preto, caixa e pulseira de aço, Hardlex, 200 metros, caixa de 41,7 mm e reserva de 41 horas, até R$ 6.500. Qual modelo atende?",
+      "agent": "O modelo que atende é o Seiko Prospex Sea Samurai Automático Preto SRPL13K1.\n\nEle bate com o que você pediu: automático 4R35, mostrador preto, caixa e pulseira em aço, Hardlex, 200 m, caixa de 41,7 mm e 41 horas de reserva. No site ele está R$ 6.099,99 ou R$ 5.184,99 no PIX.\n\nLink oficial: https://www.newstorerj.com.br/relogios/relogios-seiko/relogio-seiko-prospex-sea-samurai-automatico-preto-srpl13k1",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está fiel ao catálogo e atende ao pedido, sem erros objetivos ou falhas críticas.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta identificou o SRPL13K1 como compatível e listou características suportadas pelo catálogo: movimento 4R35, mostrador preto, caixa e pulseira em aço inoxidável, Hardlex, 200 m, caixa de 41,7 mm e reserva de 41 horas. Também informou o preço do catálogo e o valor no PIX coerentes com os dados disponíveis.",
+            "criterion": "Busca por características sem referência fornecida. O SRPL13K1 do site é um candidato compatível; deve encontrá-lo ou explicar limitações concretas sem alegar inexistência nem oferecer incompatível."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "650933462bd5465f9061036a5ab76b50",
+          "error_code": null,
+          "latency_ms": 5267.58,
+          "input_tokens": 17951,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 505,
+          "reasoning_tokens": 324
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 29906.06,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "search_products",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "verified-strict-budget.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "f58ba2354fe92e51a8822572327108a0c2c759d2b57fb86ca314b677260972b9",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-4r8uf6nwv-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2ab279310348f0bb55e489171bde737086161d2ab3481ad9f1e3b90639b0c97a"
+      },
+      "customer": "Quero esse Seiko SRPL13K1 por até R$ 5.000, inclusive no Pix. Ele cabe no orçamento?",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final falhou no critério porque não avaliou o preço do SRPL13K1 nem informou que, no catálogo, o valor no Pix ainda fica acima de R$ 5.000. Não houve invento de desconto nem troca silenciosa por outro modelo, apenas omissão da resposta solicitada.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi apenas: \"Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?\". Ela não verificou o preço do SRPL13K1 nem respondeu se cabe no orçamento. No catálogo, o SRPL13K1 está com preço de R$ 6.099,99 e opção Pix de R$ 5.184,99, ambos acima de R$ 5.000.",
+            "criterion": "Verifica preço da referência SRPL13K1; não considera 6099,99 ou 5184,99 dentro de 5000, não inventa desconto e não substitui silenciosamente por outro Samurai."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "cc3c6716f6b34329b29326acca99da03",
+          "error_code": null,
+          "latency_ms": 5161.66,
+          "input_tokens": 12021,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 740,
+          "reasoning_tokens": 497
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 28828.83,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "wrong-glass.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "b0e9d05493c52bc4583ae5e4b22461e1eae94676b9cfc6aaba33c3704f203048",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "O Seiko Samurai SRPL13K1 tem vidro de safira, certo?",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: cristal de safira. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta falhou em corrigir a premissa do cliente e repetiu a informação errada sobre o cristal. O catálogo confirma Hardlex no SRPL13K1.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final diz: \"cristal de safira\" e não corrige a premissa. A ficha do SRPL13K1 em sheet_1 informa \"Cristal: Hardlex resistente a impactos\", não safira; e o produto é \"Relógio Seiko Prospex Sea Samurai Automático Preto SRPL13K1\", não King Samurai.",
+            "criterion": "Consulta a referência SRPL13K1 e corrige a premissa: a ficha do site informa Hardlex, não safira. Não pode confirmar safira nem confundir com King Samurai."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "543df47705d84789ab45268b06a6bdbb",
+          "error_code": null,
+          "latency_ms": 4733.13,
+          "input_tokens": 13143,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 564,
+          "reasoning_tokens": 339
+        },
+        "factual_errors": [
+          "\"cristal de safira\" — contradiz a ficha do produto SRPL13K1, que informa \"Cristal: Hardlex resistente a impactos\" em sheet_1."
+        ],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 17777.32,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "search_products",
+        "get_product",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "wrong-size.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "2a1235ae935be62074beb3f764f9f29204c99b9f",
+        "model": "gpt-5.4-mini",
+        "suite": "a72584bc703eb22b48413e0797a9f303c88cdc7a755263a004ca3e04077455bc",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-gx2146pjt-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2312056c4058ec100be669bf04ae8f1272092ac085e5ae82a52d866a70cae41f"
+      },
+      "customer": "O Seiko SRPL13K1 tem caixa de 38 mm, certo?",
+      "agent": "No resultado que recebi, o modelo encontrado foi o Seiko Baby Alpinist SPB155, e ele tem caixa de 38 mm.\n\nJá o SRPL13K1 não veio confirmado nessa consulta, então eu não consigo afirmar essa medida para ele sem checar o cadastro certo.",
+      "grade": {
+        "outcome": "inconclusive",
+        "provider_limit": null,
+        "critical_errors": [],
+        "evaluation_block": "evaluation_call_bound_missing_or_exceeded",
+        "execution_errors": [
+          "EvaluationBudgetExceeded"
+        ],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 42559.71,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "list_categories",
+        "get_category_tree",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "list_product_variants",
+        "list_product_variants",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants"
+      ]
+    }
+  ],
+  "note": "Failures and corrected repetitions are retained separately. Planned scenarios are not executed evidence."
+}

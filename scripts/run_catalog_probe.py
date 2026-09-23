@@ -50,8 +50,9 @@ def main():
     run_id = str(uuid4())
     suite.update(name='catalog-adaptive-' + run_id, version=1, minimum_cases_per_category=1)
     budget = json.loads(suite['configuration_overrides']['evaluationCampaignPolicy'])
-    # Prior launch campaigns reserved USD 9.103398; this keeps total below USD 12.
-    budget.update(campaign_id='launch-20260923-catalog-complete', max_cost_usd=2.89, max_calls=40)
+    # Earlier campaigns are stopped with USD 19.34962425 reserved. User approved
+    # USD 20 total; this final USD 0.60 tranche stays below it. Do not resume old tranches.
+    budget.update(campaign_id='launch-20260923-citizen-final20', max_cost_usd=.6, max_calls=8)
     suite['configuration_overrides']['evaluationCampaignPolicy'] = json.dumps(budget)
     scenario = {'key': 'catalog_probe', 'category': 'conversa', 'split': 'development',
                 'critical': True, 'environment': 'live_readonly', 'history': history,

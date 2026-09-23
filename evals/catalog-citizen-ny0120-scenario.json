@@ -1,0 +1,23 @@
+{
+  "observed_at": "2026-09-23",
+  "source": "https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-promaster-marine-automatico-preto-ny0120-01ee",
+  "reference": "NY0120-01EE",
+  "facts": {
+    "brand": "Citizen", "family": "Promaster Marine", "dial": "preto",
+    "movement": "automático", "caliber": "8204", "power_reserve_hours": 42,
+    "case_material": "aço inoxidável", "bracelet_material": "borracha",
+    "crystal": "mineral", "water_resistance_m": 200,
+    "case_mm_summary": 41, "case_mm_description": 42,
+    "price_brl": 3399.99, "pix_price_brl": 2889.99,
+    "lead_time_business_days": 30,
+    "availability": "Confirmar ao vivo; o HTML também contém bloco de indisponibilidade."
+  },
+  "procedure": {
+    "start": "Olá, estou procurando um relógio Citizen.",
+    "budget_when_asked": "Até R$ 3.500.",
+    "preferences_when_asked": "Para mim, de mergulho. Um Promaster automático, mostrador preto e pulseira de borracha.",
+    "extra_details": "Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas.",
+    "rules": ["Não revelar a referência antes da identificação.", "Aceitar outros candidatos compatíveis antes de informação suficiente.", "Não criar carrinho, pedido nem enviar mensagem a clientes.", "Conferir produto, marca, material, preço e link com consulta ao vivo."]
+  },
+  "execution_status": "Planejado; artefatos de execução são a evidência, não esta matriz."
+}

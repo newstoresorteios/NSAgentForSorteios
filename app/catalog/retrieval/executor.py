@@ -152,12 +152,43 @@ async def execute_contextual_product_lookup(
             "inventory": inventory,
         }
     result.response_metadata.update({
+        "identity_inspection": interpretation.goal == "inspect",
         "active_product": product_reference.model_dump(mode="json"),
         "presented_products": False,
         "product_resolution_state": (
             "found_available" if availability_state == "available" else "found_unknown"
         ),
     })
+    if interpretation.goal == "inspect":
+        from app.catalog.retrieval.tokens import product_conflicts_dial_color
+        color = interpretation.preferences.color
+        if color and product_conflicts_dial_color(enriched[0], (color,)):
+            note = f"Esta referência não atende ao critério de mostrador {color}; a cor real é a registrada na ficha e no nome do produto."
+            result.reply_text = note + '\n' + result.reply_text
+            result.commercial_data['inspection_color'] = {
+                'matches': False, 'requested_color': color, 'instruction': note,
+            }
+        ceiling = interpretation.preferences.budget_max
+        price_key = 'pix_price' if interpretation.payment_method_preference == 'pix' else 'price'
+        from app.catalog.retrieval.price import money_decimal, resolve_commercial_price
+        price = (money_decimal(enriched[0].get(price_key)) if price_key == 'pix_price'
+                 else resolve_commercial_price(enriched[0], require_positive=True).amount)
+        if ceiling is not None and price is not None and price > money_decimal(ceiling):
+            note = f"Não cabe no orçamento: o preço {'no Pix' if price_key == 'pix_price' else 'do produto'} supera o teto informado."
+            result.reply_text = note + '\n' + result.reply_text
+            result.commercial_data['inspection_budget'] = {
+                'within_budget': False, 'budget_max': ceiling, 'price': float(price),
+                'payment_basis': price_key, 'instruction': note,
+            }
+        from app.catalog.specs.catalog_specs import extract_case_size_mm
+        description_size = extract_case_size_mm(enriched[0].get('description'))
+        property_size = extract_case_size_mm(str(enriched[0].get('properties') or ''))
+        if description_size and property_size and description_size != property_size:
+            result.commercial_data['catalog_discrepancies'] = [{
+                'field': 'case_size_mm', 'description': description_size,
+                'summary': property_size,
+                'instruction': 'Ao responder sobre o diâmetro, informe as duas medidas divergentes do catálogo; não declare uma medida única confirmada.',
+            }]
     return result
 
 
@@ -171,6 +202,40 @@ async def _execute_compiled_product_retrieval_unlocked(
     budget_hard_miss: BudgetHardMiss = default_budget_hard_miss,
 ) -> AgentResult | None:
     tool = resolve_execute_tool(execute_tool)
+    import re
+    reference = str(interpretation.subject.reference or '').strip()
+    # A movement code extracted from technical prose is not a product identity.
+    if (re.fullmatch(r'(?:\d{1,2}[A-Za-z]\d{2,3}|\d{3,6})', reference)
+            and re.search(r'\b(?:calibre|caliber|movimento|automatico|automático)\b[^.!?]{0,35}\b'
+                          + re.escape(reference) + r'\b', message_text or '', re.I)
+            and not re.search(r'\b(?:referencia|referência|ref|sku)\s*[:=]?\s*'
+                              + re.escape(reference), message_text or '', re.I)):
+        interpretation.subject.reference = None
+        attribute = 'caliber:' + reference.upper()
+        if attribute not in interpretation.preferences.attributes:
+            interpretation.preferences.attributes.append(attribute)
+    # Inspecting an explicit identity is not a search for products satisfying
+    # the customer's premise (e.g. "does REF have sapphire / a 38 mm case?").
+    # Resolve only that identity, then let the factual responder read its sheet.
+    if interpretation.goal == "inspect" and (interpretation.subject.reference or interpretation.subject.ean):
+        key = "reference" if interpretation.subject.reference else "ean"
+        identity = str(getattr(interpretation.subject, key)).strip()
+        lookup = await tool("search_products", {key: identity, "limit": 5, "page": 1})
+        if lookup.get("error"):
+            return AgentResult(reply_text="Não consegui consultar esse produto agora.", intent="commerce",
+                               safety_reason="tray_adapter_unavailable")
+        matches = [p for p in lookup.get("products", []) if isinstance(p, dict) and p.get("id")
+                   and str(p.get(key) or "").strip().casefold() == identity.casefold()]
+        if len(matches) == 1:
+            p = matches[0]
+            result = await execute_contextual_product_lookup(interpretation,
+                CommerceProductReference(product_id=str(p['id']), reference=p.get('reference'),
+                                         ean=p.get('ean'), name=p.get('name'), brand=p.get('brand')),
+                execute_tool=tool)
+            result.response_metadata['identity_inspection'] = True
+            return result
+        return AgentResult(reply_text="Não consegui confirmar uma ficha única para essa referência no catálogo.",
+                           intent="commerce", safety_reason="product_not_found")
     initial_plan = ProductRetrievalCompiler.compile(interpretation)
     from app.catalog.specs.requirements import normalize_requirements
     requirements = normalize_requirements(interpretation, message_text)

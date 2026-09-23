@@ -1,0 +1,30 @@
+{
+  "reviewed_at": "2026-09-23",
+  "principle": "Honest fallback and absence of hallucination do not prove product-finding success. Preserve the original automated grade and record manual disagreement separately.",
+  "reviews": [
+    {
+      "artifact": "citizen-probe/validated-01.json",
+      "automated_outcome": "failed",
+      "manual_outcome": "passed_qualification",
+      "reason": "Asked the budget without repeating Citizen in the sentence. Brand was preserved in interpretation.subject.brand, the live query brand and next_state.active_preferences.subject_brand. Repeating the brand in every question is not required; this judge verdict is a false negative."
+    },
+    {
+      "artifact": "citizen-probe/02.json",
+      "automated_outcome": "passed",
+      "manual_outcome": "failed_qualification",
+      "reason": "After only Citizen plus budget, the agent recommended a product instead of asking model/use. The judge's statement that it continued qualification was too permissive."
+    },
+    {
+      "artifact": "citizen-probe/03.json",
+      "automated_outcome": "passed",
+      "manual_outcome": "failed_identification",
+      "reason": "The customer received no identified product or official link. Honest uncertainty passed a safety-oriented criterion but did not meet the user's happy-path goal."
+    },
+    {
+      "artifact": "catalog-probe/round18-specs.json",
+      "automated_outcome": "passed",
+      "manual_outcome": "passed_with_coverage_note",
+      "reason": "The reply correctly flagged the 41 versus 41.7 mm catalog conflict; it did not explicitly restate thickness and lug-to-lug. This is not proof that every requested specification was individually answered."
+    }
+  ]
+}

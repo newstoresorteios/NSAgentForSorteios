@@ -20,6 +20,11 @@ def _contains(text: str, term: str) -> bool:
 
 
 def _denied(text: str, rule: dict, policy_name: str) -> bool:
+    if policy_name == 'catalogFeatureNegationPhrases' and any(
+        re.search(r'\bnao\s+' + re.escape(fold_text(alias)) + r'(?!\w)', fold_text(text))
+        for alias in rule['aliases']
+    ):
+        return True
     return any(_contains(text, phrase.format(feature=alias))
                for phrase in json.loads(policy(policy_name)) for alias in rule["aliases"])
 

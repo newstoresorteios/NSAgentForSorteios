@@ -121,6 +121,10 @@ def is_plausible_product_reference(value: str | None) -> bool:
         return False
     if extract_reference_code(text):
         return True
+    # Accept compact codes only in the explicit reference slot. Inferring these
+    # from a model name would misclassify families such as Certina PH2000M.
+    if re.fullmatch(r"[A-Za-z]{2,5}\d{2,6}(?:[A-Za-z]\d{0,3})?", text):
+        return True
     folded = _fold(text)
     tokens = [token for token in re.findall(r"[a-z0-9]+", folded) if token]
     if not tokens:

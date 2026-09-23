@@ -232,7 +232,9 @@ def run_phase0_double_check(
         log_swallowed("double_check.inbound_view", exc)
         view = None
 
-    if view is not None and view.budget_max is not None and products:
+    from app.sales.answer_council import _explains_inspected_budget_miss, _explains_inspected_color_miss
+    if (view is not None and view.budget_max is not None and products
+            and not _explains_inspected_budget_miss(result)):
         try:
             from app.catalog.retrieval.price import effective_price
 
@@ -246,7 +248,8 @@ def run_phase0_double_check(
         except Exception as exc:
             log_swallowed("double_check.budget", exc)
 
-    if view is not None and view.color and products:
+    if (view is not None and view.color and products
+            and not _explains_inspected_color_miss(result, view.color)):
         try:
             from app.catalog.product_retrieval import product_conflicts_dial_color
 

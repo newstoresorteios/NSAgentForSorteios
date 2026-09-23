@@ -83,6 +83,7 @@ class ProductRetrievalCompiler:
             model_codes = extract_model_codes(pt_model or subject.model)
             wants_automatic = bool(
                 re.search(r"\b(automatic|automatico)\b", _fold(subject.model))
+                or interpretation.preferences.mechanism == 'automatic'
             )
             auto_bit = "Automático" if wants_automatic else None
             color_hue = color_label.title() if color_label else None
@@ -176,6 +177,9 @@ class ProductRetrievalCompiler:
                 tier1_budget -= 1
 
             # Tier 1 — at most 6 high-signal probes (no brand paging here).
+            if auto_bit and color_hue and core_label:
+                _add_probe('technical_identity_probe',
+                    name=f'{core_label} {auto_bit} {color_hue}', brand=subject.brand)
             if model_codes:
                 _add_probe(
                     "exact_model_code",
@@ -265,6 +269,15 @@ class ProductRetrievalCompiler:
         else:
             available = True
             available_in_store = True
+            from app.catalog.specs.requirements import technical_requirements, feature_rules
+            required = technical_requirements(interpretation)
+            mechanism = next((r['query'] for r in feature_rules()
+                if r['field']=='mechanism' and r['value']==required.get('mechanism')), None)
+            color_labels = preference_color_search_labels(interpretation)
+            if mechanism and subject.brand:
+                requests.append(ProductRetrievalRequest(strategy='technical_identity_probe',
+                    name=' '.join([mechanism, *([interpretation.preferences.color] if interpretation.preferences.color else [])]), brand=subject.brand,
+                    available=available, available_in_store=available_in_store))
             for index, category_id in enumerate(category_ids[:5]):
                 requests.append(ProductRetrievalRequest(
                     strategy="category" if index == 0 else "category_child",

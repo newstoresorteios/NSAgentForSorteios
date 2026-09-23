@@ -271,6 +271,39 @@ def _presented_conflicts_style(products: list[dict[str, Any]], style: str) -> bo
     return all(_conflicts(item) for item in products)
 
 
+def _explains_inspected_budget_miss(result: AgentResult) -> bool:
+    """A verified SKU may be cited to explicitly explain why it exceeds a cap."""
+    metadata = result.response_metadata or {}
+    if metadata.get('identity_inspection') is not True:
+        return False
+    products = _presented(result)
+    if len(products) != 1 or not products[0].get('_revalidated'):
+        return False
+    from app.catalog.retrieval.text import _fold
+    text = _fold(result.reply_text).replace('*', '').replace('_', '')
+    negative = re.search(r'\b(?:nao cabe|nao entra|acima|ultrapassa|excede|supera|fora)\b', text)
+    scope = re.search(r'\b(?:orcamento|teto|limite|r\$)\b', text)
+    positive = any(
+        re.search(r'(?<!nao )\b(?:cabe|entra)\b.{0,20}(?:orcamento|teto)|'
+                  r'\bdentro\b.{0,20}(?:orcamento|teto)', clause)
+        for clause in re.split(r'[.!?\n]', text)
+        if not re.search(r'\b(?:opcoes|alternativas|outros)\b', clause)
+    )
+    return bool(negative and scope and not positive)
+
+
+def _explains_inspected_color_miss(result: AgentResult, color: str) -> bool:
+    """Allow an explicit negative answer about a verified SKU, not a substitute offer."""
+    products = _presented(result)
+    if ((result.response_metadata or {}).get('identity_inspection') is not True
+            or len(products) != 1 or not products[0].get('_revalidated')):
+        return False
+    from app.catalog.retrieval.text import _fold
+    text = _fold(result.reply_text).replace('*', '').replace('_', '')
+    wanted = re.escape(_fold(color))
+    return bool(re.search(r'\bnao (?:serve|atende|e|tem)\b[^.!?\n]{0,65}\b' + wanted + r'\b', text))
+
+
 def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
     """Checker A — did we answer the customer’s ask (not a nearby substitute)?"""
     issues: list[str] = []
@@ -280,7 +313,7 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
         issues.append("re_greet_instead_of_commerce")
     if contract.must_not_claim_stale_occasion and reply_claims_occasion(reply):
         issues.append("stale_occasion_claimed")
-    if contract.budget_max is not None:
+    if contract.budget_max is not None and not _explains_inspected_budget_miss(result):
         over = [
             item
             for item in products
@@ -334,7 +367,8 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
     ):
         issues.append("handoff_on_live_cart")
     if products and _catalog_identity_applies(result, contract):
-        if contract.color and _presented_conflicts_color(products, contract.color):
+        if (contract.color and _presented_conflicts_color(products, contract.color)
+                and not _explains_inspected_color_miss(result, contract.color)):
             issues.append("ignored_color")
         if contract.model and _presented_conflicts_model(products, contract.model):
             issues.append("ignored_model")
@@ -359,7 +393,7 @@ def check_fatos(result: AgentResult, contract: TurnContract) -> CheckerReport:
     products = _presented(result)
     if result.safety_reason == "factual_validation_failed" and products:
         issues.append("factual_failed_but_still_listing")
-    if contract.budget_max is not None:
+    if contract.budget_max is not None and not _explains_inspected_budget_miss(result):
         for item in products:
             price = effective_price(item)
             if price is not None and price > float(contract.budget_max):
@@ -372,7 +406,8 @@ def check_fatos(result: AgentResult, contract: TurnContract) -> CheckerReport:
         if labels and all(label and brand not in label and label not in brand for label in labels):
             issues.append("fact_brand_mismatch")
     if products and identity:
-        if contract.color and _presented_conflicts_color(products, contract.color):
+        if (contract.color and _presented_conflicts_color(products, contract.color)
+                and not _explains_inspected_color_miss(result, contract.color)):
             issues.append("fact_color_mismatch")
         if contract.model and _presented_conflicts_model(products, contract.model):
             issues.append("fact_model_mismatch")

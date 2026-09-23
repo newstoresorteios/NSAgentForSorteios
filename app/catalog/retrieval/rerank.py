@@ -74,7 +74,7 @@ def deterministic_semantic_order(
         if wants_small_case:
             size_raw = extract_case_size_mm(product)
             try:
-                size = int(size_raw) if size_raw else None
+                size = float(size_raw) if size_raw else None
             except (TypeError, ValueError):
                 size = None
             if size is not None:

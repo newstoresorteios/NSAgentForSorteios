@@ -49,6 +49,17 @@ async def resolve_catalog_reference(
             resolved_by="none",
         )
 
+    # An explicitly named SKU being inspected is already unambiguous. A stale
+    # shortlist or a contradictory desired color must not ask the user to pick
+    # the same reference again. The compiled lookup revalidates this SKU live.
+    from app.catalog.retrieval.tokens import effective_product_reference
+    reference = effective_product_reference(interpretation.subject.reference)
+    if (interpretation.goal == 'inspect' and reference
+            and reference.casefold() in (message.text or '').casefold()
+            and not interpretation.purchase_action):
+        return CatalogReferenceResolution(interpretation=interpretation,
+            resolved_product=None, resolved_by='explicit_identity_inspection')
+
     sales.log_purchase_progress("reference_resolution", "start")
     resolved_product, resolved_by = sales.resolve_commerce_reference(
         interpretation, state

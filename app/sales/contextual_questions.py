@@ -278,7 +278,9 @@ async def try_contextual_question(incoming, interpretation, state, recent_turns)
     clean.purchase_items = []
     clean.needs_clarification = False
     clean.answer_strategy = 'search_catalog'
-    clean.preferences = ProductPreferences()
+    # Inspection must retain the current question's criteria so the responder
+    # can explain a mismatch. The live lookup is by identity, not these filters.
+    clean.preferences = interpretation.preferences.model_copy(deep=True)
     clean.subject.brand = target.brand
     clean.subject.model = None
     clean.subject.reference = target.reference

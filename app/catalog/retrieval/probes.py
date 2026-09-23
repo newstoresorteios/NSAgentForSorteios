@@ -124,6 +124,7 @@ async def run_probes(
         "token_and_search_no_color": 5,
         "token_and_search_short": 5,
         "feature_alternative": 3,
+        "technical_identity_probe": 1,
     }
     ordered_requests = sorted(
         enumerate(probe_requests),
@@ -137,6 +138,11 @@ async def run_probes(
             "limit": request.limit,
             "page": request.page,
         }
+        # The store often encodes dial color in the title, not a property named
+        # "Cor". A targeted name probe must not require that sparse field too.
+        if request.strategy == 'technical_identity_probe' or session.retrieval_plan.mode == 'exact':
+            arguments.pop('property_name', None)
+            arguments.pop('property_value', None)
         print("[sales.retrieval.request]", {
             "strategy": request.strategy,
             "category_id_present": bool(request.category_id),

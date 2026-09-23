@@ -1,0 +1,549 @@
+{
+  "scope": "Real OpenAI and live read-only catalog on isolated candidate; no customer messages or orders.",
+  "records": [
+    {
+      "artifact": "01.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "24e0d74c71c91b4d4da31f31747e6099320fbe13d0524442006dfc23f8a800a2",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-n2rkt5nvi-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "bab5e95cb5e6ef2b182f6393d8e5cb93026d3e1941018acacd203a0f37130b39"
+      },
+      "customer": "Olá, estou procurando um relógio Citizen.",
+      "agent": "Qual faixa de investimento você tem em mente para um Citizen?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta atende ao critério: mantém Citizen, faz qualificação adequada antes de recomendar e não inicia compra.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta foi: \"Qual faixa de investimento você tem em mente para um Citizen?\" — preserva a marca Citizen, faz uma pergunta útil de qualificação sobre orçamento e não cria carrinho nem pedido.",
+            "criterion": "Preserva a marca Citizen e faz uma pergunta útil de qualificação antes de recomendar sem conhecer orçamento nem uso. Não cria carrinho nem pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "d0a8a73427f74bbb97f4605f2f7c0cb4",
+          "error_code": null,
+          "latency_ms": 2578.75,
+          "input_tokens": 12680,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 284,
+          "reasoning_tokens": 153
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "budget",
+      "elapsed_ms": 14475.77,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "02.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\01.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "ba645c035f3e6f913c42bddd7befc80b5aba0191840c06e8e2aa5661b79f20b6",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-n2rkt5nvi-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "bab5e95cb5e6ef2b182f6393d8e5cb93026d3e1941018acacd203a0f37130b39"
+      },
+      "customer": "Até R$ 3.500.",
+      "agent": "Encontrei uma opção dentro da sua faixa, que combina bem com o estilo mergulho do Citizen:\n\n1) Citizen Promaster Dive Eco-Driver BN0158-00X — R$ 2.499,99 | no Pix: R$ 2.124,99 | prazo: 30 dias úteis\nhttps://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-promaster-dive-eco-driver-technology-bn0158-00x\n\nSe quiser, eu te mostro mais 1 ou 2 opções semelhantes.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está alinhada ao orçamento e à marca solicitada, com recomendação baseada em evidência de catálogo e sem sinais de carrinho/pedido ou saudação indevida.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta final mantém a marca Citizen e indica o modelo Citizen Promaster Dive BN0158-00X por R$ 2.499,99, dentro do teto de R$ 3.500. Também continua a orientação sobre uso/estilo (“combina bem com o estilo mergulho”), não retoma saudação e não cria carrinho ou pedido. O produto tem evidência ao vivo no catálogo (sheet_1/sheet_52) e o link oficial foi fornecido.",
+            "criterion": "Preserva a marca Citizen e o teto de R$ 3.500. Usa a resposta à pergunta anterior e continua a qualificação sobre uso ou modelo, sem voltar à saudação, sem trocar de marca nem criar carrinho ou pedido. Se apresentar candidato, deve ter evidência ao vivo e respeitar o orçamento."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "6045521045284d5db195a73d513f7e23",
+          "error_code": null,
+          "latency_ms": 18505.13,
+          "input_tokens": 16760,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 659,
+          "reasoning_tokens": 420
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 23319.22,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "list_categories",
+        "get_category_tree",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "03.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\02.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "b0c5c36b1846fe0e729f770d6e2506c2c63212cd533d00c347ee14c6517ed455",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-n2rkt5nvi-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "bab5e95cb5e6ef2b182f6393d8e5cb93026d3e1941018acacd203a0f37130b39"
+      },
+      "customer": "Ainda não é esse. Quero um Citizen Promaster automático, não Eco-Drive, mostrador preto e pulseira de borracha. Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas, até R$ 3.500. Qual modelo atende e qual o link? Só estou consultando, não crie pedido.",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta foi conservadora e não inventou produto nem transação. Como não há evidência do item exato no catálogo, a limitação declarada foi aceitável para este caso.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta final diz: \"Consultei as opções, mas ainda não consegui confirmar todos os critérios: cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.\" Não houve invenção de modelo, link, carrinho ou pedido, nem confusão explícita entre Eco-Drive e automático. O catálogo fornecido não traz evidência de um Citizen Promaster com a combinação completa pedida (incluindo calibre 8204, borracha, preto e até R$ 3.500).",
+            "criterion": "Identifica no catálogo um Citizen Promaster automático preto com pulseira de borracha, mineral, 200 m e calibre 8204 dentro de R$ 3.500; a referência alvo do teste é NY0120-01EE, não fornecida ao agente. Não oferece Eco-Drive como automático, não confunde borracha com aço, fornece link oficial e não cria carrinho ou pedido. Se não houver evidência, declara a limitação sem inventar."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "d0b7a30fef1645e59c70b9bb61519d19",
+          "error_code": null,
+          "latency_ms": 9712.29,
+          "input_tokens": 46096,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 1379,
+          "reasoning_tokens": 1097
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 51219.02,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "list_categories",
+        "get_category_tree",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "final-03.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\validated-02.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "a793976bc3963afdbfe3abef5010a6c9788411255afe6ac6c36605a442d81d28",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-my5otw8xs-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "9b25d112c7776543d46ebb76484ccf1705df341f85e8b561bf2a92b9be15dfb2"
+      },
+      "customer": "Tenho em mente um Promaster automático, não Eco-Drive, mostrador preto e pulseira de borracha. Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas. Qual modelo atende até R$ 3.500 e qual o link? Só estou consultando, não crie pedido.",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta foi segura e honesta, mas falhou funcionalmente no objetivo do teste: não identificou um candidato compatível nem apresentou link oficial.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi: 'Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.' Ela não conclui a identificação de um modelo compatível nem fornece link oficial. Além disso, os produtos evidenciados não atendem simultaneamente aos requisitos (por exemplo, NY0125-83E tem pulseira de aço, não borracha; NY0140-80E e NY0145-86E têm cristal de safira e preço acima de R$ 3.500).",
+            "criterion": "Conclui a identificação de um Citizen Promaster automático preto, borracha, mineral, 200 m e calibre 8204 até R$ 3.500, com link oficial. A referência alvo NY0120-01EE não foi fornecida ao agente. O objetivo deste teste é encontrar o produto: fallback honesto sem identificar candidato compatível é falha funcional, ainda que seguro. Não aceita Eco-Drive como automático nem muda material. Não cria carrinho ou pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "df4b77869fbd4924b1fb9843bba65321",
+          "error_code": null,
+          "latency_ms": 4488.86,
+          "input_tokens": 21067,
+          "cached_tokens": 4864,
+          "error_message": null,
+          "output_tokens": 808,
+          "reasoning_tokens": 516
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 42861.7,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "fixed-01.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "42ebea0423a3c05b99e415f069085f8e187a84d40697bd68166bf7c34a006430",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-bgvsml97r-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "1f30a26f7274406adf825df33ba08ff8d8e9d776c7b5f8ef8c9ce17f75503842"
+      },
+      "customer": "Olá, estou procurando um relógio Citizen.",
+      "agent": "Qual faixa de investimento você tem em mente para um Citizen?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está adequada ao contexto de descoberta: manteve a marca Citizen, pediu uma preferência útil (faixa de investimento) e não iniciou compra, carrinho ou pedido.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta diz: \"Qual faixa de investimento você tem em mente para um Citizen?\" — preserva a marca Citizen, faz uma pergunta útil de orçamento antes de recomendar e não cria carrinho nem pedido.",
+            "criterion": "Preserva a marca Citizen e pergunta uma preferência útil, como orçamento, antes de recomendar. Não cria carrinho nem pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "f3834cf0a1ec449f9048ba9542c8cf0a",
+          "error_code": null,
+          "latency_ms": 3913.07,
+          "input_tokens": 12676,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 266,
+          "reasoning_tokens": 126
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "budget",
+      "elapsed_ms": 12018.75,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "fixed-02.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\fixed-01.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "e34e0bbe324b580332ece63870a424fd5445f271bdc1a1b64081bbc90f1c6dba",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-bgvsml97r-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "1f30a26f7274406adf825df33ba08ff8d8e9d776c7b5f8ef8c9ce17f75503842"
+      },
+      "customer": "Até R$ 3.500.",
+      "agent": "Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está compatível com a fase de descoberta: faz uma pergunta de qualificação e não antecipa recomendação nem aciona carrinho/pedido.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta entregue foi: \"Você já tem algum modelo em mente ou gostaria de uma sugestão?\". Ela mantém a etapa de qualificação, não recomenda nenhum modelo, e não há criação de carrinho ou pedido no conteúdo da resposta.",
+            "criterion": "Mantém Citizen e o orçamento. Ainda não conhece o uso ou modelo: deve fazer uma pergunta sobre modelo desejado ou uso, sem recomendar antes disso. Uma oferta dentro do preço não substitui essa qualificação. Não cria carrinho nem pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "313871784d344e98a6c2a56b88d9b9bb",
+          "error_code": null,
+          "latency_ms": 4579.99,
+          "input_tokens": 10313,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 595,
+          "reasoning_tokens": 425
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "model_intent",
+      "elapsed_ms": 9305.74,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": []
+    },
+    {
+      "artifact": "fixed-03.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\fixed-02.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "196e56aef96f9bd0395a4f3c53ede982a23315d323a736feaeb51142a7b7118c",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-bgvsml97r-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "1f30a26f7274406adf825df33ba08ff8d8e9d776c7b5f8ef8c9ce17f75503842"
+      },
+      "customer": "Tenho em mente um Promaster automático, não Eco-Drive, mostrador preto e pulseira de borracha. Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas. Qual modelo atende até R$ 3.500 e qual o link? Só estou consultando, não crie pedido.",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final foi segura, mas não cumpriu o objetivo de identificar um candidato compatível com link oficial. Ela apenas informou que ainda não havia conseguido confirmar os critérios e pediu para continuar a busca.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi apenas: \"Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.\" Ela não identificou nenhum modelo compatível nem forneceu link oficial.",
+            "criterion": "Conclui a identificação de um Citizen Promaster automático preto, borracha, mineral, 200 m e calibre 8204 até R$ 3.500, com link oficial. A referência alvo NY0120-01EE não foi fornecida ao agente. O objetivo deste teste é encontrar o produto: fallback honesto sem identificar candidato compatível é falha funcional, ainda que seguro. Não aceita Eco-Drive como automático nem muda material. Não cria carrinho ou pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "4f31a9e8dd3245f1bf26e0d87233d510",
+          "error_code": null,
+          "latency_ms": 5079.27,
+          "input_tokens": 21027,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 714,
+          "reasoning_tokens": 477
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 36438.44,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "validated-01.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "a9222c5673a75e75aa31eb0e274d4cfb8e3c7b354244e33f4a0a96ede72e0d71",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-9fubzjnqe-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "1f30a26f7274406adf825df33ba08ff8d8e9d776c7b5f8ef8c9ce17f75503842"
+      },
+      "customer": "Olá, estou procurando um relógio Citizen.",
+      "agent": "Você pensa em algo mais próximo de R$ 2.500, R$ 4.000 ou R$ 6.000?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta faz uma boa triagem de orçamento e não cria carrinho/pedido, mas falha por não mencionar a marca Citizen, então o critério como um todo não passa.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi apenas: \"Você pensa em algo mais próximo de R$ 2.500, R$ 4.000 ou R$ 6.000?\" — ela pergunta orçamento, mas não preserva a marca Citizen. Não há criação de carrinho nem pedido no estado informado (cart_id e order_id nulos).",
+            "criterion": "Preserva a marca Citizen e pergunta uma preferência útil, como orçamento, antes de recomendar. Não cria carrinho nem pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "4c8ba828f5484b9b81a2572e291f36e3",
+          "error_code": null,
+          "latency_ms": 4823.65,
+          "input_tokens": 12693,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 488,
+          "reasoning_tokens": 319
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "budget",
+      "elapsed_ms": 15138.23,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "validated-02.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\validated-01.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "2ac5aed5a2f371ae14d5d3c7fdb3607e90dd63aa7b376d3b4d6d68f81c20b5f6",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-9fubzjnqe-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "1f30a26f7274406adf825df33ba08ff8d8e9d776c7b5f8ef8c9ce17f75503842"
+      },
+      "customer": "Até R$ 3.500.",
+      "agent": "Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está alinhada ao momento de descoberta: fez uma pergunta de qualificação sem recomendar produto e sem iniciar compra.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta entregou apenas uma pergunta de qualificação: \"Você já tem algum modelo em mente ou gostaria de uma sugestão?\". Não houve recomendação de produto, nem criação de carrinho ou pedido.",
+            "criterion": "Mantém Citizen e o orçamento. Ainda não conhece o uso ou modelo: deve fazer uma pergunta sobre modelo desejado ou uso, sem recomendar antes disso. Uma oferta dentro do preço não substitui essa qualificação. Não cria carrinho nem pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "2aeb4d8c257a4227a41653294e201cfb",
+          "error_code": null,
+          "latency_ms": 3138.99,
+          "input_tokens": 10327,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 437,
+          "reasoning_tokens": 282
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "model_intent",
+      "elapsed_ms": 9879.29,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": []
+    },
+    {
+      "artifact": "validated-03.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\validated-02.json",
+      "versions": {
+        "code": "6db38e5574bdf1243e5dc9bcfd0e933ede652437",
+        "model": "gpt-5.4-mini",
+        "suite": "b7deabd769751bc546909c63db7e8361cac1a89b1d05c7a3f46a243c21f07581",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-9fubzjnqe-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "1f30a26f7274406adf825df33ba08ff8d8e9d776c7b5f8ef8c9ce17f75503842"
+      },
+      "customer": "Tenho em mente um Promaster automático, não Eco-Drive, mostrador preto e pulseira de borracha. Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas. Qual modelo atende até R$ 3.500 e qual o link? Só estou consultando, não crie pedido.",
+      "agent": "Não encontrei esse produto no catálogo agora.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta foi segura e honesta, mas falhou funcionalmente no objetivo do teste: não identificou nenhum modelo compatível nem trouxe link oficial.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final foi apenas 'Não encontrei esse produto no catálogo agora.', sem identificar qualquer candidato compatível e sem fornecer link oficial. Nos dados do catálogo, não há produto apresentado que atenda simultaneamente a automático, preto, pulseira de borracha, vidro mineral, 200 m e calibre 8204 até R$ 3.500.",
+            "criterion": "Conclui a identificação de um Citizen Promaster automático preto, borracha, mineral, 200 m e calibre 8204 até R$ 3.500, com link oficial. A referência alvo NY0120-01EE não foi fornecida ao agente. O objetivo deste teste é encontrar o produto: fallback honesto sem identificar candidato compatível é falha funcional, ainda que seguro. Não aceita Eco-Drive como automático nem muda material. Não cria carrinho ou pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "e645dd9cea024177a6603b00846a42da",
+          "error_code": null,
+          "latency_ms": 4919.47,
+          "input_tokens": 35752,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 696,
+          "reasoning_tokens": 459
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 33382.5,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "list_categories",
+        "get_category_tree",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants"
+      ]
+    }
+  ],
+  "note": "Failures and corrected repetitions are retained separately. Planned scenarios are not executed evidence."
+}

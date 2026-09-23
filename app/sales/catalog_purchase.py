@@ -32,6 +32,19 @@ async def try_catalog_purchase(
     unresolved_candidates: list[dict[str, Any]],
 ) -> AgentResult | None:
     sales = _sales()
+    # A payment preference qualifies the price to inspect; it is not by itself
+    # a request for payment policy or checkout. Resolve live product facts first.
+    if (
+        interpretation is not None
+        and interpretation.goal == "inspect"
+        and interpretation.preferences.budget_max is not None
+        and (interpretation.subject.reference or interpretation.subject.ean or resolved_product)
+        and not purchase_action
+        and not purchase_requests
+        and interpretation.payment_request_kind != "checkout"
+        and not interpretation.payment_action
+    ):
+        return None
     payment_preference = (
         interpretation.payment_method_preference
         if interpretation is not None

@@ -360,7 +360,9 @@ async def apply_catalog_pending(
                 and resolved_product is not None
             ),
         })
-    if interpretation is not None and interpretation.purchase_items:
+    if (interpretation is not None and interpretation.purchase_items
+            and (interpretation.goal != "inspect" or interpretation.purchase_action
+                 or interpretation.payment_request_kind == "checkout")):
         for item in interpretation.purchase_items:
             sales.log_purchase_progress("reference_resolution", "start")
             item_ref, item_resolved_by = sales.resolve_purchase_item_reference(item, state)

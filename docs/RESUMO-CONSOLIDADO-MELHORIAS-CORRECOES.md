@@ -214,7 +214,7 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
   `de presente`; destinatário sozinho também não autoriza pular a qualificação.
 - Continuidade normaliza `relógio`/`relógios`; uma resposta curta à pergunta de
   orçamento recupera a marca da consulta anterior quando o intérprete a omite.
-- Validação local: 2.400 testes aprovados, 7 pulados; secret scan e contrato de
+- Validação local: 2.425 testes aprovados, 7 pulados; secret scan e contrato de
   configuração aprovados. Houve um caminho feliz real de cinco turnos, incluindo
   link correto, mas repetições revelaram novas falhas. Não é certificação de produção.
 - A avaliação real permanece requisito para liberação ampla. Testes isolados não
@@ -224,35 +224,86 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
 
 - Matriz reproduzível: `evals/catalog-srpl13k1-scenarios.json`.
 - Evidência local: `docs/audits/2026-09-23/catalog-srpl13k1-evidence.json`;
-  11 turnos reais, incluindo falhas, repetição corrigida e bloqueios de orçamento.
+  27 turnos reais, incluindo falhas, repetições corrigidas e bloqueios de orçamento.
   OpenAI e catálogo reais, em deploy candidato isolado; sem envio a clientes ou pedidos.
 - Identificação progressiva: apenas Seiko → pergunta orçamento → R$ 6.500.
   A primeira execução perdeu a marca e ofereceu Citizen. A repetição após proteção
   local ofereceu Seiko, mas não fez nova pergunta. Ao acrescentar Samurai, mostrador
   preto e pulseira de aço, encontrou SRPL13K1 com preço e link corretos, sem receber
   antecipadamente essa referência. Acerto pontual não demonstra consistência.
-- Falha P1: perguntas factuais viram filtros obrigatórios. `Tem safira?` não recebe
-  a correção Hardlex; `tem 38 mm?` busca Baby Alpinist em vez de explicar o Samurai.
-  A primeira resposta não confirma safira: a falha é não corrigir a premissa.
-- Falha P1: consulta completa por atributos e confirmação posterior da ficha
-  retornam fallback genérico apesar de o detalhe correto estar nas ferramentas.
-  Investigar ordenação dos filtros, preservação de identidade e confirmação técnica.
-- Falha P1: teto de R$ 5.000 inclusive Pix dispara oferta de atendimento humano
-  em vez de informar que R$ 5.184,99 supera o limite. Não houve desconto inventado.
-- Índice local retornou zero para a referência conhecida em várias rodadas;
-  o adaptador encontrou o produto 11989. Investigar recuperação exata no cache miss.
-- Avaliador: 253 fichas de candidatos inflaram uma entrada além do limite reservado;
-  notas automáticas de orçamento corrigido e tamanho ficaram inconclusivas.
-  Necessária compactação de candidatos preservando evidência detalhada do produto.
-- Cor azul e pronta entrega: campanha interrompeu chamadas por orçamento, portanto
-  inconclusivos. A resposta visível de prazo informou corretamente 30 dias úteis,
-  mas não certifica a execução completa. Não tratar bloqueio de custo como falha
-  funcional do agente nem como aprovação.
-- Teto autorizado US$ 12; reservas acumuladas US$ 11,985351 ao encerrar esta rodada.
-  Reserva conservadora não é fatura/gasto efetivo. Novas chamadas exigem ampliação.
-- Bloqueios para liberação ampla: identidade exata, resposta factual versus filtro,
-  recuperação de confirmação técnica e repetição completa sem bloqueio de avaliação.
-  Esses pontos permanecem abertos; não foram corrigidos só por registrar a sondagem.
+- Corrigido: referências compactas (SRPL13K1/SPB155) são aceitas quando explícitas;
+  calibre 4R35 não vira SKU. Inspeção resolve a identidade exata sem usar a premissa
+  do cliente como filtro. Repetições `fixed-wrong-glass` e `fixed-wrong-size` passaram:
+  Hardlex, não safira; 41,7 mm, não 38 mm. Não substitui silenciosamente a referência.
+- Corrigido: diâmetro decimal é separado de espessura, lug-to-lug e largura da pulseira.
+  A ficha diverge entre 41 mm no resumo e 41,7 mm na descrição; a resposta de
+  `round18-specs` sinalizou essa divergência e passou. O catálogo não foi alterado.
+- Corrigido: o contrato de oferta comparava a ficha completa com sua projeção
+  factual autorizada e apagava respostas válidas. Compara agora a mesma projeção,
+  mantendo bloqueio quando preço/identidade realmente mudam. `verified-all-features`
+  encontrou o SRPL13K1 por características completas, sem fornecer o SKU, e passou.
+- Corrigido: consulta de orçamento com Pix não deve virar política genérica de
+  pagamento nem carrinho. Uma repetição tentou `create_cart`, BLOQUEADO pela
+  avaliação; nenhum carrinho foi criado. Itens inferidos em uma inspeção, sem ação
+  explícita de compra, não autorizam criar carrinho. `round18-budget` passou:
+  informou R$ 5.184,99 no Pix acima de R$ 5.000, sem desconto inventado ou mutação.
+- Corrigido: critérios da pergunta contextual são preservados. Conselho e segunda
+  checagem distinguem uma explicação negativa de uma oferta incompatível, apenas
+  para inspeção de uma ficha revalidada. `round18-color-fixed` passou: SRPL13K1 é
+  preto e não atende azul; demais atributos e teto preservados. Não apresentou
+  outra referência azul: essa busca alternativa ainda não foi executada.
+- Prazo: `final-availability` passou, informando 30 dias úteis sem prometer pronta
+  entrega/chegada amanhã nem criar pedido. Estoque positivo não prova pronta entrega.
+- Avaliador: candidatos não selecionados são compactados; detalhe completo é
+  preservado para produtos consultados/selecionados. A entrada antes inflada por
+  253 fichas foi reduzida de cerca de 583 KB para 160 KB, sem alterar fatos originais.
+- Teto autorizado ampliado para US$ 18. Ao encerrar as sondagens Seiko, reservas
+  acumuladas US$ 16,99270875. Reserva conservadora não é fatura/gasto efetivo.
+  Campanhas anteriores estão paradas; a jornada Citizen tem teto adicional de
+  US$ 1 e 12 chamadas. Não retomar saldos antigos em paralelo: ultrapassaria o limite.
+- Evidências aprovadas são repetições pontuais, em candidatos corrigidos distintos,
+  não uma certificação de consistência estatística nem execução WhatsApp ponta a ponta.
+  Persistem otimização de filtros de cor pouco estruturados, latência e recuperação
+  de cache. Homologação de checkout/pagamento e rollout monitorado continuam necessários.
+
+### Segunda marca — Citizen
+
+- Produto de referência: Citizen Promaster Marine NY0120-01EE; matriz em
+  `evals/catalog-citizen-ny0120-scenario.json`. Iniciar sem código, revelar orçamento
+  e preferências conforme perguntas. Não reaproveitar contexto do Seiko.
+- Primeira jornada: perguntou orçamento, mas recomendou após conhecer apenas marca
+  e preço. Após receber os atributos, retornou limitação genérica e não identificou
+  o produto. O juiz automático aprovou por ausência de invenção; revisão manual
+  classifica o objetivo de identificação como FALHA, não como caminho feliz.
+- Causas corrigidas: amostra preliminar sem facetas não encerra a entrevista após
+  o orçamento; negação curta `não Eco-Drive` não vira preferência por solar;
+  busca técnica por mecanismo/cor não depende também da propriedade esparsa `Cor`.
+  Os demais filtros e revalidação de detalhes continuam obrigatórios.
+- Teto ampliado explicitamente para US$ 20. Antes da repetição, reservas anteriores
+  US$ 17,92291425; campanha nova limitada a US$ 2, sem retomar campanhas antigas.
+- Resultado final: FALHA de identificação, apesar da qualificação corrigida.
+  A sequência `validated-01` → `validated-02` perguntou orçamento e modelo;
+  a terceira resposta não encontrou o Citizen. `final-03` repetiu o último turno
+  com histórico real na versão corrigida, explicitamente registrando a mudança
+  de deployment, e também falhou. Não existe caminho feliz Citizen comprovado.
+- Corrigidos ainda: calibre numérico 8204 extraído como SKU e preferência por
+  alias inglês `black` antes da cor informada `preto`. Os testes locais cobrem
+  essas causas, mas a repetição real ainda retornou busca vazia.
+- Evidência restante: buscas `Promaster Automático Preto` e `Promaster Automático`,
+  Citizen e faixa 0–3500, retornaram zero; fichas revalidadas eram de outros
+  modelos, com aço/safira ou preço incompatível. Consulta somente leitura ao índice
+  não encontrou NY0120-01EE. Isso não prova indisponibilidade na Tray: falta
+  comparar consulta por referência sem filtros, busca por tokens e preço promocional.
+  O OpenAPI atual confirma GET `/internal/products/search` com tokens/brand/filtros.
+- Dez turnos Citizen preservados em `docs/audits/2026-09-23/catalog-citizen-evidence.json`.
+  Divergências do juiz estão em `catalog-manual-review.json`: não repetir a marca
+  na frase não é perdê-la do estado; fallback sem encontrar produto não é sucesso.
+- Encerradas chamadas pagas com reserva total US$ 19,68371475, abaixo de US$ 20.
+  Não é o valor faturado. Campanhas anteriores não devem ser retomadas sem
+  recontar a reserva global; não há testes automáticos agendados.
+- Gate de liberação ampla continua NÃO aprovado: resolver e repetir identificação
+  Citizen, além de homologar o canal real e checkout/pagamento. Os casos Seiko
+  aprovados não generalizam para todas as marcas ou para todas as repetições.
 
 ## Documentação mantida separadamente
 

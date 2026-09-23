@@ -349,7 +349,19 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
         values = {v for p in matches for v in _facet_values(p, facet)}
         if len(values) > 1:
             choices.append((len(values), -priority, slot, sorted(values)))
-    if len(matches) == 1 or not choices:
+    # Missing facets in a bounded sample do not establish the customer's use
+    # or model intent. After a bare budget answer ask the published model question.
+    prefs = interpretation.preferences
+    needs_model = (previous_slot == 'budget' and not choices
+        and 'model_intent' not in asked and 'model_intent' in questions
+        and len(asked) < contextual['maxQuestions']
+        and not interpretation.subject.model
+        and not any((prefs.color, prefs.style, prefs.occasion, prefs.material,
+                     prefs.mechanism, prefs.crystal))
+        and not [a for a in prefs.attributes if not str(a).startswith('qual:')])
+    if needs_model:
+        choices.append((0, 0, 'model_intent', []))
+    if (len(matches) == 1 and not needs_model) or not choices:
         interpretation._adaptive_ready = True
         return None
     _, _, slot, options = max(choices)

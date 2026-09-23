@@ -58,6 +58,30 @@ def trim_evidence(value):
 
 def compact_catalog_evidence(facts, tools):
     """Deduplicate repeated sheets without losing conflicting versions or media."""
+    focused = {str(p.get('id')) for p in facts.get('products', []) if isinstance(p, dict)}
+    for call in tools:
+        if call.get('tool') == 'get_product':
+            focused.add(str((call.get('result') or {}).get('id')))
+    # Broad discovery can return hundreds of unrelated rows. Keep complete
+    # selected/detail sheets, but only auditable summaries of other candidates.
+    summarized = []
+    candidate_fields = {'id','name','reference','ean','brand','model','price','current_price',
+                        'stock','available','available_in_store','availability','properties',
+                        'case_size','dial_color','strap_material','mechanism','crystal','url','product_url'}
+    for call in tools:
+        result = call.get('result') or {}
+        if call.get('tool') == 'search_products' and isinstance(result.get('products'), list):
+            products = []
+            for p in result['products']:
+                if not isinstance(p, dict) or str(p.get('id')) in focused:
+                    products.append(p)
+                    continue
+                products.append({**{k:v for k,v in p.items() if k in candidate_fields},
+                    'description_excerpt': str(p.get('description') or '')[:800],
+                    'evidence_scope': 'candidate_summary_not_full_sheet'})
+            call = {**call, 'result': {**result, 'products': products}}
+        summarized.append(call)
+    tools = summarized
     evidence = {}
     fingerprints = {}
     def visit(value):
