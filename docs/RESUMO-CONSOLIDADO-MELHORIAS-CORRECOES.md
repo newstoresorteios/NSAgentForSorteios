@@ -210,12 +210,49 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
   bloqueios de orçamento ficam explícitos e interrompem a campanha. A reserva usa
   um limite superior conservador do payload textual efetivo, sem liberar reservas
   em caso de timeout. A CLI pode reutilizar o login Vercel sem exportar credenciais.
-- Validação local: 2.389 testes aprovados, 7 pulados; secret scan e contrato de
-  configuração aprovados. Reexecução real confirmou os três turnos de qualificação
-  (modelo, orçamento, uso). O caminho completo e handoff ainda estavam em execução
-  no momento deste registro; não considerar esta contagem certificação de produção.
+- Presente não é objeção de aprovação: a substring `e presente` capturava
+  `de presente`; destinatário sozinho também não autoriza pular a qualificação.
+- Continuidade normaliza `relógio`/`relógios`; uma resposta curta à pergunta de
+  orçamento recupera a marca da consulta anterior quando o intérprete a omite.
+- Validação local: 2.400 testes aprovados, 7 pulados; secret scan e contrato de
+  configuração aprovados. Houve um caminho feliz real de cinco turnos, incluindo
+  link correto, mas repetições revelaram novas falhas. Não é certificação de produção.
 - A avaliação real permanece requisito para liberação ampla. Testes isolados não
   certificam entrega WhatsApp, checkout nem pagamento real.
+
+### Sondagem real de catálogo — Seiko SRPL13K1
+
+- Matriz reproduzível: `evals/catalog-srpl13k1-scenarios.json`.
+- Evidência local: `docs/audits/2026-09-23/catalog-srpl13k1-evidence.json`;
+  11 turnos reais, incluindo falhas, repetição corrigida e bloqueios de orçamento.
+  OpenAI e catálogo reais, em deploy candidato isolado; sem envio a clientes ou pedidos.
+- Identificação progressiva: apenas Seiko → pergunta orçamento → R$ 6.500.
+  A primeira execução perdeu a marca e ofereceu Citizen. A repetição após proteção
+  local ofereceu Seiko, mas não fez nova pergunta. Ao acrescentar Samurai, mostrador
+  preto e pulseira de aço, encontrou SRPL13K1 com preço e link corretos, sem receber
+  antecipadamente essa referência. Acerto pontual não demonstra consistência.
+- Falha P1: perguntas factuais viram filtros obrigatórios. `Tem safira?` não recebe
+  a correção Hardlex; `tem 38 mm?` busca Baby Alpinist em vez de explicar o Samurai.
+  A primeira resposta não confirma safira: a falha é não corrigir a premissa.
+- Falha P1: consulta completa por atributos e confirmação posterior da ficha
+  retornam fallback genérico apesar de o detalhe correto estar nas ferramentas.
+  Investigar ordenação dos filtros, preservação de identidade e confirmação técnica.
+- Falha P1: teto de R$ 5.000 inclusive Pix dispara oferta de atendimento humano
+  em vez de informar que R$ 5.184,99 supera o limite. Não houve desconto inventado.
+- Índice local retornou zero para a referência conhecida em várias rodadas;
+  o adaptador encontrou o produto 11989. Investigar recuperação exata no cache miss.
+- Avaliador: 253 fichas de candidatos inflaram uma entrada além do limite reservado;
+  notas automáticas de orçamento corrigido e tamanho ficaram inconclusivas.
+  Necessária compactação de candidatos preservando evidência detalhada do produto.
+- Cor azul e pronta entrega: campanha interrompeu chamadas por orçamento, portanto
+  inconclusivos. A resposta visível de prazo informou corretamente 30 dias úteis,
+  mas não certifica a execução completa. Não tratar bloqueio de custo como falha
+  funcional do agente nem como aprovação.
+- Teto autorizado US$ 12; reservas acumuladas US$ 11,985351 ao encerrar esta rodada.
+  Reserva conservadora não é fatura/gasto efetivo. Novas chamadas exigem ampliação.
+- Bloqueios para liberação ampla: identidade exata, resposta factual versus filtro,
+  recuperação de confirmação técnica e repetição completa sem bloqueio de avaliação.
+  Esses pontos permanecem abertos; não foram corrigidos só por registrar a sondagem.
 
 ## Documentação mantida separadamente
 

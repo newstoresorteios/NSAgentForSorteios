@@ -31,6 +31,17 @@ async def run(i,products,history=None,text='quero um Hamilton',tool=None):
 def turn(result):
     return {'role':'assistant','content':result.reply_text,'metadata':result.response_metadata}
 
+
+@pytest.mark.asyncio
+async def test_bare_budget_followup_recovers_brand_from_actual_discovery_query(adaptive):
+    first,_=await run(interpretation(),[product(1,38,price=2000),product(2,38,price=5000)])
+    assert first.response_metadata['discovery_question']['slot']=='budget'
+    i=interpretation(subject={'product_type':'relógio'}, preferences={'budget_max':6500},
+                     references_previous_context=False, ready_for_retrieval=True)
+    _,calls=await run(i,[product(1,38),product(2,42)],[turn(first)],text='Até R$ 6.500.')
+    assert i.subject.brand=='Hamilton'
+    assert all(args.get('brand')=='Hamilton' for _,args in calls)
+
 @pytest.mark.asyncio
 async def test_asks_difference_observed_in_catalog(adaptive):
     result,calls=await run(interpretation(),[product(1,38),product(2,42)])
@@ -70,9 +81,18 @@ async def test_generic_unknown_answer_advances_contextual_question(adaptive):
 
 
 @pytest.mark.asyncio
+async def test_gift_without_product_preferences_asks_before_catalog(adaptive):
+    i=interpretation(goal='recommend',subject={'product_type':'relógio'},ready_for_retrieval=True,
+                     preferences={'occasion':'presente','recipient':'presente','attributes':['não entende do assunto']})
+    result,calls=await run(i,[],text='Quero dar um relógio de presente, mas não entendo nada.')
+    assert not calls and result.response_metadata['discovery_question']['slot']=='model_intent'
+
+
+@pytest.mark.asyncio
 async def test_budget_answer_keeps_ongoing_qualification_before_recommendation(adaptive):
     first,_=await run(interpretation(subject={'product_type':'relógio'}),[],text='quero um relógio')
     second,_=await run(interpretation(subject={'product_type':'relógio'}),[],[turn(first)],text='não tenho modelo')
+    second.response_metadata['discovery_question']['topic']='relógios'
     i=interpretation(goal='recommend',subject={'product_type':'relógio'},
                      preferences={'budget_max':2500,'explicit_no_preferences':['brand','color','style','material','occasion','recipient','attributes']},
                      ready_for_retrieval=True,references_previous_context=False)

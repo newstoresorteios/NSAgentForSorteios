@@ -176,21 +176,10 @@ def detect_objection_kind(text: str | None) -> ObjectionKind | None:
     ):
         return "comparison"
 
-    if any(
-        token in folded
-        for token in (
-            "preciso falar com",
-            "vou conversar com",
-            "minha esposa",
-            "meu marido",
-            "meu socio",
-            "meu sócio",
-            "e presente",
-            "é presente",
-            "deixa eu ver com",
-            "depois eu confirmo",
-        )
-    ):
+    # A gift/recipient is a discovery preference, not an approval objection.
+    # Substring "e presente" used to match "de presente" and steal this route.
+    if re.search(r"\b(?:preciso falar com|vou conversar com|vou confirmar com|"
+                 r"deixa eu ver com|depois eu confirmo)\b", folded):
         return "approval"
 
     return None

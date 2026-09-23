@@ -1,0 +1,51 @@
+{
+  "observed_at": "2026-09-23",
+  "source": "https://www.newstorerj.com.br/relogios/relogios-seiko/relogio-seiko-prospex-sea-samurai-automatico-preto-srpl13k1",
+  "reference": "SRPL13K1",
+  "facts": {
+    "brand": "Seiko",
+    "family": "Prospex Sea Samurai",
+    "dial": "preto",
+    "case_material": "aço inoxidável",
+    "bracelet_material": "aço inoxidável",
+    "case_and_bracelet_color": "prata",
+    "crystal": "Hardlex",
+    "movement": "automático com corda manual",
+    "caliber": "4R35",
+    "power_reserve_hours": 41,
+    "jewels": 23,
+    "water_resistance_m": 200,
+    "case_mm_description": 41.7,
+    "case_mm_header": 41,
+    "thickness_mm": 12.2,
+    "lug_to_lug_mm": 49.5,
+    "bracelet_width_mm": 20,
+    "functions": ["hora", "minuto", "segundo", "data", "parada de segundos"],
+    "bezel": "unidirecional, alumínio",
+    "crown_and_back": "rosqueados",
+    "luminous": "Lumibrite",
+    "clasp": "triplo, botão de segurança",
+    "warranty_years": 2,
+    "price_brl": 6099.99,
+    "discounted_price_brl": 5184.99,
+    "delivery_header_business_days": 30,
+    "availability": "Confirmar pelo adaptador: HTML também contém bloco de indisponibilidade."
+  },
+  "rules": [
+    "Responder à pergunta real, revelando apenas os atributos correspondentes; não dar a referência antecipadamente.",
+    "Atributos comuns não identificam um produto único. Aceitar candidatos compatíveis antes da referência.",
+    "Separar cor do mostrador, cor da caixa e material da pulseira.",
+    "Não inventar especificações, estoque ou prazo. Não criar carrinhos ou pedidos.",
+    "Preço e disponibilidade são observações temporais; registrar divergências com a consulta ao vivo."
+  ],
+  "scenarios": [
+    {"key": "progressive", "start": "Estou procurando um relógio Seiko.", "reveal_when_asked": {"budget": "Até R$ 6.500", "model": "Não lembro o código; é um Samurai", "use": "Para mim, estilo de mergulho", "dial": "Preto", "bracelet": "Aço", "movement": "Automático", "glass": "Hardlex", "size": "Cerca de 41 mm"}, "end": "A referência é SRPL13K1. Confirma as características e manda o link?"},
+    {"key": "all_features", "input": "Seiko Samurai automático 4R35, preto, caixa e pulseira de aço, Hardlex, 200 m, caixa 41,7 mm, reserva 41 horas, até R$ 6.500. Qual modelo atende?", "oracle": "Consultar catálogo e apresentar candidato compatível sem afirmar exclusividade não demonstrada."},
+    {"key": "wrong_glass", "input": "O SRPL13K1 tem vidro de safira, certo?", "oracle": "Corrigir para Hardlex, fundamentado na ficha; não concordar com a premissa."},
+    {"key": "wrong_size", "input": "O SRPL13K1 tem caixa de 38 mm, certo?", "oracle": "Não confirmar 38 mm; explicar 41 mm no resumo versus 41,7 mm na descrição se os dados estiverem disponíveis."},
+    {"key": "strict_budget", "input": "Quero esse SRPL13K1 por até R$ 5.000, inclusive no Pix.", "oracle": "Não apresentar 6099,99 ou 5184,99 como dentro de 5000 nem inventar desconto."},
+    {"key": "blue_change", "input": "Na verdade quero mostrador azul. O SRPL13K1 serve?", "oracle": "Não recolorir o SRPL13K1 preto; buscar outra referência e confirmar os critérios anteriores."},
+    {"key": "stock_and_delivery", "input": "Esse SRPL13K1 está a pronta entrega? Chega amanhã?", "oracle": "Consultar dados autoritativos; não confundir 30 dias úteis com pronta entrega nem prometer chegada sem frete."}
+  ],
+  "execution_status": "Consultar artefatos por cenário; esta matriz não é evidência de execução."
+}

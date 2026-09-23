@@ -34,7 +34,8 @@ class RegressionScenario(BaseModel):
     critical: bool = False
     source_response_ids: list[int] = Field(default_factory=list)
     channel: Literal['whatsapp', 'instagram', 'web'] = 'whatsapp'
-    history: list[dict[str, str]] = Field(default_factory=list, max_length=80)
+    # Replayed assistant messages carry discovery metadata as well as text.
+    history: list[dict[str, Any]] = Field(default_factory=list, max_length=80)
     initial_state: dict[str, Any] = Field(default_factory=dict)
     recorded_at: str | None = None
     steps: list[RegressionStep] = Field(min_length=1, max_length=12)

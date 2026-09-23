@@ -11,7 +11,7 @@ from app.models import AgentResult, ProductPreferences
 from app.catalog.retrieval.text import _fold
 from app.catalog.retrieval.hard_filter import hard_filter_products
 from app.catalog.specs.catalog_specs import extract_case_size_mm, interpretation_case_size_range
-from app.sales.contextual_discovery import configuration as contextual_configuration
+from app.sales.contextual_discovery import configuration as contextual_configuration, topic_key
 
 
 def configuration():
@@ -52,7 +52,7 @@ def _previous(recent_turns, topic):
         if not isinstance(marker, dict):
             break
         snapshot = marker.get("adaptive") or {}
-        if snapshot and marker.get("topic") == topic:
+        if snapshot and topic_key(marker.get("topic")) == topic:
             return deepcopy(snapshot), marker.get("slot")
         # A completed response or changed topic starts another discovery.
         break
@@ -240,30 +240,39 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
         return None
     from app.memory.history_window import turns_for_conversation
     recent_turns = turns_for_conversation(recent_turns, message.conversation_id)
-    topic = _fold(interpretation.subject.brand or interpretation.subject.product_type)
     last_assistant = next((t for t in reversed(recent_turns or []) if t.get("role") == "assistant"), {})
     metadata = last_assistant.get("metadata") or {}
     previous_question = metadata.get("discovery_question") if isinstance(metadata, dict) else None
     previous_question = previous_question if isinstance(previous_question, dict) else {}
+    # A bare answer to our budget question changes price, not the requested brand.
+    # Recover it from the actual preceding query, never from a offered product.
+    from app.catalog.specs.preference_normalize import extract_bare_budget_amount
+    snapshot_query = (previous_question.get("adaptive") or {}).get("query") or {}
+    budget_answer = re.sub(r"^(?:ate|no maximo|por ate)\s+", "", _fold(message.text)).rstrip(".! ")
+    if (interpretation.domain == "commerce" and not interpretation.domain_change_explicit
+            and previous_question.get("slot") == "budget"
+            and extract_bare_budget_amount(budget_answer) is not None
+            and not interpretation.subject.brand and snapshot_query.get("brand")
+            and "brand" not in interpretation.preferences.explicit_no_preferences):
+        interpretation.subject.brand = snapshot_query["brand"]
+        interpretation.references_previous_context = True
+    topic = topic_key(interpretation.subject.brand or interpretation.subject.product_type)
     if (previous_question and not previous_question.get("adaptive")
-            and _fold(previous_question.get("topic")) == topic
+            and topic_key(previous_question.get("topic")) == topic
             and not interpretation.domain_change_explicit):
         # A budget answer completes one slot, not the entire ongoing interview.
         question = await _ask_contextual_fallback(
             interpretation, state, message, recent_turns, generate_reply, used_tray=False)
         if question is not None or interpretation._adaptive_ready:
             return question
-    if not _eligible(interpretation, state, message.text):
-        prefs = interpretation.preferences
-        # An unspecified browse needs a question, not a whole-store lookup.
-        # Existing budget/category, exact-product and purchase routes are preserved.
-        if (interpretation.domain == "commerce" and interpretation.goal == "discover"
+    prefs = interpretation.preferences
+    # Recipient/occasion alone do not provide enough information for an offer.
+    if (interpretation.domain == "commerce" and interpretation.goal in {"discover", "recommend"}
                 and not interpretation.subject.brand and prefs.budget_max is None
-                and not any((prefs.color, prefs.style, prefs.occasion, prefs.material,
-                             prefs.mechanism, prefs.crystal,
-                             [a for a in prefs.attributes if not str(a).startswith("qual:")]))):
-            return await _ask_contextual_fallback(
-                interpretation, state, message, recent_turns, generate_reply, used_tray=False)
+                and not any((prefs.mechanism, prefs.crystal))):
+        return await _ask_contextual_fallback(
+            interpretation, state, message, recent_turns, generate_reply, used_tray=False)
+    if not _eligible(interpretation, state, message.text):
         return None
     snapshot, previous_slot = _previous(recent_turns, topic)
     if interpretation.domain_change_explicit or not interpretation.references_previous_context:

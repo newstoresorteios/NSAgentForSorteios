@@ -8,6 +8,12 @@ from typing import Any
 from app.configuration.runtime import current_bundle
 
 
+def topic_key(value):
+    from app.catalog.retrieval.text import _fold
+    folded = _fold(value)
+    return {"relogios": "relogio", "watches": "watch"}.get(folded, folded)
+
+
 def configuration() -> dict[str, Any]:
     values = current_bundle().get("values") or {}
     if values.get("contextualDiscoveryEnabled") is not True:
@@ -81,7 +87,7 @@ def apply_contextual_discovery(interpretation, state, recent_turns, message_text
     if not (interpretation.subject.brand or interpretation.subject.product_type):
         return
 
-    topic = (interpretation.subject.brand or interpretation.subject.product_type or "").casefold()
+    topic = topic_key(interpretation.subject.brand or interpretation.subject.product_type)
     asked = set()
     has_markers = False
     # Stop at a completed catalog answer; a later purchase starts fresh.
@@ -99,7 +105,7 @@ def apply_contextual_discovery(interpretation, state, recent_turns, message_text
             marker = {}
         if marker:
             has_markers = True
-            if marker.get("topic") != topic:
+            if topic_key(marker.get("topic")) != topic:
                 break
             asked.add(marker.get("slot"))
         elif metadata.get("safety_reason") != "commerce_clarification":
@@ -107,7 +113,10 @@ def apply_contextual_discovery(interpretation, state, recent_turns, message_text
 
     known = dict(state.get("known_preferences") or {})
     # Customer identity is not a product preference or a reason to skip discovery.
-    if not any(not str(a).startswith("qual:") for a in interpretation.preferences.attributes):
+    from app.catalog.retrieval.text import _fold
+    recipient_attributes = {_fold(interpretation.preferences.recipient), "self", "presente", "gift"}
+    if not any(not str(a).startswith("qual:") and _fold(a) not in recipient_attributes
+               for a in interpretation.preferences.attributes):
         known.pop("attributes", None)
     if any(str(a).startswith("required_strap_material:") for a in interpretation.preferences.attributes):
         known["strap"] = True
