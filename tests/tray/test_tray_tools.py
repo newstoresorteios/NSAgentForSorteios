@@ -640,11 +640,49 @@ async def test_token_search_uses_adaptor_endpoint_when_available():
         client,
         tokens=["sealander", "rosa", "automatico"],
         brand="Christopher Ward",
+        category_id="10",
+        current_price_range="0,2500",
+        property_name="Cristal",
+        property_value="Safira",
         limit=20,
     )
 
     assert [item["id"] for item in result["products"]] == ["rosa"]
     assert client.calls[0]["tokens"] == ["sealander", "rosa", "automatico"]
+    assert client.calls[0]["filters"] == {
+        "category_id": "10",
+        "current_price_range": "0,2500",
+        "property_name": "Cristal",
+        "property_value": "Safira",
+    }
+
+
+@pytest.mark.asyncio
+async def test_token_search_preserves_explicit_product_characteristics():
+    class TokenTray:
+        async def search_products_by_tokens(self, **_kwargs):
+            return {
+                "products": [{
+                    "id": "1",
+                    "name": "Relógio Clássico",
+                    "properties": [{"name": "Cristal", "value": "Safira"}],
+                    "mechanism": "automatic",
+                    "case_size": "38 mm",
+                    "water_resistance_m": 100,
+                    "attribute_sources": {"mechanism": "property:Movimento"},
+                }]
+            }
+
+    result = await search_products(
+        TokenTray(),
+        tokens=["safira", "automatic"],
+        limit=5,
+    )
+    product = result["products"][0]
+    assert product["mechanism"] == "automatic"
+    assert product["case_size"] == "38 mm"
+    assert product["water_resistance_m"] == 100
+    assert product["attribute_sources"] == {"mechanism": "property:Movimento"}
 
 
 @pytest.mark.asyncio

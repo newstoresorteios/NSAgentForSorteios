@@ -13,7 +13,7 @@ from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 
 
 TOOL_SCHEMAS = [
-    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "tokens": {"type": "array", "items": {"type": "string"}, "description": "Catalog search tokens"}, "match_mode": {"type": "string", "enum": ["all", "any"], "description": "all for exact filtering; any for ranked similar items"}, "exclude_product_ids": {"type": "array", "items": {"type": "string"}}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "current_price_range": {"type": "string", "description": "Tray current_price_range, e.g. 0,5000"}, "property_name": {"type": "string"}, "property_value": {"type": "string"}, "model": {"type": "string"}, "brand_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "search_products", "description": "Pesquisar produtos reais na loja.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "name": {"type": "string"}, "reference": {"type": "string"}, "ean": {"type": "string"}, "brand": {"type": "string"}, "tokens": {"type": "array", "items": {"type": "string"}, "description": "Catalog search tokens"}, "match_mode": {"type": "string", "enum": ["all", "any"], "description": "all for exact filtering; any for ranked similar items"}, "exclude_product_ids": {"type": "array", "items": {"type": "string"}}, "category_id": {"type": "string"}, "available": {"type": "boolean"}, "available_in_store": {"type": "boolean"}, "current_price_range": {"type": "string", "description": "Tray current_price_range, e.g. 0,5000"}, "property_name": {"type": "string"}, "property_id": {"type": "string"}, "property_value": {"type": "string"}, "property_value_id": {"type": "string"}, "model": {"type": "string"}, "brand_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}, "page": {"type": "integer", "minimum": 1}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product", "description": "Consultar detalhes atuais de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_product_link", "description": "Obter o link oficial de um produto real já identificado.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_inventory", "description": "Confirmar estoque e regras de disponibilidade de um produto.", "parameters": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"], "additionalProperties": False}}},
@@ -31,7 +31,7 @@ TOOL_REGISTRY = {
     "raffle": ("rules", "balance", "coupon_code", "raffle_history", "current_raffle", "simulation"),
 }
 
-_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_name", "category_id", "related_categories", "attributes", "properties", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "has_variation", "order_days_availability", "lead_time", "lead_time_days", "availability_days", "delivery_days", "immediate_delivery", "ready_to_ship", "ProductSettings", "payment_option", "payment_option_details", "url", "primary_image_url", "primary_image", "image_url", "image", "images")
+_PRODUCT_FIELDS = ("id", "name", "reference", "ean", "brand", "model", "description", "category", "category_name", "category_id", "related_categories", "attributes", "properties", "attribute_sources", "mechanism", "case_size", "water_resistance_m", "water_resistance", "gender", "color", "style", "material", "price", "promotional_price", "current_price", "stock", "available", "availability", "available_in_store", "available_for_purchase", "upon_request", "when_stock_runs_out", "has_variation", "order_days_availability", "lead_time", "lead_time_days", "availability_days", "delivery_days", "immediate_delivery", "ready_to_ship", "ProductSettings", "payment_option", "payment_option_details", "url", "primary_image_url", "primary_image", "image_url", "image", "images")
 _CATEGORY_FIELDS = ("id", "name", "parent_id", "parent", "slug", "path")
 _VARIANT_FIELDS = ("id", "variant_id", "product_id", "name", "value", "color", "size", "version", "choices", "properties", "attributes", "options", "option", "variation", "Variation", "reference", "sku", "Sku", "price", "promotional_price", "current_price", "stock", "available", "available_in_store", "availability", "VariationSettings", "primary_image_url", "primary_image", "image_url", "image", "images")
 _CUSTOMER_FIELDS = ("id", "name", "email", "city", "state", "last_purchase", "total_orders")
@@ -297,7 +297,20 @@ def _product_matches_search_tokens(
     text = _fold_catalog_text(
         " ".join(
             str(product.get(field) or "")
-            for field in ("name", "brand", "model", "reference", "description")
+            for field in (
+                "name",
+                "brand",
+                "model",
+                "reference",
+                "description",
+                "properties",
+                "mechanism",
+                "case_size",
+                "water_resistance_m",
+                "water_resistance",
+                "gender",
+                "material",
+            )
         )
     )
     return all(token in text for token in tokens)
@@ -309,6 +322,7 @@ async def _token_search_polyfill(
     tokens: list[str],
     brand: str | None,
     limit: int,
+    catalog_filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Local AND/LIKE filter when adaptor /search is unavailable."""
     matched: list[dict[str, Any]] = []
@@ -345,8 +359,11 @@ async def _token_search_polyfill(
             attempts.append({"name": hue, "brand": brand, "page": 1})
             attempts.append({"name": hue, "brand": brand, "page": 2})
             attempts.append({"name": hue, "brand": brand, "page": 3})
-    for filters in attempts:
-        payload = await client.search_products(**filters, limit=limit)
+    for attempt in attempts:
+        payload = await client.search_products(
+            **{**(catalog_filters or {}), **attempt},
+            limit=limit,
+        )
         _absorb(_items(payload))
         if len(matched) >= limit:
             return {"products": matched[:limit]}
@@ -363,6 +380,7 @@ async def search_products_by_tokens(
     page: int = 1,
     match_mode: str = "all",
     exclude_product_ids: list[str] | None = None,
+    catalog_filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     safe_limit = min(max(int(limit), 1), 50)
     if not tokens:
@@ -375,6 +393,7 @@ async def search_products_by_tokens(
             page=page,
             match_mode=match_mode,
             exclude_product_ids=exclude_product_ids,
+            filters=catalog_filters,
         )
         result = _reduce_products(payload, safe_limit)
         if match_mode == "all":
@@ -406,6 +425,7 @@ async def search_products_by_tokens(
             tokens=tokens,
             brand=brand,
             limit=safe_limit,
+            catalog_filters=catalog_filters,
         )
         print("[tray.search.tokens]", {
             "source": "polyfill",
@@ -451,6 +471,21 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
     exclude_product_ids = args.pop("exclude_product_ids", None)
     page = int(args.get("page") or 1)
     if tokens:
+        catalog_filters = {
+            key: args.get(key)
+            for key in (
+                "category_id",
+                "available",
+                "available_in_store",
+                "current_price_range",
+                "property_name",
+                "property_id",
+                "property_value",
+                "property_value_id",
+                "model",
+            )
+            if args.get(key) is not None
+        }
         limit = min(max(int(args.get("limit", 20)), 1), 50)
         return await search_products_by_tokens(
             client,
@@ -464,6 +499,7 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
                 if isinstance(exclude_product_ids, list)
                 else None
             ),
+            catalog_filters=catalog_filters,
         )
     limit = min(max(int(args.get("limit", 5)), 1), 50)
 
@@ -482,7 +518,9 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
         "page",
         "current_price_range",
         "property_name",
+        "property_id",
         "property_value",
+        "property_value_id",
         "model",
     )
     explicit = {key: args.get(key) for key in supported if args.get(key) is not None}

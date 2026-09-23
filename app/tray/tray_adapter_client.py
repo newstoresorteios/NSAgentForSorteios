@@ -516,7 +516,9 @@ class TrayAdapterClient:
                               page: int | None = None,
                               current_price_range: str | None = None,
                               property_name: str | None = None,
+                              property_id: str | int | None = None,
                               property_value: str | None = None,
+                              property_value_id: str | int | None = None,
                               model: str | None = None,
                               price: Any = None,
                               price_range: str | None = None) -> Any:
@@ -528,7 +530,9 @@ class TrayAdapterClient:
             "promotion": promotion, "limit": min(max(limit, 1), 50), "page": page,
             "current_price_range": current_price_range,
             "property_name": property_name,
+            "property_id": property_id,
             "property_value": property_value,
+            "property_value_id": property_value_id,
             "model": model,
             "price": price,
             "price_range": price_range,
@@ -543,6 +547,7 @@ class TrayAdapterClient:
         page: int | None = 1,
         match_mode: str = "all",
         exclude_product_ids: list[str] | tuple[str, ...] | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> Any:
         """Token AND search (adaptor: ILIKE %token% for each significant token).
 
@@ -554,6 +559,22 @@ class TrayAdapterClient:
             for token in tokens
             if str(token or "").strip()
         ]
+        allowed_filters = {
+            "category_id",
+            "available",
+            "available_in_store",
+            "current_price_range",
+            "property_name",
+            "property_id",
+            "property_value",
+            "property_value_id",
+            "model",
+        }
+        catalog_filters = {
+            key: value
+            for key, value in (filters or {}).items()
+            if key in allowed_filters and value is not None
+        }
         return await self._request(
             "GET",
             "/internal/products/search",
@@ -568,6 +589,7 @@ class TrayAdapterClient:
                     for item in (exclude_product_ids or [])
                     if str(item).strip()
                 ) or None,
+                **catalog_filters,
             },
         )
 

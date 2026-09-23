@@ -125,9 +125,9 @@ Replay offline (agente real + fakes; score não copia `expected`):
 pytest -m offline_eval
 ```
 
-Detalhes: `docs/agent_generative_migration_etapa11.md`.
+Detalhes do replay e do estado consolidado: `docs/RESUMO-CONSOLIDADO-MELHORIAS-CORRECOES.md`.
 
-Canary progressivo / rollback (Etapa 12): `AGENT_ROLLOUT_PROFILE=canary_5|…|full` ou `AGENT_EMERGENCY_ROLLBACK=true`. Status: `GET /api/health` → `rollout` ou `GET /api/admin/rollout`. Doc: `docs/agent_generative_migration_etapa12.md`.
+Canary progressivo / rollback: `AGENT_ROLLOUT_PROFILE=canary_5|…|full` ou `AGENT_EMERGENCY_ROLLBACK=true`. Status: `GET /api/health` → `rollout` ou `GET /api/admin/rollout`. Critérios e histórico: `docs/RESUMO-CONSOLIDADO-MELHORIAS-CORRECOES.md`.
 
 ## Segurança obrigatória
 

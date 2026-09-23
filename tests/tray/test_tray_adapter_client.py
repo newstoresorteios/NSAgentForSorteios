@@ -44,6 +44,28 @@ async def test_product_search_sends_bearer_params_and_limit():
 
 
 @pytest.mark.asyncio
+async def test_token_search_forwards_only_supported_hard_catalog_filters():
+    fake = FakeClient(FakeResponse(payload={"products": []}))
+    client = TrayAdapterClient("https://tray.example/", "secret", fake)
+    await client.search_products_by_tokens(
+        tokens=["safira", "automatico"],
+        filters={
+            "category_id": "10",
+            "current_price_range": "0,2500",
+            "property_name": "Cristal",
+            "property_value": "Safira",
+            "unsupported": "drop-me",
+        },
+    )
+    params = fake.calls[0][1]["params"]
+    assert params["category_id"] == "10"
+    assert params["current_price_range"] == "0,2500"
+    assert params["property_name"] == "Cristal"
+    assert params["property_value"] == "Safira"
+    assert "unsupported" not in params
+
+
+@pytest.mark.asyncio
 async def test_tray_request_propagates_trace_and_records_render_request_id():
     from app.ops.runtime_context import reset_current_turn, set_current_turn
     from app.ops.turn_runtime import TurnRuntimeContext
