@@ -28,6 +28,7 @@ class SmokeConfig:
     chatbo_base_url: str
     supabase_url: str
     timeout_s: float = DEFAULT_TIMEOUT_S
+    admin_api_token: str = ""
 
 
 @dataclass(frozen=True)
@@ -167,9 +168,47 @@ def check_env_alignment(cfg: SmokeConfig) -> CheckResult:
     token = (cfg.tray_adapter_token or "").strip()
     parts = [
         f"TRAY_ADAPTER_URL={tray_url}" if tray_url else "TRAY_ADAPTER_URL ausente",
-        f"TRAY_ADAPTER_TOKEN={mask_secret(token)}" if token else "TRAY_ADAPTER_TOKEN ausente",
+        "TRAY_ADAPTER_TOKEN configurado" if token else "TRAY_ADAPTER_TOKEN ausente",
     ]
     return CheckResult("env_alignment", "Variáveis TRAY (local)", False, bool(tray_url and token), "; ".join(parts))
+
+
+def check_authenticated_catalog(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
+    """Exercise a read-only contract without exposing products or secrets."""
+    name, label = "tray_authenticated_catalog", "TRAY catálogo autenticado"
+    if not cfg.tray_adapter_url or not cfg.tray_adapter_token:
+        return CheckResult(name, label, True, False, "URL/token interno ausente")
+    try:
+        response = client.get(
+            normalize_base(cfg.tray_adapter_url) + "/internal/products",
+            params={"limit": 1},
+            headers={"Authorization": "Bearer " + cfg.tray_adapter_token},
+            timeout=cfg.timeout_s, follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        return CheckResult(name, label, True, False, type(exc).__name__)
+    body = _json_body(response)
+    ok = response.status_code == 200 and body.get("success") is True and isinstance(body.get("products"), list)
+    return CheckResult(name, label, True, ok, f"HTTP {response.status_code}; contrato válido={ok}")
+
+
+def check_nsagent_tray_integration(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
+    name, label = "nsagent_tray_integration", "NSAgent/TRAY autenticado"
+    if not cfg.nsagent_base_url or not cfg.admin_api_token:
+        return CheckResult(name, label, True, False, "URL/ADMIN_API_TOKEN ausente")
+    try:
+        response = client.get(
+            normalize_base(cfg.nsagent_base_url) + "/api/integrations/tray/test",
+            headers={"Authorization": "Bearer " + cfg.admin_api_token},
+            timeout=cfg.timeout_s, follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        return CheckResult(name, label, True, False, type(exc).__name__)
+    body = _json_body(response)
+    ok = response.status_code == 200 and all(
+        body.get(key) is True for key in ("success", "tray_adapter_connected", "products_accessible")
+    )
+    return CheckResult(name, label, True, ok, f"HTTP {response.status_code}; integração válida={ok}")
 
 
 def check_supabase_ping(client: httpx.Client, cfg: SmokeConfig) -> CheckResult:
@@ -196,6 +235,8 @@ def run_smoke_tests(cfg: SmokeConfig, *, client: httpx.Client | None = None) -> 
             check_tray_health_basic(http, cfg),
             check_chatbo_health(http, cfg),
             check_env_alignment(cfg),
+            check_authenticated_catalog(http, cfg),
+            check_nsagent_tray_integration(http, cfg),
             check_supabase_ping(http, cfg),
         ]
     finally:
@@ -215,6 +256,7 @@ def parse_config_from_env() -> SmokeConfig:
         chatbo_base_url=os.getenv("CHATBO_BASE_URL", ""),
         supabase_url=os.getenv("SUPABASE_URL", ""),
         timeout_s=timeout_s,
+        admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
     )
 
 

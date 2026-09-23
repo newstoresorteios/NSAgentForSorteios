@@ -48,3 +48,34 @@ async def test_failed_worker_releases_conversation_for_retry(monkeypatch):
     with pytest.raises(RuntimeError):
         await worker.process_inbox_row(row(1))
     assert (await asyncio.wait_for(worker.process_inbox_row(row(2)), 1))["ok"]
+
+
+@pytest.mark.asyncio
+async def test_burst_of_100_turns_serializes_per_conversation_and_recovers(monkeypatch):
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace(database_url=""))
+    active, peaks, completed = {}, {}, []
+
+    async def process(item):
+        conversation = item["payload_json"]["normalized"]["conversation_id"]
+        active[conversation] = active.get(conversation, 0) + 1
+        peaks[conversation] = max(peaks.get(conversation, 0), active[conversation])
+        try:
+            await asyncio.sleep(0.001)
+            if item["id"] % 17 == 0:
+                raise TimeoutError("injected provider timeout")
+            completed.append(item["id"])
+            return {"ok": True}
+        finally:
+            active[conversation] -= 1
+
+    monkeypatch.setattr(worker, "_process_inbox_row_locked", process)
+    rows = [row(i) for i in range(100)]
+    for item in rows:
+        item["payload_json"]["normalized"]["conversation_id"] = f"load-test-{item['id'] % 10}"
+    results = await asyncio.wait_for(
+        asyncio.gather(*(worker.process_inbox_row(item) for item in rows), return_exceptions=True), 10
+    )
+    assert len(peaks) == 10 and set(peaks.values()) == {1}
+    assert len(completed) == len(set(completed)) == 94
+    assert sum(isinstance(result, TimeoutError) for result in results) == 6
+    assert all(count == 0 for count in active.values())

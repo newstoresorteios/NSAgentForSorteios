@@ -116,6 +116,74 @@ A API administrativa da Tray documenta filtros `property_name`, `property_id`, `
 
 ## Limites e pendências reais
 
+### Execução dos quatro gates em 23/09/2026
+
+Esta seção complementa a validação local anterior. Os gates **não estão todos
+aprovados**; ausência de credencial ou telemetria não conta como sucesso.
+
+| Gate | Evidência obtida | Estado e pendência |
+| --- | --- | --- |
+| 1. Smoke publicado | NSAgent `e81eec6535b1`, TRAYadaptor `817cdc0` live no Render; saúde dos três serviços HTTP 200; OAuth Tray válido; catálogo autenticado HTTP 200, sem token HTTP 401; Supabase acessível | Parcial: falta executar `/api/integrations/tray/test` com `ADMIN_API_TOKEN` do NSAgent |
+| 2. Jornada comercial | Testes locais de carrinho, variante, frete, pedido, PIX, reconciliação, webhooks e bloqueio de efeitos reais aprovados na suíte direcionada | Parcial: não houve compra ponta a ponta em loja de homologação nem cobrança de teste; faltam configurações desse ambiente |
+| 3. Carga e falhas | 100 turnos locais em 10 conversas: sem sobreposição por conversa, 94 conclusões únicas e 6 timeouts injetados com liberação das travas; testes de falhas de integrações aprovados | Parcial: prova concorrência local, não capacidade comercial em produção; faltam carga sustentada e falhas dos provedores em homologação |
+| 4. SLOs e alertas | Avaliador determinístico criado; regressões de limites, dados ausentes, recuperação e incidente crítico aprovadas; alerta de isolamento corrigido para primeiro evento | Parcial: faltam agregação persistente, sinais críticos completos, janela representativa e entrega de notificações operacionais |
+
+Validação desta etapa: 800 testes direcionados aprovados, 1 pulado (piloto SDK
+opcional), 8 avisos SQLite; TRAYadaptor com 239 aprovados. O smoke foi reforçado
+com consulta autenticada ao catálogo e consulta NSAgent → adaptador. Falta de
+token agora impede a aprovação. Os SHAs de produção acima correspondem ao
+instante da coleta; estas melhorias exigem confirmação do novo deploy.
+
+O bloqueio de CI `undocumented Settings aliases: AGENT_IMAGE_SEARCH_DETAIL`
+foi corrigido documentando `AGENT_IMAGE_SEARCH_DETAIL=high` em `.env.example`,
+igual ao padrão do runtime. Contrato de 233 aliases, scanner de segredos e
+empacotamento dry-run aprovados. O placeholder do token administrativo na
+documentação também foi ajustado ao formato reconhecido pelo scanner.
+
+**Custo de modelo nesta etapa: zero chamadas à OpenAI.** A Vercel confirmou a
+presença dos segredos, mas bloqueou seu download. Não foi criada outra chave.
+O token interno Tray foi usado em memória a partir da integração existente;
+nenhum segredo ou conteúdo de cliente entrou no relatório.
+
+**Amostra operacional:** seis GETs de saúde por serviço, concorrência dois,
+18/18 sem erro. p95 medido deste computador: NSAgent 855 ms, Tray 1.142 ms,
+Chatbo 1.241 ms. Isso inclui rede e não mede o tempo de resposta do agente.
+Filas no instante consultado: 228 entradas processadas, 143 saídas enviadas,
+nenhuma pendente. O adaptador não apresentou logs de nível `error` no retorno
+consultado; o Chatbo teve um registro ASGI em 22/09, sem diagnóstico nesta etapa.
+
+Nos seis atendimentos das últimas 24 horas, todos tiveram entrega e validação
+factual interna aprovadas, e um registrou `llm_budget_exceeded` (16,7%). O maior
+tempo foi 53.843,67 ms: 3 chamadas OpenAI, 11 Tray, 35.721 tokens de entrada e
+4.101 de saída, com cerca de 12,7 s na revisão da resposta. Esse atendimento
+ocorreu às 15:51 UTC, antes do deploy consolidado. Os seis registros não são
+uma certificação da versão atual nem uma amostra suficiente para aprovar SLOs.
+
+**Metas operacionais iniciais (devem ser aferidas por workspace/deployment):**
+
+- Disponibilidade: 99,5% em 30 dias; alerta com três falhas consecutivas de smoke.
+- Resposta comercial: p95 até 20 s; avaliar janelas de 15 minutos com pelo menos
+  20 turnos válidos. Registrar separadamente fila, rede e processamento.
+- Fallback: até 10%; rejeição factual interna: até 2%, na mesma janela.
+  Rejeição pelo validador não equivale a erro factual entregue ao cliente.
+- Isolamento, pedido duplicado ou pagamento confirmado indevidamente: tolerância
+  zero e incidente imediato, sem esperar mínimo de amostras.
+- As métricas de incidente crítico ainda não estão completas em `turn.quality`;
+  sua ausência deve continuar como inconclusiva, não como zero ocorrências.
+
+`scripts/evaluate_operational_slos.py <eventos.jsonl>` avalia exports locais de
+`turn.quality`: código 0 aprovado, 1 violação, 2 inconclusivo. Não faz chamadas
+externas. `scripts/probe_release_gates.py` executa smoke e amostra limitada de
+saúde. Estes executores não instalam agendamento nem canal de notificações.
+Os alertas existentes em `app/ops/rollout.py` usam janela em memória por processo;
+por isso não substituem uma agregação persistente em ambiente serverless.
+
+Para encerrar os gates restantes: fornecer o caminho do arquivo privado de
+acesso administrativo (JSON com `token`) e a configuração da loja/provedor de
+pagamento de teste; executar poucos cenários remotos selecionados sem reparo
+generativo; validar a jornada real de homologação; medir carga sustentada e
+confirmar o destino de alertas. Não enviar tokens pelo chat.
+
 - Os 7 testes pulados precisam de flags, credenciais ou serviços externos; execute-os no ambiente autorizado antes de um rollout amplo.
 - Há 8 avisos de depreciação do adaptador padrão de data do `sqlite3`; não afetam a suíte hoje, mas devem ser removidos antes de uma atualização futura de Python.
 - O plugin Tray contém resumos estáticos que podem divergir da documentação viva. A busca MCP/documentação oficial deve prevalecer; foi observada divergência histórica no caminho de cancelamento.

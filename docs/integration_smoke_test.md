@@ -6,7 +6,9 @@ Script CLI que valida os três serviços integrados em produção/staging **sem 
 
 | Prioridade | Serviço | Endpoint | Critério |
 |------------|---------|----------|----------|
-| P0 | NSAgent | `GET /api/health` | `ok`, `agent_version` e `tray_adaptor_probe.ok` |
+| P0 | NSAgent | `GET /api/health` | `ok` e `agent_version` |
+| P0 | NSAgent → Tray | `GET /api/integrations/tray/test` | Bearer administrativo; três indicadores verdadeiros |
+| P0 | TRAYadaptor | `GET /internal/products?limit=1` | Bearer interno; `success: true` e lista `products` |
 | P0 | TRAYadaptor | `GET /health/tray` | `access_valid: true` |
 | P0 | Chatbo | `GET /health` | `status: "ok"` |
 | Opcional | TRAYadaptor | `GET /health` | `status: "ok"` |
@@ -21,6 +23,7 @@ Defina no shell ou em `.env` / `.env.local` (carregados automaticamente):
 NSAGENT_BASE_URL=https://ns-agent-for-sorteios.vercel.app
 TRAY_ADAPTER_URL=https://seu-tray-adaptor.onrender.com
 TRAY_ADAPTER_TOKEN=seu-token-interno
+ADMIN_API_TOKEN=placeholder-admin-token
 CHATBO_BASE_URL=https://seu-chatbo.onrender.com
 # Opcional — ping de conectividade
 SUPABASE_URL=https://xxxx.supabase.co
@@ -61,7 +64,18 @@ OK: todos os checks passaram.
 - **Exit code 0** — todos os checks **críticos** passaram.
 - **Exit code 1** — pelo menos um check crítico falhou.
 
-Tokens nunca aparecem inteiros na saída (`TRAY_ADAPTER_TOKEN` é mascarado no check de env).
+Tokens não aparecem na saída; o check de ambiente informa somente sua presença.
+As consultas autenticadas não seguem redirecionamentos. Um token ausente ou uma
+resposta fora do contrato impede a aprovação, mesmo que os endpoints públicos estejam saudáveis.
+
+Para uma amostra limitada de latência, sem chamadas à OpenAI:
+
+```bash
+python scripts/probe_release_gates.py --output .tools/release-gates.json
+```
+
+São seis requisições de saúde por serviço, concorrência dois, além do smoke.
+Esse resultado não representa capacidade de atendimento comercial nem SLO mensal.
 
 ## CI (sem URLs live)
 

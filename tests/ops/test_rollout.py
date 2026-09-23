@@ -59,6 +59,13 @@ def test_full_profile_uses_configured_mode():
     assert resolve_responses_traffic_percent(cfg) == 1.0
 
 
+def test_isolation_breach_alerts_on_first_sample():
+    alerts = observe_turn_for_rollout_alerts(
+        {"tenant_isolation_breach": True}, settings=_cfg()
+    )
+    assert any(a["code"] == "tenant_isolation_breach" and a["samples"] == 1 for a in alerts)
+
+
 def test_canary_5_forces_canary_mode_and_traffic():
     cfg = _cfg(agent_rollout_profile="canary_5", openai_api_mode="responses")
     assert resolve_openai_api_mode(cfg) == "canary"

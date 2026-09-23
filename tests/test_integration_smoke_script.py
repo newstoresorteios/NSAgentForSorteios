@@ -8,6 +8,8 @@ from scripts.integration_smoke_test import (
     CheckResult,
     SmokeConfig,
     check_chatbo_health,
+    check_authenticated_catalog,
+    check_nsagent_tray_integration,
     check_env_alignment,
     check_nsagent_health,
     check_tray_health_tray,
@@ -24,6 +26,7 @@ def _cfg(**overrides) -> SmokeConfig:
         "chatbo_base_url": "https://chatbo.test",
         "supabase_url": "",
         "timeout_s": 5.0,
+        "admin_api_token": "admin-test-token",
     }
     base.update(overrides)
     return SmokeConfig(**base)
@@ -87,7 +90,7 @@ def test_env_alignment_masks_token():
     result = check_env_alignment(_cfg(tray_adapter_token="abcdefghijklmnop"))
     assert result.passed is True
     assert "abcdefghijklmnop" not in result.detail
-    assert "abcd" in result.detail
+    assert "abcd" not in result.detail
 
 
 def test_run_smoke_tests_all_critical_pass():
@@ -98,6 +101,8 @@ def test_run_smoke_tests_all_critical_pass():
         },
         "/health/tray": {"access_valid": True, "store_id": "42"},
         "/health": {"status": "ok"},
+        "/internal/products": {"success": True, "products": []},
+        "/api/integrations/tray/test": {"success": True, "tray_adapter_connected": True, "products_accessible": True},
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -133,3 +138,28 @@ def test_print_report_exit_zero_when_only_optional_fails(capsys):
     code = print_report(results)
     assert code == 0
     assert "OK (críticos)" in capsys.readouterr().out
+
+
+def test_catalog_probe_authenticates_and_rejects_wrong_envelope():
+    def handler(request):
+        assert request.headers["Authorization"] == "Bearer secret-token-value"
+        assert request.url.params["limit"] == "1"
+        return httpx.Response(200, json={"status": "ok"})
+    with _mock_client(handler) as client:
+        assert not check_authenticated_catalog(client, _cfg()).passed
+
+
+def test_integration_gate_cannot_pass_without_admin_access():
+    def handler(request):
+        raise AssertionError("missing credentials must not send requests")
+    with _mock_client(handler) as client:
+        result = check_nsagent_tray_integration(client, _cfg(admin_api_token=""))
+    assert result.critical and not result.passed
+
+
+def test_authenticated_probe_does_not_follow_redirects():
+    def handler(request):
+        assert request.url.host == "tray.test"
+        return httpx.Response(302, headers={"Location": "https://other.test"})
+    with _mock_client(handler) as client:
+        assert not check_authenticated_catalog(client, _cfg()).passed

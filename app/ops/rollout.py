@@ -283,15 +283,17 @@ def observe_turn_for_rollout_alerts(
                         n,
                     )
                 )
-            if any(s.get("tenant_isolation_breach") for s in _alert_window):
-                alerts.append(
-                    RolloutAlert(
-                        "tenant_isolation_breach",
-                        1.0,
-                        0.0,
-                        n,
-                    )
+        # Isolation is an incident, not a statistical rate. Cold serverless
+        # instances must alert even before the rate window has enough samples.
+        if any(s.get("tenant_isolation_breach") for s in _alert_window):
+            alerts.append(
+                RolloutAlert(
+                    "tenant_isolation_breach",
+                    1.0,
+                    0.0,
+                    n,
                 )
+            )
         payload = [
             {
                 "code": a.code,
