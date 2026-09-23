@@ -224,6 +224,7 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
             "text": "quero comprar um relógio",
             "reply_text": "Qual estilo você prefere?",
             "safety_reason": "commerce_clarification",
+            "discovery_question": {"slot": "occasion", "topic": "relogio"},
             "conversation_id": "conversation-1",
         },
     ]
@@ -279,7 +280,10 @@ def test_load_recent_conversation_turns_prefers_conversation_and_delivered_repli
         {
             "role": "assistant",
             "content": "Qual estilo você prefere?",
-            "metadata": {"safety_reason": "commerce_clarification"},
+            "metadata": {
+                "safety_reason": "commerce_clarification",
+                "discovery_question": {"slot": "occasion", "topic": "relogio"},
+            },
             "conversation_id": "conversation-1",
             "inbound_id": 10,
         },

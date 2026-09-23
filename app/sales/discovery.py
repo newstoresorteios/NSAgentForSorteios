@@ -455,6 +455,9 @@ def _persona_qualification_question(
     must come from ChatBo/persona — never invent reply copy here.
     """
     if isinstance(discovery_state, dict):
+        contextual = discovery_state.get("contextual_question")
+        if contextual and discovery_state.get("persona_qualification_required"):
+            return contextual["fallback"]
         if discovery_state.get("order_context_blocks_clarification"):
             return None
         if discovery_state.get("persona_qualification_required") is False:
@@ -737,6 +740,9 @@ def _discovery_state(
     if _needs_persona_qualification(interpretation, state):
         state["force_retrieval"] = False
         state["persona_qualification_required"] = True
+    from .contextual_discovery import apply_contextual_discovery
+
+    apply_contextual_discovery(interpretation, state, recent_turns, message_text)
     browse_reset = False
     try:
         from .dialogue_phase import message_resets_dialogue_to_discovery
@@ -777,7 +783,12 @@ def _discovery_state(
 
         log_swallowed("discovery.dialogue_phase_gates", exc)
     strategy = interpretation.resolved_answer_strategy()
-    if strategy in {"acknowledge", "clarify", "handoff", "refuse"}:
+    contextual_ready = state.get("contextual_discovery_reason") in {
+        "ready", "limit_or_request", "questions_exhausted"
+    }
+    if strategy in {"acknowledge", "clarify", "handoff", "refuse"} and not (
+        strategy == "clarify" and contextual_ready
+    ):
         state["force_retrieval"] = False
     elif strategy == "answer_directly" and interpretation.goal == "inspect":
         state["force_retrieval"] = False

@@ -259,6 +259,9 @@ async def _execute_compiled_product_retrieval_unlocked(
     await harvest_family_and_color(session)
     await merge_brand_cache(session)
 
+    from .preference_details import confirm_preference_details
+    await confirm_preference_details(session)
+
     if requirements:
         from app.catalog.retrieval.technical import retrieve_technical_products
         return await retrieve_technical_products(session)

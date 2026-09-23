@@ -202,6 +202,13 @@ async def generate_clarification_reply(
         and discovery_state.get("persona_qualification_required")
     )
     persona_question = None
+    contextual_question = (discovery_state or {}).get("contextual_question") if persona_gate else None
+    if contextual_question:
+        interpretation._discovery_question = {
+            "slot": contextual_question["slot"], "topic": contextual_question["topic"]
+        }
+        if contextual_question.get("adaptive"):
+            interpretation._discovery_question["adaptive"] = contextual_question["adaptive"]
     if persona_gate:
         persona_question = _persona_qualification_question(interpretation, discovery_state)
         if persona_question:
@@ -295,6 +302,10 @@ async def generate_clarification_reply(
     except Exception:
         persona_runtime = None
     persona_blocks: list[str] = [SALES_CLARIFICATION_INSTRUCTIONS()]
+    if contextual_question:
+        persona_blocks.append(operator_message("contextual_discovery_instruction"))
+        if contextual_question.get("adaptive"):
+            persona_blocks.append(operator_message("adaptive_discovery_instruction"))
     if persona_runtime and persona_runtime.enabled:
         policy = (persona_runtime.prompt_policy_block() or "").strip()
         skills = (
@@ -313,6 +324,7 @@ async def generate_clarification_reply(
         "interpretation": interpretation.model_dump(),
         "context_note": context_note,
         "persona_qualification_hint": persona_question,
+        "question_to_ask": {k: v for k, v in (contextual_question or {}).items() if k != "adaptive"},
         "DISCOVERY_STATE": discovery_state
         or _discovery_state(
             interpretation,
@@ -320,6 +332,11 @@ async def generate_clarification_reply(
             message_text=message.text,
         ),
     }
+    # Candidate snapshots are persisted for reuse, not sent to the language model.
+    if contextual_question and contextual_question.get("adaptive"):
+        request_context["DISCOVERY_STATE"] = {
+            k: v for k, v in (discovery_state or {}).items() if k != "contextual_question"
+        }
     try:
         from app.llm.openai_errors import OpenAIGatewayError
         from app.llm.openai_gateway import generate_text_output
@@ -338,6 +355,8 @@ async def generate_clarification_reply(
         content = text_result.text
         if not content or not content.strip():
             raise ValueError("clarification_response_empty")
+        if contextual_question and (content.count("?") != 1 or "*" in content or "http" in content):
+            raise ValueError("clarification_response_invalid")
         if is_shipping_city_prompt(content) and not bound_sale:
             return _catalog_continue()
         return _mark_sales_result(

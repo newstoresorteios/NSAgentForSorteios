@@ -51,6 +51,17 @@ async def retrieve_catalog_or_clarify(
         if response is not None:
             return response
 
+    from .adaptive_discovery import prepare_discovery
+    adaptive_result = await prepare_discovery(
+        interpretation=interpretation, state=state, message=message,
+        recent_turns=recent_turns, execute_tool=sales.execute_tool,
+        generate_reply=sales.generate_clarification_reply,
+    )
+    if adaptive_result is not None:
+        return adaptive_result
+    if interpretation is not None and interpretation._adaptive_ready:
+        plan = {**plan, "intent": "recommendation"}
+
     intent_route = route_sales_intent(
         interpretation=interpretation,
         plan=plan,
@@ -80,6 +91,8 @@ async def retrieve_catalog_or_clarify(
             "ready_for_retrieval": discovery_state["ready_for_retrieval"],
             "stop_clarification": discovery_state["stop_clarification"],
             "known_preferences_count": discovery_state["known_preferences_count"],
+            "qualification_reason": discovery_state.get("contextual_discovery_reason"),
+            "question_slot": (discovery_state.get("contextual_question") or {}).get("slot"),
         })
     vague_query = intent_route.vague_query
     if interpretation and discovery_state and intent_route.needs_clarification_before_retrieval:
@@ -277,6 +290,13 @@ async def retrieve_catalog_or_clarify(
             )
     if tray_result is None:
         return None
+    if interpretation is not None and interpretation._adaptive_ready:
+        from app.catalog.retrieval.hard_filter import hard_filter_products
+        from .adaptive_discovery import unconfirmed_result
+        products = (tray_result.commercial_data or {}).get("products") or []
+        verified = hard_filter_products(products, interpretation, mode="recommendation", message_text=message.text)
+        if products and len(verified) != len(products):
+            return unconfirmed_result(interpretation)
     if interpretation is not None:
         phase_hint: dict[str, Any] = {}
         try:

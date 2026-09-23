@@ -275,6 +275,12 @@ def hard_filter_products(
             message_text=message_text,
         )
         if case_range and selected:
+            from app.sales.contextual_discovery import configuration
+            from app.catalog.specs.catalog_specs import extract_case_size_range_from_text
+            explicit_size = extract_case_size_range_from_text(" ".join(
+                [message_text or "", *interpretation.preferences.attributes]
+            ))
+            strict_size = bool(configuration() and explicit_size)
             min_mm, max_mm = case_range
             in_range = [
                 product
@@ -297,7 +303,7 @@ def hard_filter_products(
                 for product in selected
                 if product.get("case_size") or extract_case_size_mm(product)
             ]
-            if not in_range and sized:
+            if not in_range and (sized or strict_size):
                 print(
                     "[sales.hard_filter.case_size]",
                     {

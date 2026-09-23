@@ -27,6 +27,10 @@ def mark_sales_result(
         or (interpretation._fallback_reason if interpretation else None),
     )
     if interpretation is not None:
+        if interpretation._adaptive_trace:
+            marked.response_metadata.setdefault("adaptive_discovery", dict(interpretation._adaptive_trace))
+        if result.safety_reason == "commerce_clarification" and interpretation._discovery_question:
+            marked.response_metadata["discovery_question"] = dict(interpretation._discovery_question)
         if interpretation._clear_pending_action:
             marked.response_metadata["clear_pending_action"] = True
         if interpretation._variant_refinement:

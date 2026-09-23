@@ -1226,10 +1226,12 @@ def load_recent_conversation_turns(
                         SELECT inbound.id, inbound.text, inbound.conversation_id,
                                inbound.created_at,
                                delivered.reply_text, delivered.safety_reason,
+                               delivered.discovery_question,
                                delivered.created_at AS reply_created_at
                         FROM public.ai_inbound_messages AS inbound
                         LEFT JOIN LATERAL (
                             SELECT response.reply_text, response.safety_reason,
+                                   response.provider_response->'_agent_metadata'->'discovery_question' AS discovery_question,
                                    response.created_at
                             FROM public.ai_agent_responses AS response
                             WHERE response.inbound_id = inbound.id
@@ -1278,6 +1280,8 @@ def load_recent_conversation_turns(
             assistant_turn: dict[str, Any] = {"role": "assistant", "content": reply_text}
             if row.get("safety_reason"):
                 assistant_turn["metadata"] = {"safety_reason": str(row["safety_reason"])}
+            if isinstance(row.get("discovery_question"), dict):
+                assistant_turn.setdefault("metadata", {})["discovery_question"] = row["discovery_question"]
             if conversation_id:
                 assistant_turn["conversation_id"] = conversation_id
             if inbound_id is not None:

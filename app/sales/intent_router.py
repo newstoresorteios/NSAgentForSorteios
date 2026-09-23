@@ -153,6 +153,8 @@ def should_skip_catalog_fanout(interpretation: SalesInterpretation | None) -> bo
     """Talk/inspect turns must not fan-out Tray list search."""
     if interpretation is None:
         return False
+    if interpretation._adaptive_ready:
+        return False
     if getattr(interpretation, "_slot_answer_hold", False):
         return True
     if interpretation.purchase_action:

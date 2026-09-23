@@ -22,7 +22,7 @@ class ProductPreferences(BaseModel):
     recipient: str | None = None
     attributes: list[str] = Field(default_factory=list)
     explicit_no_preferences: list[
-        Literal["budget", "brand", "color", "style", "material", "occasion", "recipient", "attributes"]
+        Literal["budget", "brand", "color", "style", "material", "occasion", "recipient", "attributes", "case_size", "strap"]
     ] = Field(default_factory=list)
 
 
@@ -190,6 +190,9 @@ class SalesInterpretation(BaseModel):
     _prior_catalog_theme: str | None = PrivateAttr(default=None)
     _technical_requirements: dict[str, str] = PrivateAttr(default_factory=dict)
     _slot_answer_hold: bool = PrivateAttr(default=False)
+    _discovery_question: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _adaptive_ready: bool = PrivateAttr(default=False)
+    _adaptive_trace: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     def resolved_answer_strategy(self) -> str | None:
         """Public field first; private TurnUnderstanding is only a fallback."""

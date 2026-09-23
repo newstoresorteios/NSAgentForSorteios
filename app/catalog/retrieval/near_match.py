@@ -299,6 +299,9 @@ async def recover_open_browse_without_soft_filters(session: RetrievalSession) ->
 async def handle_hard_filter_miss(session: RetrievalSession) -> AgentResult | None:
     if session.hard_filtered:
         return None
+    if session.interpretation._adaptive_ready:
+        from app.sales.adaptive_discovery import unconfirmed_result
+        return unconfirmed_result(session.interpretation)
     interpretation = session.interpretation
     plan = session.retrieval_plan
     if plan.mode == "recommendation" and session.candidates:
