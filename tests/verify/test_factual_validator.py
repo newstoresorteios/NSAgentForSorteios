@@ -52,6 +52,35 @@ def test_verified_product_url_and_price_are_accepted():
     assert report.checked_claims == 2
 
 
+def test_negative_verified_inspection_is_not_an_over_budget_recommendation():
+    reply = 'Não cabe em R$ 3.000 no Pix: custa R$ 3.144,99. Mostrador laranja, não azul; safira, não mineral.'
+    result = AgentResult(reply_text=reply, intent='commerce',
+        commercial_data={'products':[{'id':'10269', 'name':'Orient M-Force Laranja',
+            'current_price':3699.99, 'pix_price':3144.99, '_revalidated':True,
+            '_factual_source':'tray_live'}]},
+        response_metadata={'domain':'commerce', 'identity_inspection':True,
+                           'hard_budget_max':3000, 'used_tray':True})
+    checked = apply_factual_validation(result, decision=_decision(result), mode='enforce')
+    assert checked.reply_text == reply
+    assert not any(v['reason']=='presented_over_budget' for v in checked.response_metadata['factual_validation']['violations'])
+    positive = result.model_copy(deep=True)
+    positive.reply_text = 'Cabe no orçamento por R$ 3.699,99.'
+    report = validate_factual_response(positive, decision=_decision(positive))
+    assert any(v.reason=='presented_over_budget' for v in report.violations)
+    ordinary = result.model_copy(deep=True)
+    ordinary.response_metadata.pop('identity_inspection')
+    report = validate_factual_response(ordinary, decision=_decision(ordinary))
+    assert any(v.reason=='presented_over_budget' for v in report.violations)
+    stale = result.model_copy(deep=True)
+    stale.commercial_data['products'][0].pop('_revalidated')
+    report = validate_factual_response(stale, decision=_decision(stale))
+    assert any(v.reason=='presented_over_budget' for v in report.violations)
+    fabricated = result.model_copy(deep=True)
+    fabricated.reply_text = 'Não cabe em R$ 3.000 no Pix: custa R$ 3.555,55.'
+    report = validate_factual_response(fabricated, decision=_decision(fabricated))
+    assert not report.valid
+
+
 def test_invented_external_url_is_rejected():
     result = AgentResult(
         reply_text="Finalize em https://pagamento-inventado.example/pix",

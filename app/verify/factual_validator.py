@@ -984,7 +984,8 @@ def validate_factual_response(
             )
 
     budget_max = _budget_max_from_context(result, commerce_state)
-    if budget_max is not None:
+    from app.sales.answer_council import _explains_inspected_budget_miss
+    if budget_max is not None and not _explains_inspected_budget_miss(result):
         products = (result.commercial_data or {}).get("products") or []
         for product in products:
             if not isinstance(product, dict):

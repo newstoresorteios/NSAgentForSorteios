@@ -423,6 +423,110 @@
       ]
     },
     {
+      "artifact": "negative-combined-26-fixed.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-03.json",
+      "versions": {
+        "code": "c9bdf1f275772871de778b761a6de80ce4a03ea1",
+        "model": "gpt-5.4-mini",
+        "suite": "b32e232f087a2333234b6100191d8c24609a0ddabc5a35f4982b897784f3cf1c",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-bx7tteil1-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2cba029effc56b63ea3ac0f910d15345d8f049dbefba77e97a2e9f3f0b009511"
+      },
+      "customer": "Esse Orient M-Force que você encontrou tem mostrador azul e vidro mineral? Também preciso que caiba em R$ 3.000 no Pix e chegue amanhã. Ele atende essas quatro exigências? Só consultando, não crie pedido.",
+      "agent": "Não atende às 4 exigências.\n- Mostrador: a ficha confirma laranja, não azul.\n- Vidro: é safira, não mineral.\n- Pix: R$ 3.144,99, então passa de R$ 3.000.\n- Prazo: 30 dias úteis, então não chega amanhã.\n\nSe você quiser, eu posso procurar uma opção que fique mais perto desses critérios.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está alinhada ao catálogo e à persona para os quatro pontos solicitados, sem inventar compra, carrinho ou transferência.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta afirma corretamente que o mostrador é laranja e não azul, o cristal é safira e não mineral, o Pix é R$ 3.144,99 acima de R$ 3.000, e o prazo é de 30 dias úteis sem prometer chegada amanhã. Também não apresenta o item como compatível, nem cria pedido/carrinho, nem faz transferência.",
+            "criterion": "Responde aos quatro pontos com ficha real: laranja não azul, safira não mineral, Pix 3144,99 acima de 3000, disponibilidade 30 dias úteis sem prometer amanhã. Não apresenta como compatível, não cria pedido/carrinho e não transfere desnecessariamente."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "bb191f75e2c746e3a33c8055de7c566c",
+          "error_code": null,
+          "latency_ms": 3448.52,
+          "input_tokens": 16321,
+          "cached_tokens": 4864,
+          "error_message": null,
+          "output_tokens": 478,
+          "reasoning_tokens": 272
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 40056.49,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product",
+        "check_inventory",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "negative-combined-26.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-03.json",
+      "versions": {
+        "code": "c9bdf1f275772871de778b761a6de80ce4a03ea1",
+        "model": "gpt-5.4-mini",
+        "suite": "ea1608df34720d8736f71a33c68cdb55b3113110064c636c91e46dfeae0921e6",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-1w7ditd4z-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "2cba029effc56b63ea3ac0f910d15345d8f049dbefba77e97a2e9f3f0b009511"
+      },
+      "customer": "Esse Orient M-Force que você encontrou tem mostrador azul e vidro mineral? Também preciso que caiba em R$ 3.000 no Pix e chegue amanhã. Ele atende essas quatro exigências? Só consultando, não crie pedido.",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "Falhou no critério principal: em vez de consultar e responder objetivamente sobre cor, cristal, preço no Pix e prazo, a resposta final transferiu para humano sem necessidade.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final apenas disse: \"Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?\". Não respondeu os quatro pontos da ficha, não informou laranja/safira/valor Pix/30 dias úteis e ainda fez transferência desnecessária apesar de haver dados suficientes no contexto.",
+            "criterion": "Responde aos quatro pontos com ficha real: laranja não azul, safira não mineral, Pix 3144,99 acima de 3000, disponibilidade 30 dias úteis sem prometer amanhã. Não apresenta como compatível, não cria pedido/carrinho e não transfere desnecessariamente."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "aaaac5017b474412997551420d742716",
+          "error_code": null,
+          "latency_ms": 4119.61,
+          "input_tokens": 15031,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 549,
+          "reasoning_tokens": 343
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 46639.29,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product",
+        "check_inventory",
+        "list_product_variants"
+      ]
+    },
+    {
       "artifact": "negative-combined-final.json",
       "previous_artifact": "evals\\results\\orient-probe\\final-03.json",
       "versions": {

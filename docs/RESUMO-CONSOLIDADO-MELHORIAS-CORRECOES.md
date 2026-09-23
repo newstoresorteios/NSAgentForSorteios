@@ -402,6 +402,31 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
   Canal WhatsApp ponta a ponta, checkout/pagamento e consistência em repetições
   continuam fora desta comprovação. Não declarar produção sem desvios ou 100% pronta.
 
+### Reteste do cenário combinado — teto US$ 26
+
+- Usuário autorizou ampliar para US$ 26 somente para concluir o último cenário.
+  Reserva anterior US$ 24,95149725; nova campanha `launch-20260923-orient-final26`
+  limitada a US$ 1 / 10 chamadas, sem retomar campanhas antigas.
+- `negative-combined-26` falhou, desta vez sem bloqueio financeiro. Isolada uma
+  segunda regra em `factual_validator`: mesmo quando o conselho aceitava a
+  inspeção negativa, essa validação ainda rejeitava qualquer ficha acima do teto,
+  substituindo a resposta por texto incompleto. Agora compartilha a regra de
+  inspeção negativa revalidada, sem dispensar validação dos valores informados.
+- Regressão confirma que a explicação negativa é preservada e que oferta acima
+  do orçamento ou consulta não revalidada continuam bloqueadas. Suíte completa:
+  2.447 passaram, 7 ignorados, 8 avisos legados.
+- `negative-combined-26-fixed` APROVADO com OpenAI e Tray reais. Respondeu aos
+  quatro pontos: mostrador laranja/não azul; safira/não mineral; Pix R$ 3.144,99
+  acima de R$ 3.000; prazo informado de 30 dias úteis, sem prometer amanhã.
+  Não criou pedido/carrinho nem fez encaminhamento humano desnecessário.
+- Encerradas chamadas pagas: reserva global US$ 25,60243800, abaixo dos US$ 26
+  autorizados; não é fatura da OpenAI. Evidência Orient atualizada para 12 turnos.
+  O último cenário combinado deixa de estar pendente. Mantêm-se os limites da
+  comprovação: happy path Orient em uma versão; negativo reexecutado em versão
+  posterior corrigida; não é certificação estatística nem teste completo WhatsApp/
+  checkout. Citizen foi encontrado, mas sua enumeração técnica completa ainda não
+  foi confirmada na resposta. Não afirmar ausência total de desvios.
+
 ## Documentação mantida separadamente
 
 - `README.md`: instalação e visão geral do serviço.
