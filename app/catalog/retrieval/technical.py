@@ -17,7 +17,8 @@ from app.ops.observability import log_event
 
 def technical_miss(interpretation, *, unknown: bool, evidence: list | None = None, errors: list | None = None) -> AgentResult:
     reason = "catalog_requirements_unknown" if unknown else "catalog_requirements_no_match"
-    reply = message(reason, criteria=criteria_label(interpretation))
+    criteria = criteria_label(interpretation)
+    reply = message(reason, criteria=criteria) if criteria else message('catalog_offer_unconfirmed')
     return seal_offer(AgentResult(reply_text=reply, intent="commerce",
         safety_reason=reason, commercial_data={"products": []}, response_metadata={
             "presented_products":False, "product_resolution_state":"technical_unknown" if unknown else "technical_mismatch",

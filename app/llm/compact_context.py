@@ -43,7 +43,9 @@ def serialize_context(payload, **kwargs):
     if compacted is not payload:
         from app.configuration.runtime import message
         compacted['context_reference_instructions'] = message('context_reference_instructions')
-    before, after = json.dumps(payload, **kwargs), json.dumps(compacted, **kwargs)
+    before = json.dumps(payload, **kwargs)
+    compact_options = {**kwargs, 'separators': (',', ':')}
+    after = json.dumps(compacted, **compact_options)
     if len(after) >= len(before):
         after = before
     log_event('prompt.context_compaction', {'before_chars':len(before), 'after_chars':len(after),

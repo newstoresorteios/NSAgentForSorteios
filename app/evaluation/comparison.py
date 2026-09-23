@@ -16,7 +16,9 @@ def summarize_samples(rows):
         'p95_ms':latencies[max(0,math.ceil(len(latencies)*.95)-1)] if latencies else None}
 
 
-def compare_samples(baseline, candidate):
+def compare_samples(baseline, candidate, *, max_cost_ratio=1.0, max_latency_ratio=1.0):
+    if any(not math.isfinite(v) or v <= 0 for v in (max_cost_ratio,max_latency_ratio)):
+        raise ValueError('comparison_limits_invalid')
     keys = ('case_id','repetition','split','fixture_hash','persona_hash','code_hash')
     identity = lambda r: tuple(r.get(k) for k in keys)
     before_ids, after_ids = [identity(r) for r in baseline], [identity(r) for r in candidate]
@@ -24,7 +26,13 @@ def compare_samples(baseline, candidate):
                   and len(after_ids)==len(set(after_ids)) and set(before_ids)==set(after_ids)
                   and all(all(v is not None for v in key) for key in before_ids))
     before, after = summarize_samples(baseline), summarize_samples(candidate)
+    cost_ok = (comparable and before['cost_usd'] is not None and after['cost_usd'] is not None
+               and after['cost_usd'] <= before['cost_usd'] * max_cost_ratio)
+    latency_ok = (comparable and before['p95_ms'] is not None and after['p95_ms'] is not None
+                  and after['p95_ms'] <= before['p95_ms'] * max_latency_ratio
+                  and all(r.get('latency_ms') is not None for r in [*baseline,*candidate]))
     return {'comparable':comparable,'baseline':before,'candidate':after,
+        'cost_within_limit':cost_ok,'latency_within_limit':latency_ok,
         'quality_non_regression': comparable and after['complete']==after['total']
             and before['complete']==before['total'] and after['passed']>=before['passed']
             and after['critical_errors']==0,

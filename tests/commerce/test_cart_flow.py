@@ -878,7 +878,8 @@ async def test_cart_failure_gives_openai_only_safe_semantic_facts(monkeypatch):
 
     assert result is not None
     facts_message = captured["messages"][1]["content"]
-    assert '"category": "integration_failure"' in facts_message
+    import json
+    assert '"category": "integration_failure"' in json.dumps(json.loads(facts_message))
     assert "tray_error_message" not in facts_message
 
 

@@ -21,10 +21,23 @@ def build_readonly_agent(model):
         tool_use_behavior='stop_on_first_tool')
 
 
-async def run_readonly_pilot(question, *, model):
+async def run_readonly_pilot(question, *, model=None):
     if policy('agentsSdkPilotEnabled') is not True:
         raise ValueError('agents_sdk_pilot_disabled')
-    from agents import Runner, RunConfig
+    from agents import Runner, RunConfig, ModelSettings
+    role = None
+    if model is None:
+        from app.agents.sdk_budget import configured_provider
+        model, role = configured_provider()
     agent = build_readonly_agent(model)
-    return await Runner.run(agent, input=question, max_turns=2,
-                           run_config=RunConfig(tracing_disabled=True))
+    if role:
+        from openai.types.shared import Reasoning
+        agent.model_settings = ModelSettings(max_tokens=role.max_output_tokens,
+            reasoning=Reasoning(effort=role.reasoning_effort) if role.reasoning_effort else None,
+            tool_choice='required', parallel_tool_calls=False, store=False)
+    try:
+        return await Runner.run(agent, input=question, max_turns=2,
+                               run_config=RunConfig(tracing_disabled=True))
+    finally:
+        if role:
+            await model.aclose()

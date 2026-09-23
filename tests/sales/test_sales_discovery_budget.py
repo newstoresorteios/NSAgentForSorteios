@@ -374,6 +374,11 @@ def test_open_browse_scrubs_stale_budget_and_asks_investment():
 
 @pytest.mark.asyncio
 async def test_open_browse_ignores_previous_recommendation_and_asks_budget(monkeypatch):
+    # This contract exercises the persona's legacy qualification question.
+    # Adaptive discovery has its own catalog-backed fixtures and tests.
+    from app.configuration.runtime import current_bundle
+    monkeypatch.setitem(current_bundle()['values'], 'adaptiveDiscoveryEnabled', False)
+    monkeypatch.setitem(current_bundle()['values'], 'contextualDiscoveryEnabled', False)
     import app.persona.persona_runtime as persona_runtime
     import app.sales_agent as sales_agent
     from app.commerce.commerce_context import (

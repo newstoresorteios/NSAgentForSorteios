@@ -131,5 +131,8 @@ async def grade_turn(scenario, step, replay, history, persona):
     critical = list(verdict['critical_errors'])
     critical.extend(f for f in failures if f.startswith('forbidden_tool_called:'))
     passed = not (failures or verdict['factual_errors'] or critical) and all(c['passed'] for c in verdict['criteria'])
+    from dataclasses import asdict
+    metrics = getattr(result, 'metrics', None)
     return {**verdict, 'outcome':'passed' if passed else 'failed',
+            'model_usage':asdict(metrics) if metrics is not None else None,
             'objective_failures':failures,'critical_errors':critical}

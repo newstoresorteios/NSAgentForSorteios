@@ -9,7 +9,9 @@ from app.evaluation.regression_models import RegressionSuite
 
 def test_frozen_reference_has_distinct_holdout_and_full_expectations():
     suite=RegressionSuite.model_validate_json(Path('evals/priority_reference.json').read_text(encoding='utf-8'))
-    assert len(suite.scenarios)==25
+    assert len(suite.scenarios)>=96
+    assert sum(s.split=='validation' for s in suite.scenarios)>=20
+    assert all(sum(s.category==c for s in suite.scenarios)>=suite.minimum_cases_per_category for c in suite.categories)
     assert {'development','validation'}=={s.split for s in suite.scenarios}
     assert all(s.environment=='simulated_commerce' for s in suite.scenarios)
     assert all(step.expected.requirements for s in suite.scenarios for step in s.steps)
@@ -46,3 +48,8 @@ def test_comparison_rejects_missing_or_different_samples():
     assert not compare_samples([row],[{**row,'fixture_hash':'other'}])['comparable']
     assert not compare_samples([row],[row])['release_approved']
     assert compare_samples([row],[row])['candidate']['cost_usd'] is None
+    assert not compare_samples([row],[row])['cost_within_limit']
+    baseline={**row,'cost_usd':.01}
+    candidate={**row,'cost_usd':.02}
+    assert not compare_samples([baseline],[candidate])['cost_within_limit']
+    assert compare_samples([baseline],[candidate],max_cost_ratio=2)['cost_within_limit']

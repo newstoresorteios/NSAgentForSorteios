@@ -34,3 +34,26 @@ async def test_sdk_executes_readonly_tool_without_network_or_mutations():
         assert sum(r.usage.total_tokens for r in result.raw_responses)==0
     finally:
         reset_bundle(token)
+
+
+@pytest.mark.asyncio
+async def test_sdk_reserves_before_provider_and_enforces_actual_limit(monkeypatch):
+    from agents import ModelSettings
+    from app.agents.sdk_budget import budgeted_model
+    from app.evaluation.campaign_budget import EvaluationBudgetExceeded
+    from unittest.mock import AsyncMock,Mock
+    delegate=OfflinePolicyModel();delegate.get_response=AsyncMock(return_value='ok')
+    reserve=Mock(side_effect=EvaluationBudgetExceeded('limit'))
+    monkeypatch.setattr('app.evaluation.campaign_budget.reserve_evaluation_call',reserve)
+    wrapped=budgeted_model(delegate,model_name='test',output_limit=500,timeout_seconds=2)
+    settings=ModelSettings(max_tokens=9000)
+    kwargs=dict(system_instructions='policy',input='question',model_settings=settings,tools=[],
+                output_schema=None,handoffs=[],tracing=None,previous_response_id=None,
+                conversation_id=None,prompt=None)
+    with pytest.raises(EvaluationBudgetExceeded):await wrapped.get_response(**kwargs)
+    delegate.get_response.assert_not_awaited()
+    assert settings.max_tokens==500
+    reserve.side_effect=None
+    assert await wrapped.get_response(**kwargs)=='ok'
+    assert reserve.call_count==2
+    assert reserve.call_args.kwargs['output_limit']==500

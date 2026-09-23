@@ -296,6 +296,8 @@ async def test_product_search_uses_progressive_strategies(monkeypatch):
     async def fake_execute(name, arguments):
         calls.append(arguments)
         # Match any exact/token probe for Seastar/Tissot.
+        if name == 'get_product':
+            return {'id':'3','name':'Tissot Seastar','current_price':5000,'available':True}
         tokens = [str(t).casefold() for t in (arguments.get("tokens") or [])]
         name_arg = str(arguments.get("name") or "").casefold()
         brand = str(arguments.get("brand") or "").casefold()
@@ -341,6 +343,8 @@ async def test_ranking_removes_incompatible_brand_model_candidate(monkeypatch):
     monkeypatch.setattr(sales_agent, "get_settings", lambda: settings)
 
     async def fake_execute(name, arguments):
+        if name == 'get_product':
+            return {'id':'1','name':'Tissot Seastar preto','brand':'Tissot','model':'Seastar','current_price':5000,'available':True}
         return {"products": [
             {"id": "1", "name": "Tissot Seastar preto", "brand": "Tissot", "model": "Seastar", "current_price": 5000},
             {"id": "2", "name": "Tissot Tradition", "brand": "Tissot", "model": "Tradition", "current_price": 4000},

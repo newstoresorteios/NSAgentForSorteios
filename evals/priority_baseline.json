@@ -5,16 +5,16 @@
   "persona_id": 17,
   "model": "gpt-5.4-mini",
   "reasoning_effort": "medium",
-  "fixture_sha256": "76ba44c8ccac9af2c51c4f74200b5e1002927a18f8df5d67ce8dddfce35a0dbb",
-  "scenario_count": 25,
-  "steps": 29,
-  "validation_scenarios": 14,
+  "fixture_sha256": "7b1dad271495c0aa710162c25fa11fb7062b24389dfba4d0436fdfd55bc1887d",
+  "scenario_count": 97,
+  "steps": 110,
+  "validation_scenarios": 25,
   "environment": "simulated_commerce",
   "paid_inference_calls": 0,
   "release_approved": false,
   "limitations": [
-    "Reference subset does not meet full release coverage gates.",
+    "Coverage is defined, not executed; critical cases require three independent runs.",
     "No live quality, cost or latency comparison has been executed.",
-    "Local candidate includes uncommitted changes; baseline commit is not candidate identity."
+    "Source IDs are inherited from the existing reviewed suite; historical records were not reloaded."
   ]
 }

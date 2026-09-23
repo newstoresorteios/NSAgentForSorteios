@@ -37,6 +37,20 @@ def test_invalid_effort_fails_before_transport(configured):
     with pytest.raises(ValueError,match='reasoning_effort'):
         with configured_call('judge','baseline'): pass
 
+def test_primary_transport_rejected_before_provider(configured):
+    caps=json.loads(configured['values']['modelCapabilityRegistry'])
+    caps['configured-model']['responses']=False
+    configured['values']['modelCapabilityRegistry']=json.dumps(caps)
+    with pytest.raises(ValueError,match='primary_transport'):
+        with configured_call('judge','baseline'): pass
+
+def test_chat_role_without_specific_limit_keeps_global_bound(configured,monkeypatch):
+    configured['values']['modelRolePolicies']=json.dumps({'review':{'model':'configured-model'}})
+    monkeypatch.setattr('app.config.get_settings',lambda:SimpleNamespace(openai_max_output_tokens=700))
+    with configured_call('judge','baseline'):
+        kwargs={};apply_chat_controls(kwargs,'configured-model')
+    assert kwargs['max_completion_tokens']==700
+
 @pytest.mark.asyncio
 async def test_gateway_uses_role_and_timeout(configured,monkeypatch):
     from app.llm.openai_gateway import generate_text_output

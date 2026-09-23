@@ -76,6 +76,9 @@ async def resolve_catalog_photo(incoming, identified) -> AgentResult:
             if len(ranked) > 1 and margin <= 0:
                 ambiguous = True
                 continue
+            if ambiguous:
+                # A narrower subsequent query must not hide a proven sibling.
+                continue
             log_event('image.catalog_candidates', {
                 'query': query, 'count': len(hits), 'ranked': len(ranked),
                 'best_id': hit.get('product_id'), 'distance': best_distance,

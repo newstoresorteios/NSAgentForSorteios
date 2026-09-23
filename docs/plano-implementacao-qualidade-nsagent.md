@@ -1,6 +1,6 @@
 # Plano de implementação: qualidade e custo do NSAgent
 
-Data: 23/09/2026. Status: implementação iniciada; primeiro bloco de proteção de ofertas técnicas implementado, demais fases pendentes.
+Data: 23/09/2026. Status: controles e executores P0–P7 implementados e testados localmente; validação paga, metas de qualidade e ativação em produção ainda não aprovadas. Consulte o fechamento abaixo; os blocos anteriores são históricos.
 
 ## Objetivo
 
@@ -261,7 +261,7 @@ A migração 20260923165605_agent_quality_priorities foi aplicada ao banco: cat�
 
 approvedOfferContractEnabled e compactRoleContextEnabled permanecem falsos para comparação controlada. institutionalDirectAnswerEnabled está habilitado na configuração, mas requer implantação do código novo. modelRolePolicies vazio preserva o modelo atual gpt-5.4-mini. Novos campos usam os editores genéricos da configuração avançada; o backend complementar inclui validação de JSON, regex, capacidades e orçamento. Implantar esse backend antes de operadores configurarem políticas por função.
 
-O SDK 0.22.3 exige OpenAI 3.x, incompatível com a versão fixada no runtime principal. Por isso requirements-sdk-pilot.txt e ambiente separado; nenhuma troca de dependência do serviço principal. O piloto não está ligado à resposta de clientes. Não executar com provedor pago antes de conectar o mesmo controle de orçamento e aprovar a comparação.
+O SDK 0.22.3 exige OpenAI 3.x, incompatível com a versão fixada no runtime principal. Por isso requirements-sdk-pilot.txt e ambiente separado; nenhuma troca de dependência do serviço principal. O piloto não está ligado à resposta de clientes. O controle de orçamento foi conectado ao provedor SDK no fechamento abaixo. Execução paga continua dependendo de campanha publicada com teto e credencial no ambiente de execução.
 
 Para reverter o fluxo institucional, desligar institutionalDirectAnswerEnabled. As demais expansões já estão desligadas. Não reverter estados comerciais nem apagar o catálogo ou a tabela de orçamento. Push, implantação, teste real e liberação de qualidade são etapas distintas; nenhuma maturidade superior a 90% está certificada por estes testes offline.
 
@@ -274,3 +274,69 @@ Para reverter o fluxo institucional, desligar institutionalDirectAnswerEnabled. 
 - git diff --check sem erros de whitespace; avisos de normalização LF/CRLF.
 - Banco: RLS ativa no orçamento; anon sem leitura, authenticated sem escrita, service_role com atualização; nenhuma reserva de teste remanescente.
 - Estes grupos têm sobreposição e não devem ser somados como casos distintos de qualidade.
+
+
+## Fechamento da implementação P0–P7
+
+### P0 — Cobertura
+
+A referência foi ampliada de 25 para 97 cenários, 110 passos e 25 casos de validação. O executor agenda três execuções independentes por cenário crítico. IDs históricos foram herdados do gerador de cenários existente; respostas históricas incorretas não são usadas como resposta esperada. Cobertura definida não significa campanha executada: o score mantém falhas e casos ausentes no denominador.
+
+### P1 e P2 — Oferta e continuidade
+
+A proteção genérica de ofertas foi exercitada com a flag ligada. Fixtures que só simulavam nome/preço foram corrigidas para representar confirmação comercial real, sem relaxar a validação do serviço. Contingência sem critérios técnicos agora usa mensagem própria do banco e não exibe um campo vazio. Testes de memória, variante, checkout, entrega e recebimento preservam os caminhos existentes. Casos antigos que verificam qualificação fixa selecionam explicitamente o modo legado; a descoberta contextual e adaptativa tem testes separados.
+
+### P3 — Medição de contexto
+
+scripts/measure_quality_context.py mede tokens offline com o200k_base. No estado e catálogo congelados, a mediana passou de 3112 para 2588 tokens (16,84%). A serialização compacta e a deduplicação não removem fatos. Esta medição não inclui o prompt completo, histórico ou envelopes do provedor. A meta original de 30% não foi atingida; ela permanece pendente, e não foi reduzida para declarar sucesso. A compactação permanece protegida por flag até comparação generativa.
+
+### P4 — Capacidades e interface
+
+O runtime rejeita o transporte primário incompatível antes da chamada. Quando a função não define seu próprio limite de saída, Chat Completions herda o limite global efetivo, preservando o teto reservado. O front prioriza whenUsed e description publicados no catálogo, sem um mapa local obrigatório para novos campos. Quinze controles receberam documentação no banco. O backend valida os limites de custo e latência da comparação.
+
+### P5 — Ambiguidade visual
+
+Fotos compartilhadas por dois candidatos continuam ambíguas após a revisão final. Uma consulta posterior mais restrita não pode apagar uma ambiguidade já observada. Testes incluem empate visual praticamente idêntico, candidato ausente, imagem de concorrente não carregada, variante semelhante e proteção contra substituição pelo revisor. A confirmação com imagens e catálogo de produção ainda não foi medida nesta etapa.
+
+### P6 — Executor e comparação
+
+scripts/run_controlled_campaign.py usa a persona publicada e somente comércio simulado. Conserva estado/histórico entre passos, isola cenários e repetições, registra versão de código/configuração/persona/fixtures, cria marcador exclusivo por amostra e reutiliza apenas resultados concluídos com identidade idêntica. Uma execução interrompida permanece incompleta e não é reexecutada automaticamente. Orçamento não pode ser sobrescrito pelo arquivo de candidato.
+
+scripts/compare_quality_campaigns.py verifica amostras equivalentes, qualidade, cobertura, custo e p95. Métricas ausentes não equivalem a zero. Tetos max_cost_ratio e max_latency_ratio ficam dentro de evaluationCampaignPolicy.comparison_limits; padrão 1 significa não aceitar aumento. O comparador não promove configurações automaticamente. Chamadas de revisão entram na medição, além do atendimento.
+
+### P7 — SDK e auditor
+
+O provedor do SDK usa seleção explícita pela função evaluation, teto real de saída, timeout, reserva durável antes de cada chamada, zero retries do cliente e tracing externo desativado. Handoffs, contexto remoto e streaming estão fora do piloto delimitado. A fábrica é a via de produção; injeção de Model é o ponto de teste offline. O cliente HTTP é fechado após o piloto.
+
+scripts/run_sdk_pilot.py consulta documentos sem executar ações comerciais. scripts/audit_conversation_report.py --semantic executa auditoria estruturada com evidência, causa provável, teste e recomendação. Falhas objetivas prevalecem sobre aprovação do modelo; orçamento indisponível resulta em inconclusivo. Nenhuma sugestão é aplicada automaticamente.
+
+### Banco, implantação e limite de execução
+
+Aplicadas as migrações 20260923180000_quality_campaign_completion e 20260923183000_quality_comparison_limits. Catálogo e tetos verificados após aplicar. Nenhuma campanha paga ou agendamento foi habilitado. O deploy anterior do NSAgent está Ready na Vercel e o backend b2f3cdb está live no Render. As alterações deste fechamento permanecem locais até novo push/implantação.
+
+A CLI Vercel está autenticada, mas a plataforma não permite exportar os segredos protegidos de produção. O comando env run confirmou OPENAI_API_KEY e DATABASE_URL indisponíveis para execução local. Acesso não foi contornado. Portanto comparação generativa real, auditoria semântica real, piloto real e aprovação >90% não foram executados. Os executores estão prontos para um ambiente com as credenciais existentes e orçamento publicado; nenhuma aprovação de qualidade foi simulada.
+
+### Comandos de operação manual
+
+Executar na raiz do NSAgent, em ambiente com as credenciais existentes. O piloto requer o ambiente isolado de requirements-sdk-pilot.txt. Substituir WORKSPACE e os arquivos de saída; não há execução agendada.
+
+```powershell
+python scripts/run_controlled_campaign.py --workspace WORKSPACE --suite evals/priority_reference.json --output evals/results/baseline
+python scripts/run_controlled_campaign.py --workspace WORKSPACE --suite evals/priority_reference.json --output evals/results/candidate --overrides candidate.json
+python scripts/compare_quality_campaigns.py --baseline baseline-summary.json --candidate candidate-summary.json --output evals/results/comparison.json
+python scripts/audit_conversation_report.py --report replay.json --expected expected.json --output evals/results/audit.json --semantic --workspace WORKSPACE
+.venv-sdk-pilot/Scripts/python scripts/run_sdk_pilot.py --workspace WORKSPACE --question "Qual é a política de troca?"
+```
+
+Campanha sem orçamento publicado falha antes do provedor. Não remover marcadores de execuções interrompidas para tentar de novo: revisar primeiro o consumo e registrar outra identidade de campanha. Nunca editar os resultados para satisfazer os critérios de liberação.
+
+### Verificação final deste fechamento
+
+- NSAgent: 2359 passaram, 7 ignorados, 8 avisos de depreciação SQLite.
+- Recorte com proteção de ofertas e compactação ligadas: 1649 passaram, 1 ignorado.
+- Descoberta adaptativa/contextual junto dos controles novos, com fixtures apropriadas: 892 passaram.
+- Backend de configuração: 33 passaram.
+- Front: 10 testes de configuração passaram e build TypeScript/Vite concluído; aviso de bundle acima de 500 kB preexistente.
+- SDK isolado: 2 passaram, incluindo bloqueio antes do provedor e limite efetivamente enviado; aviso de escopo do pytest-asyncio.
+- Nova medição: zero inferências pagas; banco confirma evaluationCampaignPolicy.enabled=false.
+- Os recortes se sobrepõem. Não somar essas contagens como conversas independentes.

@@ -1,0 +1,10 @@
+{
+  "scope": "frozen_state_and_catalog_context_only",
+  "encoding": "o200k_base",
+  "before_median_tokens": 3112,
+  "after_median_tokens": 2588,
+  "median_reduction_percent": 16.84,
+  "paid_calls": 0,
+  "release_approved": false,
+  "suite_hash": "7b1dad271495c0aa710162c25fa11fb7062b24389dfba4d0436fdfd55bc1887d"
+}

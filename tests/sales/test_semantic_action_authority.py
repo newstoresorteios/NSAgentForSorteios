@@ -43,6 +43,8 @@ def _catalog_result(*product_ids: str) -> AgentResult:
                     "name": f"Produto {product_id}",
                     "current_price": "100.00",
                     "available": True,
+                    "_revalidated": True,
+                    "_factual_source": "tray_live",
                 }
                 for product_id in product_ids
             ]
@@ -221,6 +223,10 @@ async def test_broad_purchase_interest_continues_without_catalog_or_cart(monkeyp
 
 @pytest.mark.asyncio
 async def test_explicit_product_request_allows_catalog_search(monkeypatch):
+    # The stub replaces compiled retrieval, not adaptive discovery's tool calls.
+    from app.configuration.runtime import current_bundle
+    monkeypatch.setitem(current_bundle()['values'], 'adaptiveDiscoveryEnabled', False)
+    monkeypatch.setitem(current_bundle()['values'], 'contextualDiscoveryEnabled', False)
     import app.sales_agent as sales_agent
 
     calls = []

@@ -70,7 +70,7 @@ async def test_photo_match_uses_page_identity_and_survives_reviewer_and_previous
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('distance,margin,color_error', [(22,10,.01),(0,0,.01),(0,12,.25)])
+@pytest.mark.parametrize('distance,margin,color_error', [(22,10,.01),(0,0,.01),(0,0,.00001),(0,12,.25)])
 async def test_text_similarity_or_ambiguous_photo_cannot_confirm_reference(monkeypatch,distance,margin,color_error):
     hit={'product_id':'2721','url':'https://www.newstorerj.com.br/relogios/relogio-errado','_image_color_error':color_error}
     monkeypatch.setattr(resolver,'search_storefront',AsyncMock(return_value=[hit]))

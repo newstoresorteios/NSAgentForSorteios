@@ -76,7 +76,9 @@ def enforce_photo_identity(result):
                   product_resolution_state='resolved')
     else:
         unresolved_key = (
-            'image_catalog_search_incomplete'
+            'image_catalog_ambiguous'
+            if result.safety_reason == 'image_catalog_ambiguous'
+            else 'image_catalog_search_incomplete'
             if md.get('catalog_search_incomplete')
             else 'image_catalog_unconfirmed'
         )

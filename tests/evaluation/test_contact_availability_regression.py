@@ -321,8 +321,8 @@ def test_empty_supplemental_search_keeps_verified_matching_product():
     from app.verify.response_critique import apply_search_products_to_result
     request = interpretation(preferences={'recipient':'feminino','budget_max':3000})
     source = AgentResult(reply_text='answer', intent='commerce', commercial_data={'products':[
-        {'id':'1','name':'Feminino Lovely','current_price':2000,'_revalidated':True},
-        {'id':'2','name':'Masculino','current_price':1000,'_revalidated':True}]},
+        {'id':'1','name':'Feminino Lovely','current_price':2000,'_revalidated':True,'available':True},
+        {'id':'2','name':'Masculino','current_price':1000,'_revalidated':True,'available':True}]},
         response_metadata={'interpretation':request.model_dump()})
     updated = apply_search_products_to_result(result=source, api_facts={'search_products':{'products':[]}})
     assert [p['id'] for p in updated.commercial_data['products']] == ['1']

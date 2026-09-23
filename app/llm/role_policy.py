@@ -51,6 +51,12 @@ def configured_call(call_type, model, *, structured=False, tools=False):
         caps = registry().get(effective)
         if not caps:
             raise ValueError('model_capabilities_not_registered:' + effective)
+        from app.config import get_settings
+        settings = get_settings()
+        chat_primary = (getattr(settings, 'openai_api_mode', 'responses') == 'chat_completions'
+                        and getattr(settings, 'openai_chat_completions_primary_allowed', False))
+        if not caps.get('chat_completions' if chat_primary else 'responses'):
+            raise ValueError('model_primary_transport_unsupported')
         if structured and not caps.get('structured_outputs'):
             raise ValueError('model_structured_outputs_unsupported')
         if tools and not caps.get('tools'):
@@ -80,5 +86,7 @@ def apply_chat_controls(kwargs, model, *, tools=False):
         raise ValueError('model_chat_transport_unsupported')
     if config.reasoning_effort is not None:
         kwargs['reasoning_effort'] = config.reasoning_effort
-    if config.max_output_tokens is not None:
-        kwargs['max_completion_tokens'] = config.max_output_tokens
+    from app.config import get_settings
+    limit = config.max_output_tokens or getattr(get_settings(), 'openai_max_output_tokens', None)
+    if limit:
+        kwargs['max_completion_tokens'] = int(limit)
