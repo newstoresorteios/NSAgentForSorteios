@@ -29,6 +29,15 @@ def test_brand_only_asks_model_first(contextual):
     assert s['contextual_question']['slot']=='model_intent'
     assert _persona_qualification_question(i,s).endswith('?')
 
+
+def test_no_model_does_not_mean_no_preferences_on_every_facet():
+    from app.sales.contextual_discovery import grounded_no_preferences
+    claimed=['color','occasion','attributes']
+    assert grounded_no_preferences(claimed,{'model_intent','budget'},
+        [{'role':'user','content':'Não tenho nenhum modelo em mente.'}], 'Até 2500') == set()
+    assert grounded_no_preferences(claimed,set(),[], 'Tanto faz a cor') == {'color'}
+    assert grounded_no_preferences(claimed,set(),[], 'Sem nenhuma preferência') == set(claimed)
+
 def test_unknown_answer_advances_by_slot_not_wording(contextual):
     s=_discovery_state(interpretation(),[marker('model_intent'),{'role':'user','content':'não sei'}],message_text='não sei')
     assert s['contextual_question']['slot']=='budget'

@@ -19,6 +19,7 @@ class EvaluationContext:
     started_tool_calls: int = 0
     review_inputs: list[dict] = field(default_factory=list)
     simulator: Any = None
+    budget_errors: list[str] = field(default_factory=list)
 
 
 _context: ContextVar[EvaluationContext | None] = ContextVar("evaluation_context", default=None)

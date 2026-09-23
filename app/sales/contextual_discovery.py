@@ -35,6 +35,26 @@ def configuration() -> dict[str, Any]:
         return {}
 
 
+def grounded_no_preferences(claimed, asked, recent_turns, message_text):
+    """Do not turn 'no model in mind' into indifference to every product facet."""
+    from app.catalog.retrieval.text import _fold
+    utterances = [str(t.get('content') or '') for t in recent_turns or [] if t.get('role') == 'user']
+    utterances.append(message_text or '')
+    aliases = {'brand': r'marca', 'color': r'cor|cores|mostrador', 'style': r'estilo',
+               'material': r'material|pulseira', 'strap': r'pulseira', 'occasion': r'ocasiao|uso',
+               'case_size': r'tamanho|caixa', 'budget': r'orcamento|preco|valor', 'recipient': r'presente|destinatario'}
+    supported = set(asked)
+    for utterance in utterances:
+        text = _fold(utterance)
+        if re.search(r'\b(?:sem (?:nenhuma|qualquer) preferencia|tanto faz tudo|qualquer relogio serve)\b', text):
+            return set(claimed)
+        for clause in re.split(r'[.!?;]|\bmas\b', text):
+            if not re.search(r'\b(?:sem preferencia|indiferente|tanto faz|qualquer)\b', clause):
+                continue
+            supported.update(slot for slot, pattern in aliases.items() if re.search(r'\b(?:' + pattern + r')\b', clause))
+    return set(claimed) & supported
+
+
 def apply_contextual_discovery(interpretation, state, recent_turns, message_text, *, fallback=False):
     if interpretation._adaptive_ready:
         state.update(persona_qualification_required=False, force_retrieval=True,
@@ -93,7 +113,8 @@ def apply_contextual_discovery(interpretation, state, recent_turns, message_text
         known["strap"] = True
     if interpretation.subject.model:
         known["model_intent"] = True
-    covered = set(known) | set(interpretation.preferences.explicit_no_preferences)
+    covered = set(known) | grounded_no_preferences(
+        interpretation.preferences.explicit_no_preferences, asked, recent_turns, message_text)
     ready_groups = config.get("readyGroups") or []
     ready = any(set(group) <= covered for group in ready_groups if isinstance(group, list) and group)
     direct = bool(re.search(config["directRequestPattern"], message_text or "", re.I))

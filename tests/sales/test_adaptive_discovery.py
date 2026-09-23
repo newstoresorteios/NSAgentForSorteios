@@ -68,6 +68,22 @@ async def test_generic_unknown_answer_advances_contextual_question(adaptive):
     assert calls==[]
     assert result.response_metadata['discovery_question']['slot']=='budget'
 
+
+@pytest.mark.asyncio
+async def test_budget_answer_keeps_ongoing_qualification_before_recommendation(adaptive):
+    first,_=await run(interpretation(subject={'product_type':'relógio'}),[],text='quero um relógio')
+    second,_=await run(interpretation(subject={'product_type':'relógio'}),[],[turn(first)],text='não tenho modelo')
+    i=interpretation(goal='recommend',subject={'product_type':'relógio'},
+                     preferences={'budget_max':2500,'explicit_no_preferences':['brand','color','style','material','occasion','recipient','attributes']},
+                     ready_for_retrieval=True,references_previous_context=False)
+    third,calls=await run(i,[],[turn(first),turn(second)],text='até 2500')
+    assert calls==[] and not i._adaptive_ready
+    assert third.response_metadata['discovery_question']['slot']=='occasion'
+    final=interpretation(goal='recommend',subject={'product_type':'relógio'},
+                         preferences={'budget_max':2500,'occasion':'dia a dia'},ready_for_retrieval=True)
+    result,calls=await run(final,[],[turn(first),turn(second),turn(third)],text='dia a dia')
+    assert result is None and calls==[] and final._adaptive_ready
+
 @pytest.mark.asyncio
 async def test_short_answer_reuses_pool_and_filters(adaptive):
     rows=[product(1,38),product(2,42)]

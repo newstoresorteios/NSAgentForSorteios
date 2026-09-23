@@ -201,8 +201,19 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
 - Migração aditiva `20260923185104` restaura sete definições de configuração ausentes;
   aplicada ao banco em 23/09, sem sobrescrever personalizações. Os dois blocos de
   política da persona foram renderizados com sucesso após a restauração.
-- Validação local: 2.383 testes aprovados, 7 pulados; secret scan e contrato de
-  configuração aprovados. Isso não certifica ainda o caminho feliz com modelo real.
+- Continuidade: responder o orçamento mantém a qualificação aberta até cobrir uso
+  ou preferência, respeitando o limite de perguntas publicado. O marcador da pergunta
+  tem precedência sobre uma classificação incorreta de ausência de contexto.
+- Indiferença: "não tenho modelo em mente" não significa ausência de preferência
+  de cor, material ou ocasião; esses descartes precisam de suporte na conversa.
+- Avaliador: URLs de imagens dentro de texto não contam como entrada multimodal;
+  bloqueios de orçamento ficam explícitos e interrompem a campanha. A reserva usa
+  um limite superior conservador do payload textual efetivo, sem liberar reservas
+  em caso de timeout. A CLI pode reutilizar o login Vercel sem exportar credenciais.
+- Validação local: 2.389 testes aprovados, 7 pulados; secret scan e contrato de
+  configuração aprovados. Reexecução real confirmou os três turnos de qualificação
+  (modelo, orçamento, uso). O caminho completo e handoff ainda estavam em execução
+  no momento deste registro; não considerar esta contagem certificação de produção.
 - A avaliação real permanece requisito para liberação ampla. Testes isolados não
   certificam entrega WhatsApp, checkout nem pagamento real.
 

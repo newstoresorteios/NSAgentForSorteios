@@ -92,9 +92,9 @@ async def grade_turn(scenario, step, replay, history, persona):
     unexpected = [c['tool'] for c in replay.get('tools',[]) if (c.get('result') or {}).get('error')
                   and not (c['tool'] in expected.expected_tool_errors and (c['result'].get('_simulated_fault')
                           or c['result'].get('status_code')==404))]
-    if replay.get('error') or replay.get('blocked') or unexpected:
+    if replay.get('error') or replay.get('blocked') or replay.get('budget_errors') or unexpected:
         return {'outcome':'failed' if critical else 'inconclusive','objective_failures':failures,
-                'execution_errors':[replay.get('error'),*replay.get('blocked',[]),*unexpected],
+                'execution_errors':[replay.get('error'),*replay.get('blocked',[]),*replay.get('budget_errors',[]),*unexpected],
                 'critical_errors':critical}
     if failures and not bool(policy('historyEvaluationJudgeObjectiveFailures')):
         return {

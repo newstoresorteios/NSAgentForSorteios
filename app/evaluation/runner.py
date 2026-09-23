@@ -74,7 +74,7 @@ async def replay_case(case, persona, *, fixtures=None):
         'metadata': compact_metadata(metadata), 'tools': context.tool_calls, 'blocked': context.blocked,
         'review_inputs': context.review_inputs,
         'session_time_rebased': bool(case.get('recorded_at')),
-        'runtime': runtime.safe_summary(), 'error': error,
+        'runtime': runtime.safe_summary(), 'error': error, 'budget_errors': context.budget_errors,
         'integration_errors': [call.get('error_type') or 'tool_error' for call in (c['result'] for c in context.tool_calls) if call.get('error')],
         'real_model_calls': sum(1 for call in runtime.openai_calls if call.get('ok')),
         'generative_exercised': any(call.get('ok') for call in runtime.openai_calls),

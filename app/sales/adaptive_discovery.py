@@ -224,6 +224,9 @@ async def _ask_contextual_fallback(interpretation, state, message, recent_turns,
                                  commerce_state=state)
     apply_contextual_discovery(interpretation, discovery, recent_turns, message.text, fallback=True)
     if not discovery.get("persona_qualification_required") or not discovery.get("contextual_question"):
+        if discovery.get("contextual_discovery_reason") in {"ready", "limit_or_request", "questions_exhausted"}:
+            interpretation._adaptive_ready = True
+            interpretation._adaptive_trace = {"decision": "search", "reason": discovery["contextual_discovery_reason"]}
         return None
     interpretation._adaptive_trace = {"decision": "ask", "reason": "contextual_fallback",
                                        "slot": discovery["contextual_question"]["slot"]}
@@ -235,6 +238,21 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
     rules, contextual = configuration(), contextual_configuration()
     if not rules or not contextual or interpretation is None:
         return None
+    from app.memory.history_window import turns_for_conversation
+    recent_turns = turns_for_conversation(recent_turns, message.conversation_id)
+    topic = _fold(interpretation.subject.brand or interpretation.subject.product_type)
+    last_assistant = next((t for t in reversed(recent_turns or []) if t.get("role") == "assistant"), {})
+    metadata = last_assistant.get("metadata") or {}
+    previous_question = metadata.get("discovery_question") if isinstance(metadata, dict) else None
+    previous_question = previous_question if isinstance(previous_question, dict) else {}
+    if (previous_question and not previous_question.get("adaptive")
+            and _fold(previous_question.get("topic")) == topic
+            and not interpretation.domain_change_explicit):
+        # A budget answer completes one slot, not the entire ongoing interview.
+        question = await _ask_contextual_fallback(
+            interpretation, state, message, recent_turns, generate_reply, used_tray=False)
+        if question is not None or interpretation._adaptive_ready:
+            return question
     if not _eligible(interpretation, state, message.text):
         prefs = interpretation.preferences
         # An unspecified browse needs a question, not a whole-store lookup.
@@ -247,9 +265,6 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
             return await _ask_contextual_fallback(
                 interpretation, state, message, recent_turns, generate_reply, used_tray=False)
         return None
-    topic = _fold(interpretation.subject.brand or interpretation.subject.product_type)
-    from app.memory.history_window import turns_for_conversation
-    recent_turns = turns_for_conversation(recent_turns, message.conversation_id)
     snapshot, previous_slot = _previous(recent_turns, topic)
     if interpretation.domain_change_explicit or not interpretation.references_previous_context:
         snapshot, previous_slot = {}, None

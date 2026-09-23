@@ -17,7 +17,7 @@ class Client:
         self.args=args
         self.token=json.loads(args.access_file.read_text(encoding='utf-8'))['token']
         self.env=dict(os.environ)
-        if args.vercel_cli:
+        if args.vercel_cli and args.vercel_auth_dir:
             self.env['VERCEL_TOKEN']=json.loads((args.vercel_auth_dir/'auth.json').read_text(encoding='utf-8'))['token']
 
     def request(self,path,payload=None):
@@ -28,7 +28,9 @@ class Client:
                      '-H','Content-Type: application/json','-H','Authorization: Bearer '+self.token]
             if body is not None: command+=['--data-binary','@-']
             result=subprocess.run(command,input=body,env=self.env,capture_output=True,text=True,encoding='utf-8',timeout=600)
-            if result.returncode: raise RuntimeError('regression_http_request_failed:' + result.stdout[-1500:])
+            if result.returncode:
+                diagnostic = (result.stdout + '\n' + result.stderr).replace(self.token, '[REDACTED]')
+                raise RuntimeError('regression_http_request_failed:' + diagnostic[-1500:])
             return json.loads(result.stdout)
         request=urllib.request.Request(self.args.base_url.rstrip('/')+path,data=body.encode() if body else None,
             headers={'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
@@ -51,7 +53,6 @@ def main():
     parser.add_argument('--max-turns',type=int,default=24,
                         help='Maximum remote turns in this invocation; 0 means unlimited')
     args=parser.parse_args()
-    if args.vercel_cli and not args.vercel_auth_dir: parser.error('--vercel-auth-dir is required')
     client=Client(args)
     specification=json.loads(args.suite.read_text(encoding='utf-8'))
     suite=client.request('/api/admin/regression/suites',{'workspace_id':args.workspace,'specification':specification})
@@ -108,10 +109,13 @@ def main():
                 print(json.dumps({'scenario':scenario['key'],'repetition':item['repetition'],'step':step,
                                   'outcome':report['turns'][step]['grade']['outcome']}),flush=True)
                 grade=report['turns'][step]['grade']
-                if grade.get('provider_limit'):
+                evaluation_block = grade.get('evaluation_block') or next((e for e in grade.get('execution_errors', [])
+                    if isinstance(e, str) and e.startswith('evaluation_')), None)
+                if grade.get('provider_limit') or evaluation_block:
                     provider_blocked.set()
                     with mutex:
-                        item.update(status='blocked_provider',outcome='inconclusive',provider_limit=grade['provider_limit']);save()
+                        item.update(status='blocked_provider',outcome='inconclusive',provider_limit=grade.get('provider_limit'),
+                                    evaluation_block=evaluation_block);save()
                     return
             outcomes={t['grade']['outcome'] for t in report['turns']}
             outcome='passed' if outcomes=={'passed'} else ('inconclusive' if 'inconclusive' in outcomes else 'failed')

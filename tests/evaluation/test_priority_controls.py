@@ -37,7 +37,7 @@ def test_reserves_uncached_upper_bound_and_rejects_missing_rates():
     policy={'enabled':True,'campaign_id':'test','price_version':'v1','max_calls':3,'max_tokens':80000,
             'max_cost_usd':1,'max_input_tokens_per_call':20000,'prices':{'test':{'input':1,'output':2}}}
     tokens,cost=reservation(policy,model='test',messages=[],output_limit=1000)
-    assert tokens==21000 and float(cost)==.022
+    assert tokens==17386 and float(cost)==.018386
     with pytest.raises(EvaluationBudgetExceeded):reservation(policy,model='unknown',messages=[],output_limit=1000)
     with pytest.raises(EvaluationBudgetExceeded):reservation(policy,model='test',messages=[{'image_url':'x'}],output_limit=1000)
 

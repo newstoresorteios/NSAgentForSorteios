@@ -89,6 +89,9 @@ async def run_turn(workspace,suite_id,scenario_key,run_id,step_index):
                               else 'rate_limit')
         grade={'outcome':'inconclusive','execution_errors':[type(exc).__name__],
                'critical_errors':[],'objective_failures':[], 'provider_limit':provider_limit}
+        from app.evaluation.campaign_budget import EvaluationBudgetExceeded
+        if isinstance(exc, EvaluationBudgetExceeded):
+            grade['evaluation_block'] = str(exc)
     finally:
         reset_current_turn(outer)
         reset_bundle(tokens)

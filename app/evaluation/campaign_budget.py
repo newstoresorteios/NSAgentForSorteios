@@ -13,7 +13,30 @@ from app.ops.turn_runtime import LLMCallBudgetExceeded
 
 
 class EvaluationBudgetExceeded(LLMCallBudgetExceeded):
-    pass
+    def __init__(self, reason):
+        super().__init__(reason)
+        from app.evaluation.context import current_evaluation
+        context = current_evaluation()
+        if context is not None and reason not in context.budget_errors:
+            context.budget_errors.append(reason)
+
+
+def contains_media_input(value):
+    """Only structured media blocks incur media cost; URLs inside text are text."""
+    if isinstance(value, list):
+        return any(contains_media_input(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    kind = value.get('type')
+    if isinstance(kind, str) and kind in {'image_url', 'input_image', 'input_audio', 'input_video', 'input_file'}:
+        return True
+    if any(key in value for key in ('image_url', 'input_image', 'input_audio')) and 'type' not in value:
+        # Also reject malformed/raw media payloads, while ignoring JSON schemas.
+        if not any(key in value for key in ('properties', '$defs', 'required')):
+            return True
+    return any(contains_media_input(item) for key, item in value.items()
+               if key not in {'text', 'content', 'properties', '$defs', 'schema'}) or (
+        isinstance(value.get('content'), (list, dict)) and contains_media_input(value['content']))
 
 
 def reservation(policy, *, model, messages, output_limit):
@@ -25,7 +48,7 @@ def reservation(policy, *, model, messages, output_limit):
     # schema/protocol overhead; image/audio campaigns need an explicit estimator.
     payload = json.dumps(messages or [], ensure_ascii=False,
                          default=lambda value: value.model_json_schema() if hasattr(value, 'model_json_schema') else str(value))
-    if any(key in payload for key in ('image_url', 'input_image', 'input_audio')):
+    if contains_media_input(messages):
         raise EvaluationBudgetExceeded('evaluation_media_budget_not_supported')
     max_input = int(policy.get('max_input_tokens_per_call') or 0)
     estimate = len(payload.encode('utf-8')) + 16384
@@ -37,8 +60,10 @@ def reservation(policy, *, model, messages, output_limit):
     input_rate, output_rate = Decimal(str(rates['input'])), Decimal(str(rates['output']))
     if not input_rate.is_finite() or not output_rate.is_finite() or min(input_rate, output_rate) < 0:
         raise EvaluationBudgetExceeded('evaluation_model_price_invalid')
-    tokens = max_input + int(output_limit)
-    cost = (max_input * input_rate + int(output_limit) * output_rate) / 1000000
+    # Reserve the conservative bound of this actual text payload, not the full
+    # per-call ceiling. The ceiling remains enforced above.
+    tokens = estimate + int(output_limit)
+    cost = (estimate * input_rate + int(output_limit) * output_rate) / 1000000
     if (int(policy.get('max_calls') or 0) < 1 or tokens > int(policy.get('max_tokens') or 0)
             or cost > Decimal(str(policy.get('max_cost_usd') or 0))):
         raise EvaluationBudgetExceeded('evaluation_campaign_budget_exceeded')
