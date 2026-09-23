@@ -94,9 +94,9 @@ async def test_technical_probe_does_not_require_sparse_color_property():
         list_query_extras=lambda _: {'property_name':'Cor','property_value':'Preto','current_price_range':'0,3500'})
     await run_probes(session,[r for r in plan.requests if r.strategy=='technical_identity_probe'])
     args=tool.await_args.args[1]
-    assert args['brand']=='Citizen' and args['current_price_range']=='0,3500'
+    assert args['brand']=='Citizen' and 'current_price_range' not in args
     assert 'property_name' not in args and 'property_value' not in args
-    assert 'automático' in args['name']
+    assert args['tokens']==['automático','preto'] and 'name' not in args
 
 
 def test_decimal_case_diameter_is_not_lug_to_lug_or_strap_width():
@@ -105,6 +105,17 @@ def test_decimal_case_diameter_is_not_lug_to_lug_or_strap_width():
     assert extract_case_size_range_from_text('Quero caixa de 41,7 mm, pulseira de 20 mm, espessura 12,2 mm') == (41.7,41.7)
     assert product_matches_case_size_range({'description':description},41.7,41.7)
     assert not product_matches_case_size_range({'description':description},38,38)
+
+
+@pytest.mark.parametrize('mode', ['exact', 'recommendation'])
+def test_technical_probe_candidates_still_require_current_price_under_budget(mode):
+    from app.catalog.retrieval.hard_filter import hard_filter_products
+    i = interpretation(domain='commerce', goal='recommend', subject={'brand':'Citizen'},
+                       preferences={'budget_max':3500})
+    product = {'id':'test', 'name':'Citizen Promaster', 'brand':'Citizen',
+               'price':4399.99, 'current_price':3399.99, 'available':'1'}
+    assert hard_filter_products([product], i, mode=mode) == [product]
+    assert not hard_filter_products([{**product, 'current_price':3599.99}], i, mode=mode)
 
 
 @pytest.mark.asyncio

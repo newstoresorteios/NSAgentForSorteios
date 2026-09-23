@@ -143,12 +143,20 @@ async def run_probes(
         if request.strategy == 'technical_identity_probe' or session.retrieval_plan.mode == 'exact':
             arguments.pop('property_name', None)
             arguments.pop('property_value', None)
+        if request.strategy == 'technical_identity_probe' and arguments.get('name'):
+            # Tray's name phrase can miss intervening title words (e.g. Marine).
+            # The existing adaptor token endpoint enforces AND across words.
+            arguments['tokens'] = arguments.pop('name').split()
+            # Upstream price_range may apply to list price, excluding a valid
+            # promotional price. Enforce the customer's ceiling on returned
+            # current prices in the existing hard-filter/revalidation stages.
+            arguments.pop('current_price_range', None)
         print("[sales.retrieval.request]", {
             "strategy": request.strategy,
             "category_id_present": bool(request.category_id),
-            "name_filter_present": bool(request.name),
+            "name_filter_present": bool(arguments.get('name')),
             "has_brand_filter": bool(request.brand),
-            "token_count": len(getattr(request, "tokens", ()) or ()),
+            "token_count": len(arguments.get('tokens') or ()),
             "has_budget_filter": session.has_budget,
             "candidate_limit": request.limit,
         })

@@ -311,30 +311,28 @@ def _extract_budget_max(text: str) -> float | None:
     if bare is not None:
         return bare
     match = re.search(
-        r"(?:at[eé]|ate|menos de|no m[aá]ximo|at[eé] uns?|por at[eé])\s*"
-        r"(?:r\$\s*)?([\d.,]+)\s*(mil|k)?",
+        r"\b(?:at[eé]|menos de|no m[aá]ximo|at[eé] uns?|por at[eé])\s*"
+        r"(?:r\$\s*)?([\d.,]+)\s*(mil|k)?\b",
         text or "",
         flags=re.IGNORECASE,
     )
     if not match:
         match = re.search(
-            r"(?:r\$\s*)?([\d.,]+)\s*(mil|k)?\s*(?:reais|real)?",
+            r"(?:r\$\s*([\d.,]+)\s*(mil|k)?\b|"
+            r"(?<![\w-])([\d.,]+)\s*(mil|k|reais|real)\b)",
             text or "",
             flags=re.IGNORECASE,
         )
         if not match:
             return None
-        # Avoid treating bare years/codes as budget without currency cue.
-        raw_text = (text or "").lower()
-        if "real" not in raw_text and "r$" not in raw_text and "mil" not in raw_text:
-            if not re.search(r"at[eé]|ate|menos|m[aá]ximo", raw_text):
-                return None
-    raw = match.group(1).replace(".", "").replace(",", ".")
+    amount = match.group(1) or match.group(3)
+    unit = match.group(2) or (match.group(4) if match.lastindex and match.lastindex >= 4 else None)
+    raw = amount.replace(".", "").replace(",", ".")
     try:
         value = float(raw)
     except ValueError:
         return None
-    if match.group(2):
+    if unit and unit.lower() in {"mil", "k"}:
         value *= 1000
     if value <= 0 or value > 1_000_000:
         return None

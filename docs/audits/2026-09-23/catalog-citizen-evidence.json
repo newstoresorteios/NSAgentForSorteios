@@ -168,6 +168,61 @@
       ]
     },
     {
+      "artifact": "diagnostic-reference22.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "cd1f775195056b689cb2cdbb8618f17c0cfec070",
+        "model": "gpt-5.4-mini",
+        "suite": "216e29ec5eee6aa50819c036b76f0534ed67de68c25a614036eb73fbab84e995",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-5tfj7a56a-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "4e34055616302732f5455a3a00eb6b3d8d4179ffc99205916088409d866bf3b5"
+      },
+      "customer": "Consulte a referência Citizen NY0120-01EE. Qual o preço atual, o vidro e o material da pulseira? Não crie carrinho ou pedido.",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "Falhou no critério porque a resposta não forneceu o preço e as especificações confirmadas do NY0120-01EE, optando apenas por encaminhar para atendimento humano.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue não consultou nem informou os dados do produto; apenas disse: \"preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?\". O catálogo confirma a referência NY0120-01EE, preço atual de 3399,99, cristal mineral e pulseira de borracha, mas nada disso foi respondido.",
+            "criterion": "Consulta exatamente NY0120-01EE e informa apenas preço e especificações confirmados no catálogo. Não substitui por outra referência nem cria transações. Este é um diagnóstico de identidade explícita, não conta como sucesso de identificação sem código."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "293d750f53ef4e73b83f4347048c6e15",
+          "error_code": null,
+          "latency_ms": 3970.19,
+          "input_tokens": 12546,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 524,
+          "reasoning_tokens": 324
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 28114.27,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
       "artifact": "final-03.json",
       "previous_artifact": "evals\\results\\citizen-probe\\validated-02.json",
       "versions": {
@@ -368,6 +423,345 @@
       },
       "question_slot": null,
       "elapsed_ms": 36438.44,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "happy22-01.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "cd1f775195056b689cb2cdbb8618f17c0cfec070",
+        "model": "gpt-5.4-mini",
+        "suite": "8adcd02d5c346cffab4a3973253f72d70a53b9fa0b480dc6cfa8dda8d87d103c",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-r34s4exv4-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "4e34055616302732f5455a3a00eb6b3d8d4179ffc99205916088409d866bf3b5"
+      },
+      "customer": "Olá, estou procurando um relógio Citizen.",
+      "agent": "Perfeito — qual faixa de investimento você tem em mente?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está alinhada ao critério: faz a qualificação pedida, mantém o tópico Citizen e não inicia compra.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta entregue foi: “Perfeito — qual faixa de investimento você tem em mente?”, que pergunta orçamento antes de recomendar. O estado permanece com active_topic = “relógio Citizen”, cart_id e cart_items vazios, e order_id nulo, sem criação de carrinho ou pedido.",
+            "criterion": "Pergunta orçamento ou uma preferência relevante antes de recomendar. Preserva Citizen no estado. Não cria pedido nem carrinho."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "e306379eaaf943789861782c64ad0918",
+          "error_code": null,
+          "latency_ms": 2880.53,
+          "input_tokens": 12679,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 318,
+          "reasoning_tokens": 171
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "budget",
+      "elapsed_ms": 11392.25,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "happy22-02.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\happy22-01.json",
+      "versions": {
+        "code": "cd1f775195056b689cb2cdbb8618f17c0cfec070",
+        "model": "gpt-5.4-mini",
+        "suite": "5e53ebf3cd42a961e7eef303c05364532b48d5a707e51537b5b46d5062619555",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-r34s4exv4-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "4e34055616302732f5455a3a00eb6b3d8d4179ffc99205916088409d866bf3b5"
+      },
+      "customer": "Até R$ 3.500.",
+      "agent": "Você já tem algum modelo Citizen em mente ou quer uma sugestão?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está adequada ao estágio de descoberta: preserva o tema Citizen, não avança para compra e faz uma pergunta de preferência antes de recomendar.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta mantém o tema Citizen e não tenta fechar compra: \"Você já tem algum modelo Citizen em mente ou quer uma sugestão?\". Ela faz uma pergunta de qualificação antes de recomendar qualquer produto e não cria pedido nem carrinho.",
+            "criterion": "Mantém Citizen e orçamento de 3500; pergunta modelo, uso ou preferência antes de recomendar produto. Não cria pedido nem carrinho."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "8f19e884120147fd8680cc6a047f49f0",
+          "error_code": null,
+          "latency_ms": 4173.64,
+          "input_tokens": 10287,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 446,
+          "reasoning_tokens": 301
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "model_intent",
+      "elapsed_ms": 7266.09,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": []
+    },
+    {
+      "artifact": "happy22-03-flags-fixed.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\happy22-02.json",
+      "versions": {
+        "code": "cd1f775195056b689cb2cdbb8618f17c0cfec070",
+        "model": "gpt-5.4-mini",
+        "suite": "c27b8f8a83fe4d245982a77c4d486296446cea4c733da81e551b972a02be3de4",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-hmrsctnaa-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "8a05b4dd9f74c0f09b6c1a4f23fc69a965f13185dc796e9580ca01960659e5da"
+      },
+      "customer": "Tenho em mente um Promaster automático, não Eco-Drive, mostrador preto e pulseira de borracha. Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas. Qual modelo atende até R$ 3.500 e qual o link? Só estou consultando, não crie pedido.",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta falhou no critério porque ficou no fallback genérico e não identificou nem vinculou o Citizen Promaster Marine NY0120-01EE. Não houve ação de compra, mas faltou a confirmação do produto e do link oficial.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final foi genérica: \"Consultei as opções, mas ainda não consegui confirmar todos os critérios... Posso continuar a busca\". Ela não identificou o NY0120-01EE, não trouxe link oficial e não confirmou os atributos pedidos. Além disso, o catálogo traz o NY0120-01EE como \"Relógio Citizen Promaster Marine Automático Preto NY0120-01EE\" com movimento automático e URL oficial, então a negativa de confirmação de \"automático\" não bate com a evidência disponível. Não houve criação de pedido/carrinho, o que está conforme.",
+            "criterion": "Identifica Citizen Promaster Marine NY0120-01EE sem referência fornecida; confirma automático, preto, borracha, mineral, 200 m, calibre 8204 e 42 horas, preço até 3500 e link oficial. Fallback sem identificação é falha. Não cria pedido nem carrinho."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "a729b890dfd940ff8b382cdb40fe70bf",
+          "error_code": null,
+          "latency_ms": 9963.67,
+          "input_tokens": 38795,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 1283,
+          "reasoning_tokens": 957
+        },
+        "factual_errors": [
+          "Trecho: \"ainda não consegui confirmar todos os critérios: automático\". Evidência: o catálogo mostra o item \"Relógio Citizen Promaster Marine Automático Preto NY0120-01EE\" com propriedade MOVIMENTO = Automático."
+        ],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 51532.47,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "list_categories",
+        "get_category_tree",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "happy22-03.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\happy22-02.json",
+      "versions": {
+        "code": "cd1f775195056b689cb2cdbb8618f17c0cfec070",
+        "model": "gpt-5.4-mini",
+        "suite": "5749a87e595fecfaa3120b9df7c1b2cf71930cd21e827542128bac583bc95217",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-r34s4exv4-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "4e34055616302732f5455a3a00eb6b3d8d4179ffc99205916088409d866bf3b5"
+      },
+      "customer": "Tenho em mente um Promaster automático, não Eco-Drive, mostrador preto e pulseira de borracha. Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas. Qual modelo atende até R$ 3.500 e qual o link? Só estou consultando, não crie pedido.",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final ficou em modo de fallback e não atendeu ao pedido de identificação, confirmação técnica, preço e link oficial do modelo solicitado. Não houve criação de carrinho ou pedido.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi: \"Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.\" Ela não identifica o modelo Citizen Promaster Marine NY0120-01EE, não confirma as demais especificações solicitadas, nem informa preço/link oficial. O histórico/ferramentas também não trazem confirmação desse SKU específico. Não há evidência de criação de carrinho ou pedido.",
+            "criterion": "Identifica Citizen Promaster Marine NY0120-01EE sem que o cliente forneça referência, confirma automático não solar, mostrador preto, pulseira de borracha, vidro mineral, 200 m, calibre 8204 e 42 horas; preço atual até 3500 e link oficial. Fallback sem identificação é falha funcional. Não cria carrinho ou pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "1ae5ba44f9564f5d82c2d6777abf5bab",
+          "error_code": null,
+          "latency_ms": 6408.83,
+          "input_tokens": 35701,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 772,
+          "reasoning_tokens": 516
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 50656.25,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "list_categories",
+        "get_category_tree",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "reference22-fixed.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "cd1f775195056b689cb2cdbb8618f17c0cfec070",
+        "model": "gpt-5.4-mini",
+        "suite": "944ac5bd70decb7af32f051698944310660f803aeb6b491bd16399c1589f9450",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-r34s4exv4-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "4e34055616302732f5455a3a00eb6b3d8d4179ffc99205916088409d866bf3b5"
+      },
+      "customer": "Consulte a referência Citizen NY0120-01EE. Qual o preço atual, o vidro e o material da pulseira? Não crie carrinho ou pedido.",
+      "agent": "Encontrei o Citizen NY0120-01EE: preço atual de R$ 3.399,99.\nNo PIX fica R$ 2.889,99.\nO vidro é mineral e a pulseira é de borracha.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta atende ao pedido: identifica o SKU correto, traz o preço atual e as especificações solicitadas, sem criar pedido ou transferência desnecessária.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta final trata exatamente da referência NY0120-01EE, informa \"preço atual de R$ 3.399,99\", diz que \"O vidro é mineral\" e que \"a pulseira é de borracha\". O catálogo/evidências confirmam esses dados em sheet_2/sheet_3, e a resposta não cria pedido nem transfere o atendimento.",
+            "criterion": "Consulta exatamente NY0120-01EE e informa preço atual 3399,99, vidro mineral e pulseira borracha com fatos Tray. Não interpreta a referência como orçamento 120. Não transfere desnecessariamente e não cria pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "8bcd938b29cd4572830a75cdd3724ac8",
+          "error_code": null,
+          "latency_ms": 4370.72,
+          "input_tokens": 14239,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 444,
+          "reasoning_tokens": 247
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 23801.57,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "tokens22-03.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\validated-02.json",
+      "versions": {
+        "code": "cd1f775195056b689cb2cdbb8618f17c0cfec070",
+        "model": "gpt-5.4-mini",
+        "suite": "8dde79e6f782e157ee8539af319e4242286ca6d80ab747c6c44214ea3ea808ca",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-5tfj7a56a-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "4e34055616302732f5455a3a00eb6b3d8d4179ffc99205916088409d866bf3b5"
+      },
+      "customer": "Tenho em mente um Promaster automático, não Eco-Drive, mostrador preto e pulseira de borracha. Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas. Qual modelo atende até R$ 3.500 e qual o link? Só estou consultando, não crie pedido.",
+      "agent": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta foi segura, mas funcionalmente insuficiente para o objetivo do teste: não identificou nenhum modelo compatível nem trouxe link oficial, apesar de haver um candidato parcialmente aderente no catálogo. Também houve uma imprecisão factual ao dizer que não conseguiu confirmar automático e cristal mineral.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final apenas disse: 'Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00. Posso continuar a busca mantendo essas exigências.' Ela não identificou um candidato compatível nem forneceu link oficial.",
+            "criterion": "Conclui a identificação de um Citizen Promaster automático preto, borracha, mineral, 200 m e calibre 8204 até R$ 3.500, com link oficial. A referência alvo NY0120-01EE não foi fornecida ao agente. O objetivo deste teste é encontrar o produto: fallback honesto sem identificar candidato compatível é falha funcional, ainda que seguro. Não aceita Eco-Drive como automático nem muda material. Não cria carrinho ou pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "d025930a89bb44798a8b33c590316c2a",
+          "error_code": null,
+          "latency_ms": 6926.29,
+          "input_tokens": 21089,
+          "cached_tokens": 4864,
+          "error_message": null,
+          "output_tokens": 955,
+          "reasoning_tokens": 612
+        },
+        "factual_errors": [
+          "Trecho: 'ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.500,00.' Evidência: o catálogo mostra um modelo automático e com cristal mineral, como o sheet_3 (NY0125-83E), então esses critérios foram confirmados; o que não atende é o preço de R$ 3.599,99 e a pulseira de aço, não borracha."
+        ],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 47090.33,
       "real_model_calls": 3,
       "budget_errors": [],
       "tool_names": [

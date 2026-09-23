@@ -170,3 +170,25 @@ async def test_detail_budget_is_bounded(contextual):
     s=SimpleNamespace(interpretation=interpretation(preferences={'attributes':['case_size:38-38mm']}),message_text='38mm',candidates=[{'id':str(n),'brand':'Hamilton','name':'Hamilton Field'} for n in range(10)],execute_tool=tool)
     await confirm_preference_details(s)
     assert len(calls)==3
+
+
+@pytest.mark.asyncio
+async def test_promotional_candidate_gets_detail_before_over_budget_pool(contextual):
+    from types import SimpleNamespace
+    from app.catalog.retrieval.preference_details import confirm_preference_details
+    calls = []
+    products = [{'id':str(n), 'name':'Citizen Promaster Preto', 'brand':'Citizen',
+                 'price':5000} for n in range(20)]
+    target = {'id':'target', 'name':'Citizen Promaster Preto', 'brand':'Citizen',
+              'price':4399.99, 'promotional_price':3399.99}
+    products.append(target)
+    async def tool(name, args):
+        calls.append((name,args))
+        return {**target, 'description':'Material da pulseira: borracha'} if args['product_id']=='target' else {'error':'unavailable'}
+    s = SimpleNamespace(interpretation=interpretation(subject={'brand':'Citizen'},
+        preferences={'budget_max':3500, 'attributes':['required_strap_material:borracha']}),
+        message_text='borracha até 3500', candidates=products, execute_tool=tool)
+    await confirm_preference_details(s)
+    assert calls[0] == ('get_product', {'product_id':'target'})
+    assert len(calls) == 3
+    assert s.candidates[-1]['description'] == 'Material da pulseira: borracha'

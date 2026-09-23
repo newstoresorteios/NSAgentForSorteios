@@ -66,6 +66,20 @@ async def test_token_search_forwards_only_supported_hard_catalog_filters():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('value,expected', [(True,'1'), (False,'0'), ('true','1'), ('false','0'), ('1','1'), ('0','0')])
+async def test_token_search_normalizes_tray_availability_flags(value, expected):
+    fake = FakeClient()
+    client = TrayAdapterClient('https://tray.example/', 'secret', fake)
+    await client.search_products_by_tokens(tokens=['automatico','preto'], brand='Citizen',
+        filters={'available':value, 'available_in_store':value})
+    args, kwargs = fake.calls[0]
+    assert args == ('GET', 'https://tray.example/internal/products/search')
+    assert kwargs['headers'] == {'Authorization':'Bearer secret'}
+    assert kwargs['params']['available'] == expected
+    assert kwargs['params']['available_in_store'] == expected
+
+
+@pytest.mark.asyncio
 async def test_tray_request_propagates_trace_and_records_render_request_id():
     from app.ops.runtime_context import reset_current_turn, set_current_turn
     from app.ops.turn_runtime import TurnRuntimeContext

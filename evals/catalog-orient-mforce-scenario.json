@@ -1,0 +1,23 @@
+{
+  "observed_at": "2026-09-23",
+  "source": "https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b",
+  "reference": "RA-AC0N02Y10B",
+  "facts": {
+    "brand": "Orient", "family": "M-Force Land", "dial": "laranja",
+    "movement": "automático", "caliber": "F6722", "power_reserve_hours": 40,
+    "case_material": "aço inoxidável", "bracelet_material": "aço inoxidável",
+    "crystal": "safira", "water_resistance_m": 200,
+    "case_mm": 45, "thickness_mm": 13.2, "bracelet_width_mm": 20,
+    "price_brl": 3699.99, "pix_price_brl": 3144.99,
+    "lead_time_business_days": 30,
+    "availability": "Confirmar na consulta ao vivo; HTML contém também widget genérico de indisponibilidade."
+  },
+  "procedure": {
+    "start": "Olá, quero um relógio Orient.",
+    "budget_when_asked": "Até R$ 4.000.",
+    "preferences_when_asked": "Um M-Force automático, mostrador laranja e pulseira de aço.",
+    "extra_details": "Safira, 200 metros, calibre F6722, reserva de 40 horas e caixa de 45 mm.",
+    "rules": ["Não revelar referência antes da identificação.", "Responder às perguntas reais do agente.", "Não criar carrinho, pedido ou enviar mensagens a clientes.", "Separar identificação, verificação técnica e casos negativos."]
+  },
+  "execution_status": "Planejado; somente os artefatos reais comprovam execução."
+}

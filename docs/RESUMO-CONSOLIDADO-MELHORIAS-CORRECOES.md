@@ -281,7 +281,7 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
   Os demais filtros e revalidação de detalhes continuam obrigatórios.
 - Teto ampliado explicitamente para US$ 20. Antes da repetição, reservas anteriores
   US$ 17,92291425; campanha nova limitada a US$ 2, sem retomar campanhas antigas.
-- Resultado final: FALHA de identificação, apesar da qualificação corrigida.
+- Resultado da rodada até US$ 20: FALHA de identificação, apesar da qualificação corrigida.
   A sequência `validated-01` → `validated-02` perguntou orçamento e modelo;
   a terceira resposta não encontrou o Citizen. `final-03` repetiu o último turno
   com histórico real na versão corrigida, explicitamente registrando a mudança
@@ -298,12 +298,58 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
 - Dez turnos Citizen preservados em `docs/audits/2026-09-23/catalog-citizen-evidence.json`.
   Divergências do juiz estão em `catalog-manual-review.json`: não repetir a marca
   na frase não é perdê-la do estado; fallback sem encontrar produto não é sucesso.
-- Encerradas chamadas pagas com reserva total US$ 19,68371475, abaixo de US$ 20.
+- Pausadas chamadas dessa rodada com reserva total US$ 19,68371475, abaixo de US$ 20.
   Não é o valor faturado. Campanhas anteriores não devem ser retomadas sem
   recontar a reserva global; não há testes automáticos agendados.
 - Gate de liberação ampla continua NÃO aprovado: resolver e repetir identificação
   Citizen, além de homologar o canal real e checkout/pagamento. Os casos Seiko
   aprovados não generalizam para todas as marcas ou para todas as repetições.
+
+### Continuação autorizada até US$ 22
+
+- Consulta real pela referência encontrou NY0120-01EE, id 11013: preço atual
+  R$ 3.399,99, Pix R$ 2.889,99, mineral, borracha, disponibilidade em 30 dias úteis.
+  Portanto a ausência no índice parcial não era prova de ausência no catálogo.
+- A resposta correta dessa consulta foi bloqueada por orçamento fictício de R$ 120:
+  o extrator pegava números do SKU e aceitava `ate` dentro de `material` como
+  indicação de teto. Corrigido para exigir indicação monetária junto ao valor ou
+  expressão de limite com fronteira de palavra; coberto com regressões locais.
+- A consulta técnica agora usa tokens AND no contrato existente do adaptador,
+  permitindo palavras intermediárias como `Marine`. Nessa recuperação específica,
+  não envia faixa upstream: o preço de tabela pode excluir uma promoção válida.
+  O teto permanece obrigatório nos filtros locais sobre preço vigente e na
+  revalidação da ficha. Testes verificam aceitação de R$ 3.399,99 e rejeição de
+  R$ 3.599,99 com teto R$ 3.500, nos modos exato e recomendação.
+- Campanha isolada `launch-20260923-citizen-tokens22`, limite US$ 2 / 24 chamadas,
+  sobre reserva anterior US$ 19,68371475. Campanhas antigas permanecem paradas.
+  Esse limite conservador conjunto fica abaixo do teto total aprovado de US$ 22.
+- A repetição `happy22-01` → `happy22-02` qualificou marca/orçamento/modelo, mas
+  `happy22-03` ainda falhou na identificação. A consulta direta
+  `reference22-fixed` passou: orçamento fictício eliminado, ficha correta respondida.
+- Diagnóstico Render: `/internal/products/search` recebia `available=true` e
+  `available_in_store=true`. No código do adaptador, a rota de listagem converte
+  booleanos para `1/0`, mas a rota de tokens não. Cliente do NSAgent corrigido
+  para enviar `1/0` nessa rota, preservando os filtros em vez de removê-los.
+  MCP Tray consultado: a documentação contém tabelas contraditórias sobre a
+  semântica de `available_in_store`; não invertemos o significado desse campo.
+- Suíte local: 2.441 passaram, 7 ignorados; contrato de configuração (233 aliases)
+  e varredura de segredos passaram. Regressões cobrem normalização true/false,
+  booleanos e strings, sem alterar os valores já numéricos.
+- Reserva anterior à última repetição: US$ 21,39451275. Tranche anterior parada;
+  nova `launch-20260923-citizen-flags22` limitada a US$ 0,60 / 7 chamadas, mantendo
+  reserva máxima conjunta US$ 21,99451275. Não executar tranches antigas em paralelo.
+- A repetição `happy22-03-flags-fixed` confirmou a correção de transporte: consulta
+  com `1/0` retornou 20 produtos, incluindo NY0120-01EE. Ainda falhou na resposta:
+  detalhes de três outros modelos consumiram a cota antes da ficha correta.
+  Corrigida a priorização de detalhes por preço vigente compatível antes do corte
+  de ranking; valores desconhecidos vêm depois, fora do teto por último. Todos os
+  fatos continuam exigindo revalidação. Regressão cobre promoção após 20 itens caros.
+- Reserva acumulada US$ 21,78337575. Usuário autorizou US$ 25 e pediu nova marca/modelo
+  e push. Não houve chamada na tranche `citizen-detail23`; última correção Citizen
+  validada apenas localmente, sem declarar caminho feliz completo aprovado.
+  Nova campanha `launch-20260923-orient25`: US$ 3,20 / 36 chamadas; máximo conjunto
+  US$ 24,98337575, mantendo campanhas anteriores paradas. Evidência Citizen: 17 turnos.
+- Suíte completa após priorização de detalhes: 2.442 passaram, 7 ignorados.
 
 ## Documentação mantida separadamente
 

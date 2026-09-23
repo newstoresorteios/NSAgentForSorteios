@@ -575,6 +575,14 @@ class TrayAdapterClient:
             for key, value in (filters or {}).items()
             if key in allowed_filters and value is not None
         }
+        # Unlike /products, the token route forwards these strings upstream.
+        # Tray flags use 1/0, not HTTPX's boolean serialization true/false.
+        for key in ("available", "available_in_store"):
+            value = catalog_filters.get(key)
+            if isinstance(value, bool):
+                catalog_filters[key] = "1" if value else "0"
+            elif isinstance(value, str) and value.lower() in {"true", "false"}:
+                catalog_filters[key] = "1" if value.lower() == "true" else "0"
         return await self._request(
             "GET",
             "/internal/products/search",

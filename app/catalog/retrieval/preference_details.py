@@ -13,10 +13,29 @@ async def confirm_preference_details(session):
     if not (size or strap):
         return
     from app.catalog.retrieval.rerank import deterministic_semantic_order
+    from app.catalog.retrieval.price import effective_price
+
+    # Rank within budget groups before semantic ordering truncates its pool.
+    # Otherwise high-scoring, over-budget watches consume every detail slot,
+    # while a compatible promotional-price candidate never gets its sheet read.
+    prefs = session.interpretation.preferences
+    groups = [[], [], []]  # compatible known price, unknown, outside budget
+    for product in session.candidates:
+        price = effective_price(product)
+        if price is None:
+            group = 1
+        elif ((prefs.budget_max is not None and price > prefs.budget_max)
+              or (prefs.budget_min is not None and price < prefs.budget_min)):
+            group = 2
+        else:
+            group = 0
+        groups[group].append(product)
+    ordered = [product for group in groups
+               for product in deterministic_semantic_order(group, session.interpretation)]
 
     checked = 0
     replacements = {}
-    for product in deterministic_semantic_order(session.candidates, session.interpretation):
+    for product in ordered:
         needs_detail = (size and not extract_case_size_mm(product)) or (
             strap and not product_matches_required_strap_material(product, strap)
         )
