@@ -190,6 +190,22 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
 - O MCP Storefront é público e orientado à vitrine. Seu uso futuro deve ser complementar e passar por testes de equivalência/frescura antes de entrar no caminho comercial.
 - Resultados locais não provam saúde de Render, Vercel, Supabase, Brevo, Meta, Mercado Pago ou da loja Tray em produção.
 
+## Correções da conversa — 23/09/2026
+
+- Atributos de identificação `qual:*` não contam mais como preferências do produto.
+- Pedido genérico volta à qualificação contextual antes de pesquisar; busca preliminar
+  vazia e sem requisitos técnicos não autoriza recomendar um produto arbitrário.
+- A busca de relógios rejeita títulos claramente de acessórios sem afetar pedidos
+  explícitos de pulseiras ou relógios cuja descrição menciona uma pulseira.
+- A regressão multi-turno preserva os marcadores de perguntas e o cache da descoberta.
+- Migração aditiva `20260923185104` restaura sete definições de configuração ausentes;
+  aplicada ao banco em 23/09, sem sobrescrever personalizações. Os dois blocos de
+  política da persona foram renderizados com sucesso após a restauração.
+- Validação local: 2.383 testes aprovados, 7 pulados; secret scan e contrato de
+  configuração aprovados. Isso não certifica ainda o caminho feliz com modelo real.
+- A avaliação real permanece requisito para liberação ampla. Testes isolados não
+  certificam entrega WhatsApp, checkout nem pagamento real.
+
 ## Documentação mantida separadamente
 
 - `README.md`: instalação e visão geral do serviço.

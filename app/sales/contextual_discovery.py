@@ -35,13 +35,13 @@ def configuration() -> dict[str, Any]:
         return {}
 
 
-def apply_contextual_discovery(interpretation, state, recent_turns, message_text):
+def apply_contextual_discovery(interpretation, state, recent_turns, message_text, *, fallback=False):
     if interpretation._adaptive_ready:
         state.update(persona_qualification_required=False, force_retrieval=True,
                      contextual_discovery_reason="ready")
         return
     from .adaptive_discovery import configuration as adaptive_configuration
-    if adaptive_configuration():
+    if adaptive_configuration() and not fallback:
         # The async catalog-guided gate replaces this fixed-question gate.
         return
     config = configuration()
@@ -86,6 +86,9 @@ def apply_contextual_discovery(interpretation, state, recent_turns, message_text
             break
 
     known = dict(state.get("known_preferences") or {})
+    # Customer identity is not a product preference or a reason to skip discovery.
+    if not any(not str(a).startswith("qual:") for a in interpretation.preferences.attributes):
+        known.pop("attributes", None)
     if any(str(a).startswith("required_strap_material:") for a in interpretation.preferences.attributes):
         known["strap"] = True
     if interpretation.subject.model:

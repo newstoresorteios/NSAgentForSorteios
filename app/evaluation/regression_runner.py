@@ -18,6 +18,22 @@ def public_run(row):
                                         'active_step','turns','created_at','finished_at')}
 
 
+def replay_history(initial, turns):
+    history = deepcopy(initial)
+    for prior in turns:
+        replay = prior.get('replay') or {}
+        metadata = replay.get('metadata') or {}
+        history.extend([
+            {'role': 'user', 'content': prior['input']},
+            {'role': 'assistant', 'content': replay.get('reply', ''), 'metadata': {
+                **{key: deepcopy(metadata[key]) for key in ('handoff', 'discovery_question', 'adaptive_discovery')
+                   if key in metadata},
+                **({'safety_reason': replay['safety_reason']} if replay.get('safety_reason') is not None else {}),
+            }},
+        ])
+    return history
+
+
 async def run_turn(workspace,suite_id,scenario_key,run_id,step_index):
     from app.persona.persona_runtime import load_persona_runtime
     suite_row=repository.get_suite(workspace,suite_id)
@@ -51,11 +67,7 @@ async def run_turn(workspace,suite_id,scenario_key,run_id,step_index):
               'deployment':os.getenv('VERCEL_URL') or 'local','environment':scenario.environment}
     row,claimed=repository.claim_turn(workspace,suite_id,scenario_key,run_id,step_index,versions)
     if not claimed: return public_run(row)
-    history=deepcopy(scenario.history)
-    for prior in row['turns']:
-        history.extend([{'role':'user','content':prior['input']},
-                        {'role':'assistant','content':prior.get('replay',{}).get('reply',''),
-                         'metadata':{'handoff':deepcopy((prior.get('replay',{}).get('metadata') or {}).get('handoff') or {})}}])
+    history=replay_history(scenario.history, row['turns'])
     state=deepcopy(row['state'] if step_index else scenario.initial_state)
     case={'workspace_id':workspace,'channel':scenario.channel,'input':scenario.steps[step_index].input,
           'history':history,'initial_state':state,'recorded_at':scenario.recorded_at if step_index==0 else None,

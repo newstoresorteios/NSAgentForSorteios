@@ -36,7 +36,8 @@ def compact_metadata(metadata):
               'product_resolution_state', 'answer_council_final_validation', 'persona_runtime', 'commerce_state',
               'technical_requirements', 'technical_evidence', 'answer_council',
               'institutional_evidence', 'rejected_candidates', 'missing_evidence', 'image_candidate_comparisons',
-              'rejected_draft_factual_validation', 'factual_validation_repaired', 'handoff', 'double_check')
+              'rejected_draft_factual_validation', 'factual_validation_repaired', 'handoff', 'double_check',
+              'discovery_question', 'adaptive_discovery')
     result = {key: metadata.get(key) for key in fields if key in metadata}
     runtime = metadata.get('turn_runtime') or {}
     result['path'] = {key: runtime.get(key) for key in ('catalog_queries', 'tray_tools', 'llm_calls_by_type',

@@ -77,7 +77,8 @@ def _eligible(interpretation, state, text):
     prefs = interpretation.preferences
     if not interpretation.subject.brand and (
         interpretation.ready_for_retrieval or prefs.budget_max is not None
-        or not any((prefs.color, prefs.style, prefs.occasion, prefs.attributes, prefs.material))
+        or not any((prefs.color, prefs.style, prefs.occasion,
+                    [a for a in prefs.attributes if not str(a).startswith("qual:")], prefs.material))
     ):
         # Preserve established category/budget searches and avoid querying the
         # entire store before a completely unspecified consultative request.
@@ -215,9 +216,36 @@ def unconfirmed_result(interpretation):
         used_openai_responder=False, used_tray=True)
 
 
+async def _ask_contextual_fallback(interpretation, state, message, recent_turns, generate_reply, *, used_tray):
+    from .discovery import _discovery_state
+    from .contextual_discovery import apply_contextual_discovery
+
+    discovery = _discovery_state(interpretation, recent_turns, message_text=message.text,
+                                 commerce_state=state)
+    apply_contextual_discovery(interpretation, discovery, recent_turns, message.text, fallback=True)
+    if not discovery.get("persona_qualification_required") or not discovery.get("contextual_question"):
+        return None
+    interpretation._adaptive_trace = {"decision": "ask", "reason": "contextual_fallback",
+                                       "slot": discovery["contextual_question"]["slot"]}
+    return await generate_reply(message=message, interpretation=interpretation,
+                                recent_turns=recent_turns, discovery_state=discovery, used_tray=used_tray)
+
+
 async def prepare_discovery(*, interpretation, state, message, recent_turns, execute_tool, generate_reply):
     rules, contextual = configuration(), contextual_configuration()
-    if not rules or not contextual or not _eligible(interpretation, state, message.text):
+    if not rules or not contextual or interpretation is None:
+        return None
+    if not _eligible(interpretation, state, message.text):
+        prefs = interpretation.preferences
+        # An unspecified browse needs a question, not a whole-store lookup.
+        # Existing budget/category, exact-product and purchase routes are preserved.
+        if (interpretation.domain == "commerce" and interpretation.goal == "discover"
+                and not interpretation.subject.brand and prefs.budget_max is None
+                and not any((prefs.color, prefs.style, prefs.occasion, prefs.material,
+                             prefs.mechanism, prefs.crystal,
+                             [a for a in prefs.attributes if not str(a).startswith("qual:")]))):
+            return await _ask_contextual_fallback(
+                interpretation, state, message, recent_turns, generate_reply, used_tray=False)
         return None
     topic = _fold(interpretation.subject.brand or interpretation.subject.product_type)
     from app.memory.history_window import turns_for_conversation
@@ -265,6 +293,17 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
     }
     snapshot.update(asked=asked, preferences=interpretation.preferences.model_dump(mode="json"))
     if not matches:
+        prefs = interpretation.preferences
+        constrained = any((prefs.budget_max is not None, prefs.budget_min is not None,
+                           prefs.color, prefs.style, prefs.occasion, prefs.material,
+                           prefs.mechanism, prefs.crystal,
+                           [a for a in prefs.attributes if not str(a).startswith("qual:")],
+                           interpretation_case_size_range(interpretation, message_text=message.text)))
+        if not constrained:
+            question = await _ask_contextual_fallback(
+                interpretation, state, message, recent_turns, generate_reply, used_tray=True)
+            if question is not None:
+                return question
         # A bounded preliminary pool cannot establish that the store has no match.
         # Continue with the existing full lookup and live evidence recovery.
         interpretation._adaptive_ready = True

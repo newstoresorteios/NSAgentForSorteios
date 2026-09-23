@@ -162,6 +162,15 @@ def hard_filter_products(
     for product in products:
         if not isinstance(product, dict) or not product.get("id"):
             continue
+        # Accessory descriptions mention watches/movements but are not watches.
+        # Reject clear accessory titles before spending calls on technical detail.
+        requested_type = _fold(subject.product_type)
+        if requested_type in {"relogio", "relogios", "watch", "watches", "relogio de pulso"}:
+            title = _fold(product.get("name"))
+            if re.match(r"^(?:pulseira|bracelete|strap|bracelet|watch\s*winder|"
+                        r"kit\s+(?:de\s+)?(?:reparo|ferramentas)|"
+                        r"caixa\s+(?:giratoria|de\s+suporte|organizadora))\b", title):
+                continue
         text = _product_text(product)
         if excluded_catalog_tokens and any(
             re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text)

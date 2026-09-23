@@ -39,6 +39,35 @@ async def test_asks_difference_observed_in_catalog(adaptive):
     assert q['catalog_options']==['38 mm','42 mm']
     assert calls[0][1]['brand']=='Hamilton'
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('attributes',[[],['qual:name:Cliente'],['qual:city:Rio']])
+async def test_generic_watch_request_asks_before_any_catalog_call(adaptive,attributes):
+    i=interpretation(subject={'product_type':'relógio'},preferences={'attributes':attributes},
+                     needs_clarification=True,ready_for_retrieval=False,references_previous_context=False)
+    result,calls=await run(i,[],text='quero um relogio')
+    assert calls==[]
+    assert result.safety_reason=='commerce_clarification'
+    assert result.response_metadata['discovery_question']['slot']=='model_intent'
+    assert not i._adaptive_ready
+
+
+@pytest.mark.asyncio
+async def test_empty_preliminary_brand_search_preserves_qualification(adaptive):
+    i=interpretation(needs_clarification=True,ready_for_retrieval=False)
+    result,calls=await run(i,[])
+    assert len(calls)==1 and result.safety_reason=='commerce_clarification'
+    assert not i._adaptive_ready
+
+
+@pytest.mark.asyncio
+async def test_generic_unknown_answer_advances_contextual_question(adaptive):
+    first,_=await run(interpretation(subject={'product_type':'relógio'}),[],text='quero um relógio')
+    i=interpretation(subject={'product_type':'relógio'})
+    result,calls=await run(i,[],[turn(first)],text='não sei')
+    assert calls==[]
+    assert result.response_metadata['discovery_question']['slot']=='budget'
+
 @pytest.mark.asyncio
 async def test_short_answer_reuses_pool_and_filters(adaptive):
     rows=[product(1,38),product(2,42)]
