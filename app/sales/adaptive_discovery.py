@@ -358,7 +358,8 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
         and not interpretation.subject.model
         and not any((prefs.color, prefs.style, prefs.occasion, prefs.material,
                      prefs.mechanism, prefs.crystal))
-        and not [a for a in prefs.attributes if not str(a).startswith('qual:')])
+        and not [a for a in prefs.attributes
+                 if not str(a).startswith(('qual:', 'somente:'))])
     if needs_model:
         choices.append((0, 0, 'model_intent', []))
     if (len(matches) == 1 and not needs_model) or not choices:

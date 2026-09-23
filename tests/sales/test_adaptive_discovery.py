@@ -116,12 +116,13 @@ async def test_short_answer_reuses_pool_and_filters(adaptive):
 
 
 @pytest.mark.asyncio
-async def test_budget_followup_with_sparse_catalog_facets_still_asks_model(adaptive):
+@pytest.mark.parametrize('attributes', [[], ['somente:Citizen'], ['qual:name:Cliente','somente:Citizen']])
+async def test_budget_followup_with_sparse_catalog_facets_still_asks_model(adaptive, attributes):
     rows=[{'id':'1','name':'Citizen Promaster','brand':'Citizen','price':2000,'available':True},
           {'id':'2','name':'Citizen Chandler','brand':'Citizen','price':5000,'available':True}]
     first,_=await run(interpretation(subject={'brand':'Citizen'}),rows,text='Quero um Citizen')
     assert first.response_metadata['discovery_question']['slot']=='budget'
-    i=interpretation(subject={'brand':'Citizen'},preferences={'budget_max':3500})
+    i=interpretation(subject={'brand':'Citizen'},preferences={'budget_max':3500,'attributes':attributes})
     second,calls=await run(i,rows,[turn(first)],text='Até R$ 3.500')
     assert second.response_metadata['discovery_question']['slot']=='model_intent'
     assert not i._adaptive_ready and not calls
