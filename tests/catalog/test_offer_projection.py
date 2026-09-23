@@ -26,6 +26,8 @@ def test_negative_inspection_is_not_an_over_budget_offer():
         commercial_data={'products':[{'id':'1','name':'Seiko','price':6099.99,'_revalidated':True}]},
         response_metadata={'identity_inspection':True})
     assert check_pedido(result,contract).pass_check and check_fatos(result,contract).pass_check
+    result.reply_text = 'Esse não cabe em R$ 5.000 no Pix: fica em R$ 5.184,99. Não chega amanhã.'
+    assert check_pedido(result,contract).pass_check and check_fatos(result,contract).pass_check
     result.reply_text = 'No Pix fica R$ 5.184,99, então não cabe no teto de R$ 5.000. Se quiser, mostro opções Seiko dentro desse orçamento.'
     assert check_pedido(result,contract).pass_check and check_fatos(result,contract).pass_check
     positive=result.model_copy(update={'reply_text':'Cabe no orçamento por R$ 6.099,99.'})
@@ -53,3 +55,32 @@ def test_inspection_can_explain_wrong_color_without_offering_it_as_matching():
     assert 'ignored_color' in check_pedido(result,contract).issues
     assert 'fact_color_mismatch' in check_fatos(result,contract).issues
     assert any(i.code=='color_mismatch' for i in run_phase0_double_check(incoming=incoming,result=result))
+
+
+def test_negative_inspection_preserves_multiple_corrected_attributes():
+    from app.sales.answer_council import check_pedido, check_fatos
+    from app.sales.turn_contract import TurnContract
+    result = AgentResult(reply_text='Não. Esse vem com mostrador laranja e cristal de safira, não vidro mineral. Então ele não atende esses 2 pontos.',
+        intent='commerce', commercial_data={'products':[{'id':'1','name':'Orient M-Force Laranja','_revalidated':True}]},
+        response_metadata={'identity_inspection':True})
+    contract = TurnContract(color='azul')
+    assert check_pedido(result, contract).pass_check and check_fatos(result, contract).pass_check
+    result.reply_text = 'Não. Esse vem com mostrador azul. Não atende ao orçamento.'
+    assert not check_pedido(result, contract).pass_check
+
+
+def test_combined_negative_inspection_from_real_orient_replay():
+    from app.sales.answer_council import check_pedido, check_fatos
+    from app.sales.turn_contract import TurnContract
+    from app.verify.double_check import run_phase0_double_check
+    from app.models import IncomingMessage
+    result = AgentResult(reply_text='Não atende essas 4 exigências.\n• Mostrador: é laranja, não azul.\n• Vidro: safira, não mineral.\n• Pix: R$ 3.144,99, então passa de R$ 3.000; disponibilidade em 30 dias úteis, não amanhã.',
+        intent='commerce', commercial_data={'products':[{'id':'10269','name':'Orient M-Force Laranja',
+            'price':3699.99,'pix_price':3144.99,'_revalidated':True}]},
+        response_metadata={'identity_inspection':True})
+    contract = TurnContract(color='azul', budget_max=3000)
+    assert check_pedido(result, contract).pass_check and check_fatos(result, contract).pass_check
+    incoming = IncomingMessage(text='Ele tem mostrador azul e cabe em R$ 3.000 no Pix?', conversation_id='regression')
+    assert not any(i.code=='color_mismatch' for i in run_phase0_double_check(incoming=incoming, result=result))
+    result.reply_text = 'Sim. Esse vem com mostrador laranja e atende ao que pediu.'
+    assert 'ignored_color' in check_pedido(result, contract).issues

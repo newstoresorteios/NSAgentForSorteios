@@ -281,8 +281,8 @@ def _explains_inspected_budget_miss(result: AgentResult) -> bool:
         return False
     from app.catalog.retrieval.text import _fold
     text = _fold(result.reply_text).replace('*', '').replace('_', '')
-    negative = re.search(r'\b(?:nao cabe|nao entra|acima|ultrapassa|excede|supera|fora)\b', text)
-    scope = re.search(r'\b(?:orcamento|teto|limite|r\$)\b', text)
+    negative = re.search(r'\b(?:nao cabe|nao entra|acima|ultrapassa|excede|supera|fora|passa de)\b', text)
+    scope = re.search(r'\b(?:orcamento|teto|limite)\b|r\$', text)
     positive = any(
         re.search(r'(?<!nao )\b(?:cabe|entra)\b.{0,20}(?:orcamento|teto)|'
                   r'\bdentro\b.{0,20}(?:orcamento|teto)', clause)
@@ -301,7 +301,18 @@ def _explains_inspected_color_miss(result: AgentResult, color: str) -> bool:
     from app.catalog.retrieval.text import _fold
     text = _fold(result.reply_text).replace('*', '').replace('_', '')
     wanted = re.escape(_fold(color))
-    return bool(re.search(r'\bnao (?:serve|atende|e|tem)\b[^.!?\n]{0,65}\b' + wanted + r'\b', text))
+    if re.search(r'\bnao (?:serve|atende|e|tem)\b[^.!?\n]{0,65}\b' + wanted + r'\b', text):
+        return True
+    # "Não. Este vem com mostrador laranja ... não atende esses dois pontos"
+    # is a negative inspection too, even when the requested color is not repeated.
+    from app.catalog.retrieval.tokens import product_matches_color_tokens
+    actual = re.search(r'\b(?:mostrador|dial)\s*:?\s*(?:e\s+)?(\w+)\b', text)
+    explicit_denial = re.search(r'\bnao\s+' + wanted + r'\b', text)
+    negative_answer = (re.match(r'^\s*nao[.!,:]', text)
+                       and re.search(r'\bnao (?:serve|atende)\b', text))
+    return bool((explicit_denial or negative_answer) and actual
+                and _presented_conflicts_color(products, color)
+                and product_matches_color_tokens(products[0], (actual.group(1),)))
 
 
 def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:

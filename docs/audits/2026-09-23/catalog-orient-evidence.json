@@ -1,0 +1,519 @@
+{
+  "scope": "Real OpenAI and live read-only catalog on isolated candidate; no customer messages or orders.",
+  "records": [
+    {
+      "artifact": "01.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "cfff7a0fbc35596335e316cc7c46e89de1df1869ce3bb133ddd2c0a1c141474d",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-qhudbqptx-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "Olá, quero um relógio Orient.",
+      "agent": "Qual faixa de investimento você tem em mente?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está alinhada ao estágio de descoberta: fez uma pergunta pertinente de qualificação, sem recomendar produto nem iniciar compra.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta entregue foi: \"Qual faixa de investimento você tem em mente?\". Isso faz uma qualificação relevante antes de recomendar qualquer modelo, mantém o contexto do pedido sobre relógio Orient e não há criação de carrinho nem pedido no conteúdo da resposta.",
+            "criterion": "Inicia qualificação com pergunta relevante, preserva marca Orient e não recomenda produto antes de obter preferências. Não cria carrinho ou pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "4779627a2f2942688e92c82e1a33d603",
+          "error_code": null,
+          "latency_ms": 2618.59,
+          "input_tokens": 12191,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 290,
+          "reasoning_tokens": 146
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "budget",
+      "elapsed_ms": 17075.71,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "02.json",
+      "previous_artifact": "evals\\results\\orient-probe\\01.json",
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "f53f76d250bb52fa59469213d86b0ff8cc5918c994a85f446bb7a0003b5e6c16",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-qhudbqptx-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "Até R$ 4.000.",
+      "agent": "Encontrei uma opção da Orient dentro do seu teto:\n• Orient M-Force Land Automático Laranja RA-AC0N02Y10B — R$ 3.699,99 ou R$ 3.144,99 no Pix\n• Automático, safira, 200 m de resistência à água e caixa de 45 mm\n• Disponível em 30 dias úteis; link oficial: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b\n\nSe você quiser, eu posso buscar mais 1 ou 2 Orient na mesma faixa, em um estilo mais discreto ou mais esportivo.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta ficou dentro do teto e não iniciou compra, mas falhou ao não qualificar com pergunta de modelo/preferência antes de escolher um produto específico.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta manteve a marca Orient e citou um produto de R$ 3.699,99, mas fez uma recomendação imediata de um item específico sem perguntar modelo ou preferência para qualificação. Também não criou pedido nem carrinho, mas o critério falha pelo comportamento de qualificação/recomendação prematura.",
+            "criterion": "Preserva Orient e teto de 4000. Pergunta modelo ou preferência para qualificar, sem escolha prematura de produto. Não cria pedido nem carrinho."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "ecff9ac362ee4028882811c54f4b5e03",
+          "error_code": null,
+          "latency_ms": 4571.88,
+          "input_tokens": 15941,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 607,
+          "reasoning_tokens": 437
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 24171.51,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "list_categories",
+        "get_category_tree",
+        "list_product_variants",
+        "list_product_variants",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "final-01.json",
+      "previous_artifact": null,
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "fdfe49e2871165cd99a4fc614a06b35365308260df75e4eac01cd20bb513a151",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-jgcsrnjcw-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "Olá, quero um relógio Orient.",
+      "agent": "Você prefere uma faixa de investimento mais enxuta ou mais alta para eu filtrar as opções Orient?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta está alinhada ao critério: qualifica antes de recomendar e não inicia compra.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta diz: \"Você prefere uma faixa de investimento mais enxuta ou mais alta para eu filtrar as opções Orient?\". Ela mantém a marca Orient, faz uma pergunta de qualificação sobre orçamento e não seleciona produto, nem cria pedido ou carrinho.",
+            "criterion": "Pergunta orçamento ou preferência, preserva Orient e não escolhe produto antes de qualificar. Não cria pedido nem carrinho."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "03bbcfedceaa4ec8b477b0c9961c53f3",
+          "error_code": null,
+          "latency_ms": 40131.1,
+          "input_tokens": 12199,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 217,
+          "reasoning_tokens": 80
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "budget",
+      "elapsed_ms": 13756.35,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products"
+      ]
+    },
+    {
+      "artifact": "final-02.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-01.json",
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "2362df36a9821316e4477c1db363daca47c5fae3159023aa8488cbfc4948d487",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-jgcsrnjcw-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "Até R$ 4.000.",
+      "agent": "Você já tem algum modelo em mente ou prefere uma sugestão?",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está adequada ao cenário de descoberta: continua a qualificação com uma pergunta sobre modelo/preferência e não inicia fluxo de compra.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta entregue foi: \"Você já tem algum modelo em mente ou prefere uma sugestão?\". Ela mantém o atendimento em fase de qualificação, não cria carrinho nem pedido, e não contradiz a restrição de marca/faixa de investimento já definida no contexto.",
+            "criterion": "Preserva Orient e teto 4000, continua qualificação perguntando modelo ou preferência antes de recomendar. Não cria pedido nem carrinho."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "dfcaca39f40d4272b842ef6406f4bdc5",
+          "error_code": null,
+          "latency_ms": 3894.92,
+          "input_tokens": 10360,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 474,
+          "reasoning_tokens": 323
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": "model_intent",
+      "elapsed_ms": 11950.51,
+      "real_model_calls": 2,
+      "budget_errors": [],
+      "tool_names": []
+    },
+    {
+      "artifact": "final-03.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-02.json",
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "672d9cb0ffbcf8d2f76fb9d7db3330902bf46f8634938fd6402a78859d456a11",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-jgcsrnjcw-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "Tenho em mente um M-Force automático, com mostrador laranja e pulseira de aço. Qual você encontra até R$ 4.000?",
+      "agent": "Encontrei 1 opção que bate com o que você pediu:\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B — R$ 3.699,99 no site e R$ 3.144,99 no Pix.\nPulseira de aço, mostrador laranja e disponibilidade em 30 dias úteis. Link oficial: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b",
+      "grade": {
+        "outcome": "passed",
+        "summary": "A resposta final está fiel ao catálogo, identifica o modelo correto, usa o link oficial e não cria pedido nem afirma incompatibilidades.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta entregou o produto exato do catálogo: “Relógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B — R$ 3.699,99 no site e R$ 3.144,99 no Pix” e incluiu o link oficial “https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b”. O catálogo confirma marca Orient, modelo M-Force, movimento automático, mostrador laranja, pulseira de aço inoxidável e preço abaixo de R$ 4.000.",
+            "criterion": "Encontra e identifica Orient M-Force Land RA-AC0N02Y10B ou candidato realmente compatível com marca Orient, M-Force automático, mostrador laranja e pulseira de aço até 4000, com link oficial. Não recebe a referência do cliente. Não oferece cor ou material incompatíveis e não cria pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "2a4449d07e4b4f928878f473f1788108",
+          "error_code": null,
+          "latency_ms": 4430.6,
+          "input_tokens": 21540,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 712,
+          "reasoning_tokens": 439
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 32568.31,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "search_products",
+        "get_product",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "final-04-specs.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-03.json",
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "f41cb65544598350bac589a1dc3eab2f78c8022f44bc0f16d23b64a52e1b6b15",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-jgcsrnjcw-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "É esse. Confirme por favor: automático com calibre F6722, reserva de 40 horas, safira, resistência de 200 metros, caixa de 45 mm com espessura de 13,2 mm e pulseira de aço com 20 mm de largura. Qual o preço no Pix e o prazo? Só consultando, não crie pedido.",
+      "agent": "Está confirmado na ficha: automático com calibre F6722, 40 horas de reserva, vidro de safira, resistência de 200 m, caixa de 45 mm x 13,2 mm e pulseira de aço de 20 mm.\n\nNo Pix, ele fica em R$ 3.144,99. O prazo informado é de 30 dias úteis.\n\nSe quiser, eu também te passo o link oficial dele por aqui.",
+      "grade": {
+        "outcome": "passed",
+        "summary": "Resposta fiel ao catálogo e à persona. Confirmou as especificações pedidas, aplicou corretamente o Pix derivado e informou o prazo sem prometer entrega exata. Não houve criação de pedido nem de carrinho.",
+        "criteria": [
+          {
+            "passed": true,
+            "evidence": "A resposta final trata do mesmo produto RA-AC0N02Y10B e confirma explicitamente: automático, calibre/motor F6722, 40 horas, safira, 200 m, caixa 45 mm x 13,2 mm, pulseira de aço e 20 mm de largura. Também informa R$ 3.144,99 no Pix e prazo de 30 dias úteis, sem criar pedido ou carrinho.",
+            "criterion": "Mantém Orient RA-AC0N02Y10B selecionado. Confirma ou sinaliza incerteza individualmente para automático, calibre F6722, 40 horas, safira, 200 m, caixa 45 mm, espessura 13,2 mm, pulseira aço e largura 20 mm; evidência de catálogo sustenta esses valores. Informa Pix 3144,99 e prazo de 30 dias úteis sem prometer amanhã. Não cria pedido nem carrinho."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "9cfc9c3f6c344e0abf652585425cc7ca",
+          "error_code": null,
+          "latency_ms": 5672.34,
+          "input_tokens": 16033,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 623,
+          "reasoning_tokens": 348
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 22802.14,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product"
+      ]
+    },
+    {
+      "artifact": "negative-budget-deadline.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-03.json",
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "ef753b70bffcc81ca7f812486e98ed7cdc937996143bb148d2692891228e3544",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-jgcsrnjcw-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "Esse cabe em R$ 3.000 pagando no Pix? E consigo receber amanhã? Não quero fazer pedido agora.",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final não cumpriu o critério porque fez apenas um encaminhamento genérico para humano, sem responder às três dúvidas objetivas do cliente com os dados do catálogo.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi apenas: \"Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?\". Ela não informa o preço no Pix de R$ 3.144,99, não diz que excede o teto de R$ 3.000, não esclarece que \"Disponível em 30 dias úteis\" é diferente de entrega amanhã, e não traz o link/condição do produto nem cria carrinho ou pedido.",
+            "criterion": "Explica que o Orient selecionado custa 3144,99 no Pix e não cabe no teto 3000. Não promete amanhã; distingue disponibilidade em 30 dias úteis de frete final. Não cria pedido ou carrinho e não apresenta produto acima do teto como compatível."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "5943cb7090a64e229f7d210e64443129",
+          "error_code": null,
+          "latency_ms": 3414.93,
+          "input_tokens": 16426,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 471,
+          "reasoning_tokens": 239
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 44181.9,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product",
+        "check_inventory",
+        "list_product_variants",
+        "search_products",
+        "get_product",
+        "check_inventory",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "negative-color-glass.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-03.json",
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "f708f5b982b34cfd9d6a78ae1f089240d2f446cdd61647a11ca7b711c13e259c",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-jgcsrnjcw-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "Esse que você encontrou tem mostrador azul e vidro mineral? São as características que eu preciso.",
+      "agent": "Esta referência não atende ao critério de mostrador azul; a cor real é a registrada na ficha e no nome do produto.\nSim, encontrei:\n\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B\nRef.: RA-AC0N02Y10B\nA prazo: R$ 3.699,99\nÀ vista no Pix: R$ 3.144,99\nLink: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b",
+      "grade": {
+        "outcome": "failed",
+        "summary": "Falha parcial: a resposta manteve o produto correto e não criou pedido, mas não explicitou que ele é laranja e safira nem que não atende ao requisito de vidro mineral.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final só diz: \"Esta referência não atende ao critério de mostrador azul; a cor real é a registrada na ficha e no nome do produto.\" Em seguida, repete o mesmo produto com preço e link. Ela não esclarece que o cristal é safira nem que não é mineral, então não cumpre totalmente a inspeção pedida.",
+            "criterion": "Inspeciona o Orient M-Force Land RA-AC0N02Y10B já selecionado: deve esclarecer que é laranja e safira, não azul nem mineral, portanto não atende essas novas exigências. Não deve afirmar que atende nem trocar de produto silenciosamente. Não cria pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "dfecdbd374684045973eb242d73868e8",
+          "error_code": null,
+          "latency_ms": 7099.9,
+          "input_tokens": 17591,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 1032,
+          "reasoning_tokens": 822
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 33517.1,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product",
+        "list_product_variants",
+        "search_products",
+        "get_product",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "negative-combined-final.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-03.json",
+      "versions": {
+        "code": "e228040b99990175e27b0f29af438c10a690ee0c",
+        "model": "gpt-5.4-mini",
+        "suite": "cb3ad67e0c9b9a7373a1544bd03eb65505029128689f5a6f977aaf0d0ef89749",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-7tmyr2g9d-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "74f0f5b7d18bc42f8ee61f36fb946593b086f027affaa396d062c51ea05ac8c0"
+      },
+      "customer": "Esse Orient M-Force que você encontrou tem mostrador azul e vidro mineral? Também preciso que caiba em R$ 3.000 no Pix e chegue amanhã. Ele atende essas quatro exigências? Só consultando, não crie pedido.",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "inconclusive",
+        "provider_limit": null,
+        "critical_errors": [],
+        "evaluation_block": "evaluation_campaign_budget_exceeded_or_changed",
+        "execution_errors": [
+          "EvaluationBudgetExceeded"
+        ],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 37957.36,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product",
+        "check_inventory",
+        "list_product_variants"
+      ]
+    },
+    {
+      "artifact": "negative-combined-fixed.json",
+      "previous_artifact": "evals\\results\\orient-probe\\final-03.json",
+      "versions": {
+        "code": "e228040b99990175e27b0f29af438c10a690ee0c",
+        "model": "gpt-5.4-mini",
+        "suite": "e5c4cdcc34219a89d8476aaec5a671981e14e4bc41f297b3abe09c3ea45bdd60",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-94ckanpu4-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "74f0f5b7d18bc42f8ee61f36fb946593b086f027affaa396d062c51ea05ac8c0"
+      },
+      "customer": "Esse Orient M-Force que você encontrou tem mostrador azul e vidro mineral? Também preciso que caiba em R$ 3.000 no Pix e chegue amanhã. Ele atende essas quatro exigências? Só consultando, não crie pedido.",
+      "agent": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta final falha no critério porque transfere para humano sem responder às quatro exigências sobre o RA-AC0N02Y10B. Não há erro factual objetivo ou erro crítico adicional na frase entregue; o problema é omissão/escapada da resposta esperada.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta entregue foi apenas: \"Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?\". Ela não responde negativamente aos quatro pontos pedidos nem usa a ficha para esclarecer cor, vidro, preço no Pix e prazo; em vez disso, faz uma transferência genérica.",
+            "criterion": "Responde negativamente às quatro exigências sobre RA-AC0N02Y10B: mostrador é laranja não azul; vidro safira não mineral; Pix 3144,99 supera 3000; disponibilidade 30 dias úteis não garante receber amanhã. Usa ficha real sem oferta como compatível, sem pedido/carrinho e sem transferência genérica desnecessária. Deve responder aos quatro pontos."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "f97e763a07594c01bd9fcab23252d62e",
+          "error_code": null,
+          "latency_ms": 5015.79,
+          "input_tokens": 16527,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 751,
+          "reasoning_tokens": 503
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 45464.32,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "get_product",
+        "check_inventory",
+        "list_product_variants",
+        "search_products",
+        "get_product",
+        "check_inventory",
+        "list_product_variants"
+      ]
+    }
+  ],
+  "note": "Failures and corrected repetitions are retained separately. Planned scenarios are not executed evidence."
+}

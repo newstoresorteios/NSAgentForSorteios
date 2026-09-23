@@ -351,6 +351,57 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
   US$ 24,98337575, mantendo campanhas anteriores paradas. Evidência Citizen: 17 turnos.
 - Suíte completa após priorização de detalhes: 2.442 passaram, 7 ignorados.
 
+### Terceira marca — Orient M-Force Land
+
+- Referência escolhida para conferência independente: RA-AC0N02Y10B, mostrador
+  laranja, automático F6722, safira, aço, 200 m, reserva 40 h, caixa 45 mm,
+  espessura 13,2 mm e pulseira 20 mm. Matriz em `evals/catalog-orient-mforce-scenario.json`.
+- Push `b7a6c0d` publicado e CI aprovado. Primeira conversa Orient: `01` perguntou
+  orçamento; `02` recomendou imediatamente após R$ 4.000. Mesmo recomendando a
+  referência escolhida por coincidência, o caso FALHOU por qualificação prematura.
+- Causa: atributo interno `somente:Orient` foi contado como preferência adicional
+  suficiente. Ajuste ignora marcador de exclusividade de marca nessa decisão;
+  mantém preferências reais e o pedido explícito de busca. Coberto por regressão.
+- Push adicional `e228040` aprovado no CI e publicado. Nova conversa inteira no
+  mesmo candidato: `final-01` → `final-02` → `final-03` → `final-04-specs`, todos
+  aprovados. Perguntou orçamento e modelo, identificou a referência sem receber
+  seu código e depois confirmou cada especificação solicitada, preço Pix e prazo.
+  Escopo: OpenAI real + Tray real, avaliação isolada; não WhatsApp ponta a ponta.
+- Negativos separados falharam: `negative-color-glass` perdeu a explicação de
+  safira versus mineral; `negative-budget-deadline` foi para humano sem necessidade.
+  As respostas originais corretas foram rejeitadas pelo verificador: negação
+  `Não.` em frase separada não era reconhecida como incompatibilidade de cor;
+  `R$` exigia erroneamente fronteira de palavra após `$`, ignorando o contexto
+  de orçamento. Regras ajustadas mantendo exigência de ficha única revalidada e
+  confirmação da cor realmente declarada na ficha; testes rejeitam aceitação falsa.
+- Reteste Citizen `detail25-final` encontrou NY0120-01EE, preço R$ 3.399,99,
+  Pix R$ 2.889,99 e link. Objetivo de recuperação corrigido; critério completo do
+  juiz ainda FALHOU porque a resposta não enumerou borracha/mineral/200 m/8204/42 h.
+  Não tratar identificação correta como aprovação de toda a cobertura técnica.
+- Reserva US$ 24,38296650 antes da última verificação. Campanha Orient anterior
+  parada; tranche `launch-20260923-orient-final25` com US$ 0,61 / 7 chamadas mantém
+  máximo global US$ 24,99296650. Reserva conservadora não é custo faturado.
+- `negative-combined-fixed` ainda falhou: o texto correto usou `passa de R$ 3.000`
+  e `Mostrador: é laranja, não azul`, variantes não reconhecidas pelas regras.
+  Acrescentada regressão com a resposta real e suporte às duas construções, sem
+  permitir afirmar a cor solicitada como verdadeira. Reserva após esse teste:
+  US$ 24,71005350. Restam no máximo 3 chamadas / US$ 0,282913 na tranche ativa.
+- Encerramento: `negative-combined-final` INCONCLUSIVO, com
+  `evaluation_campaign_budget_exceeded_or_changed` no juiz e resposta final de
+  encaminhamento humano. A correção final das regras tem regressão local, mas
+  não aprovação real desse caso combinado. Não encerrar esse gate como sucesso.
+- Reserva TOTAL final: US$ 24,95149725, abaixo do teto US$ 25. Sem novas chamadas
+  pagas, sem testes agendados. Tranches encerradas operacionalmente, não retomar
+  seus saldos antigos em paralelo. Não equivale a custo faturado pela OpenAI.
+- Última suíte completa: 2.446 testes passaram, 7 ignorados, 8 avisos legados;
+  contrato de configuração e varredura de segredos aprovados. Evidências exportadas:
+  10 turnos Orient e 18 Citizen, incluindo falhas e repetições separadamente.
+- Estado atual: caminho feliz Orient aprovado em quatro turnos na mesma versão;
+  recuperação Citizen corrigida, cobertura explícita de todos os atributos ainda
+  pendente; negativo combinado Orient precisa repetição com orçamento disponível.
+  Canal WhatsApp ponta a ponta, checkout/pagamento e consistência em repetições
+  continuam fora desta comprovação. Não declarar produção sem desvios ou 100% pronta.
+
 ## Documentação mantida separadamente
 
 - `README.md`: instalação e visão geral do serviço.

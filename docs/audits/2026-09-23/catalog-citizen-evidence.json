@@ -168,6 +168,69 @@
       ]
     },
     {
+      "artifact": "detail25-final.json",
+      "previous_artifact": "evals\\results\\citizen-probe\\happy22-02.json",
+      "versions": {
+        "code": "b7a6c0d1f5d4cfdb253375a3b693f20877356140",
+        "model": "gpt-5.4-mini",
+        "suite": "e61614c79472504458107889f16f1d8f8a953afda3bc314b56b4c8845c5d9971",
+        "persona": 17,
+        "deployment": "ns-agent-for-sorteios-jgcsrnjcw-newstores-projects.vercel.app",
+        "environment": "live_readonly",
+        "judge_model": "gpt-5.4-mini",
+        "configuration": 6,
+        "configuration_hash": "80345eecb17d7906fa5f097e63b2b285a1c2268ba64151ff77fdab2a3ad0feea"
+      },
+      "customer": "Tenho em mente um Promaster automático, não Eco-Drive, mostrador preto e pulseira de borracha. Vidro mineral, 200 metros, calibre 8204 e reserva de 42 horas. Qual modelo atende até R$ 3.500 e qual o link? Só estou consultando, não crie pedido.",
+      "agent": "Pelo que você descreveu, o modelo que atende é o Citizen Promaster Marine Automático Preto NY0120-01EE (ref. NY0120-01EE).\nEstá R$ 3.399,99 no site, ou R$ 2.889,99 no Pix, e o link oficial é: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-promaster-marine-automatico-preto-ny0120-01ee\nSe quiser, eu também posso te passar os detalhes técnicos dele por aqui, sem criar pedido.",
+      "grade": {
+        "outcome": "failed",
+        "summary": "A resposta acertou a identificação do NY0120-01EE, o preço e o link oficial, mas falhou no ponto exigido de confirmar os atributos técnicos pedidos com base na ficha real.",
+        "criteria": [
+          {
+            "passed": false,
+            "evidence": "A resposta final identificou corretamente o modelo e trouxe preço abaixo de R$ 3.500 e o link oficial, mas não confirmou os atributos pedidos com a ficha real. Ela não menciona nem valida borracha, cristal mineral, 200 metros, calibre 8204 ou reserva de 42 horas, apesar de esses dados constarem na ficha do produto (sheet_122 / sheet_1).",
+            "criterion": "Identifica Citizen Promaster Marine NY0120-01EE sem referência fornecida, confirma os atributos pedidos com ficha real, preço atual até 3500 e link oficial. Não troca borracha por aço nem automático por Eco-Drive. Fallback sem identificação é falha. Não cria pedido."
+          }
+        ],
+        "model_usage": {
+          "model": "gpt-5.4-mini",
+          "status": "completed",
+          "call_id": "5d41b35c21c74866a665f145c417efc6",
+          "error_code": null,
+          "latency_ms": 6307.39,
+          "input_tokens": 43380,
+          "cached_tokens": 0,
+          "error_message": null,
+          "output_tokens": 884,
+          "reasoning_tokens": 665
+        },
+        "factual_errors": [],
+        "critical_errors": [],
+        "objective_failures": []
+      },
+      "question_slot": null,
+      "elapsed_ms": 52189.72,
+      "real_model_calls": 3,
+      "budget_errors": [],
+      "tool_names": [
+        "list_categories",
+        "get_category_tree",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "search_products",
+        "get_product",
+        "get_product",
+        "list_product_variants",
+        "get_product",
+        "list_product_variants",
+        "get_product"
+      ]
+    },
+    {
       "artifact": "diagnostic-reference22.json",
       "previous_artifact": null,
       "versions": {
