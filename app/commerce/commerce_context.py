@@ -143,6 +143,7 @@ class CommerceConversationState(BaseModel):
     active_domain: Literal["commerce", "raffle"] | None = None
     active_topic: str | None = None
     active_product: CommerceProductReference | None = None
+    selection_status: Literal['mentioned', 'recommended', 'chosen', 'in_cart'] | None = None
     # Last product that the customer explicitly advanced toward purchase.
     # It is intentionally separate from active_product: generic clarification
     # and thread changes may clear the visible browse state, while a bounded
@@ -927,13 +928,21 @@ def evolve_commerce_state(
 
     if metadata.get("clear_active_product"):
         state.active_product = None
+        if not state.cart_product_id:
+            state.selection_status = None
     resolved = metadata.get("active_product")
+    parsed_turn = metadata.get('interpretation')
+    turn_goal = metadata.get('goal') or (parsed_turn.get('goal') if isinstance(parsed_turn, dict) else None)
+    explicit_selection = turn_goal == 'buy' or metadata.get('purchase_stage') in {'selected', 'checkout'}
     if isinstance(resolved, dict):
         try:
             state.active_product = CommerceProductReference.model_validate(resolved)
-            state.purchase_target = state.active_product.model_copy(deep=True)
-            from datetime import timezone
-            state.purchase_target_selected_at = datetime.now(timezone.utc)
+            state.selection_status = 'chosen' if explicit_selection else 'mentioned'
+            if explicit_selection or turn_goal is None:
+                # Legacy producers have no goal; retain their established contract.
+                state.purchase_target = state.active_product.model_copy(deep=True)
+                from datetime import timezone
+                state.purchase_target_selected_at = datetime.now(timezone.utc)
             # A newly confirmed SKU is fresh browse evidence. It must revive
             # the sale even if an older turn left a shortlist tombstone.
             state.forget_shortlist = False
@@ -957,6 +966,8 @@ def evolve_commerce_state(
         state.forget_shortlist = True
     elif metadata.get("presented_products") and compact_products:
         state.last_presented_products = compact_products
+        if not metadata.get('active_product'):
+            state.selection_status = 'recommended'
         state.forget_shortlist = False
         state.closed_by_farewell = False
     elif len(compact_products) >= 2:
@@ -982,6 +993,9 @@ def evolve_commerce_state(
         state.purchase_target = state.active_product.model_copy(deep=True)
         from datetime import timezone
         state.purchase_target_selected_at = datetime.now(timezone.utc)
+        state.selection_status = 'chosen'
+    if metadata.get('cart_state') and state.cart_product_id:
+        state.selection_status = 'in_cart'
     resolution_state = metadata.get("product_resolution_state")
     if isinstance(resolution_state, str) and resolution_state.strip():
         state.product_resolution_state = resolution_state.strip()

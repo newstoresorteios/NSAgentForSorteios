@@ -1123,6 +1123,8 @@ async def apply_answer_council_with_retry(
     interpretation: SalesInterpretation | None,
     commerce_state: CommerceConversationState | None = None,
 ) -> tuple[AgentResult, CouncilDecision, SalesInterpretation | None]:
+    if result.response_metadata.get('domain') == 'institutional' and result.response_metadata.get('institutional_evidence'):
+        return result, CouncilDecision(approved=True, attempts=0), interpretation
     settings = get_settings()
     if not bool(getattr(settings, "agent_answer_council_enabled", True)):
         empty = CouncilDecision(approved=True, attempts=0)

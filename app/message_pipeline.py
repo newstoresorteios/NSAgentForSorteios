@@ -722,6 +722,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         response_metadata["generation_attempts"] = dict(runtime.llm_calls_by_type)
         result.response_metadata = response_metadata
     outbound_snapshot = {
+        "institutional_evidence": response_metadata.get("institutional_evidence", []),
         "domain": response_metadata.get("domain"),
         "goal": response_metadata.get("goal"),
         "intent": result.intent,

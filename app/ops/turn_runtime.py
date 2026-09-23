@@ -118,6 +118,7 @@ class TurnRuntimeContext(BaseModel):
     iq_counters: dict[str, int] = Field(default_factory=dict)
 
     _stage_started_at: dict[str, float] = PrivateAttr(default_factory=dict)
+    _image_comparison_cache: dict[str, tuple] = PrivateAttr(default_factory=dict)
 
     def start_stage(self, name: str) -> None:
         self._stage_started_at[name] = time.perf_counter()

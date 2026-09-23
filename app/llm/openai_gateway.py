@@ -166,6 +166,17 @@ def model_capabilities(model: str | None = None) -> ModelCapabilities:
     """
     settings = get_settings()
     name = (model or "").strip().casefold()
+    from app.llm.role_policy import registry
+    declared = registry().get(model)
+    if declared:
+        return ModelCapabilities(
+            supports_responses=bool(declared.get('responses')),
+            supports_structured_outputs=bool(declared.get('structured_outputs')),
+            supports_reasoning_effort=bool(declared.get('reasoning_efforts')),
+            supports_text_verbosity=bool(declared.get('verbosity')),
+            supports_parallel_tool_calls=bool(declared.get('parallel_tools')),
+            supports_temperature=bool(declared.get('temperature')))
+
     overrides_raw = getattr(settings, "openai_model_capability_overrides", None)
     overrides: dict[str, Any] = {}
     if isinstance(overrides_raw, dict):
@@ -207,7 +218,7 @@ def model_capabilities(model: str | None = None) -> ModelCapabilities:
 
     # Known families (conservative).
     # Reasoning effort: o* and gpt-5 only (not gpt-4.1 / gpt-4o).
-    reasoning_families = ("o1", "o3", "o4", "gpt-5")
+    reasoning_families = ("o1", "o3", "o4", "gpt-5", "gpt-6")
     verbosity_families = reasoning_families + ("gpt-4.1", "gpt-4o", "chatgpt-4o")
     reasoning = any(name.startswith(prefix) for prefix in reasoning_families)
     verbosity = any(name.startswith(prefix) for prefix in verbosity_families)
@@ -261,8 +272,16 @@ def apply_responses_controls_report(
         "text_verbosity_skip_reason": None,
         "max_output_tokens_applied": False,
     }
-    effort = str(getattr(settings, "openai_reasoning_effort", "") or "").strip()
+    from app.llm.role_policy import active_policy
+    role = active_policy.get()
+    effort = str(role.reasoning_effort if role and role.reasoning_effort is not None
+                 else getattr(settings, "openai_reasoning_effort", "") or "").strip()
     report["configured_reasoning_effort"] = effort or None
+    from app.llm.role_policy import registry
+    declared = registry().get(model)
+    if effort and declared is not None and effort not in declared.get('reasoning_efforts', []):
+        raise ValueError('model_reasoning_effort_unsupported')
+
     if effort:
         if caps.supports_reasoning_effort:
             kwargs["reasoning"] = {"effort": effort}
@@ -295,7 +314,7 @@ def apply_responses_controls_report(
                     "model": model,
                 },
             )
-    max_tokens = getattr(settings, "openai_max_output_tokens", None)
+    max_tokens = role.max_output_tokens if role and role.max_output_tokens is not None else getattr(settings, "openai_max_output_tokens", None)
     if max_tokens is not None:
         try:
             value = int(max_tokens)
@@ -645,6 +664,8 @@ class ChatCompletionsGateway:
             "messages": chat_messages,
             "response_format": text_format,
         }
+        from app.llm.role_policy import apply_chat_controls
+        apply_chat_controls(kwargs, model, tools='tools' in kwargs)
         apply_temperature_param(kwargs, temperature=temperature, model=model)
         started = time.perf_counter()
         try:
@@ -653,6 +674,7 @@ class ChatCompletionsGateway:
                 model=model,
                 messages=chat_messages,
                 timeout_seconds=_resolve_timeout(timeout_seconds),
+                request_payload=kwargs,
                 operation=lambda: self.client.chat.completions.parse(**kwargs),
             )
         except (BadRequestError, LLMCallBudgetExceeded):
@@ -696,6 +718,8 @@ class ChatCompletionsGateway:
             input_items=input_items,
         )
         kwargs: dict[str, Any] = {"model": model, "messages": chat_messages}
+        from app.llm.role_policy import apply_chat_controls
+        apply_chat_controls(kwargs, model, tools='tools' in kwargs)
         apply_temperature_param(kwargs, temperature=temperature, model=model)
         started = time.perf_counter()
         try:
@@ -704,6 +728,7 @@ class ChatCompletionsGateway:
                 model=model,
                 messages=chat_messages,
                 timeout_seconds=_resolve_timeout(timeout_seconds),
+                request_payload=kwargs,
                 operation=lambda: self.client.chat.completions.create(**kwargs),
             )
         except (BadRequestError, LLMCallBudgetExceeded):
@@ -765,6 +790,8 @@ class ChatCompletionsGateway:
                 "tools": chat_tools,
                 "tool_choice": "auto",
             }
+            from app.llm.role_policy import apply_chat_controls
+            apply_chat_controls(kwargs, model, tools='tools' in kwargs)
             apply_temperature_param(kwargs, temperature=temperature, model=model)
             if not parallel_tool_calls:
                 kwargs["parallel_tool_calls"] = False
@@ -776,7 +803,8 @@ class ChatCompletionsGateway:
                     model=model,
                     messages=current_messages,
                     timeout_seconds=resolved_timeout,
-                    operation=lambda: self.client.chat.completions.create(**kwargs),
+                    request_payload=kwargs,
+                operation=lambda: self.client.chat.completions.create(**kwargs),
                 )
             except (BadRequestError, LLMCallBudgetExceeded):
                 raise
@@ -896,6 +924,7 @@ class ResponsesGateway:
                 model=model,
                 messages=messages,
                 timeout_seconds=_resolve_timeout(timeout_seconds),
+                request_payload=kwargs,
                 operation=lambda: self.client.responses.parse(**kwargs),
             )
         except LLMCallBudgetExceeded:
@@ -958,6 +987,7 @@ class ResponsesGateway:
                 model=model,
                 messages=messages,
                 timeout_seconds=_resolve_timeout(timeout_seconds),
+                request_payload=kwargs,
                 operation=lambda: self.client.responses.create(**kwargs),
             )
         except LLMCallBudgetExceeded:
@@ -1049,7 +1079,8 @@ class ResponsesGateway:
                     model=model,
                     messages=messages,
                     timeout_seconds=resolved_timeout,
-                    operation=lambda: self.client.responses.create(**kwargs),
+                    request_payload=kwargs,
+                operation=lambda: self.client.responses.create(**kwargs),
                 )
             except (BadRequestError, LLMCallBudgetExceeded):
                 raise
@@ -1180,6 +1211,10 @@ class FallbackOpenAIGateway:
                 runtime.release_failed_openai_attempt(call_type, after_attempt=attempts_before)
 
     def _fallback_enabled(self) -> bool:
+        from app.llm.role_policy import active_policy
+        role = active_policy.get()
+        if role and not role.allow_transport_fallback:
+            return False
         return bool(getattr(get_settings(), "openai_responses_fallback_to_chat", True))
 
     async def parse_structured(
@@ -1346,6 +1381,10 @@ class CanaryOpenAIGateway:
         return self._chat, "canary_chat"
 
     def _fallback_enabled(self) -> bool:
+        from app.llm.role_policy import active_policy
+        role = active_policy.get()
+        if role and not role.allow_transport_fallback:
+            return False
         settings = get_settings()
         return bool(getattr(settings, "openai_responses_fallback_to_chat", True))
 
@@ -1760,17 +1799,19 @@ async def parse_structured_output(
     store: bool | None = None,
 ) -> StructuredParseResult:
     """Domain entrypoint for Structured Outputs (Chat Completions or Responses)."""
-    return await get_openai_gateway().parse_structured(
-        model=model,
-        text_format=text_format,
-        messages=messages,
-        instructions=instructions,
-        input_items=input_items,
-        temperature=temperature,
-        call_type=call_type,
-        timeout_seconds=timeout_seconds,
-        store=store,
-    )
+    from app.llm.role_policy import configured_call
+    with configured_call(call_type, model, structured=True, tools=False) as (effective_model, role):
+        return await get_openai_gateway().parse_structured(
+            model=effective_model,
+            text_format=text_format,
+            messages=messages,
+            instructions=instructions,
+            input_items=input_items,
+            temperature=temperature,
+            call_type=call_type,
+            timeout_seconds=role.timeout_seconds if role and role.timeout_seconds else timeout_seconds,
+            store=store,
+        )
 
 
 async def generate_text_output(
@@ -1785,16 +1826,18 @@ async def generate_text_output(
     store: bool | None = None,
 ) -> TextGenerationResult:
     """Domain entrypoint for free-text generation."""
-    return await get_openai_gateway().generate_text(
-        model=model,
-        messages=messages,
-        instructions=instructions,
-        input_items=input_items,
-        temperature=temperature,
-        call_type=call_type,
-        timeout_seconds=timeout_seconds,
-        store=store,
-    )
+    from app.llm.role_policy import configured_call
+    with configured_call(call_type, model, structured=False, tools=False) as (effective_model, role):
+        return await get_openai_gateway().generate_text(
+            model=effective_model,
+            messages=messages,
+            instructions=instructions,
+            input_items=input_items,
+            temperature=temperature,
+            call_type=call_type,
+            timeout_seconds=role.timeout_seconds if role and role.timeout_seconds else timeout_seconds,
+            store=store,
+        )
 
 
 async def run_tool_loop_output(
@@ -1813,20 +1856,22 @@ async def run_tool_loop_output(
     temperature: float | None = 0.3,
 ) -> ToolLoopResult:
     """Domain entrypoint for function-calling tool loops."""
-    return await get_openai_gateway().run_tool_loop(
-        model=model,
-        tools=tools,
-        execute_tool=execute_tool,
-        messages=messages,
-        instructions=instructions,
-        input_items=input_items,
-        parallel_tool_calls=parallel_tool_calls,
-        call_type=call_type,
-        timeout_seconds=timeout_seconds,
-        store=store,
-        max_rounds=max_rounds,
-        temperature=temperature,
-    )
+    from app.llm.role_policy import configured_call
+    with configured_call(call_type, model, structured=False, tools=True) as (effective_model, role):
+        return await get_openai_gateway().run_tool_loop(
+            model=effective_model,
+            tools=tools,
+            execute_tool=execute_tool,
+            messages=messages,
+            instructions=instructions,
+            input_items=input_items,
+            parallel_tool_calls=parallel_tool_calls,
+            call_type=call_type,
+            timeout_seconds=role.timeout_seconds if role and role.timeout_seconds else timeout_seconds,
+            store=store,
+            max_rounds=max_rounds,
+            temperature=temperature,
+        )
 
 
 def generate_text_sync(

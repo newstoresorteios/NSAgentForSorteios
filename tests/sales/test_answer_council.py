@@ -1231,3 +1231,23 @@ async def test_inspect_fake_name_does_not_restart_catalog_search(monkeypatch):
     assert called["n"] == 0
     assert inspect_reply in (result.reply_text or "")
     assert decision.approved is True
+
+
+@pytest.mark.parametrize("status", ["shipped", "delivered", "canceled", "completed", "refunded"])
+def test_terminal_order_history_does_not_block_greeting(status):
+    from app.sales.dialogue_phase import reconcile_checkout_context
+    from app.sales.qualification_slots import has_bound_sale_target
+    state = reconcile_checkout_context(CommerceConversationState(
+        order_id="25894", order_status_group=status))
+    contract = build_turn_contract(message_text="ola", interpretation=None, commerce_state=state)
+    assert state.order_id == "25894"
+    assert not contract.live_checkout
+    assert not contract.must_not_re_greet
+    assert not has_bound_sale_target(state)
+
+
+def test_pending_order_still_binds_checkout():
+    state = CommerceConversationState(order_id="25894", order_status_group="pending")
+    contract = build_turn_contract(message_text="ola", interpretation=None, commerce_state=state)
+    assert contract.live_checkout
+    assert contract.must_not_re_greet

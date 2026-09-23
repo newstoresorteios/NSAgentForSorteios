@@ -562,6 +562,11 @@ async def _generate_agent_reply_async_inner(
     if early is not None:
         return early
 
+    from app.persona.institutional_route import answer_institutional
+    institutional = await answer_institutional(message)
+    if institutional is not None:
+        return _annotate_agent_result(institutional)
+
     raw_inbound_id = (message.raw or {}).get("inbound_id")
     try:
         inbound_id = int(raw_inbound_id) if raw_inbound_id is not None else None

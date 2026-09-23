@@ -19,8 +19,10 @@ def _decimal_money_value(value: Any) -> Decimal | None:
             normalized = normalized.replace(" ", "")
             if "," in normalized:
                 normalized = normalized.replace(".", "").replace(",", ".")
-            return Decimal(normalized)
-        return Decimal(str(value))
+            amount = Decimal(normalized)
+        else:
+            amount = Decimal(str(value))
+        return amount if amount.is_finite() else None
     except (InvalidOperation, TypeError, ValueError):
         return None
 

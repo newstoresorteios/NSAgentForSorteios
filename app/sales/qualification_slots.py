@@ -250,13 +250,15 @@ def has_bound_sale_target(commerce_state: Any | None) -> bool:
     """A chosen SKU, live cart, or order — not a leftover shortlist."""
     if commerce_state is None:
         return False
+    from .dialogue_phase import is_terminal_order_state
+    terminal_order = is_terminal_order_state(commerce_state)
     return any(
         (
             getattr(commerce_state, "active_product", None),
             getattr(commerce_state, "cart_session_id", None),
             getattr(commerce_state, "cart_id", None),
-            getattr(commerce_state, "order_id", None),
-            getattr(commerce_state, "order_lookup_id", None),
+            not terminal_order and getattr(commerce_state, "order_id", None),
+            not terminal_order and getattr(commerce_state, "order_lookup_id", None),
         )
     )
 

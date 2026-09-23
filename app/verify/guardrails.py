@@ -234,6 +234,9 @@ def detect_human_support_request(text: str) -> bool:
 
 def detect_trade_in_or_appraisal_request(text: str) -> bool:
     """Customer wants to sell, trade or appraise a watch — human sales handoff."""
+    from app.persona.institutional_route import institutional_question
+    if institutional_question(text):
+        return False
     normalized = (text or "").lower()
     if not normalized:
         return False

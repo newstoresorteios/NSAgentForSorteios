@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from app.catalog.retrieval.offer_contract import responder_evidence
+from app.llm.compact_context import serialize_context
+
 from app.configuration.runtime import message as operator_message
 
 import html
@@ -516,7 +519,7 @@ async def sales_response_with_openai(
             *history[-model_history_limit:],
             {
                 "role": "user",
-                "content": json.dumps(
+                "content": serialize_context(
                     {
                         "original_message": message.text,
                         "message_sent_at": "agora",
@@ -539,7 +542,7 @@ async def sales_response_with_openai(
                             "status": tray_result.safety_reason,
                             "summary": tray_result.reply_text,
                             "technical_requirements": tray_result.response_metadata.get('technical_requirements'),
-                            "technical_evidence": tray_result.response_metadata.get('technical_evidence'),
+                            "technical_evidence": responder_evidence(tray_result.response_metadata),
                             "product_resolution_state": tray_result.response_metadata.get('product_resolution_state'),
                         },
                     },

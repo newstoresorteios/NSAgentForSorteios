@@ -498,12 +498,16 @@ def inbound_from_memory(
     presented = getattr(commerce_state, "last_presented_products", None) or []
     live_shortlist = bool(presented)
     phase = getattr(commerce_state, "dialogue_phase", None)
+    from .dialogue_phase import is_terminal_order_state
+    terminal_order = is_terminal_order_state(commerce_state)
     live_checkout = bool(
         getattr(commerce_state, "active_product", None)
         or getattr(commerce_state, "cart_id", None)
         or getattr(commerce_state, "cart_session_id", None)
-        or getattr(commerce_state, "order_id", None)
-        or getattr(commerce_state, "order_lookup_id", None)
+        or (not terminal_order and (
+            getattr(commerce_state, "order_id", None)
+            or getattr(commerce_state, "order_lookup_id", None)
+        ))
         or getattr(commerce_state, "pending_action", None)
         or phase in {"shortlist", "buy", "checkout"}
     )

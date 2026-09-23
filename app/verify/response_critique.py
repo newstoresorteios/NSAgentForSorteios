@@ -772,27 +772,11 @@ def apply_search_products_to_result(
         metadata["product_resolution_state"] = "not_found"
         metadata["clear_active_product"] = True
     updated.response_metadata = metadata
-    if commerce_state is not None:
-        compact: list[PresentedCommerceProduct] = []
-        for position, product in enumerate(products[:3], start=1):
-            identity = product_reference_from_product(product)
-            if identity:
-                compact.append(
-                    PresentedCommerceProduct(position=position, **identity.model_dump())
-                )
-        commerce_state.last_presented_products = compact
-        if compact:
-            commerce_state.active_product = CommerceProductReference.model_validate(
-                compact[0].model_dump(exclude={"position"})
-            )
-            commerce_state.product_resolution_state = (
-                commerce_state.product_resolution_state
-                if commerce_state.product_resolution_state == "options_presented"
-                else "plausible_matches"
-            )
-        else:
-            commerce_state.active_product = None
-            commerce_state.product_resolution_state = "not_found"
+    # Review is pure: state is committed only from the final delivered response.
+    from app.catalog.retrieval.offer_contract import validate_recommendation
+    updated = validate_recommendation(updated, parsed,
+                                      force=bool(result.response_metadata.get('offer_contract')))
+
     return updated
 
 
@@ -877,6 +861,10 @@ async def _regenerate_reply(
         working = working.model_copy(deep=True)
         working.commercial_data = _merge_payment_and_order_facts(
             working.commercial_data or {}, api_facts, commerce_state)
+        from app.catalog.retrieval.offer_contract import validate_recommendation
+        from app.verify.final_response import result_interpretation
+        working = validate_recommendation(working, result_interpretation(working),
+                                         force=bool(result.response_metadata.get('offer_contract')))
         products = (working.commercial_data or {}).get("products")
         search_ran = "search_products" in (api_facts or {})
         empty_search = (
@@ -909,7 +897,7 @@ async def _regenerate_reply(
                         ),
                         "commercial_data": working.commercial_data or {},
                         "search_products_empty": empty_search,
-                        "api_facts": api_facts,
+                        "api_facts": ({"validated_products": products} if working.response_metadata.get("offer_contract") else api_facts),
                         "published_persona": persona_evidence((working.commercial_data or {}).get('products')),
                     },
                     ensure_ascii=False,
@@ -929,12 +917,6 @@ async def _regenerate_reply(
         regenerated = working.model_copy(deep=True)
         regenerated.reply_text = content.strip()
         commercial = dict(regenerated.commercial_data or {})
-        if api_facts:
-            commercial = _merge_payment_and_order_facts(
-                commercial,
-                api_facts,
-                commerce_state,
-            )
         regenerated.commercial_data = commercial
         regenerated.response_metadata = dict(regenerated.response_metadata or {})
         regenerated.response_metadata["critique_regenerated"] = True

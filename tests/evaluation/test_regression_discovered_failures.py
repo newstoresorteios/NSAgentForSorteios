@@ -186,18 +186,21 @@ def test_identity_introduction_does_not_erase_a_concrete_answer():
     assert is_generic_greeting_reply('Sou o Crono.')
 
 
-def test_mentioned_on_request_product_remains_resolvable_without_becoming_a_recommendation():
+@pytest.mark.parametrize("availability", ["available", "unavailable", "unknown"])
+def test_unpriced_technical_match_is_not_an_offer_or_purchase_target(availability):
     from app.catalog.retrieval.technical import technical_miss
     from app.verify.final_response import finalize_response
     interpretation=SalesInterpretation(domain='commerce',goal='find',references_previous_context=False,
         needs_clarification=False,confidence=.99,preferences={'mechanism':'automatic','crystal':'sapphire','budget_max':2500})
     result=technical_miss(interpretation,unknown=True,evidence=[{'stage':'live_detail','status':'matched',
         'product_id':'1','product_name':'Orient Mako AAA001','reference':'AAA001','brand':'Orient',
-        'product_url':'https://example.test/aaa001','commercial':{'price_status':'missing','upon_request':True}}])
+        'product_url':'https://example.test/aaa001','commercial':{'price_status':'missing','upon_request':True,'availability':availability}}])
     final,state=finalize_response(result,incoming=IncomingMessage(text='Automático com safira até 2500'),
         interpretation=interpretation,previous_state=CommerceConversationState())
     assert final.commercial_data['products']==[]
-    assert state.active_product.product_id=='1'
+    assert state.active_product is None
+    assert not state.purchase_target
+    assert 'Orient Mako' not in final.reply_text
     assert state.last_presented_products==[]
 
 

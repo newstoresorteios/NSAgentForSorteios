@@ -82,7 +82,18 @@ def _start_call(
     call_type: str,
     *,
     reason: str | None = None,
+    model: str | None = None,
+    messages=None,
 ) -> tuple[Any, float]:
+    from app.evaluation.context import current_evaluation
+    from app.llm.role_policy import role_for, active_policy
+    if current_evaluation() is not None or role_for(call_type) == 'evaluation':
+        from app.evaluation.campaign_budget import reserve_evaluation_call
+        from app.config import get_settings
+        role = active_policy.get()
+        reserve_evaluation_call(model=model, messages=messages,
+            output_limit=role.max_output_tokens if role and role.max_output_tokens else
+                         getattr(get_settings(), 'openai_max_output_tokens', None))
     context = get_current_turn()
     if context is not None:
         context.register_openai_call(call_type, reason=reason)
@@ -138,8 +149,10 @@ async def execute_openai_call(
     model: str | None = None,
     messages: list[dict[str, Any]] | None = None,
     reason: str | None = None,
+    request_payload: dict | None = None,
 ) -> T:
-    context, started_at = _start_call(call_type, reason=reason)
+    context, started_at = _start_call(call_type, reason=reason, model=model,
+                                     messages=request_payload if request_payload is not None else messages)
     try:
         awaitable = operation()
         response = (
@@ -179,8 +192,10 @@ def execute_openai_call_sync(
     model: str | None = None,
     messages: list[dict[str, Any]] | None = None,
     reason: str | None = None,
+    request_payload: dict | None = None,
 ) -> T:
-    context, started_at = _start_call(call_type, reason=reason)
+    context, started_at = _start_call(call_type, reason=reason, model=model,
+                                     messages=request_payload if request_payload is not None else messages)
     try:
         response = operation()
     except Exception as exc:

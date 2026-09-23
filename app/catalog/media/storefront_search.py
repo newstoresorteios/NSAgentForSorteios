@@ -268,9 +268,7 @@ async def rank_storefront_hits_by_image(
                     timeout_seconds=10,
                     allowed_suffixes=tuple(json_policy('storefrontImageHosts')),
                 )
-            distance, error, source_view, candidate_view = best_image_view_metrics(
-                source, content
-            )
+            distance, error, source_view, candidate_view = cached_image_view_metrics(source, content)
             return distance, {
                 **hit,
                 '_image_color_error': error,
@@ -284,6 +282,24 @@ async def rank_storefront_hits_by_image(
     ranked = [row for row in rows if row is not None]
     ranked.sort(key=lambda row: row[0])
     return ranked
+
+
+def cached_image_view_metrics(source, candidate):
+    """Only cache within this turn; changed bytes always invalidate the result."""
+    from hashlib import sha256
+    from app.ops.runtime_context import get_current_turn
+    runtime = get_current_turn()
+    if runtime is None:
+        return best_image_view_metrics(source, candidate)
+    key = sha256(source).hexdigest() + ':' + sha256(candidate).hexdigest()
+    cache = runtime._image_comparison_cache
+    if key not in cache:
+        metrics = best_image_view_metrics(source, candidate)
+        # Same bounded pool used for candidate retrieval; do not retain images.
+        if len(cache) < int(policy('imageStorefrontCandidateLimit')):
+            cache[key] = metrics
+        return metrics
+    return cache[key]
 
 
 async def storefront_product_available(url: str) -> bool | None:

@@ -11,41 +11,24 @@ from app.catalog.retrieval.availability import product_availability_state, apply
 from app.catalog.specs.requirements import technical_requirements, feature_evidence, feature_rules, criteria_label
 from app.configuration.runtime import policy, message
 from app.models import AgentResult
+from .offer_contract import seal_offer
 from app.ops.observability import log_event
 
 
-def technical_miss(interpretation, *, unknown: bool, evidence: list | None = None) -> AgentResult:
+def technical_miss(interpretation, *, unknown: bool, evidence: list | None = None, errors: list | None = None) -> AgentResult:
     reason = "catalog_requirements_unknown" if unknown else "catalog_requirements_no_match"
     reply = message(reason, criteria=criteria_label(interpretation))
-    mentioned = None
-    for item in evidence or []:
-        commercial = item.get("commercial") or {}
-        if (item.get("stage") == "live_detail" and item.get("status") == "matched"
-                and commercial.get("price_status") == "missing" and item.get("product_name")):
-            template = ("catalog_requirements_price_on_request" if commercial.get("upon_request")
-                        else "catalog_requirements_price_missing")
-            reply = message(template, product=item["product_name"],
-                            criteria=criteria_label(interpretation))
-            if item.get('product_url'):
-                mentioned = {'product_id':item['product_id'], 'name':item['product_name'],
-                             'product_url':item['product_url'], 'reference':item.get('reference'),
-                             'brand':item.get('brand')}
-            break
-    return AgentResult(reply_text=reply, intent="commerce",
+    return seal_offer(AgentResult(reply_text=reply, intent="commerce",
         safety_reason=reason, commercial_data={"products": []}, response_metadata={
             "presented_products":False, "product_resolution_state":"technical_unknown" if unknown else "technical_mismatch",
             "clear_active_product":True, "clear_presented_products":True,
-            "technical_requirements":technical_requirements(interpretation), "technical_evidence":evidence or [],
-            # Mentioning an item with no confirmed price still establishes a
-            # conversational reference. It does not make it a buyable option.
-            **({'active_product':mentioned, 'clear_active_product':False,
-                'clear_presented_products':False, 'mentioned_product_only':True} if mentioned else {}),
-        })
+            "technical_requirements":technical_requirements(interpretation), "technical_evidence":evidence or [], "integration_errors":errors or [],
+        }))
 
 
 def confirmed_product_reply(products, interpretation) -> str:
     from app.commerce.commerce_router import _product_lines
-    lines = [f"{i}. {line}" for i, line in enumerate(_product_lines(products, compact=True), 1)]
+    lines = _product_lines(products, compact=True)
     return message("catalog_requirements_intro", criteria=criteria_label(interpretation)) + "\n\n" + "\n\n".join(lines)
 
 
@@ -54,12 +37,14 @@ async def retrieve_technical_products(session) -> AgentResult:
     required = technical_requirements(interpretation)
     # Search the requested feature itself; a generic category's first page is not
     # a complete search for a technical combination. Keep all probes bounded.
+    errors = []
     candidates = list(session.candidates)
     queries = list(dict.fromkeys(r["query"] for r in feature_rules() if required.get(r["field"]) == r["value"] and r.get("query")))
     for query in queries[:int(policy("catalogTechnicalSearchLimit"))]:
         data = await session.search_products({**session.list_query_extras(interpretation), "name":query,
                                              "limit":session.retrieval_plan.candidate_limit, "page":1})
         if data.get("error"):
+            errors.append({'stage':'search', 'status_code':data.get('status_code')})
             if data.get("status_code") in (429, 502, 503, 504):
                 break
             continue
@@ -84,6 +69,8 @@ async def retrieve_technical_products(session) -> AgentResult:
         for prior, live in zip(batch, results):
             attempted += 1
             if isinstance(live, Exception) or live.get("error"):
+                errors.append({'stage':'live_detail','product_id':str(prior['id']),
+                    'error_type':type(live).__name__ if isinstance(live, Exception) else 'tool_error'})
                 unknown = True
                 if isinstance(live, Exception) or live.get("status_code") in (429,502,503,504):
                     stop = True
@@ -124,17 +111,17 @@ async def retrieve_technical_products(session) -> AgentResult:
         reference = str(interpretation.subject.reference or '').strip().casefold()
         if reference and not any(str(p.get('reference') or '').strip().casefold() == reference for p in unique.values()):
             # A missing identity is not proof that a technical feature mismatched.
-            return AgentResult(reply_text=message('commerce.commerce_router._product_result.7cc54b8858'),
+            return seal_offer(AgentResult(reply_text=message('commerce.commerce_router._product_result.7cc54b8858'),
                 intent='commerce',safety_reason='product_not_found',commercial_data={'products':[]},
-                response_metadata={'technical_evidence':evidence,'requested_reference':interpretation.subject.reference})
-        return technical_miss(interpretation, unknown=unknown, evidence=evidence)
+                response_metadata={'technical_evidence':evidence,'requested_reference':interpretation.subject.reference}))
+        return technical_miss(interpretation, unknown=unknown, evidence=evidence, errors=errors)
     from app.catalog.index.catalog_index import build_allowed_id_sets, index_products_best_effort
     accepted = apply_persona_presentation_order(accepted)[:customer_result_limit()]
     index_products_best_effort(accepted, factual_source="tray_live")
-    return AgentResult(reply_text=confirmed_product_reply(accepted, interpretation), intent="commerce",
+    return seal_offer(AgentResult(reply_text=confirmed_product_reply(accepted, interpretation), intent="commerce",
         commercial_data={"products":accepted}, response_metadata={
             "presented_products":True, "product_resolution_state":"options_presented",
-            "technical_requirements":required, "technical_evidence":evidence,
+            "technical_requirements":required, "technical_evidence":evidence, "integration_errors":errors,
             "allowed_id_sets":{k:sorted(v) for k,v in build_allowed_id_sets(accepted).items()},
             "factual_fallback_text":confirmed_product_reply(accepted, interpretation),
-        })
+        }))

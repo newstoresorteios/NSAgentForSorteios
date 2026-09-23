@@ -25,3 +25,6 @@ htmlcov/
 # Local evaluations contain customer conversation history.
 docs/audits/**/history-evaluation-*
 docs/audits/**/pytest-history*.txt
+
+.venv-sdk-pilot/
+evals/results/

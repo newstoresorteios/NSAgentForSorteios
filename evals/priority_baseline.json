@@ -1,0 +1,20 @@
+{
+  "baseline_commit": "7385bf7ea60c90f6ef683793339d949f0f2d77bb",
+  "captured_on": "2026-09-23",
+  "published_config_version": 6,
+  "persona_id": 17,
+  "model": "gpt-5.4-mini",
+  "reasoning_effort": "medium",
+  "fixture_sha256": "76ba44c8ccac9af2c51c4f74200b5e1002927a18f8df5d67ce8dddfce35a0dbb",
+  "scenario_count": 25,
+  "steps": 29,
+  "validation_scenarios": 14,
+  "environment": "simulated_commerce",
+  "paid_inference_calls": 0,
+  "release_approved": false,
+  "limitations": [
+    "Reference subset does not meet full release coverage gates.",
+    "No live quality, cost or latency comparison has been executed.",
+    "Local candidate includes uncommitted changes; baseline commit is not candidate identity."
+  ]
+}

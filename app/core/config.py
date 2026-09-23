@@ -145,7 +145,7 @@ class Settings(BaseSettings):
         default=False,
         alias="OPENAI_CHAT_COMPLETIONS_PRIMARY_ALLOWED",
     )
-    openai_reasoning_effort: Literal["", "minimal", "low", "medium", "high"] = Field(
+    openai_reasoning_effort: Literal["", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] = Field(
         default="medium",
         alias="OPENAI_REASONING_EFFORT",
     )

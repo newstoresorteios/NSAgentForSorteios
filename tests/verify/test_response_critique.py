@@ -379,7 +379,7 @@ def test_apply_search_products_replaces_classic_list():
     assert updated.response_metadata["critique_products_replaced"] is True
     assert "9001" in str(updated.response_metadata["allowed_id_sets"])
     assert "Chronograph" in updated.response_metadata["factual_fallback_text"]
-    assert state.last_presented_products[0].product_id == "9001"
+    assert state.last_presented_products == []  # Only final delivery may commit state.
 
 
 def test_critique_product_swap_cannot_retain_stale_factual_fallback():
@@ -550,7 +550,7 @@ async def test_critique_catalog_mismatch_retries_search_and_swaps_products(monke
     assert final.commercial_data["products"][0]["id"] == "9001"
     assert "Chronograph" in final.reply_text
     assert "Classic" not in final.commercial_data["products"][0]["name"]
-    assert state.last_presented_products[0].product_id == "9001"
+    assert state.last_presented_products == []  # Only final delivery may commit state.
 
 
 @pytest.mark.asyncio

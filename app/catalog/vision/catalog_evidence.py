@@ -10,6 +10,11 @@ from app.catalog.media.storefront_search import search_storefront, rank_storefro
 
 
 async def resolve_catalog_photo(incoming, identified) -> AgentResult:
+    # Defaults must exist even when configuration or the first HTTP request fails.
+    search_incomplete = False
+    candidates_compared = False
+    comparisons = []
+    ambiguous = False
     base = {
         'domain': 'commerce', 'goal': 'find', 'image_search': True,
         'response_source': 'image_catalog_evidence', 'image_evidence_guard': True,
@@ -61,6 +66,16 @@ async def resolve_catalog_photo(incoming, identified) -> AgentResult:
                 if not exact_visual or len(ranked) < len(hits):
                     continue
             margin = ranked[1][0] - best_distance if len(ranked) > 1 else margin_min
+            comparisons.extend({'product_id':str(candidate.get('product_id') or ''),
+                'distance':distance, 'color_error':candidate.get('_image_color_error'),
+                'source_view':candidate.get('_image_source_view'),
+                'candidate_view':candidate.get('_image_candidate_view')}
+                for distance, candidate in ranked)
+            # Shared merchant photos cannot distinguish sibling SKUs even when
+            # one photo is pixel-identical to the customer's upload.
+            if len(ranked) > 1 and margin <= 0:
+                ambiguous = True
+                continue
             log_event('image.catalog_candidates', {
                 'query': query, 'count': len(hits), 'ranked': len(ranked),
                 'best_id': hit.get('product_id'), 'distance': best_distance,
@@ -93,6 +108,7 @@ async def resolve_catalog_photo(incoming, identified) -> AgentResult:
                     'presented_products': True, 'product_resolution_state': 'resolved',
                     'image_catalog_proof': {'product_id': pid, 'distance': best_distance,
                         'margin': margin, 'color_error': color_error, 'url': product['url']},
+                    'image_candidate_comparisons': comparisons,
                     'active_preferences': {'subject_brand': product.get('brand') or identified.brand,
                         'subject_model': product['model'] or product['name'],
                         'subject_reference': product['reference'], 'color': identified.color,
@@ -100,10 +116,11 @@ async def resolve_catalog_photo(incoming, identified) -> AgentResult:
             )
     except (ConfigurationUnavailable, httpx.HTTPError, OSError, ValueError, TypeError) as exc:
         log_event('image.catalog_resolution_failed', {'error_type': type(exc).__name__})
-    reason = ('image_catalog_search_incomplete' if search_incomplete
+    reason = ('image_catalog_ambiguous' if ambiguous else 'image_catalog_search_incomplete' if search_incomplete
               else 'image_catalog_unconfirmed')
     return AgentResult(reply_text=copy(reason), intent='commerce',
                        safety_reason=reason,
                        commercial_data={'products': [], 'match_status': 'unresolved'},
                        response_metadata={**base, 'catalog_search_incomplete': search_incomplete,
+                                          'image_candidate_comparisons': comparisons,
                                           'catalog_candidates_compared': candidates_compared})

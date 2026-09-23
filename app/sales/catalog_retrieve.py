@@ -371,6 +371,8 @@ async def retrieve_catalog_or_clarify(
                 used_tray=True,
                 discovery_state=discovery_state,
             )
+    from app.catalog.retrieval.offer_contract import validate_recommendation
+    tray_result = validate_recommendation(tray_result, interpretation)
     final = await sales._sales_response_with_openai(
         message,
         plan,

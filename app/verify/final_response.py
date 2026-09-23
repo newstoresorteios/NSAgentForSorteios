@@ -39,6 +39,13 @@ def grounded_catalog_fallback(result):
 
 def finalize_response(result, *, incoming, interpretation, previous_state):
     from app.verify.catalog_delivery import enforce_photo_identity, apply_output_style
+    if result.response_metadata.get('domain') == 'institutional' and result.response_metadata.get('institutional_evidence'):
+        # A policy question neither selects a product nor resets a pending cart.
+        result.response_metadata['final_response_validation'] = {
+            'passed': True, 'authority': 'published_institutional_documents',
+            'delivered_product_ids': [],
+        }
+        return apply_output_style(result), previous_state.model_copy(deep=True)
     if result.response_metadata.get('image_evidence_guard'):
         result = apply_output_style(enforce_photo_identity(result))
         state = evolve_commerce_state(previous_state, result)
@@ -51,6 +58,8 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
     from app.catalog.retrieval.technical import technical_miss
     from app.sales.answer_council import build_turn_contract, check_pedido, check_fatos
 
+    from app.catalog.retrieval.offer_contract import enforce_offer
+    result = enforce_offer(result, result_interpretation(result) or interpretation)
     metadata = result.response_metadata
     interpretation = result_interpretation(result) or interpretation
     from app.sales.contextual_questions import normalize_followup
