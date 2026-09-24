@@ -323,7 +323,12 @@ def test_prompt_injects_active_memory_when_auto_apply_enabled(monkeypatch):
         ),
     )
     assert text.startswith("BASE_PROMPT")
-    assert "preferred_brands: Tissot" in text
+    assert "preferred_brands: Tissot" not in text
+    resumed = resolve_system_instructions(
+        fallback_instructions="BASE_PROMPT",
+        incoming=IncomingMessage(channel="whatsapp",sender_key="whatsapp:allowed",text="o mesmo de antes"),
+    )
+    assert "preferred_brands: Tissot" in resumed
 
 
 def test_below_threshold_does_not_auto_apply(monkeypatch):

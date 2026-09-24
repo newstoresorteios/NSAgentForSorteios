@@ -317,6 +317,8 @@ def compile_agent_prompt(
                 limit=int(getattr(settings, "agent_max_active_contact_memories", 20)),
                 max_chars=int(getattr(settings, "agent_max_contact_memory_chars", 3000)),
             )
+            from app.memory.contact_preference_memory import memories_for_current_search
+            memories = memories_for_current_search(memories, getattr(incoming, "text", None))
             memory_ids = [int(item.id) for item in memories if item.id is not None]
             memory_block = format_customer_memory_block(memories)
         except Exception as exc:
@@ -325,7 +327,9 @@ def compile_agent_prompt(
                 "error": str(exc)[:160],
             })
 
-    if load_conversation_summary and resolved_conversation_key:
+    # Legacy cumulative summaries have no search-session boundary. After a
+    # reset use bounded current history/state instead of replaying old criteria.
+    if load_conversation_summary and resolved_conversation_key and not getattr(conversation_state, "history_cut_inbound_id", None):
         try:
             from app.memory.conversation_summary_policy import format_conversation_summary_block
             from app.memory.conversation_summary_repository import get_conversation_summary
@@ -586,6 +590,8 @@ def _append_contact_memory_block(
                 limit=int(getattr(settings, "agent_max_active_contact_memories", 20)),
                 max_chars=int(getattr(settings, "agent_max_contact_memory_chars", 3000)),
             )
+            from app.memory.contact_preference_memory import memories_for_current_search
+            memories = memories_for_current_search(memories, getattr(incoming, "text", None))
             if memories:
                 block = contact_memory_repository.format_customer_memory_block(memories)
                 if block.strip() not in {
@@ -608,7 +614,7 @@ def _append_contact_memory_block(
         summary_mode == "off"
         and bool(getattr(settings, "agent_conversation_summary_in_prompt_enabled", False))
     )
-    if inject_summary:
+    if inject_summary and not getattr(conversation_state, "history_cut_inbound_id", None):
         conversation_key = None
         if incoming is not None:
             conversation_key = (

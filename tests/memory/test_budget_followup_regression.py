@@ -27,11 +27,13 @@ def test_bare_budget_preserves_cents_and_does_not_parse_selection(text,expected)
 
 
 @pytest.mark.parametrize("continuation", [True,False])
-def test_budget_continuation_preserves_brand_but_new_search_does_not(continuation):
+def test_budget_continuation_never_imports_brand_from_durable_memory(continuation):
     memory=ContactMemory(id=1,tenant_id="test",sender_key="test",memory_key="brand_preference",
         memory_kind="brand_preference",value={"active":"Seiko"})
     interp=SalesInterpretation(domain="commerce",goal="recommend",confidence=.99,
         needs_clarification=False,references_previous_context=continuation,
         preferences={"budget_max":2700})
     result,_=rehydrate_interpretation_from_memories(interp,[memory],message_text="2700")
-    assert result.subject.brand == ("Seiko" if continuation else None)
+    # Current-session brand is recovered from its question/state (covered by
+    # adaptive discovery tests), never inferred from a lifetime preference.
+    assert result.subject.brand is None

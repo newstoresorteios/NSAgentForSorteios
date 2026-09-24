@@ -23,6 +23,8 @@ _CATALOG_PREF_KEYS = (
     "occasion",
     "style",
     "excluded_product_ids",
+    "budget_min", "material", "mechanism", "crystal", "gender",
+    "explicit_no_preferences",
 )
 
 DialoguePhase = Literal["discovery", "shortlist", "buy", "checkout"]
@@ -95,8 +97,8 @@ _FRESH_CATALOG_ASK_RE = re.compile(
 
 _FRESH_START_RE = re.compile(
     r"\b("
-    r"come[cç]ar\s+(de\s+novo|outra|do\s+zero|uma\s+nova|uma\s+conversa)|"
-    r"recome[cç]ar|"
+    r"come[cç](?:ar|a|e)\s+(de\s+novo|outra|do\s+zero|uma\s+nova|uma\s+conversa)|"
+    r"recome[cç](?:ar|a|e)|reinici(?:ar|a|e)\s+(?:a\s+)?(?:conversa|busca|atendimento)|"
     r"nova\s+conversa|outra\s+conversa|conversa\s+nova|"
     r"do\s+zero|"
     r"vamos\s+come[cç]ar\s+outra"
@@ -107,7 +109,17 @@ _FRESH_START_RE = re.compile(
 
 def is_fresh_commerce_start(message_text: str | None) -> bool:
     """Customer asked to start over — not a follow-up on the last shortlist."""
-    return bool(_FRESH_START_RE.search(_fold(message_text)))
+    text = _fold(message_text)
+    if re.search(r"\bnao\s+(?:quero\s+)?(?:reinici|recomec|comec)", text):
+        return False
+    return bool(_FRESH_START_RE.search(text))
+
+
+def is_bare_commerce_restart(message_text: str | None) -> bool:
+    text = _fold(message_text).strip(" .!?")
+    text = re.sub(r"^(?:por favor[, ]+|vamos\s+)", "", text)
+    text = re.sub(r"[, ]+por favor$", "", text)
+    return bool(_FRESH_START_RE.fullmatch(text))
 
 
 def is_generic_catalog_ask(message_text: str | None) -> bool:
@@ -122,6 +134,16 @@ def _scrub_catalog_preferences(prefs: dict[str, Any] | None) -> dict[str, Any]:
     cleaned = dict(prefs or {})
     for key in _CATALOG_PREF_KEYS:
         cleaned.pop(key, None)
+    # Preserve identity, not product requirements encoded as attributes/slots.
+    cleaned["attributes"] = [a for a in cleaned.get("attributes", [])
+                             if str(a).startswith(("qual:name:", "qual:city:"))]
+    cleaned["qualification_slots"] = {k: v for k, v in cleaned.get("qualification_slots", {}).items()
+                                      if k in {"customer_name", "customer_city", "shipping_city"}}
+    if cleaned.get("recipient") != cleaned["qualification_slots"].get("customer_name"):
+        cleaned.pop("recipient", None)
+    for key in ("attributes", "qualification_slots"):
+        if not cleaned[key]:
+            cleaned.pop(key)
     return cleaned
 
 
@@ -328,6 +350,8 @@ def reset_browse_memory_keep_orders(
     updated.last_presented_products = []
     updated.active_product = None
     updated.active_topic = None
+    updated.purchase_target = None
+    updated.purchase_target_selected_at = None
     updated.dialogue_phase = "discovery"
     updated.forget_shortlist = True
     updated.product_resolution_state = None

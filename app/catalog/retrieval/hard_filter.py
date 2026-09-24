@@ -178,6 +178,20 @@ def hard_filter_products(
         ):
             continue
         gender_tokens = preference_gender_tokens(interpretation)
+        # A declared catalog style must have evidence, not merely lack a conflict.
+        styles = {"aviador": ("aviador", "aviation", "pilot"),
+                  "piloto": ("piloto", "pilot", "aviador"),
+                  "classico": ("classico", "classic", "dress"),
+                  "dress": ("dress", "social", "classico"),
+                  "esportivo": ("esportivo", "sport"),
+                  "field": ("field", "militar"),
+                  "militar": ("militar", "military", "field"),
+                  "mergulho": ("mergulho", "diver", "diving")}
+        style = _fold(interpretation.preferences.style)
+        if style in styles:
+            evidence = _fold(str(product.get("style") or "") + " " + text)
+            if not any(re.search(r"\b" + re.escape(term) + r"\b", evidence) for term in styles[style]):
+                continue
         if gender_tokens and not product_matches_gender_tokens(product, gender_tokens):
             continue
         if mode == "recommendation" and "ready_to_ship" in preferences.attributes:

@@ -153,6 +153,11 @@ class ProductSoftPreferences(BaseModel):
             "occasion",
             "recipient",
             "attributes",
+            "case_size",
+            "strap",
+            "gender",
+            "mechanism",
+            "purchase_purpose",
         ]
     ] = Field(default_factory=list)
 

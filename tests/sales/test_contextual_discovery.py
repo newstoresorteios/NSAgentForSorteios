@@ -43,6 +43,9 @@ def test_unknown_answer_advances_by_slot_not_wording(contextual):
     assert s['contextual_question']['slot']=='budget'
 
 def test_question_limit_opens_search(contextual):
+    rules=json.loads(contextual['contextualDiscoveryRules'])
+    rules['maxQuestions']=3
+    contextual['contextualDiscoveryRules']=json.dumps(rules)
     s=_discovery_state(interpretation(),[marker(x) for x in ('model_intent','budget','occasion')],message_text='não sei')
     assert not s['persona_qualification_required']
     assert s['force_retrieval']

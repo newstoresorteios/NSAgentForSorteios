@@ -98,11 +98,12 @@ async def test_budget_answer_keeps_ongoing_qualification_before_recommendation(a
                      ready_for_retrieval=True,references_previous_context=False)
     third,calls=await run(i,[],[turn(first),turn(second)],text='até 2500')
     assert calls==[] and not i._adaptive_ready
-    assert third.response_metadata['discovery_question']['slot']=='occasion'
+    assert third.response_metadata['discovery_question']['slot']=='purchase_purpose'
     final=interpretation(goal='recommend',subject={'product_type':'relógio'},
                          preferences={'budget_max':2500,'occasion':'dia a dia'},ready_for_retrieval=True)
-    result,calls=await run(final,[],[turn(first),turn(second),turn(third)],text='dia a dia')
-    assert result is None and calls==[] and final._adaptive_ready
+    result,calls=await run(final,[],[turn(first),turn(second),turn(third)],text='para mim')
+    assert calls==[] and not final._adaptive_ready
+    assert result.response_metadata['discovery_question']['slot']=='gender'
 
 @pytest.mark.asyncio
 async def test_short_answer_reuses_pool_and_filters(adaptive):

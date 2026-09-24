@@ -706,6 +706,15 @@ async def _generate_agent_reply_async_inner(
         customer_context["_model_conversation_turns"] = []
     customer_context["_commerce_state"] = commerce_state.model_dump(mode="json")
     phrase_restart = is_fresh_commerce_start(message.text)
+    from app.sales.dialogue_phase import is_bare_commerce_restart
+    if is_bare_commerce_restart(message.text):
+        return AgentResult(
+            reply_text=operator_message("commerce_search_restarted"),
+            intent="commerce",
+            response_metadata={"response_source": "commerce_search_restart",
+                               "commerce_state": commerce_state.model_dump(mode="json"),
+                               "browse_reset": True},
+        )
     resume_pending_order_early = (not phrase_restart) and should_resume_pending_order(
         message.text,
         commerce_state,

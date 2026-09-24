@@ -31,7 +31,7 @@ def configuration():
         ):
             return {}
         for facet in rules["facets"]:
-            if facet["slot"] not in {"case_size", "color", "strap", "budget", "occasion"}:
+            if facet["slot"] not in {"case_size", "color", "strap", "budget", "occasion", "style", "mechanism", "gender", "crystal"}:
                 return {}
             if not isinstance(facet["fields"], list) or not all(isinstance(f, str) for f in facet["fields"]):
                 return {}
@@ -104,6 +104,11 @@ def _restore_preferences(interpretation, snapshot, slot, text):
         current["attributes"] = [a for a in current["attributes"] if not a.startswith("case_size:")]
     if no_preference & {"material", "strap"}:
         current["attributes"] = [a for a in current["attributes"] if not a.startswith("required_strap_material:")]
+    if "gender" in no_preference:
+        current["recipient"] = None
+        current["attributes"] = [a for a in current["attributes"] if _fold(a) not in {"masculino", "feminino", "unissex"}]
+    if "purchase_purpose" in no_preference:
+        current["attributes"] = [a for a in current["attributes"] if not a.startswith("qual:purchase_purpose:")]
     interpretation.preferences = ProductPreferences(**current)
     from app.catalog.specs.preference_normalize import extract_bare_budget_amount, extract_stated_strap_material
     prefs = interpretation.preferences
@@ -125,7 +130,7 @@ def _restore_preferences(interpretation, snapshot, slot, text):
         if size:
             prefs.attributes = [a for a in prefs.attributes if not a.startswith("case_size:")]
             prefs.attributes.append(f"case_size:{size[0]}-{size[1]}mm")
-    elif slot in {"color", "occasion"}:
+    elif slot in {"color", "occasion", "style", "mechanism", "crystal"}:
         # Only exact catalog values are safe to bind deterministically.
         choices = snapshot.get("last_options") or []
         choice = next((v for v in choices if _fold(v) == _fold(text)), None)
@@ -136,7 +141,7 @@ def _restore_preferences(interpretation, snapshot, slot, text):
 def _compact(product):
     keys = ("id", "name", "brand", "model", "reference", "case_size", "case_size_mm",
             "dial_color", "color", "strap_type", "strap_material", "bracelet_material", "material",
-            "style", "occasion", "mechanism", "crystal", "current_price", "price", "promotional_price",
+            "style", "occasion", "gender", "mechanism", "crystal", "current_price", "price", "promotional_price",
             "available", "available_in_store", "stock", "water_resistance_m", "description")
     return {k: (v[:1500] if isinstance(v, str) else v) for k, v in product.items()
             if k in keys and isinstance(v, (str, int, float, bool, type(None)))}
@@ -244,6 +249,8 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
     metadata = last_assistant.get("metadata") or {}
     previous_question = metadata.get("discovery_question") if isinstance(metadata, dict) else None
     previous_question = previous_question if isinstance(previous_question, dict) else {}
+    from .qualification_enrichment import apply_qualification_answer, qualification_known
+    apply_qualification_answer(interpretation, message.text, previous_question.get("slot"))
     # A bare answer to our budget question changes price, not the requested brand.
     # Recover it from the actual preceding query, never from a offered product.
     from app.catalog.specs.preference_normalize import extract_bare_budget_amount
@@ -333,6 +340,7 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
         interpretation._adaptive_ready = True
         return None
     known = {k for k, v in interpretation.preferences.model_dump().items() if v}
+    known.update(qualification_known(interpretation))
     known |= set(interpretation.preferences.explicit_no_preferences)
     if interpretation_case_size_range(interpretation, message_text=message.text):
         known.add("case_size")
@@ -342,6 +350,9 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
         known.add("budget")
     questions = {q["slot"]: q for q in contextual["questions"]}
     choices = []
+    if (interpretation.goal == "recommend" and "purchase_purpose" in questions and "purchase_purpose" not in known
+            and "purchase_purpose" not in asked and len(matches) > 1):
+        choices.append((1000, 0, "purchase_purpose", []))
     for priority, facet in enumerate(rules["facets"]):
         slot = facet["slot"]
         if slot in known or slot in asked or slot not in questions:

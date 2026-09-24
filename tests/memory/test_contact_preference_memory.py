@@ -143,7 +143,7 @@ def test_rehydrate_fills_empty_fields_without_overwriting():
         goal="discover",
         references_previous_context=True,
     )
-    updated, filled = rehydrate_interpretation_from_memories(interpretation, memories)
+    updated, filled = rehydrate_interpretation_from_memories(interpretation, memories, message_text="o mesmo de antes")
     assert updated.subject.brand == "Hamilton"  # current wins
     assert "brand" not in filled
     assert updated.preferences.budget_max == 4500
@@ -183,7 +183,7 @@ def test_golden_explicit_no_brand_blocks_certina_rehydrate():
         preferences={},
         goal="discover",
     )
-    updated, filled = rehydrate_interpretation_from_memories(interpretation, memories)
+    updated, filled = rehydrate_interpretation_from_memories(interpretation, memories, message_text="o mesmo de antes")
     assert updated.subject.brand is None
     assert "brand" not in filled
     assert "brand" in list(updated.preferences.explicit_no_preferences or [])

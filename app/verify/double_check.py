@@ -63,6 +63,7 @@ _LOW_RISK_SOURCES = frozenset(
     {
         "local_greeting",
         "context_resume_soft",
+        "commerce_search_restart",
         "handoff",
         "guardrail",
         "out_of_scope",

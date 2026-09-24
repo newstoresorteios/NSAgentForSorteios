@@ -21,7 +21,7 @@ def product_text(product: dict[str, Any]) -> str:
     fields = (
         "name", "brand", "model", "reference", "ean", "description",
         "category", "category_name", "category_id", "attributes", "color",
-        "style", "material", "properties", "ProductSettings", "variants",
+        "style", "gender", "material", "properties", "ProductSettings", "variants",
         "case_size", "water_resistance_m", "mechanism",
     )
     chunks = [str(product.get(field) or "") for field in fields]

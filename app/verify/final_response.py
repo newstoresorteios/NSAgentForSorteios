@@ -39,6 +39,15 @@ def grounded_catalog_fallback(result):
 
 def finalize_response(result, *, incoming, interpretation, previous_state):
     from app.verify.catalog_delivery import enforce_photo_identity, apply_output_style
+    from app.sales.dialogue_phase import is_bare_commerce_restart, reset_browse_memory_keep_orders
+    if (result.response_metadata.get('response_source') == 'commerce_search_restart'
+            and is_bare_commerce_restart(incoming.text)):
+        state = reset_browse_memory_keep_orders(previous_state)
+        cut = (result.response_metadata.get('commerce_state') or {}).get('history_cut_inbound_id')
+        if cut is not None:
+            state.history_cut_inbound_id = cut
+        result.response_metadata['final_response_validation'] = {'passed': True, 'authority': 'explicit_search_restart', 'delivered_product_ids': []}
+        return apply_output_style(result), state
     if result.response_metadata.get('domain') == 'institutional' and result.response_metadata.get('institutional_evidence'):
         # A policy question neither selects a product nor resets a pending cart.
         result.response_metadata['final_response_validation'] = {

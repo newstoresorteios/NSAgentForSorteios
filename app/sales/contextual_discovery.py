@@ -22,7 +22,7 @@ def configuration() -> dict[str, Any]:
         config = json.loads(values.get("contextualDiscoveryRules") or "{}")
         if not isinstance(config, dict) or not isinstance(config.get("questions"), list):
             return {}
-        if type(config["maxQuestions"]) is not int or not 1 <= config["maxQuestions"] <= 6:
+        if type(config["maxQuestions"]) is not int or not 1 <= config["maxQuestions"] <= 12:
             return {}
         if type(config.get("detailLimit")) is not int or not 0 <= config["detailLimit"] <= 6:
             return {}
@@ -48,7 +48,9 @@ def grounded_no_preferences(claimed, asked, recent_turns, message_text):
     utterances.append(message_text or '')
     aliases = {'brand': r'marca', 'color': r'cor|cores|mostrador', 'style': r'estilo',
                'material': r'material|pulseira', 'strap': r'pulseira', 'occasion': r'ocasiao|uso',
-               'case_size': r'tamanho|caixa', 'budget': r'orcamento|preco|valor', 'recipient': r'presente|destinatario'}
+               'case_size': r'tamanho|caixa', 'budget': r'orcamento|preco|valor', 'recipient': r'presente|destinatario',
+               'gender': r'genero|masculino|feminino|unissex', 'mechanism': r'movimento|automatico|quartzo',
+               'purchase_purpose': r'presente|uso pessoal'}
     supported = set(asked)
     for utterance in utterances:
         text = _fold(utterance)
@@ -112,6 +114,8 @@ def apply_contextual_discovery(interpretation, state, recent_turns, message_text
             break
 
     known = dict(state.get("known_preferences") or {})
+    from .qualification_enrichment import qualification_known
+    known.update({k: True for k in qualification_known(interpretation)})
     # Customer identity is not a product preference or a reason to skip discovery.
     from app.catalog.retrieval.text import _fold
     recipient_attributes = {_fold(interpretation.preferences.recipient), "self", "presente", "gift"}

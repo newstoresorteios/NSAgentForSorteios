@@ -434,6 +434,17 @@ def confirms_prior_catalog_theme(message_text: str | None) -> bool:
     return bool(_CONFIRM_PRIOR_THEME_RE.search(str(message_text or "")))
 
 
+def memories_for_current_search(memories, message_text):
+    """Keep identity/style of communication; historical shopping needs opt-in."""
+    if confirms_prior_catalog_theme(message_text):
+        return memories
+    commercial_kinds = {"product_preference", "brand_preference", "price_preference",
+                        "color_preference", "material_preference", "size_preference",
+                        "occasion", "recipient", "explicit_no_preference", "conversation_goal"}
+    return [m for m in memories if str(getattr(m.memory_kind, "value", m.memory_kind)) not in commercial_kinds
+            and m.memory_key not in {"last_commerce_theme", "movement_preference", "style_preference"}]
+
+
 def prior_catalog_theme_from_memories(memories: list[ContactMemory]) -> str | None:
     """Active brand from durable memory, if any."""
     if _explicit_no_brand_active(memories):
@@ -477,28 +488,10 @@ def should_skip_catalog_memory_rehydrate(
         _log_optional("skip_other_brands", exc)
     if confirms_prior_catalog_theme(message_text):
         return False
-    # A named model/reference is a self-contained catalog request. Durable
-    # tastes from another shopping session (price, color, style) must not be
-    # silently AND-ed into it, even when the model marks the turn as contextual.
-    subject = interpretation.subject
-    if subject.model or subject.reference or subject.ean:
-        return True
-    if not bool(getattr(interpretation, "references_previous_context", False)):
-        return True
-    try:
-        from app.sales.dialogue_phase import (
-            is_fresh_commerce_start,
-            is_generic_catalog_ask,
-            message_resets_dialogue_to_discovery,
-        )
-
-        if is_fresh_commerce_start(message_text) or is_generic_catalog_ask(message_text):
-            return True
-        if message_resets_dialogue_to_discovery(message_text, interpretation):
-            return True
-    except Exception as exc:
-        _log_optional("skip_dialogue_reset", exc)
-    return False
+    # A contextual answer (e.g. "Orient", "aço") continues the current search,
+    # not every preference ever stored for the contact. Session state provides
+    # continuity; durable commercial tastes require explicit consent to resume.
+    return True
 
 
 def should_offer_prior_catalog_theme(
@@ -706,6 +699,8 @@ def rehydrate_interpretation_from_memories(
     # recipient without allowing it to cross into another conversation.
 
     for memory in memories:
+        if skip_catalog:
+            break
         if not str(memory.memory_key or "").startswith("explicit_no:"):
             continue
         value = _fold_label(_unwrap_value(memory.value))
