@@ -343,6 +343,9 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             commerce_state.purchase_target_selected_at = None
         if inbound_id is not None:
             commerce_state.history_cut_inbound_id = inbound_id
+        # Resetting browse targets can orphan a cart that was still bound at
+        # the first reconciliation. Clean it before greeting/answer validation.
+        commerce_state = reconcile_checkout_context(commerce_state)
     # New product photo starts a fresh identification — never price the
     # previous SKU (e.g. CW Rosa) while Vision runs on a Beaubleu.
     if (incoming.image_url or "").strip():

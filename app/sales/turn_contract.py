@@ -500,10 +500,18 @@ def inbound_from_memory(
     phase = getattr(commerce_state, "dialogue_phase", None)
     from .dialogue_phase import is_terminal_order_state
     terminal_order = is_terminal_order_state(commerce_state)
+    cart_has_target = bool(
+        getattr(commerce_state, "cart_items", None)
+        or getattr(commerce_state, "cart_product_id", None)
+        or getattr(commerce_state, "active_product", None)
+        or getattr(commerce_state, "purchase_target", None)
+    )
     live_checkout = bool(
         getattr(commerce_state, "active_product", None)
-        or getattr(commerce_state, "cart_id", None)
-        or getattr(commerce_state, "cart_session_id", None)
+        or (cart_has_target and (
+            getattr(commerce_state, "cart_id", None)
+            or getattr(commerce_state, "cart_session_id", None)
+        ))
         or (not terminal_order and (
             getattr(commerce_state, "order_id", None)
             or getattr(commerce_state, "order_lookup_id", None)

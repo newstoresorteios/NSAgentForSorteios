@@ -60,3 +60,17 @@ Validação local: 2.518 testes aprovados e 7 ignorados, sem chamadas pagas à
 OpenAI. As regressões incluem ciclos repetidos de salvar/recarregar o estado,
 carrinho novo após pedido histórico, marca com candidato único e pedido direto.
 Nenhuma rota comercial ou migração de banco foi adicionada nesta correção.
+
+## Saudação após recomendação (24/09/2026)
+
+O trace `inbox-348` no deploy `d385604` registrou `ola`, carrinho sem itens e
+`re_greet_instead_of_commerce`. O reset da busca removia o produto depois da
+primeira reconciliação, deixando a sessão do carrinho órfã. O conselho de resposta
+considerava esse identificador suficiente para bloquear a saudação e aplicava
+a mensagem genérica de continuação.
+
+A pipeline agora reconcilia novamente após o reset. O contrato de resposta só
+considera o identificador de carrinho ativo quando existe também um produto ou
+alvo associado. Pedidos pendentes e carrinhos válidos mantêm suas proteções.
+Testes cobrem a sequência completa até a geração da resposta, preservação do CEP
+e validação da saudação, além do carrinho válido ligado a um pedido histórico.

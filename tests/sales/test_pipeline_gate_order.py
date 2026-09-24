@@ -110,13 +110,15 @@ async def test_listed_products_run_factual_once_after_scope_council(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_pipeline_marks_browse_reset_for_door(monkeypatch):
+@pytest.mark.parametrize("historical_cart", [False, True])
+async def test_pipeline_marks_browse_reset_for_door(monkeypatch, historical_cart):
     import app.message_pipeline as pipeline
 
     seen: dict[str, object] = {}
 
     async def fake_generate(_incoming, customer_context):
         seen["flag"] = customer_context.get("_browse_reset_this_turn")
+        seen["state"] = customer_context.get("_commerce_state")
         return AgentResult(
             reply_text="oi",
             intent="general",
@@ -132,6 +134,13 @@ async def test_pipeline_marks_browse_reset_for_door(monkeypatch):
                 {"position": 1, "product_id": "1", "name": "Tissot PRX"},
             ],
             "active_domain": "commerce",
+            **({
+                "order_id": "25894", "order_status_group": "shipped",
+                "terminal_order_context_cleared_for": "25894",
+                "cart_session_id": "old-cart", "cart_items": [],
+                "active_product": {"product_id": "1", "name": "Tissot PRX"},
+                "checkout_draft": {"address": {"zip_code": "88030300"}},
+            } if historical_cart else {}),
         },
     )
     monkeypatch.setattr(pipeline, "persist_customer_commerce_session", lambda **_k: None)
@@ -161,6 +170,18 @@ async def test_pipeline_marks_browse_reset_for_door(monkeypatch):
         {},
     )
     assert seen["flag"] is True
+    if historical_cart:
+        from app.commerce.commerce_context import CommerceConversationState
+        from app.sales.answer_council import build_turn_contract, check_pedido
+        state = CommerceConversationState.from_payload(seen["state"])
+        assert state.cart_session_id is None
+        assert state.checkout_draft.address.zip_code == "88030300"
+        contract = build_turn_contract(message_text="ola", interpretation=None, commerce_state=state)
+        assert not contract.live_checkout
+        assert not contract.must_not_re_greet
+        assert "re_greet_instead_of_commerce" not in check_pedido(
+            AgentResult(reply_text="Olá! Como posso te ajudar hoje?", intent="general"), contract
+        ).issues
 
 
 async def _async_identity(result):

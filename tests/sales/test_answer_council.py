@@ -1251,3 +1251,15 @@ def test_pending_order_still_binds_checkout():
     contract = build_turn_contract(message_text="ola", interpretation=None, commerce_state=state)
     assert contract.live_checkout
     assert contract.must_not_re_greet
+
+
+@pytest.mark.parametrize("has_product", [False, True])
+def test_cart_handle_requires_product_to_block_greeting(has_product):
+    state = CommerceConversationState(
+        order_id="25894", order_status_group="shipped",
+        cart_session_id="recovered-cart",
+        cart_product_id="new-product" if has_product else None,
+    )
+    contract = build_turn_contract(message_text="ola", interpretation=None, commerce_state=state)
+    assert contract.live_checkout is has_product
+    assert contract.must_not_re_greet is has_product
