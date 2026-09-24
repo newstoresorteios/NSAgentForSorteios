@@ -92,7 +92,17 @@ def payload_skeleton(value: Any, *, depth: int = 0) -> Any:
 
 
 def instagram_event_skip_reason(event: dict[str, Any]) -> str:
-    if _normalize_instagram_event(event):
+    normalized = _normalize_instagram_event(event)
+    if normalized:
+        message = normalized['message']
+        reply_to = message.get('reply_to')
+        story = reply_to.get('story') if isinstance(reply_to, dict) else None
+        # ManyChat owns only the agreed exact story keyword, not ordinary DMs
+        # or subsequent questions. No conversation-wide pause is created.
+        if (str(message.get('text') or '').strip().casefold() == 'valor'
+                and isinstance(story, dict)
+                and any(str(story.get(key) or '').strip() for key in ('id', 'url'))):
+            return 'manychat_story_keyword'
         return "parsed"
     raw_message = event.get("message")
     if isinstance(raw_message, dict) and raw_message.get("is_echo"):
@@ -518,6 +528,7 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                         "has_standby_entry": "standby" in entry,
                     },
                 )
+                continue
             normalized = _normalize_instagram_event(event)
             if not normalized:
                 continue

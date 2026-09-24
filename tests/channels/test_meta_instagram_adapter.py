@@ -1,3 +1,5 @@
+import pytest
+
 from app.channels.meta_instagram import (
     handle_meta_verify_challenge,
     instagram_event_skip_reason,
@@ -190,7 +192,7 @@ def test_parse_meta_story_reply_attachment():
                         "recipient": {"id": "ig-biz"},
                         "message": {
                             "mid": "m1",
-                            "text": "valor",
+                            "text": "qual o tamanho?",
                             "reply_to": {
                                 "story": {
                                     "id": "story-99",
@@ -208,7 +210,7 @@ def test_parse_meta_story_reply_attachment():
     msg = messages[0]
     assert msg.channel == "instagram"
     assert msg.provider == "meta"
-    assert msg.text == "valor"
+    assert msg.text == "qual o tamanho?"
     assert msg.image_url == "https://cdn.example/story.jpg"
     assert msg.instagram_story is not None
     assert msg.instagram_story.replied_to_story is True
@@ -227,7 +229,7 @@ def test_parse_meta_video_story_and_link_sticker():
                         "recipient": {"id": "ig-biz"},
                         "message": {
                             "mid": "m-video",
-                            "text": "valor",
+                            "text": "tem outra cor?",
                             "reply_to": {
                                 "story": {
                                     "id": "story-video",
@@ -252,6 +254,53 @@ def test_parse_meta_video_story_and_link_sticker():
     assert story.media_type == "video"
     assert story.operational_thumbnail_url() is not None
     assert story.story_link_sticker_url and "laco-pilot" in story.story_link_sticker_url
+
+
+def _manychat_event(text, *, story=None, echo=False):
+    message = {'mid': 'manychat-test', 'text': text}
+    if story is not None:
+        message['reply_to'] = {'story': story}
+    if echo:
+        message['is_echo'] = True
+    return {'sender': {'id': 'user-test', 'username': 'cliente'},
+            'recipient': {'id': 'ig-biz'}, 'message': message}
+
+
+@pytest.mark.parametrize('text', ['valor', 'VALOR', ' Valor \n'])
+@pytest.mark.parametrize('envelope', ['messaging', 'standby', 'changes'])
+def test_manychat_owns_exact_story_keyword_only(text, envelope, monkeypatch):
+    events = []
+    monkeypatch.setattr('app.channels.meta_instagram.log_event', lambda name, data: events.append((name, data)))
+    def unexpected_lookup(_):
+        pytest.fail('ManyChat keyword must be filtered before profile/API work')
+    monkeypatch.setattr('app.channels.meta_instagram._lookup_ig_username', unexpected_lookup)
+    event = _manychat_event(text, story={'id': 'story-99'})
+    entry = ({'changes': [{'field': 'messages', 'value': event}]} if envelope == 'changes'
+             else {envelope: [event]})
+    assert instagram_event_skip_reason(event) == 'manychat_story_keyword'
+    assert parse_meta_instagram_messaging({'entry': [entry]}) == []
+    assert any(data.get('reason') == 'manychat_story_keyword' for _, data in events)
+
+
+@pytest.mark.parametrize('text,story', [
+    ('valor', None), ('valor', {}), ('qual o valor?', {'id': 'story-99'}),
+    ('valor e prazo?', {'id': 'story-99'}), ('tem safira?', {'id': 'story-99'}),
+    ('valor?', {'id': 'story-99'}),
+])
+def test_manychat_filter_preserves_other_questions_and_regular_dms(text, story):
+    event = _manychat_event(text, story=story)
+    assert instagram_event_skip_reason(event) == 'parsed'
+    messages = parse_meta_instagram_messaging({'entry': [{'messaging': [event]}]})
+    assert len(messages) == 1 and messages[0].text == text
+
+
+def test_manychat_echo_is_ignored_without_pausing_followup():
+    keyword = _manychat_event('valor', story={'id': 'story-99'})
+    echo = _manychat_event('Custa R$ 100', echo=True)
+    followup = _manychat_event('E o prazo de entrega?')
+    assert instagram_event_skip_reason(echo) == 'echo'
+    messages = parse_meta_instagram_messaging({'entry': [{'messaging': [keyword, echo, followup]}]})
+    assert [m.text for m in messages] == ['E o prazo de entrega?']
 
 
 def test_story_rollout_allows_meta_live_media(monkeypatch):
