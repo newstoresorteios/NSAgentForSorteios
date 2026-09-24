@@ -50,3 +50,27 @@ def resolve_commercial_price(
 def effective_price(product: dict[str, Any]) -> float | None:
     resolved = resolve_commercial_price(product)
     return float(resolved.amount) if resolved.amount is not None else None
+
+
+def budget_price(product: dict[str, Any], payment_basis: str | None = None) -> float | None:
+    """Compare the customer's ceiling with the explicitly requested payment basis."""
+    if payment_basis == 'pix':
+        amount = money_decimal(product.get('pix_price'))
+        if amount is None and product.get('_revalidated'):
+            # Use the same published payment rule as the displayed price.
+            # The field can be absent after factual projection/recomposition.
+            from app.commerce.commerce_router import _pix_cash_price, _payment_details
+            amount = money_decimal(_pix_cash_price(product, _payment_details(product)))
+        if amount is not None and amount > 0:
+            return float(amount)
+    return effective_price(product)
+
+
+def result_budget_price(product, result, commerce_state=None):
+    metadata = result.response_metadata or {}
+    interpretation = metadata.get('interpretation') or {}
+    basis = interpretation.get('payment_method_preference') if isinstance(interpretation, dict) else None
+    for prefs in (metadata.get('active_preferences'), (commerce_state or {}).get('active_preferences')):
+        if basis is None and isinstance(prefs, dict):
+            basis = prefs.get('budget_payment_basis')
+    return budget_price(product, basis)

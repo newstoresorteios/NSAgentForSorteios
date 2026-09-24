@@ -69,6 +69,8 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
 
     from app.catalog.retrieval.offer_contract import enforce_offer
     result = enforce_offer(result, result_interpretation(result) or interpretation)
+    from app.sales.inspection_copy import complete_inspection_copy
+    result = complete_inspection_copy(result, result_interpretation(result) or interpretation, incoming.text)
     metadata = result.response_metadata
     interpretation = result_interpretation(result) or interpretation
     from app.sales.contextual_questions import normalize_followup

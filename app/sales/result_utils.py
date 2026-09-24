@@ -53,6 +53,8 @@ def mark_sales_result(
             prefs["subject_reference"] = interpretation.subject.reference
         if interpretation.subject.ean:
             prefs["subject_ean"] = interpretation.subject.ean
+        if interpretation.preferences.budget_max is not None and interpretation.payment_method_preference:
+            prefs['budget_payment_basis'] = interpretation.payment_method_preference
         try:
             from .qualification_slots import attach_qualification_slots
 

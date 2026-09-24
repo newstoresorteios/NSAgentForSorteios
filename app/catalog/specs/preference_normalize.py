@@ -139,6 +139,8 @@ _COLOR_IN_MESSAGE_RE = re.compile(
     re.IGNORECASE,
 )
 _STYLE_CANON = {
+    "classico": "social",
+    "classic": "social",
     "esportivo": "esportivo",
     "esporte": "esportivo",
     "sport": "esportivo",
@@ -155,7 +157,7 @@ _STYLE_CANON = {
 }
 _STYLE_IN_MESSAGE_RE = re.compile(
     r"\b(esportivo|esporte|sports?|diver|mergulho|social|dress|"
-    r"casual|cron[oó]grafo|chrono(?:graph)?)\b",
+    r"cl[aá]ssico|classic|casual|cron[oó]grafo|chrono(?:graph)?)\b",
     re.IGNORECASE,
 )
 

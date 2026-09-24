@@ -177,6 +177,8 @@ def _should_skip(
         safety_reason in {
             "commerce_clarification",
             "recommendation_budget_miss",
+            "recommendation_no_match",
+            "adaptive_discovery_unconfirmed",
             "product_unavailable",
         }
         and not _presented(result)

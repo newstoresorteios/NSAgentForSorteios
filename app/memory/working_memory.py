@@ -22,6 +22,8 @@ def build_working_memory(
         else CommerceConversationState.from_payload(state)
     )
     active = payload.active_product
+    from app.sales.dialogue_phase import is_terminal_order_state
+    open_order = bool(payload.order_id) and not is_terminal_order_state(payload)
     # Only field presence flags — never raw CPF/email/address in the prompt dump.
     known_checkout = {
         key: True
@@ -29,7 +31,7 @@ def build_working_memory(
         if present
     }
     payment_pending = bool(
-        payload.order_id
+        open_order
         and (
             payload.pending_action == "awaiting_payment"
             or payload.order_payment_url
@@ -60,11 +62,11 @@ def build_working_memory(
             }
             for item in payload.last_presented_products[:5]
         ],
-        "has_open_order": bool(payload.order_id),
+        "has_open_order": open_order,
         "order_id": payload.order_id,
         "payment_pending": payment_pending,
-        "payment_url_available": bool(payload.order_payment_url),
-        "payment_url": payload.order_payment_url,
+        "payment_url_available": bool(open_order and payload.order_payment_url),
+        "payment_url": payload.order_payment_url if open_order else None,
         "order_payment_status": payload.order_payment_status,
         "known_checkout_fields": known_checkout,
         "selected_payment_method": payload.selected_payment_method

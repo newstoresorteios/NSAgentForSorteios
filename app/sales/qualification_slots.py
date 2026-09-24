@@ -341,6 +341,8 @@ def _get_qual_value(attributes: list[str], slot: str) -> str | None:
         raw = str(item or "")
         if raw.startswith(prefix):
             value = raw[len(prefix) :].strip()
+            if slot == CUSTOMER_NAME and not _is_plausible_name(value):
+                continue
             return value or None
     return None
 
@@ -421,7 +423,10 @@ def _is_plausible_name(text: str) -> bool:
     if not cleaned or len(cleaned) > 48:
         return False
     folded = _fold(cleaned)
-    if folded in _GENDER_LABELS:
+    if folded in _GENDER_LABELS or folded in {
+        'uso proprio', 'uso pessoal', 'para mim', 'pra mim', 'self', 'gift',
+        'presente', 'para presente', 'pessoal', 'eu', 'mim',
+    }:
         return False
     if _BUDGET_ANSWER_RE.search(cleaned):
         return False
@@ -637,6 +642,8 @@ def _slots_from_preferences(prefs: dict[str, Any] | None) -> dict[str, str]:
     if isinstance(stored, dict):
         for key, value in stored.items():
             text = str(value or "").strip()
+            if key == CUSTOMER_NAME and not _is_plausible_name(text):
+                continue
             if key == SHIPPING_CITY and not _is_plausible_city(text):
                 continue
             if text:
@@ -646,6 +653,8 @@ def _slots_from_preferences(prefs: dict[str, Any] | None) -> dict[str, str]:
         if slot in slots:
             continue
         value = _get_qual_value([str(item) for item in attrs], slot)
+        if slot == CUSTOMER_NAME and value and not _is_plausible_name(value):
+            continue
         if slot == SHIPPING_CITY and value and not _is_plausible_city(value):
             continue
         if value:
@@ -673,14 +682,15 @@ def merge_persisted_qualification_slots(
     slots = _slots_from_preferences(prior)
     slots.update(_slots_from_preferences(merged))
     slots.update(qualification_slots_payload(interpretation))
-    if not slots:
-        return merged
     merged["qualification_slots"] = slots
     attrs = merged.get("attributes") if isinstance(merged.get("attributes"), list) else []
     attrs = [
         str(item)
         for item in attrs
         if not (
+            (str(item).startswith(_qual_attr_key(CUSTOMER_NAME))
+             and not _is_plausible_name(str(item).split(":", 2)[-1]))
+            or
             str(item).startswith(_qual_attr_key(SHIPPING_CITY))
             and not _is_plausible_city(str(item).split(":", 2)[-1])
         )

@@ -165,6 +165,15 @@ def apply_fast_deterministic_critique(
     """
     reply = (result.reply_text or "").strip()
     text = (incoming.text or "").strip()
+    metadata = result.response_metadata or {}
+    if (result.safety_reason == 'adaptive_discovery_unconfirmed'
+            and metadata.get('response_source') == 'published_discovery_policy'
+            and not (result.commercial_data or {}).get('products')
+            and not result.handoff_required
+            and not (metadata.get('factual_validation') or {}).get('violations')):
+        # Published copy explicitly says the criteria were not confirmed; it
+        # does not claim that the bounded search exhausted the entire catalog.
+        return result, None, 'published_discovery_unconfirmed'
 
     # 1) Trade-in / appraisal must never be flatly refused by the bot.
     if detect_trade_in_or_appraisal_request(text):

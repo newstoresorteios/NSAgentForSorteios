@@ -1,0 +1,704 @@
+{
+  "code": "a88e8d4",
+  "campaign": "consistency-a88e8d4-new5-20260924",
+  "authorized_additional_usd": 5,
+  "reserved_usd": 4.26891675,
+  "reserved_calls": 51,
+  "billing_note": "Conservative reservation, not actual provider invoice. Campaign stopped.",
+  "manual_review": {
+    "screenshot_orient_2500:2": "False negative: Orient is preserved in state; repetition in reply is unnecessary.",
+    "screenshot_orient_2500:3": "Qualification stops after budget; no confirmed recommendation. Production counterpart additionally vetoed by double-check.",
+    "technical_and_reset:1": "Technical criteria preserved in state but omitted from explanation; use-purpose polluted customer name.",
+    "technical_and_reset:2": "Wrong budget basis: says over 3000 while displaying Pix 2889.99. Requested technical enumeration missing.",
+    "technical_and_reset:3": "Restart reply correct, but old subject_reference remains in state.",
+    "technical_and_reset:4": "Automatic approval insufficient: delivered generic double-check failure.",
+    "orient_identity_negative:0": "Identity correct; requested crystal, size and delivery details omitted.",
+    "orient_identity_negative:1": "Budget/color corrected; crystal and tomorrow delivery left unanswered.",
+    "qualification_changes:0": "Explicit classic style lost before filtering; diver offered.",
+    "qualification_changes:2": "Movement updated, but Orient silently removed and Bulova offered.",
+    "qualification_changes:3": "Stop-questions respected, but mechanism remains quartz despite any movement; lost-brand state persists.",
+    "qualification_changes:4": "Human handoff intention honored; actual customer-channel handoff not exercised."
+  },
+  "environment": "isolated deployment with production OpenAI/configuration and read-only Tray",
+  "limitations": [
+    "No customer channel delivery",
+    "No commercial mutations",
+    "Automated outcomes require manual review; do not use as approval rate"
+  ],
+  "turns": [
+    {
+      "scenario": "screenshot_orient_2500",
+      "run_id": "774cf148-3ae4-406d-b659-b0ec201091df",
+      "step": 0,
+      "input": "Olá",
+      "reply": "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. Como posso te ajudar hoje?",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atende ao critério: cumprimenta de forma adequada e não oferece produto nem pagamento.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {},
+      "adaptive_discovery": null,
+      "response_source": "persona_greeting",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": true,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "deterministic:persona_greeting",
+        "skip_reason": "deterministic:persona_greeting",
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "screenshot_orient_2500",
+      "run_id": "774cf148-3ae4-406d-b659-b0ec201091df",
+      "step": 1,
+      "input": "quero um relogio",
+      "reply": "Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta está adequada ao estágio de descoberta: faz uma pergunta de preferência antes de sugerir um modelo, como exigido.",
+      "safety_reason": "commerce_clarification",
+      "budget_errors": [],
+      "preferences": {},
+      "adaptive_discovery": {
+        "slot": "model_intent",
+        "reason": "contextual_fallback",
+        "decision": "ask"
+      },
+      "response_source": "openai",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": true,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "deterministic:commerce_clarification",
+        "skip_reason": "deterministic:commerce_clarification",
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "screenshot_orient_2500",
+      "run_id": "774cf148-3ae4-406d-b659-b0ec201091df",
+      "step": 2,
+      "input": "orient",
+      "reply": "Qual faixa de investimento você tem em mente?",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta atende à parte de qualificação sobre orçamento, mas falha em manter a marca Orient na conversa.",
+      "safety_reason": "commerce_clarification",
+      "budget_errors": [],
+      "preferences": {
+        "subject_brand": "Orient"
+      },
+      "adaptive_discovery": {
+        "slot": "budget",
+        "reason": "catalog_difference",
+        "decision": "ask",
+        "review_due": false,
+        "asked_slots": [],
+        "cache_reused": false,
+        "filtered_out": 12,
+        "candidate_count": 20,
+        "compatible_count": 8,
+        "preliminary_searches": 1
+      },
+      "response_source": "openai",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": true,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "deterministic:commerce_clarification",
+        "skip_reason": "deterministic:commerce_clarification",
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "screenshot_orient_2500",
+      "run_id": "774cf148-3ae4-406d-b659-b0ec201091df",
+      "step": 3,
+      "input": "2500",
+      "reply": "Na confirmação atual, as opções consultadas não atenderam a todos os critérios. Posso tentar outras opções mantendo o que você pediu.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta final não cumpriu o critério: ficou genérica e não reaproveitou o orçamento como R$ 2.500 nem a preferência por Orient de forma útil.",
+      "safety_reason": "recommendation_no_match",
+      "budget_errors": [],
+      "preferences": {
+        "budget_max": 2500.0,
+        "subject_brand": "Orient"
+      },
+      "adaptive_discovery": {
+        "reason": "full_lookup",
+        "decision": "search",
+        "review_due": false,
+        "asked_slots": [
+          "budget"
+        ],
+        "cache_reused": true,
+        "filtered_out": 20,
+        "candidate_count": 20,
+        "compatible_count": 0,
+        "preliminary_searches": 1
+      },
+      "response_source": "deterministic_fallback",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": true,
+        "phase1_gate": "risk:inbound_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [
+          "inbound_budget"
+        ],
+        "phase1_verdict": {
+          "code": "unanswered",
+          "action": "approve",
+          "reason": "A resposta não inventa preço, link, SKU, pagamento ou pedido e apenas indica que as opções consultadas não fecharam com os critérios, mantendo a conversa aberta para novas alternativas."
+        }
+      }
+    },
+    {
+      "scenario": "technical_and_reset",
+      "run_id": "00b485d8-0cce-40a7-af1d-cbbb75160db6",
+      "step": 0,
+      "input": "Quero um Citizen automático, não Eco-Drive, até R$ 3.000 no Pix.",
+      "reply": "Sim, encontrei:\n\n1. Relógio Citizen Urban Diver Tiffany Automático Azul NJ0170-83X\nRef.: NJ0170-83X\nA prazo: R$ 2.999,99\nÀ vista no Pix: R$ 2.549,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-urban-diver-tiffany-automatico-azul-nj0170-83x\n\n2. Relógio Citizen Urban Diver Automático Amarelo NJ0170-83Z\nRef.: NJ0170-83Z\nA prazo: R$ 2.999,99\nÀ vista no Pix: R$ 2.549,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-urban-diver-automatico-amarelo-nj0170-83z",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta final atende ao pedido: mantém Citizen automático, não inclui modelos solar/Eco-Drive e fica dentro do orçamento informado.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "mechanism": "automatic",
+        "attributes": [
+          "não Eco-Drive"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Citizen"
+      },
+      "adaptive_discovery": {
+        "reason": "full_lookup",
+        "decision": "search",
+        "review_due": false,
+        "asked_slots": [],
+        "cache_reused": false,
+        "filtered_out": 4,
+        "candidate_count": 4,
+        "compatible_count": 0,
+        "preliminary_searches": 1
+      },
+      "response_source": "openai",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "technical_and_reset",
+      "run_id": "00b485d8-0cce-40a7-af1d-cbbb75160db6",
+      "step": 1,
+      "input": "Não é para presente, é para mim. Preto, pulseira de borracha, vidro mineral, 200 metros, movimento 8204.",
+      "reply": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.000,00. Posso continuar a busca mantendo essas exigências.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta foi genérica e não refletiu os pontos centrais do pedido do cliente: marca, uso próprio e separação entre requisitos técnicos e restrição de orçamento/referência.",
+      "safety_reason": "catalog_requirements_unknown",
+      "budget_errors": [],
+      "preferences": {
+        "color": "preto",
+        "crystal": "mineral",
+        "material": "borracha",
+        "mechanism": "automatic",
+        "recipient": "uso próprio",
+        "attributes": [
+          "200 metros",
+          "movimento 8204",
+          "não Eco-Drive",
+          "uso próprio",
+          "required_strap_material:borracha",
+          "qual:purchase_purpose:self",
+          "qual:name:uso próprio"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Citizen",
+        "qualification_slots": {
+          "customer_name": "uso próprio"
+        },
+        "excluded_product_ids": [
+          "6682",
+          "6684"
+        ]
+      },
+      "adaptive_discovery": null,
+      "response_source": "grounded_fallback",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "technical_and_reset",
+      "run_id": "00b485d8-0cce-40a7-af1d-cbbb75160db6",
+      "step": 2,
+      "input": "NY0120-01EE. Confirme cada característica e o preço no Pix.",
+      "reply": "Não cabe no orçamento: o preço do produto supera o teto informado.\nSim, encontrei:\n\nRelógio Citizen Promaster Marine Automático Preto NY0120-01EE\nRef.: NY0120-01EE\nA prazo: R$ 3.399,99\nÀ vista no Pix: R$ 2.889,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-promaster-marine-automatico-preto-ny0120-01ee",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta final ficou incompleta para o pedido: identificou o produto correto, mas não confirmou as características solicitadas com evidência. Além disso, trouxe uma afirmação de orçamento incompatível com o preço no Pix exibido na própria resposta.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "color": "preto",
+        "crystal": "mineral",
+        "mechanism": "automatic",
+        "recipient": "uso próprio",
+        "attributes": [
+          "somente",
+          "qual:name:uso próprio"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Citizen",
+        "subject_reference": "NY0120-01EE",
+        "qualification_slots": {
+          "customer_name": "uso próprio"
+        }
+      },
+      "adaptive_discovery": null,
+      "response_source": "answer_council_fallback",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "technical_and_reset",
+      "run_id": "00b485d8-0cce-40a7-af1d-cbbb75160db6",
+      "step": 3,
+      "input": "Reinicia a conversa",
+      "reply": "Claro, vamos começar uma nova busca. Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atende ao pedido de reiniciar a conversa, sem inserir oferta comercial ou retomada de pagamento.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "recipient": "uso próprio",
+        "attributes": [
+          "qual:name:uso próprio"
+        ],
+        "subject_reference": "NY0120-01EE",
+        "qualification_slots": {
+          "customer_name": "uso próprio"
+        }
+      },
+      "adaptive_discovery": null,
+      "response_source": "commerce_search_restart",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": true,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "deterministic:commerce_search_restart",
+        "skip_reason": "deterministic:commerce_search_restart",
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "technical_and_reset",
+      "run_id": "00b485d8-0cce-40a7-af1d-cbbb75160db6",
+      "step": 4,
+      "input": "Quero um Orient clássico até R$ 2.500.",
+      "reply": "Não consigo confirmar isso com segurança agora. Posso verificar de novo ou te passar para um atendente.",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta não herdou atributos da busca anterior e apenas sinalizou necessidade de nova verificação/transferência.",
+      "safety_reason": "double_check_insufficient",
+      "budget_errors": [],
+      "preferences": {
+        "recipient": "uso próprio",
+        "attributes": [
+          "qual:name:uso próprio"
+        ],
+        "budget_max": 2500.0,
+        "subject_brand": "Orient",
+        "qualification_slots": {
+          "customer_name": "uso próprio"
+        }
+      },
+      "adaptive_discovery": {
+        "reason": "full_lookup",
+        "decision": "search",
+        "review_due": false,
+        "asked_slots": [],
+        "cache_reused": false,
+        "filtered_out": 0,
+        "candidate_count": 0,
+        "compatible_count": 0,
+        "preliminary_searches": 1
+      },
+      "response_source": "deterministic_fallback",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [
+          {
+            "code": "unanswered",
+            "reason": "A resposta não atende ao pedido de forma útil: não confirma nenhum modelo Orient clássico dentro do orçamento, nem informa que precisa checar o catálogo antes de sugerir opções. Como não há produtos no contexto, faltou uma resposta efetiva ao pedido de busca."
+          }
+        ],
+        "applied": true,
+        "skipped": false,
+        "approved": false,
+        "phase1_ran": true,
+        "phase1_gate": "risk:inbound_budget",
+        "skip_reason": null,
+        "applied_code": "insufficiency",
+        "phase1_signals": [
+          "inbound_budget"
+        ],
+        "phase1_verdict": {
+          "code": "unanswered",
+          "action": "veto",
+          "reason": "A resposta não atende ao pedido de forma útil: não confirma nenhum modelo Orient clássico dentro do orçamento, nem informa que precisa checar o catálogo antes de sugerir opções. Como não há produtos no contexto, faltou uma resposta efetiva ao pedido de busca."
+        }
+      }
+    },
+    {
+      "scenario": "orient_identity_negative",
+      "run_id": "0f08a285-0b08-46ab-8085-ef4baf0f0c81",
+      "step": 0,
+      "input": "Quero o Orient M-Force Land RA-AC0N02Y10B. Confirme cor, vidro, movimento, tamanho, Pix e prazo.",
+      "reply": "Sim, encontrei:\n\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B\nRef.: RA-AC0N02Y10B\nA prazo: R$ 3.699,99\nÀ vista no Pix: R$ 3.144,99\nLink: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta final está aderente ao catálogo para a referência e o preço Pix, sem erros factuais objetivos nem violações críticas. Apenas deixa de detalhar vidro e prazo de entrega, mas isso não configura erro factual na resposta entregue.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "style": "M-Force Land",
+        "attributes": [
+          "somente"
+        ],
+        "subject_brand": "Orient",
+        "subject_reference": "RA-AC0N02Y10B"
+      },
+      "adaptive_discovery": null,
+      "response_source": "answer_council_fallback",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "orient_identity_negative",
+      "run_id": "0f08a285-0b08-46ab-8085-ef4baf0f0c81",
+      "step": 1,
+      "input": "Então é azul, mineral, até R$ 3.000 no Pix e chega amanhã?",
+      "reply": "Não cabe no orçamento: o preço no Pix supera o teto informado.\nEsta referência não atende ao critério de mostrador azul; a cor real é a registrada na ficha e no nome do produto.\nSim, encontrei:\n\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B\nRef.: RA-AC0N02Y10B\nA prazo: R$ 3.699,99\nÀ vista no Pix: R$ 3.144,99\nLink: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta final atende ao critério: corrige os pontos errados do cliente, preserva o preço oficial e não cria prazo ou fallback genérico.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "color": "azul",
+        "crystal": "mineral",
+        "budget_max": 3000.0,
+        "subject_ean": "4942715027704",
+        "subject_brand": "Orient",
+        "subject_reference": "RA-AC0N02Y10B"
+      },
+      "adaptive_discovery": null,
+      "response_source": "answer_council_fallback",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "qualification_changes",
+      "run_id": "e385234b-88ed-4053-9f80-afacc94726d0",
+      "step": 0,
+      "input": "Quero uma indicação de relógio Orient clássico até R$ 3.500.",
+      "reply": "Encontrei uma opção Orient dentro do seu teto, mas ele puxa mais para o esportivo/diver do que para o clássico:\nOrient Mako Kamasu III Automático Cinza Gradiente RA-AA0810N19B — R$ 3.399,99 ou R$ 2.889,99 no Pix.\nEle tem caixa de 41 mm, movimento automático e reserva de marcha de 40h; a disponibilidade é em 30 dias úteis.\nLink oficial: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-mako-kamasu-iii-automatico-cinza-gradiente-ra-aa0810n19b\nSe você quiser, eu posso seguir te indicando um Orient mais clássico na sua faixa.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta está fundamentada em catálogo e preço, mas falha no alinhamento com a preferência 'clássico', pois recomenda um modelo mais esportivo em vez de uma opção clássica compatível com o pedido.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "budget_max": 3500.0,
+        "subject_brand": "Orient"
+      },
+      "adaptive_discovery": {
+        "reason": "full_lookup",
+        "decision": "search",
+        "review_due": false,
+        "asked_slots": [],
+        "cache_reused": false,
+        "filtered_out": 5,
+        "candidate_count": 6,
+        "compatible_count": 1,
+        "preliminary_searches": 1
+      },
+      "response_source": "openai",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "qualification_changes",
+      "run_id": "e385234b-88ed-4053-9f80-afacc94726d0",
+      "step": 1,
+      "input": "Não é para presente, é para mim. Automático com pulseira de aço.",
+      "reply": "As opções que consultei não atenderam a todos os critérios: automático, até R$ 3.500,00. Posso continuar procurando com essas características.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta foi genérica e não demonstrou compreensão completa dos critérios informados pelo cliente.",
+      "safety_reason": "catalog_requirements_no_match",
+      "budget_errors": [],
+      "preferences": {
+        "material": "aço",
+        "mechanism": "automatic",
+        "recipient": "uso próprio",
+        "attributes": [
+          "uso próprio",
+          "required_strap_material:aço",
+          "qual:purchase_purpose:self",
+          "qual:name:uso próprio"
+        ],
+        "budget_max": 3500.0,
+        "subject_brand": "Orient",
+        "qualification_slots": {
+          "customer_name": "uso próprio"
+        }
+      },
+      "adaptive_discovery": {
+        "reason": "full_lookup",
+        "decision": "search",
+        "review_due": false,
+        "asked_slots": [],
+        "cache_reused": false,
+        "filtered_out": 6,
+        "candidate_count": 6,
+        "compatible_count": 0,
+        "preliminary_searches": 1
+      },
+      "response_source": "openai",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "qualification_changes",
+      "run_id": "e385234b-88ed-4053-9f80-afacc94726d0",
+      "step": 2,
+      "input": "Prefiro quartzo, não automático. Social, estilo dress. Mantenha o restante.",
+      "reply": "Confirmei estas opções com quartzo, até R$ 3.500,00:\n\nRelógio Bulova Classico 96B149\nA prazo: R$ 3.099,99\nÀ vista no Pix: R$ 2.634,99\nLink: https://www.newstorerj.com.br/relogios/relogios-bulova/relogio-bulova-classico-96b149\n\nRelógio Bulova Classic Sutton Azul 96B338\nRef.: 96B338\nA prazo: R$ 3.099,99\nÀ vista no Pix: R$ 2.634,99\nLink: https://www.newstorerj.com.br/relogios/relogio-bulova-classic-sutton-azul-96b338\n\nRelógio Bulova Classic 97B154\nRef.: 97B154\nA prazo: R$ 3.299,99\nÀ vista no Pix: R$ 2.804,99\nLink: https://www.newstorerj.com.br/relogios/relogio-bulova-classic-97b154",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta acertou em oferecer relógios quartzo dentro do orçamento e com estilo clássico/dress, mas falhou no requisito de manter Orient e aço, pois apresentou apenas Bulova e incluiu um modelo com pulseira de couro.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "style": "social",
+        "material": "aço",
+        "occasion": "uso próprio social",
+        "mechanism": "quartz",
+        "recipient": "uso próprio",
+        "attributes": [
+          "uso próprio",
+          "pulseira de aço",
+          "qual:name:uso próprio"
+        ],
+        "budget_max": 3500.0,
+        "qualification_slots": {
+          "customer_name": "uso próprio"
+        },
+        "explicit_no_preferences": [
+          "brand",
+          "color",
+          "attributes"
+        ]
+      },
+      "adaptive_discovery": null,
+      "response_source": "answer_council_fallback",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "qualification_changes",
+      "run_id": "e385234b-88ed-4053-9f80-afacc94726d0",
+      "step": 3,
+      "input": "Pode ser qualquer movimento e qualquer pulseira. Mostre as opções sem mais perguntas.",
+      "reply": "Perfeito — dentro da sua faixa e com visual social/dress, as 3 opções confirmadas são:\n1. Bulova Clássico 96B149 — R$ 3.099,99 ou R$ 2.634,99 no Pix — https://www.newstorerj.com.br/relogios/relogios-bulova/relogio-bulova-classico-96b149\n2. Bulova Classic Sutton Azul 96B338 — R$ 3.099,99 ou R$ 2.634,99 no Pix — https://www.newstorerj.com.br/relogios/relogio-bulova-classic-sutton-azul-96b338\n3. Bulova Classic 97B154 — R$ 3.299,99 ou R$ 2.804,99 no Pix — https://www.newstorerj.com.br/relogios/relogio-bulova-classic-97b154\n\nTodos aparecem com disponibilidade em 30 dias úteis.",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atende ao critério: remove apenas as restrições liberadas, preserva marca, faixa de preço e estilo, e não prolonga a qualificação. Não há erro factual ou crítico identificado.",
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "style": "social/dress",
+        "occasion": "uso próprio social",
+        "mechanism": "quartz",
+        "recipient": "uso próprio",
+        "attributes": [
+          "uso próprio",
+          "qual:name:uso próprio"
+        ],
+        "budget_max": 3500.0,
+        "qualification_slots": {
+          "customer_name": "uso próprio"
+        },
+        "explicit_no_preferences": [
+          "brand",
+          "color",
+          "attributes"
+        ]
+      },
+      "adaptive_discovery": null,
+      "response_source": "openai",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": false,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "llm_budget",
+        "skip_reason": null,
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    },
+    {
+      "scenario": "qualification_changes",
+      "run_id": "e385234b-88ed-4053-9f80-afacc94726d0",
+      "step": 4,
+      "input": "Quero falar com uma pessoa.",
+      "reply": "Solicitei seu atendimento à equipe. Aguarde a continuidade por um atendente.",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atendeu ao pedido de transferência para atendimento humano e não trouxe afirmações objetivas problemáticas.",
+      "safety_reason": "customer_requested_human",
+      "budget_errors": [],
+      "preferences": {
+        "style": "social/dress",
+        "occasion": "uso próprio social",
+        "mechanism": "quartz",
+        "recipient": "uso próprio",
+        "attributes": [
+          "uso próprio",
+          "qual:name:uso próprio"
+        ],
+        "budget_max": 3500.0,
+        "qualification_slots": {
+          "customer_name": "uso próprio"
+        },
+        "explicit_no_preferences": [
+          "brand",
+          "color",
+          "attributes"
+        ]
+      },
+      "adaptive_discovery": null,
+      "response_source": "handoff",
+      "double_check": {
+        "mode": "enforce",
+        "issues": [],
+        "applied": false,
+        "skipped": true,
+        "approved": true,
+        "phase1_ran": false,
+        "phase1_gate": "human_handoff",
+        "skip_reason": "human_handoff",
+        "applied_code": null,
+        "phase1_signals": [],
+        "phase1_verdict": null
+      }
+    }
+  ]
+}

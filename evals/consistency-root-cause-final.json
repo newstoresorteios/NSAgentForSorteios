@@ -1,0 +1,1587 @@
+{
+  "name": "consistency-root-cause-final",
+  "version": 1,
+  "categories": [
+    "conversa"
+  ],
+  "target_percent": 90.0,
+  "minimum_category_percent": 85.0,
+  "minimum_cases_per_category": 1,
+  "configuration_overrides": {
+    "modelRolePolicies": "{\"interpretation\": {\"max_output_tokens\": 6000}, \"composition\": {\"max_output_tokens\": 6000}, \"review\": {\"max_output_tokens\": 6000}, \"evaluation\": {\"max_output_tokens\": 6000}}",
+    "evaluationCampaignPolicy": "{\"enabled\": true, \"campaign_id\": \"consistency-root-cause-final150-20260924\", \"price_version\": \"openai-pricing-2026-09-23\", \"max_calls\": 20, \"max_tokens\": 6000000, \"max_cost_usd\": 1.5, \"max_input_tokens_per_call\": 300000, \"prices\": {\"gpt-5.4-mini\": {\"input\": 0.75, \"output\": 4.5}}}"
+  },
+  "scenarios": [
+    {
+      "key": "technical_and_reset_replay_2",
+      "category": "conversa",
+      "split": "development",
+      "critical": true,
+      "source_response_ids": [],
+      "channel": "whatsapp",
+      "history": [
+        {
+          "role": "user",
+          "content": "Quero um Citizen automático, não Eco-Drive, até R$ 3.000 no Pix."
+        },
+        {
+          "role": "assistant",
+          "content": "Confirmei estas opções com automático, até R$ 3.000,00:\n\nRelógio Citizen Urban Diver Tiffany Automático Azul NJ0170-83X\nRef.: NJ0170-83X\nA prazo: R$ 2.999,99\nÀ vista no Pix: R$ 2.549,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-urban-diver-tiffany-automatico-azul-nj0170-83x\n\nRelógio Citizen Urban Diver Automático Amarelo NJ0170-83Z\nRef.: NJ0170-83Z\nA prazo: R$ 2.999,99\nÀ vista no Pix: R$ 2.549,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-urban-diver-automatico-amarelo-nj0170-83z",
+          "metadata": {
+            "interpretation": {
+              "goal": "recommend",
+              "domain": "commerce",
+              "subject": {
+                "ean": null,
+                "brand": "Citizen",
+                "model": null,
+                "reference": null,
+                "product_type": "relógio"
+              },
+              "order_id": null,
+              "quantity": null,
+              "confidence": 0.94,
+              "preferences": {
+                "color": null,
+                "style": null,
+                "crystal": null,
+                "material": null,
+                "occasion": null,
+                "mechanism": "automatic",
+                "recipient": null,
+                "attributes": [
+                  "não Eco-Drive",
+                  "Pix"
+                ],
+                "budget_max": 3000.0,
+                "budget_min": null,
+                "explicit_no_preferences": []
+              },
+              "active_topic": "Citizen automático",
+              "confirmation": "none",
+              "order_action": null,
+              "checkout_data": null,
+              "image_request": false,
+              "payment_action": null,
+              "product_action": null,
+              "purchase_items": [],
+              "purchase_stage": "discovery",
+              "reference_type": null,
+              "answer_strategy": "search_catalog",
+              "checkout_action": null,
+              "purchase_action": null,
+              "shipping_action": null,
+              "shipping_zipcode": null,
+              "installment_count": null,
+              "payment_option_id": null,
+              "information_needed": [
+                "catalog"
+              ],
+              "reference_position": null,
+              "stop_clarification": false,
+              "needs_clarification": false,
+              "ready_for_retrieval": true,
+              "payment_request_kind": null,
+              "shipping_selection_id": null,
+              "clarification_question": null,
+              "domain_change_explicit": false,
+              "payment_method_preference": "pix",
+              "checkout_channel_preference": null,
+              "references_previous_context": true,
+              "shipping_selection_position": null,
+              "enough_information_to_search": true
+            },
+            "active_preferences": {
+              "mechanism": "automatic",
+              "attributes": [
+                "não Eco-Drive",
+                "Pix"
+              ],
+              "budget_max": 3000.0,
+              "subject_brand": "Citizen",
+              "qualification_slots": {},
+              "budget_payment_basis": "pix",
+              "explicit_no_preferences": []
+            }
+          }
+        },
+        {
+          "role": "user",
+          "content": "Não é para presente, é para mim. Preto, pulseira de borracha, vidro mineral, 200 metros, movimento 8204."
+        },
+        {
+          "role": "assistant",
+          "content": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.000,00. Posso continuar a busca mantendo essas exigências.",
+          "metadata": {
+            "interpretation": {
+              "goal": "find",
+              "domain": "commerce",
+              "subject": {
+                "ean": null,
+                "brand": "Citizen",
+                "model": "8204",
+                "reference": null,
+                "product_type": "relógio"
+              },
+              "order_id": null,
+              "quantity": 1,
+              "confidence": 0.93,
+              "preferences": {
+                "color": "preto",
+                "style": null,
+                "crystal": "mineral",
+                "material": "borracha",
+                "occasion": null,
+                "mechanism": "automatic",
+                "recipient": null,
+                "attributes": [
+                  "não Eco-Drive",
+                  "200 metros de resistência",
+                  "movimento 8204",
+                  "para uso próprio",
+                  "self",
+                  "required_strap_material:borracha"
+                ],
+                "budget_max": 3000.0,
+                "budget_min": null,
+                "explicit_no_preferences": []
+              },
+              "active_topic": "Citizen automático",
+              "confirmation": "none",
+              "order_action": null,
+              "checkout_data": null,
+              "image_request": false,
+              "payment_action": null,
+              "product_action": null,
+              "purchase_items": [],
+              "purchase_stage": "discovery",
+              "reference_type": null,
+              "answer_strategy": "search_catalog",
+              "checkout_action": null,
+              "purchase_action": null,
+              "shipping_action": null,
+              "shipping_zipcode": null,
+              "installment_count": null,
+              "payment_option_id": null,
+              "information_needed": [
+                "catalog"
+              ],
+              "reference_position": null,
+              "stop_clarification": true,
+              "needs_clarification": false,
+              "ready_for_retrieval": true,
+              "payment_request_kind": null,
+              "shipping_selection_id": null,
+              "clarification_question": null,
+              "domain_change_explicit": false,
+              "payment_method_preference": "pix",
+              "checkout_channel_preference": null,
+              "references_previous_context": true,
+              "shipping_selection_position": null,
+              "enough_information_to_search": true
+            },
+            "active_preferences": {
+              "color": "preto",
+              "crystal": "mineral",
+              "material": "borracha",
+              "mechanism": "automatic",
+              "attributes": [
+                "não Eco-Drive",
+                "200 metros de resistência",
+                "movimento 8204",
+                "para uso próprio",
+                "self",
+                "required_strap_material:borracha"
+              ],
+              "budget_max": 3000.0,
+              "subject_brand": "Citizen",
+              "subject_model": "8204",
+              "qualification_slots": {},
+              "budget_payment_basis": "pix",
+              "explicit_no_preferences": []
+            }
+          }
+        }
+      ],
+      "initial_state": {
+        "cart_id": null,
+        "cart_url": null,
+        "order_id": null,
+        "cart_items": [],
+        "active_topic": "Citizen automático",
+        "order_status": null,
+        "active_domain": "commerce",
+        "cart_quantity": null,
+        "active_product": null,
+        "checkout_draft": {
+          "address": {
+            "city": null,
+            "type": "1",
+            "state": null,
+            "number": null,
+            "address": null,
+            "country": "BRA",
+            "zip_code": null,
+            "complement": null,
+            "neighborhood": null
+          },
+          "customer": {
+            "rg": null,
+            "cpf": null,
+            "name": null,
+            "type": "0",
+            "email": null,
+            "phone": null,
+            "gender": null
+          }
+        },
+        "dialogue_phase": "discovery",
+        "last_browse_at": "2026-09-24T03:04:33.333565Z",
+        "pending_action": null,
+        "pix_payment_id": null,
+        "purchase_stage": "discovery",
+        "cart_product_id": null,
+        "cart_session_id": null,
+        "cart_variant_id": null,
+        "context_repairs": [],
+        "order_lookup_id": null,
+        "purchase_target": null,
+        "shipping_quotes": [],
+        "forget_shortlist": true,
+        "order_created_at": null,
+        "order_session_id": null,
+        "pix_amount_label": null,
+        "selection_status": null,
+        "order_has_payment": null,
+        "order_payment_url": null,
+        "selected_shipping": null,
+        "active_preferences": {
+          "color": "preto",
+          "crystal": "mineral",
+          "material": "borracha",
+          "mechanism": "automatic",
+          "attributes": [
+            "não Eco-Drive",
+            "200 metros de resistência",
+            "movimento 8204",
+            "para uso próprio",
+            "self",
+            "required_strap_material:borracha"
+          ],
+          "budget_max": 3000.0,
+          "subject_brand": "Citizen",
+          "subject_model": "8204",
+          "budget_payment_basis": "pix"
+        },
+        "closed_by_farewell": false,
+        "last_story_product": null,
+        "order_payment_date": null,
+        "order_payment_type": null,
+        "order_status_group": null,
+        "pix_payment_status": null,
+        "pix_copy_paste_code": null,
+        "last_conversation_id": "evaluation:e57ceaae0d2e4fd3b2bc8a9ef640a303",
+        "order_payment_method": null,
+        "order_payment_status": "not_available",
+        "order_review_version": null,
+        "history_cut_inbound_id": null,
+        "shipping_quote_zipcode": null,
+        "cart_context_updated_at": null,
+        "last_presented_products": [],
+        "order_payment_method_id": null,
+        "selected_payment_method": null,
+        "selected_payment_option": null,
+        "order_creation_ambiguous": false,
+        "order_payment_checked_at": null,
+        "pix_order_review_version": null,
+        "product_resolution_state": "technical_unknown",
+        "order_confirmation_status": "not_ready",
+        "payment_method_preference": null,
+        "pending_action_product_ids": [],
+        "selected_payment_option_id": null,
+        "checkout_channel_preference": null,
+        "purchase_target_selected_at": null,
+        "conversation_repair_attempts": 0,
+        "confirmed_order_review_version": null,
+        "order_payment_revalidation_status": "not_checked"
+      },
+      "recorded_at": null,
+      "steps": [
+        {
+          "input": "NY0120-01EE. Confirme cada característica e o preço no Pix.",
+          "expected": {
+            "requirements": [
+              "Identifica somente a referência solicitada, confirma características com evidência ou explica as lacunas."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        }
+      ],
+      "environment": "live_readonly",
+      "simulation": {}
+    },
+    {
+      "key": "orient_identity_negative_replay_1",
+      "category": "conversa",
+      "split": "development",
+      "critical": true,
+      "source_response_ids": [],
+      "channel": "whatsapp",
+      "history": [
+        {
+          "role": "user",
+          "content": "Quero o Orient M-Force Land RA-AC0N02Y10B. Confirme cor, vidro, movimento, tamanho, Pix e prazo."
+        },
+        {
+          "role": "assistant",
+          "content": "Sim, encontrei:\n\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B\nRef.: RA-AC0N02Y10B\nA prazo: R$ 3.699,99\nÀ vista no Pix: R$ 3.144,99\nLink: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b",
+          "metadata": {
+            "interpretation": {
+              "goal": "inspect",
+              "domain": "commerce",
+              "subject": {
+                "ean": null,
+                "brand": "Orient",
+                "model": "M-Force Land",
+                "reference": "RA-AC0N02Y10B",
+                "product_type": "relógio"
+              },
+              "order_id": null,
+              "quantity": 1,
+              "confidence": 0.95,
+              "preferences": {
+                "color": null,
+                "style": null,
+                "crystal": null,
+                "material": null,
+                "occasion": null,
+                "mechanism": null,
+                "recipient": null,
+                "attributes": [
+                  "cor",
+                  "vidro",
+                  "movimento",
+                  "tamanho",
+                  "pix",
+                  "prazo",
+                  "somente"
+                ],
+                "budget_max": null,
+                "budget_min": null,
+                "explicit_no_preferences": []
+              },
+              "active_topic": "Orient M-Force Land RA-AC0N02Y10B",
+              "confirmation": "none",
+              "order_action": null,
+              "checkout_data": null,
+              "image_request": false,
+              "payment_action": null,
+              "product_action": null,
+              "purchase_items": [],
+              "purchase_stage": "details",
+              "reference_type": "explicit_product",
+              "answer_strategy": "search_catalog",
+              "checkout_action": null,
+              "purchase_action": null,
+              "shipping_action": null,
+              "shipping_zipcode": null,
+              "installment_count": null,
+              "payment_option_id": null,
+              "information_needed": [
+                "catalog",
+                "price",
+                "payment"
+              ],
+              "reference_position": null,
+              "stop_clarification": true,
+              "needs_clarification": false,
+              "ready_for_retrieval": true,
+              "payment_request_kind": "informational",
+              "shipping_selection_id": null,
+              "clarification_question": null,
+              "domain_change_explicit": false,
+              "payment_method_preference": "pix",
+              "checkout_channel_preference": null,
+              "references_previous_context": true,
+              "shipping_selection_position": null,
+              "enough_information_to_search": true
+            },
+            "active_preferences": {
+              "attributes": [
+                "cor",
+                "vidro",
+                "movimento",
+                "tamanho",
+                "pix",
+                "prazo",
+                "somente"
+              ],
+              "subject_brand": "Orient",
+              "subject_model": "M-Force Land",
+              "subject_reference": "RA-AC0N02Y10B",
+              "qualification_slots": {},
+              "explicit_no_preferences": []
+            }
+          }
+        }
+      ],
+      "initial_state": {
+        "cart_id": null,
+        "cart_url": null,
+        "order_id": null,
+        "cart_items": [],
+        "active_topic": "Orient M-Force Land RA-AC0N02Y10B",
+        "order_status": null,
+        "active_domain": "commerce",
+        "cart_quantity": null,
+        "active_product": {
+          "ean": "4942715027704",
+          "name": "Relógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B",
+          "brand": "Orient",
+          "reference": "RA-AC0N02Y10B",
+          "product_id": "10269",
+          "variant_id": null,
+          "product_url": null
+        },
+        "checkout_draft": {
+          "address": {
+            "city": null,
+            "type": "1",
+            "state": null,
+            "number": null,
+            "address": null,
+            "country": "BRA",
+            "zip_code": null,
+            "complement": null,
+            "neighborhood": null
+          },
+          "customer": {
+            "rg": null,
+            "cpf": null,
+            "name": null,
+            "type": "0",
+            "email": null,
+            "phone": null,
+            "gender": null
+          }
+        },
+        "dialogue_phase": "shortlist",
+        "last_browse_at": "2026-09-24T03:07:43.259532Z",
+        "pending_action": null,
+        "pix_payment_id": null,
+        "purchase_stage": "details",
+        "cart_product_id": null,
+        "cart_session_id": null,
+        "cart_variant_id": null,
+        "context_repairs": [],
+        "order_lookup_id": null,
+        "purchase_target": null,
+        "shipping_quotes": [],
+        "forget_shortlist": false,
+        "order_created_at": null,
+        "order_session_id": null,
+        "pix_amount_label": null,
+        "selection_status": "mentioned",
+        "order_has_payment": null,
+        "order_payment_url": null,
+        "selected_shipping": null,
+        "active_preferences": {
+          "attributes": [
+            "cor",
+            "vidro",
+            "movimento",
+            "tamanho",
+            "pix",
+            "prazo",
+            "somente"
+          ],
+          "subject_brand": "Orient",
+          "subject_model": "M-Force Land",
+          "subject_reference": "RA-AC0N02Y10B"
+        },
+        "closed_by_farewell": false,
+        "last_story_product": null,
+        "order_payment_date": null,
+        "order_payment_type": null,
+        "order_status_group": null,
+        "pix_payment_status": null,
+        "pix_copy_paste_code": null,
+        "last_conversation_id": "evaluation:fc25eae097334a5e992e27d434d58db0",
+        "order_payment_method": null,
+        "order_payment_status": "not_available",
+        "order_review_version": null,
+        "history_cut_inbound_id": null,
+        "shipping_quote_zipcode": null,
+        "cart_context_updated_at": null,
+        "last_presented_products": [
+          {
+            "ean": "4942715027704",
+            "name": "Relógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B",
+            "brand": "Orient",
+            "position": 1,
+            "reference": "RA-AC0N02Y10B",
+            "product_id": "10269",
+            "variant_id": null,
+            "product_url": "https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b"
+          }
+        ],
+        "order_payment_method_id": null,
+        "selected_payment_method": null,
+        "selected_payment_option": null,
+        "order_creation_ambiguous": false,
+        "order_payment_checked_at": null,
+        "pix_order_review_version": null,
+        "product_resolution_state": "found_available",
+        "order_confirmation_status": "not_ready",
+        "payment_method_preference": null,
+        "pending_action_product_ids": [],
+        "selected_payment_option_id": null,
+        "checkout_channel_preference": null,
+        "purchase_target_selected_at": null,
+        "conversation_repair_attempts": 0,
+        "confirmed_order_review_version": null,
+        "order_payment_revalidation_status": "not_checked"
+      },
+      "recorded_at": null,
+      "steps": [
+        {
+          "input": "Confirme cor, vidro, movimento, tamanho, Pix e prazo. Então é azul, mineral, até R$ 3.000 no Pix e chega amanhã?",
+          "expected": {
+            "requirements": [
+              "Corrige individualmente afirmações incompatíveis com o produto consultado, sem inventar preço ou prazo e sem fallback genérico."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        }
+      ],
+      "environment": "live_readonly",
+      "simulation": {}
+    },
+    {
+      "key": "screenshot_orient_2500_replay_3",
+      "category": "conversa",
+      "split": "development",
+      "critical": true,
+      "source_response_ids": [],
+      "channel": "whatsapp",
+      "history": [
+        {
+          "role": "user",
+          "content": "Olá"
+        },
+        {
+          "role": "assistant",
+          "content": "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. Como posso te ajudar hoje?",
+          "metadata": {}
+        },
+        {
+          "role": "user",
+          "content": "quero um relogio"
+        },
+        {
+          "role": "assistant",
+          "content": "Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+          "metadata": {
+            "interpretation": {
+              "goal": "discover",
+              "domain": "commerce",
+              "subject": {
+                "ean": null,
+                "brand": null,
+                "model": null,
+                "reference": null,
+                "product_type": "relógio"
+              },
+              "order_id": null,
+              "quantity": null,
+              "confidence": 0.97,
+              "preferences": {
+                "color": null,
+                "style": null,
+                "crystal": null,
+                "material": null,
+                "occasion": null,
+                "mechanism": null,
+                "recipient": null,
+                "attributes": [],
+                "budget_max": null,
+                "budget_min": null,
+                "explicit_no_preferences": []
+              },
+              "active_topic": "relógios",
+              "confirmation": "none",
+              "order_action": null,
+              "checkout_data": null,
+              "image_request": false,
+              "payment_action": null,
+              "product_action": null,
+              "purchase_items": [],
+              "purchase_stage": "discovery",
+              "reference_type": null,
+              "answer_strategy": "search_catalog",
+              "checkout_action": null,
+              "purchase_action": null,
+              "shipping_action": null,
+              "shipping_zipcode": null,
+              "installment_count": null,
+              "payment_option_id": null,
+              "information_needed": [
+                "catalog"
+              ],
+              "reference_position": null,
+              "stop_clarification": false,
+              "needs_clarification": true,
+              "ready_for_retrieval": false,
+              "payment_request_kind": null,
+              "shipping_selection_id": null,
+              "clarification_question": "Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+              "domain_change_explicit": false,
+              "payment_method_preference": null,
+              "checkout_channel_preference": null,
+              "references_previous_context": false,
+              "shipping_selection_position": null,
+              "enough_information_to_search": true
+            },
+            "active_preferences": {
+              "attributes": [],
+              "qualification_slots": {},
+              "explicit_no_preferences": []
+            },
+            "adaptive_discovery": {
+              "slot": "model_intent",
+              "reason": "contextual_fallback",
+              "decision": "ask"
+            },
+            "discovery_question": {
+              "slot": "model_intent",
+              "topic": "relogio"
+            }
+          }
+        },
+        {
+          "role": "user",
+          "content": "orient"
+        },
+        {
+          "role": "assistant",
+          "content": "Você prefere algo mais perto de R$ 3.500 ou de R$ 5.500?",
+          "metadata": {
+            "interpretation": {
+              "goal": "discover",
+              "domain": "commerce",
+              "subject": {
+                "ean": null,
+                "brand": "Orient",
+                "model": null,
+                "reference": null,
+                "product_type": "relógio"
+              },
+              "order_id": null,
+              "quantity": null,
+              "confidence": 0.91,
+              "preferences": {
+                "color": null,
+                "style": null,
+                "crystal": null,
+                "material": null,
+                "occasion": null,
+                "mechanism": null,
+                "recipient": null,
+                "attributes": [],
+                "budget_max": null,
+                "budget_min": null,
+                "explicit_no_preferences": []
+              },
+              "active_topic": "relógios",
+              "confirmation": "none",
+              "order_action": null,
+              "checkout_data": null,
+              "image_request": false,
+              "payment_action": null,
+              "product_action": null,
+              "purchase_items": [],
+              "purchase_stage": "discovery",
+              "reference_type": null,
+              "answer_strategy": "search_catalog",
+              "checkout_action": null,
+              "purchase_action": null,
+              "shipping_action": null,
+              "shipping_zipcode": null,
+              "installment_count": null,
+              "payment_option_id": null,
+              "information_needed": [
+                "catalog"
+              ],
+              "reference_position": null,
+              "stop_clarification": false,
+              "needs_clarification": true,
+              "ready_for_retrieval": false,
+              "payment_request_kind": null,
+              "shipping_selection_id": null,
+              "clarification_question": "Qual faixa de investimento você tem em mente?",
+              "domain_change_explicit": false,
+              "payment_method_preference": null,
+              "checkout_channel_preference": null,
+              "references_previous_context": true,
+              "shipping_selection_position": null,
+              "enough_information_to_search": true
+            },
+            "active_preferences": {
+              "attributes": [],
+              "subject_brand": "Orient",
+              "qualification_slots": {},
+              "explicit_no_preferences": []
+            },
+            "adaptive_discovery": {
+              "slot": "budget",
+              "reason": "catalog_difference",
+              "decision": "ask",
+              "review_due": false,
+              "asked_slots": [],
+              "cache_reused": false,
+              "filtered_out": 12,
+              "candidate_count": 20,
+              "compatible_count": 8,
+              "preliminary_searches": 1
+            },
+            "discovery_question": {
+              "slot": "budget",
+              "topic": "orient",
+              "adaptive": {
+                "asked": [],
+                "query": {
+                  "page": 1,
+                  "brand": "Orient",
+                  "limit": 20
+                },
+                "searches": 1,
+                "candidates": [
+                  {
+                    "id": "4249",
+                    "name": "Relógio Orient Revival Azul RA-AA0E03L19B",
+                    "brand": "Orient",
+                    "model": "Revival",
+                    "price": 0.0,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "RA-AA0E03L19B",
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4251",
+                    "name": "Relógio Orient World Map Revival Automático Branco RA-AA0E01S19B",
+                    "brand": "Orient",
+                    "model": "Revival",
+                    "price": 0.0,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "RA-AA0E01S19B",
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4253",
+                    "name": "Relógio Orient Revival 1 Verde RA-AA0E02E19B",
+                    "brand": "Orient",
+                    "model": "Revival 1",
+                    "price": 0.0,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "RA-AA0E02E19B",
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4255",
+                    "name": "Relógio Orient Triton Verde RA-AC0K02E10B",
+                    "brand": "Orient",
+                    "model": "Triton",
+                    "price": 3699.99,
+                    "stock": 39,
+                    "available": "1",
+                    "reference": "RA-AC0K02E10B",
+                    "available_in_store": "1"
+                  },
+                  {
+                    "id": "4257",
+                    "name": "Relógio Orient Triton Preto RA-AC0K01B10B",
+                    "brand": "Orient",
+                    "model": "Triton",
+                    "price": 3699.99,
+                    "stock": 39,
+                    "available": "1",
+                    "reference": "RA-AC0K01B10B",
+                    "available_in_store": "1"
+                  },
+                  {
+                    "id": "4267",
+                    "name": "Relógio Orient Kamasu  RA-AA0003R19B",
+                    "brand": "Orient",
+                    "model": "Kamasu",
+                    "price": 3599.99,
+                    "stock": 36,
+                    "available": "1",
+                    "reference": "RA-AA0003R19B",
+                    "promotional_price": 2799.99,
+                    "available_in_store": "1"
+                  },
+                  {
+                    "id": "4269",
+                    "name": "Relógio Orient Kamasu Verde RA-AA0004E19B",
+                    "brand": "Orient",
+                    "model": "Kamasu",
+                    "price": 3599.99,
+                    "stock": 38,
+                    "available": "1",
+                    "reference": "RA-AA0004E19B",
+                    "promotional_price": 2799.99,
+                    "available_in_store": "1"
+                  },
+                  {
+                    "id": "4271",
+                    "name": "Relógio Orient Kamasu Automático Preto RA-AA0001B19A",
+                    "brand": "Orient",
+                    "model": "Kamasu",
+                    "price": 4999.99,
+                    "stock": 39,
+                    "available": "1",
+                    "reference": "RA-AA0001B19A",
+                    "promotional_price": 3499.99,
+                    "available_in_store": "1"
+                  },
+                  {
+                    "id": "4273",
+                    "name": "Relógio Orient Kamasu  Preto RA-AA0005B19B",
+                    "brand": "Orient",
+                    "model": "Kamasu",
+                    "price": 3499.99,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "RA-AA0005B19B",
+                    "promotional_price": 2699.99,
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4275",
+                    "name": "Relógio Orient Kamasu Automático Azul RA-AA0006L19A",
+                    "brand": "Orient",
+                    "model": "Kamasu",
+                    "price": 4499.99,
+                    "stock": 39,
+                    "available": "1",
+                    "reference": "RA-AA0006L19A",
+                    "promotional_price": 2990.0,
+                    "available_in_store": "1"
+                  },
+                  {
+                    "id": "4773",
+                    "name": "Relógio Orient Clássic Ouro Rosa RA-AK0001S10B",
+                    "brand": "Orient",
+                    "model": "Clássic",
+                    "price": 0.0,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "RA-AK0001S10B",
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4867",
+                    "name": "Relógio Orient Open Heart Azul RA-AG0015L10B",
+                    "brand": "Orient",
+                    "model": "Coração aberto",
+                    "price": 0.0,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "4942715012748",
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4869",
+                    "name": "Relógio Orient Open Heart Ouro Rosa RA-AG0012S10B",
+                    "brand": "Orient",
+                    "model": "Coração aberto",
+                    "price": 0.0,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "RA-AG0012S10B",
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4871",
+                    "name": "Relógio Orient Open Heart Preto FAG03002B0",
+                    "brand": "Orient",
+                    "model": "Open Heart",
+                    "price": 2999.99,
+                    "stock": 38,
+                    "available": "0",
+                    "reference": "FAG03002B0",
+                    "promotional_price": 2499.99,
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4873",
+                    "name": "Relógio Orient Open Heart Azul RA-AR0003L10B",
+                    "brand": "Orient",
+                    "model": "Open Heart",
+                    "price": 3500.0,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "RA-AR0003L10B",
+                    "promotional_price": 3349.99,
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4875",
+                    "name": "Relógio Orient Open Heart Branco RA-AR0102S10B",
+                    "brand": "Orient",
+                    "model": "Open Heart",
+                    "price": 2999.99,
+                    "stock": 39,
+                    "available": "0",
+                    "reference": "RA-AR0102S10B",
+                    "promotional_price": 2499.99,
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4917",
+                    "name": "Relógio Orient Kanno Preto RA-AA0010B19B",
+                    "brand": "Orient",
+                    "model": "Kanno",
+                    "price": 3499.99,
+                    "stock": 38,
+                    "available": "0",
+                    "reference": "RA-AA0010B19B",
+                    "promotional_price": 2399.99,
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4919",
+                    "name": "Relógio Orient Kanno Vermelho Metálico RA-AA0011B19B",
+                    "brand": "Orient",
+                    "model": "Kanno",
+                    "price": 0.0,
+                    "stock": 38,
+                    "available": "0",
+                    "reference": "",
+                    "available_in_store": "0"
+                  },
+                  {
+                    "id": "4921",
+                    "name": "Relógio Orient Kanno Azul RAAA0009L19B",
+                    "brand": "Orient",
+                    "model": "Kanno",
+                    "price": 3499.99,
+                    "stock": 39,
+                    "available": "1",
+                    "reference": "RAAA0009L19B",
+                    "promotional_price": 2599.99,
+                    "available_in_store": "1"
+                  },
+                  {
+                    "id": "6085",
+                    "name": "Relógio Orient Star Automático Verde RE-AV0114E00B",
+                    "brand": "Orient",
+                    "model": "Orient Star",
+                    "price": 5499.99,
+                    "stock": 38,
+                    "available": "0",
+                    "reference": "RE-AV0114E00B",
+                    "promotional_price": 4999.99,
+                    "available_in_store": "1"
+                  }
+                ],
+                "fetched_at": 1790219005.1639495,
+                "preferences": {
+                  "color": null,
+                  "style": null,
+                  "crystal": null,
+                  "material": null,
+                  "occasion": null,
+                  "mechanism": null,
+                  "recipient": null,
+                  "attributes": [],
+                  "budget_max": null,
+                  "budget_min": null,
+                  "explicit_no_preferences": []
+                },
+                "last_options": [
+                  "3499.99",
+                  "3599.99",
+                  "3699.99",
+                  "4499.99",
+                  "4999.99",
+                  "5499.99"
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "initial_state": {
+        "cart_id": null,
+        "cart_url": null,
+        "order_id": "evaluation-historical-order",
+        "cart_items": [],
+        "active_topic": "relógios",
+        "order_status": null,
+        "active_domain": "commerce",
+        "cart_quantity": null,
+        "active_product": null,
+        "checkout_draft": {
+          "address": {
+            "city": null,
+            "type": "1",
+            "state": null,
+            "number": null,
+            "address": null,
+            "country": "BRA",
+            "zip_code": null,
+            "complement": null,
+            "neighborhood": null
+          },
+          "customer": {
+            "rg": null,
+            "cpf": null,
+            "name": null,
+            "type": "0",
+            "email": null,
+            "phone": null,
+            "gender": null
+          }
+        },
+        "dialogue_phase": null,
+        "last_browse_at": null,
+        "pending_action": null,
+        "pix_payment_id": null,
+        "purchase_stage": "discovery",
+        "cart_product_id": null,
+        "cart_session_id": null,
+        "cart_variant_id": null,
+        "context_repairs": [],
+        "order_lookup_id": null,
+        "purchase_target": null,
+        "shipping_quotes": [],
+        "forget_shortlist": false,
+        "order_created_at": null,
+        "order_session_id": null,
+        "pix_amount_label": null,
+        "selection_status": null,
+        "order_has_payment": null,
+        "order_payment_url": null,
+        "selected_shipping": null,
+        "active_preferences": {
+          "subject_brand": "Orient"
+        },
+        "closed_by_farewell": false,
+        "last_story_product": null,
+        "order_payment_date": null,
+        "order_payment_type": null,
+        "order_status_group": "shipped",
+        "pix_payment_status": null,
+        "pix_copy_paste_code": null,
+        "last_conversation_id": "evaluation:342786ddb69745e4a8f93a49d81902ef",
+        "order_payment_method": null,
+        "order_payment_status": "unknown",
+        "order_review_version": null,
+        "history_cut_inbound_id": null,
+        "shipping_quote_zipcode": null,
+        "cart_context_updated_at": null,
+        "last_presented_products": [],
+        "order_payment_method_id": null,
+        "selected_payment_method": null,
+        "selected_payment_option": null,
+        "order_creation_ambiguous": false,
+        "order_payment_checked_at": null,
+        "pix_order_review_version": null,
+        "product_resolution_state": null,
+        "order_confirmation_status": "not_ready",
+        "payment_method_preference": null,
+        "pending_action_product_ids": [],
+        "selected_payment_option_id": null,
+        "checkout_channel_preference": null,
+        "purchase_target_selected_at": null,
+        "conversation_repair_attempts": 0,
+        "confirmed_order_review_version": null,
+        "order_payment_revalidation_status": "not_checked"
+      },
+      "recorded_at": null,
+      "steps": [
+        {
+          "input": "2500",
+          "expected": {
+            "requirements": [
+              "Interpreta 2500 como orçamento de R$ 2.500, mantém Orient e continua atendimento sem mensagem genérica de insuficiência."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {
+              "active_preferences.subject_brand": "Orient",
+              "active_preferences.budget_max": 2500
+            },
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        }
+      ],
+      "environment": "live_readonly",
+      "simulation": {}
+    },
+    {
+      "key": "technical_and_reset_replay_4",
+      "category": "conversa",
+      "split": "development",
+      "critical": true,
+      "source_response_ids": [],
+      "channel": "whatsapp",
+      "history": [
+        {
+          "role": "user",
+          "content": "Quero um Citizen automático, não Eco-Drive, até R$ 3.000 no Pix."
+        },
+        {
+          "role": "assistant",
+          "content": "Confirmei estas opções com automático, até R$ 3.000,00:\n\nRelógio Citizen Urban Diver Tiffany Automático Azul NJ0170-83X\nRef.: NJ0170-83X\nA prazo: R$ 2.999,99\nÀ vista no Pix: R$ 2.549,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-urban-diver-tiffany-automatico-azul-nj0170-83x\n\nRelógio Citizen Urban Diver Automático Amarelo NJ0170-83Z\nRef.: NJ0170-83Z\nA prazo: R$ 2.999,99\nÀ vista no Pix: R$ 2.549,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-urban-diver-automatico-amarelo-nj0170-83z",
+          "metadata": {
+            "interpretation": {
+              "goal": "recommend",
+              "domain": "commerce",
+              "subject": {
+                "ean": null,
+                "brand": "Citizen",
+                "model": null,
+                "reference": null,
+                "product_type": "relógio"
+              },
+              "order_id": null,
+              "quantity": null,
+              "confidence": 0.94,
+              "preferences": {
+                "color": null,
+                "style": null,
+                "crystal": null,
+                "material": null,
+                "occasion": null,
+                "mechanism": "automatic",
+                "recipient": null,
+                "attributes": [
+                  "não Eco-Drive",
+                  "Pix"
+                ],
+                "budget_max": 3000.0,
+                "budget_min": null,
+                "explicit_no_preferences": []
+              },
+              "active_topic": "Citizen automático",
+              "confirmation": "none",
+              "order_action": null,
+              "checkout_data": null,
+              "image_request": false,
+              "payment_action": null,
+              "product_action": null,
+              "purchase_items": [],
+              "purchase_stage": "discovery",
+              "reference_type": null,
+              "answer_strategy": "search_catalog",
+              "checkout_action": null,
+              "purchase_action": null,
+              "shipping_action": null,
+              "shipping_zipcode": null,
+              "installment_count": null,
+              "payment_option_id": null,
+              "information_needed": [
+                "catalog"
+              ],
+              "reference_position": null,
+              "stop_clarification": false,
+              "needs_clarification": false,
+              "ready_for_retrieval": true,
+              "payment_request_kind": null,
+              "shipping_selection_id": null,
+              "clarification_question": null,
+              "domain_change_explicit": false,
+              "payment_method_preference": "pix",
+              "checkout_channel_preference": null,
+              "references_previous_context": true,
+              "shipping_selection_position": null,
+              "enough_information_to_search": true
+            },
+            "active_preferences": {
+              "mechanism": "automatic",
+              "attributes": [
+                "não Eco-Drive",
+                "Pix"
+              ],
+              "budget_max": 3000.0,
+              "subject_brand": "Citizen",
+              "qualification_slots": {},
+              "budget_payment_basis": "pix",
+              "explicit_no_preferences": []
+            }
+          }
+        },
+        {
+          "role": "user",
+          "content": "Não é para presente, é para mim. Preto, pulseira de borracha, vidro mineral, 200 metros, movimento 8204."
+        },
+        {
+          "role": "assistant",
+          "content": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.000,00. Posso continuar a busca mantendo essas exigências.",
+          "metadata": {
+            "interpretation": {
+              "goal": "find",
+              "domain": "commerce",
+              "subject": {
+                "ean": null,
+                "brand": "Citizen",
+                "model": "8204",
+                "reference": null,
+                "product_type": "relógio"
+              },
+              "order_id": null,
+              "quantity": 1,
+              "confidence": 0.93,
+              "preferences": {
+                "color": "preto",
+                "style": null,
+                "crystal": "mineral",
+                "material": "borracha",
+                "occasion": null,
+                "mechanism": "automatic",
+                "recipient": null,
+                "attributes": [
+                  "não Eco-Drive",
+                  "200 metros de resistência",
+                  "movimento 8204",
+                  "para uso próprio",
+                  "self",
+                  "required_strap_material:borracha"
+                ],
+                "budget_max": 3000.0,
+                "budget_min": null,
+                "explicit_no_preferences": []
+              },
+              "active_topic": "Citizen automático",
+              "confirmation": "none",
+              "order_action": null,
+              "checkout_data": null,
+              "image_request": false,
+              "payment_action": null,
+              "product_action": null,
+              "purchase_items": [],
+              "purchase_stage": "discovery",
+              "reference_type": null,
+              "answer_strategy": "search_catalog",
+              "checkout_action": null,
+              "purchase_action": null,
+              "shipping_action": null,
+              "shipping_zipcode": null,
+              "installment_count": null,
+              "payment_option_id": null,
+              "information_needed": [
+                "catalog"
+              ],
+              "reference_position": null,
+              "stop_clarification": true,
+              "needs_clarification": false,
+              "ready_for_retrieval": true,
+              "payment_request_kind": null,
+              "shipping_selection_id": null,
+              "clarification_question": null,
+              "domain_change_explicit": false,
+              "payment_method_preference": "pix",
+              "checkout_channel_preference": null,
+              "references_previous_context": true,
+              "shipping_selection_position": null,
+              "enough_information_to_search": true
+            },
+            "active_preferences": {
+              "color": "preto",
+              "crystal": "mineral",
+              "material": "borracha",
+              "mechanism": "automatic",
+              "attributes": [
+                "não Eco-Drive",
+                "200 metros de resistência",
+                "movimento 8204",
+                "para uso próprio",
+                "self",
+                "required_strap_material:borracha"
+              ],
+              "budget_max": 3000.0,
+              "subject_brand": "Citizen",
+              "subject_model": "8204",
+              "qualification_slots": {},
+              "budget_payment_basis": "pix",
+              "explicit_no_preferences": []
+            }
+          }
+        },
+        {
+          "role": "user",
+          "content": "NY0120-01EE. Confirme cada característica e o preço no Pix."
+        },
+        {
+          "role": "assistant",
+          "content": "Não consegui confirmar no catálogo disponível um relógio que atenda a todos esses critérios. Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas.",
+          "metadata": {
+            "interpretation": {
+              "goal": "inspect",
+              "domain": "commerce",
+              "subject": {
+                "ean": null,
+                "brand": "Citizen",
+                "model": "NY0120-01EE",
+                "reference": "NY0120-01EE",
+                "product_type": "relógio"
+              },
+              "order_id": null,
+              "quantity": 1,
+              "confidence": 0.96,
+              "preferences": {
+                "color": "preto",
+                "style": null,
+                "crystal": "mineral",
+                "material": "borracha",
+                "occasion": null,
+                "mechanism": "automatic",
+                "recipient": null,
+                "attributes": [
+                  "não Eco-Drive",
+                  "200 metros de resistência",
+                  "movimento 8204",
+                  "para uso próprio",
+                  "self",
+                  "required_strap_material:borracha",
+                  "uso próprio",
+                  "somente"
+                ],
+                "budget_max": 3000.0,
+                "budget_min": null,
+                "explicit_no_preferences": []
+              },
+              "active_topic": "Citizen automático",
+              "confirmation": "none",
+              "order_action": null,
+              "checkout_data": null,
+              "image_request": false,
+              "payment_action": null,
+              "product_action": null,
+              "purchase_items": [],
+              "purchase_stage": "selection",
+              "reference_type": "explicit_product",
+              "answer_strategy": "search_catalog",
+              "checkout_action": null,
+              "purchase_action": null,
+              "shipping_action": null,
+              "shipping_zipcode": null,
+              "installment_count": null,
+              "payment_option_id": null,
+              "information_needed": [
+                "catalog",
+                "price"
+              ],
+              "reference_position": null,
+              "stop_clarification": true,
+              "needs_clarification": false,
+              "ready_for_retrieval": true,
+              "payment_request_kind": "informational",
+              "shipping_selection_id": null,
+              "clarification_question": null,
+              "domain_change_explicit": false,
+              "payment_method_preference": "pix",
+              "checkout_channel_preference": null,
+              "references_previous_context": true,
+              "shipping_selection_position": null,
+              "enough_information_to_search": true
+            },
+            "active_preferences": {
+              "color": "preto",
+              "crystal": "mineral",
+              "material": "borracha",
+              "mechanism": "automatic",
+              "attributes": [
+                "não Eco-Drive",
+                "200 metros de resistência",
+                "movimento 8204",
+                "para uso próprio",
+                "self",
+                "required_strap_material:borracha",
+                "uso próprio",
+                "somente"
+              ],
+              "budget_max": 3000.0,
+              "subject_brand": "Citizen",
+              "subject_model": "NY0120-01EE",
+              "subject_reference": "NY0120-01EE",
+              "qualification_slots": {},
+              "budget_payment_basis": "pix",
+              "explicit_no_preferences": []
+            }
+          }
+        },
+        {
+          "role": "user",
+          "content": "Reinicia a conversa"
+        },
+        {
+          "role": "assistant",
+          "content": "Claro, vamos começar uma nova busca. Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+          "metadata": {}
+        }
+      ],
+      "initial_state": {
+        "cart_id": null,
+        "cart_url": null,
+        "order_id": null,
+        "cart_items": [],
+        "active_topic": null,
+        "order_status": null,
+        "active_domain": "commerce",
+        "cart_quantity": null,
+        "active_product": null,
+        "checkout_draft": {
+          "address": {
+            "city": null,
+            "type": "1",
+            "state": null,
+            "number": null,
+            "address": null,
+            "country": "BRA",
+            "zip_code": null,
+            "complement": null,
+            "neighborhood": null
+          },
+          "customer": {
+            "rg": null,
+            "cpf": null,
+            "name": null,
+            "type": "0",
+            "email": null,
+            "phone": null,
+            "gender": null
+          }
+        },
+        "dialogue_phase": "discovery",
+        "last_browse_at": null,
+        "pending_action": null,
+        "pix_payment_id": null,
+        "purchase_stage": "selection",
+        "cart_product_id": null,
+        "cart_session_id": null,
+        "cart_variant_id": null,
+        "context_repairs": [],
+        "order_lookup_id": null,
+        "purchase_target": null,
+        "shipping_quotes": [],
+        "forget_shortlist": true,
+        "order_created_at": null,
+        "order_session_id": null,
+        "pix_amount_label": null,
+        "selection_status": "mentioned",
+        "order_has_payment": null,
+        "order_payment_url": null,
+        "selected_shipping": null,
+        "active_preferences": {},
+        "closed_by_farewell": false,
+        "last_story_product": null,
+        "order_payment_date": null,
+        "order_payment_type": null,
+        "order_status_group": null,
+        "pix_payment_status": null,
+        "pix_copy_paste_code": null,
+        "last_conversation_id": "evaluation:e57ceaae0d2e4fd3b2bc8a9ef640a303",
+        "order_payment_method": null,
+        "order_payment_status": "not_available",
+        "order_review_version": null,
+        "history_cut_inbound_id": null,
+        "shipping_quote_zipcode": null,
+        "cart_context_updated_at": null,
+        "last_presented_products": [],
+        "order_payment_method_id": null,
+        "selected_payment_method": null,
+        "selected_payment_option": null,
+        "order_creation_ambiguous": false,
+        "order_payment_checked_at": null,
+        "pix_order_review_version": null,
+        "product_resolution_state": null,
+        "order_confirmation_status": "not_ready",
+        "payment_method_preference": null,
+        "pending_action_product_ids": [],
+        "selected_payment_option_id": null,
+        "checkout_channel_preference": null,
+        "purchase_target_selected_at": null,
+        "conversation_repair_attempts": 0,
+        "confirmed_order_review_version": null,
+        "order_payment_revalidation_status": "not_checked"
+      },
+      "recorded_at": null,
+      "steps": [
+        {
+          "input": "Quero um Orient clássico até R$ 2.500.",
+          "expected": {
+            "requirements": [
+              "Não herda cor preta, pulseira de borracha, mineral ou Citizen da busca anterior."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        }
+      ],
+      "environment": "live_readonly",
+      "simulation": {}
+    }
+  ]
+}

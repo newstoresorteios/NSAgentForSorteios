@@ -323,7 +323,17 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
         "review_due": len(asked) >= rules["reviewAfterQuestions"],
     }
     snapshot.update(asked=asked, preferences=interpretation.preferences.model_dump(mode="json"))
-    if not matches:
+    prefs = interpretation.preferences
+    questions = {q["slot"]: q for q in contextual["questions"]}
+    budget_needs_model = (previous_slot == 'budget'
+        and 'model_intent' not in asked and 'model_intent' in questions
+        and len(asked) < contextual['maxQuestions']
+        and not interpretation.subject.model
+        and not any((prefs.color, prefs.style, prefs.occasion, prefs.material,
+                     prefs.mechanism, prefs.crystal))
+        and not [a for a in prefs.attributes
+                 if not str(a).startswith(('qual:', 'somente:'))])
+    if not matches and not budget_needs_model:
         prefs = interpretation.preferences
         constrained = any((prefs.budget_max is not None, prefs.budget_min is not None,
                            prefs.color, prefs.style, prefs.occasion, prefs.material,
@@ -363,14 +373,7 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
     # Missing facets in a bounded sample do not establish the customer's use
     # or model intent. After a bare budget answer ask the published model question.
     prefs = interpretation.preferences
-    needs_model = (previous_slot == 'budget' and not choices
-        and 'model_intent' not in asked and 'model_intent' in questions
-        and len(asked) < contextual['maxQuestions']
-        and not interpretation.subject.model
-        and not any((prefs.color, prefs.style, prefs.occasion, prefs.material,
-                     prefs.mechanism, prefs.crystal))
-        and not [a for a in prefs.attributes
-                 if not str(a).startswith(('qual:', 'somente:'))])
+    needs_model = budget_needs_model and not choices
     if needs_model:
         choices.append((0, 0, 'model_intent', []))
     if (len(matches) == 1 and not needs_model) or not choices:

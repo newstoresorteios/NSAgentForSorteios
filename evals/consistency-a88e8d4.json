@@ -1,0 +1,262 @@
+{
+  "name": "consistency-a88e8d4-five-usd",
+  "version": 4,
+  "categories": [
+    "conversa"
+  ],
+  "target_percent": 90.0,
+  "minimum_category_percent": 85.0,
+  "minimum_cases_per_category": 1,
+  "configuration_overrides": {
+    "modelRolePolicies": "{\"interpretation\": {\"max_output_tokens\": 6000}, \"composition\": {\"max_output_tokens\": 6000}, \"review\": {\"max_output_tokens\": 6000}, \"evaluation\": {\"max_output_tokens\": 6000}}",
+    "evaluationCampaignPolicy": "{\"enabled\": true, \"campaign_id\": \"consistency-a88e8d4-new5-20260924\", \"price_version\": \"openai-pricing-2026-09-23\", \"max_calls\": 65, \"max_tokens\": 6000000, \"max_cost_usd\": 5, \"max_input_tokens_per_call\": 300000, \"prices\": {\"gpt-5.4-mini\": {\"input\": 0.75, \"output\": 4.5}}}"
+  },
+  "scenarios": [
+    {
+      "key": "screenshot_orient_2500",
+      "category": "conversa",
+      "split": "development",
+      "critical": true,
+      "source_response_ids": [],
+      "channel": "whatsapp",
+      "history": [],
+      "initial_state": {},
+      "recorded_at": null,
+      "steps": [
+        {
+          "input": "Olá",
+          "expected": {
+            "requirements": [
+              "Cumprimenta sem oferecer produto ou pagamento antigo."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        },
+        {
+          "input": "quero um relogio",
+          "expected": {
+            "requirements": [
+              "Pergunta preferência antes de recomendar modelo específico."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        },
+        {
+          "input": "orient",
+          "expected": {
+            "requirements": [
+              "Preserva marca Orient e pergunta o orçamento ou outra preferência útil."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        },
+        {
+          "input": "2500",
+          "expected": {
+            "requirements": [
+              "Interpreta 2500 como orçamento de R$ 2.500, mantém Orient e continua atendimento sem mensagem genérica de insuficiência."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        }
+      ],
+      "environment": "live_readonly",
+      "simulation": {}
+    },
+    {
+      "key": "technical_and_reset",
+      "category": "conversa",
+      "split": "development",
+      "critical": true,
+      "source_response_ids": [],
+      "channel": "whatsapp",
+      "history": [],
+      "initial_state": {},
+      "recorded_at": null,
+      "steps": [
+        {
+          "input": "Quero um Citizen automático, não Eco-Drive, até R$ 3.000 no Pix.",
+          "expected": {
+            "requirements": [
+              "Mantém Citizen automático, exclui solar/Eco-Drive e respeita orçamento."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        },
+        {
+          "input": "Não é para presente, é para mim. Preto, pulseira de borracha, vidro mineral, 200 metros, movimento 8204.",
+          "expected": {
+            "requirements": [
+              "Preserva orçamento e marca, entende uso pessoal e separa atributos técnicos de orçamento e referência."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        },
+        {
+          "input": "NY0120-01EE. Confirme cada característica e o preço no Pix.",
+          "expected": {
+            "requirements": [
+              "Identifica somente a referência solicitada, confirma características com evidência ou explica as lacunas."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        },
+        {
+          "input": "Reinicia a conversa",
+          "expected": {
+            "requirements": [
+              "Confirma nova busca sem oferta ou retomada de pagamento."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        },
+        {
+          "input": "Quero um Orient clássico até R$ 2.500.",
+          "expected": {
+            "requirements": [
+              "Não herda cor preta, pulseira de borracha, mineral ou Citizen da busca anterior."
+            ],
+            "forbidden_claims": [],
+            "required_tools": [],
+            "forbidden_tools": [
+              "create_cart",
+              "set_cart_item_quantity",
+              "delete_cart",
+              "create_order",
+              "cancel_order"
+            ],
+            "handoff": "forbidden",
+            "handoff_offer": "forbidden",
+            "state_equals": {},
+            "min_products": 0,
+            "max_price": null,
+            "allowed_product_ids": [],
+            "expected_tool_errors": []
+          }
+        }
+      ],
+      "environment": "live_readonly",
+      "simulation": {}
+    }
+  ]
+}

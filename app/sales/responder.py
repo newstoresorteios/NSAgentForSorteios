@@ -418,6 +418,14 @@ async def sales_response_with_openai(
     settings = get_settings()
     if interpretation is not None and getattr(interpretation, "_slot_answer_hold", False):
         return None
+    from app.sales.inspection_copy import complete_inspection_copy
+    completed = complete_inspection_copy(tray_result, interpretation, message.text)
+    if completed is not tray_result:
+        return _mark_sales_result(
+            completed, interpretation=interpretation, goal=plan.get('goal'),
+            response_source='deterministic_fallback', used_openai_responder=False,
+            used_tray=True,
+        )
     if not settings.openai_api_key or tray_result.safety_reason in {
         "tray_adapter_unavailable", "product_match_failed", "product_not_found",
         "ambiguous_product", "product_context_missing", "coupon_not_found",
@@ -428,6 +436,7 @@ async def sales_response_with_openai(
         "product_media_link_fallback",
         "product_image_link_fallback",
         "recommendation_no_match",
+        "adaptive_discovery_unconfirmed",
         "recommendation_budget_miss",
         "product_unavailable",
         "shipping_guidance_without_cart",

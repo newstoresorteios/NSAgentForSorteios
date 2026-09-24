@@ -35,6 +35,9 @@ def normalize_requirements(interpretation: SalesInterpretation, message_text: st
     required: dict[str, str] = {}
     # Persisted public preference fields survive history/database round trips.
     for field in {r["field"] for r in rules}:
+        if field in prefs.explicit_no_preferences:
+            setattr(prefs, field, None)
+            continue
         raw = getattr(prefs, field, None)
         source = str(raw) if raw else " ".join(prefs.attributes or [])
         choices = [r for r in rules if r["field"] == field and
@@ -55,6 +58,7 @@ def normalize_requirements(interpretation: SalesInterpretation, message_text: st
                     and not _denied(text, r, "catalogFeatureNegationPhrases") and r not in relaxed]
         if len(explicit) == 1:
             required[field] = explicit[0]["value"]
+            prefs.explicit_no_preferences = [v for v in prefs.explicit_no_preferences if v != field]
         elif len(explicit) > 1:
             # Different values of one property are ambiguous, never silently last-wins.
             required[field] = "|".join(r["value"] for r in explicit)
@@ -94,6 +98,12 @@ def feature_evidence(product: dict[str, Any], requirements: dict[str, str]) -> d
 def criteria_label(interpretation: SalesInterpretation) -> str:
     required = technical_requirements(interpretation)
     labels = [message("catalog_requirement_line", label=r["label"]) for r in feature_rules() if required.get(r["field"]) == r["value"]]
+    if interpretation.subject.brand:
+        labels.insert(0, interpretation.subject.brand)
+    for field, label in (('style', 'estilo'), ('color', 'mostrador'), ('material', 'material')):
+        value = getattr(interpretation.preferences, field)
+        if value:
+            labels.append(f'{label} {value}')
     if interpretation.preferences.budget_max is not None:
         amount = f"{interpretation.preferences.budget_max:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
         labels.append(message("catalog_required_budget", amount=amount))

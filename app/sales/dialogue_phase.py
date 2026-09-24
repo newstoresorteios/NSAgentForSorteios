@@ -17,6 +17,7 @@ _CATALOG_PREF_KEYS = (
     "locked_identity",
     "subject_brand",
     "subject_model",
+    "subject_reference", "subject_ean", "budget_payment_basis",
     "budget",
     "budget_max",
     "color",
@@ -197,6 +198,10 @@ def reconcile_checkout_context(state: CommerceConversationState, *, now: datetim
     if isinstance(model, str):
         updated.active_preferences["subject_model"] = normalize_model_identity(model)
     if is_terminal_order_state(updated):
+        terminal_key = str(updated.order_id or updated.order_lookup_id or 'terminal')
+        if updated.terminal_order_context_cleared_for == terminal_key:
+            # The historical order must not erase a new search on every turn.
+            return updated
         from app.commerce.cart_service import _clear_cart_session_state
         from app.commerce.commerce_context import CheckoutDraft
 
@@ -214,6 +219,7 @@ def reconcile_checkout_context(state: CommerceConversationState, *, now: datetim
         updated.dialogue_phase = "discovery"
         updated.purchase_stage = "selection"
         updated.context_repairs = ["terminal_order_checkout_cleared"]
+        updated.terminal_order_context_cleared_for = terminal_key
         return updated
     if updated.order_id or updated.order_lookup_id or updated.order_payment_url or updated.order_creation_ambiguous:
         return updated
@@ -550,7 +556,7 @@ def resolve_dialogue_phase(
 
     if (
         previous.cart_session_id
-        or previous.order_id
+        or (previous.order_id and not is_terminal_order_state(previous))
         or purchase_stage in _CHECKOUT_PURCHASE_STAGES
         or pending in _CHECKOUT_PENDING_ACTIONS
     ):

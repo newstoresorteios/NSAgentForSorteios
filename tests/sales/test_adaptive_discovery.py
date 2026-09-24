@@ -33,6 +33,18 @@ def turn(result):
 
 
 @pytest.mark.asyncio
+async def test_budget_answer_without_affordable_preview_continues_qualification(adaptive):
+    first, _ = await run(interpretation(), [product(1,38,price=3000), product(2,38,price=5000)])
+    assert first.response_metadata['discovery_question']['slot'] == 'budget'
+    i = interpretation(preferences={'budget_max': 2500})
+    result, _ = await run(i, [product(1,38,price=3000), product(2,38,price=5000)],
+                          [turn(first)], text='2500')
+    assert result.safety_reason == 'commerce_clarification'
+    assert result.response_metadata['discovery_question']['slot'] == 'model_intent'
+    assert not i._adaptive_ready
+
+
+@pytest.mark.asyncio
 async def test_bare_budget_followup_recovers_brand_from_actual_discovery_query(adaptive):
     first,_=await run(interpretation(),[product(1,38,price=2000),product(2,38,price=5000)])
     assert first.response_metadata['discovery_question']['slot']=='budget'

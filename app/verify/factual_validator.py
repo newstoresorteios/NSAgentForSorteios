@@ -992,7 +992,8 @@ def validate_factual_response(
                 continue
             from app.catalog.product_retrieval import effective_price
 
-            price = effective_price(product)
+            from app.catalog.retrieval.price import result_budget_price
+            price = result_budget_price(product, result, commerce_state)
             if price is None:
                 continue
             report.checked_claims += 1

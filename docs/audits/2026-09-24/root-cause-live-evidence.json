@@ -1,0 +1,738 @@
+{
+  "base_commit": "a88e8d4",
+  "production_promoted": false,
+  "authorized_total_usd": 10,
+  "prior_reserved_usd": 4.26891675,
+  "candidate_reserved_usd": 4.20220425,
+  "final_tranche_reserved_usd": 1.4971395,
+  "total_reserved_usd": 9.9682605,
+  "note": "Reservation is conservative, not the provider invoice. All campaigns stopped.",
+  "environment": "Isolated candidates, production OpenAI/configuration, read-only TRAYadaptor",
+  "limitations": [
+    "No real channel delivery, media, checkout or orders",
+    "Seeded final replays are targeted regressions, not another full journey",
+    "Automated judge penalizes omitted repetition of preserved preferences; manual review required"
+  ],
+  "manual_review": {
+    "screenshot_orient_2500": "No generic outage. Brand Orient and budget 2500 retained; clarification continues. Final seeded test also includes historical shipped order. Objective state assertions passed.",
+    "qualification_changes": "Orient and 3500 retained through quartz replacement and movement/strap release. Released search delivered an Orient Classic. Final local tests additionally retain the required strap marker through replacement.",
+    "technical_and_reset": "Restart clears reference/EAN; no recipient-name poisoning in replay. Final post-reset search preserved Orient/social/2500 without handoff.",
+    "delivery:technical_and_reset_replay_2": "Passed real replay and automated review: NY0120-01EE, Pix 2889.99, automatic/mineral/200m/black/rubber/8204, explicit 41-vs-42mm discrepancy. Final validators passed.",
+    "delivery:orient_identity_negative_replay_1": "Real agent reply complete and final deterministic validators passed: orange/sapphire/automatic/45mm/Pix3144.99, above budget, catalog availability30businessdays, no tomorrow delivery promise. External automated judge blocked by final campaign budget/call limit; retain inconclusive automated outcome, do not claim a judge pass."
+  },
+  "turns": [
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "qualification_changes",
+      "run_id": "0acd8c12-55d0-4dc7-bc82-49ee9153c96f",
+      "step": 0,
+      "input": "Quero uma indicação de relógio Orient clássico até R$ 3.500.",
+      "reply": "Uma boa indicação é o Orient Clássic Day-Night Automático Bordeaux Sunburst RA-AK0807R30B.\nEle está dentro do seu teto: R$ 3.399,99 no site ou R$ 2.889,99 no PIX. É automático, caixa de 41 mm e visual clássico.\nLink oficial: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-classic-day-night-automatico-bordeaux-sunburst-ra-ak0807r30b\nSe quiser, eu posso te mostrar mais 1 opção Orient nessa faixa.",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta está alinhada ao pedido: indica um Orient clássico dentro do orçamento, com preço e link oficiais. Não identifiquei erro factual ou crítico relevante na entrega final.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "style": "social",
+        "budget_max": 3500.0,
+        "subject_brand": "Orient"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": [
+          "13854"
+        ]
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "qualification_changes",
+      "run_id": "0acd8c12-55d0-4dc7-bc82-49ee9153c96f",
+      "step": 1,
+      "input": "Não é para presente, é para mim. Automático com pulseira de aço.",
+      "reply": "As opções que consultei não atenderam a todos os critérios: automático, até R$ 3.500,00. Posso continuar procurando com essas características.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta final ficou genérica e não demonstrou retenção dos critérios completos do cliente (uso pessoal e pulseira de aço), embora não haja erro factual crítico ou inventado no texto entregue.",
+      "objective_failures": [],
+      "safety_reason": "catalog_requirements_no_match",
+      "budget_errors": [],
+      "preferences": {
+        "style": "social",
+        "material": "aço",
+        "mechanism": "automatic",
+        "attributes": [
+          "self",
+          "required_strap_material:aço",
+          "qual:purchase_purpose:self"
+        ],
+        "budget_max": 3500.0,
+        "subject_brand": "Orient"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "qualification_changes",
+      "run_id": "0acd8c12-55d0-4dc7-bc82-49ee9153c96f",
+      "step": 2,
+      "input": "Prefiro quartzo, não automático. Social, estilo dress. Mantenha o restante.",
+      "reply": "As opções que consultei não atenderam a todos os critérios: quartzo, até R$ 3.500,00. Posso continuar procurando com essas características.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta reconheceu a troca de automático por quartzo e o teto de orçamento, mas não preservou de forma fiel os demais critérios (Orient, aço e equivalência social/dress).",
+      "objective_failures": [],
+      "safety_reason": "catalog_requirements_no_match",
+      "budget_errors": [],
+      "preferences": {
+        "style": "social",
+        "material": "aço",
+        "occasion": "social",
+        "mechanism": "quartz",
+        "attributes": [
+          "classic",
+          "social",
+          "dress",
+          "for_self",
+          "self"
+        ],
+        "budget_max": 3500.0,
+        "subject_brand": "Orient"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": true,
+        "rejected_issues": [
+          "final_technical_requirements_failed"
+        ],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "qualification_changes",
+      "run_id": "0acd8c12-55d0-4dc7-bc82-49ee9153c96f",
+      "step": 3,
+      "input": "Pode ser qualquer movimento e qualquer pulseira. Mostre as opções sem mais perguntas.",
+      "reply": "Encontrei 1 opção que encaixa no seu perfil social/dress e fica dentro do teto:\nRelógio Orient Clássic Day-Night Automático Bordeaux Sunburst RA-AK0807R30B — R$ 3.399,99 ou R$ 2.889,99 no PIX.\nLink oficial: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-classic-day-night-automatico-bordeaux-sunburst-ra-ak0807r30b",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta final atende ao pedido: entregou uma opção compatível com Orient, orçamento e estilo, sem continuar a qualificação.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "style": "social / dress",
+        "occasion": "social",
+        "attributes": [
+          "classic",
+          "social",
+          "dress",
+          "for_self",
+          "self"
+        ],
+        "budget_max": 3500.0,
+        "subject_brand": "Orient",
+        "explicit_no_preferences": [
+          "material",
+          "mechanism",
+          "strap"
+        ]
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": [
+          "13854"
+        ]
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "qualification_changes",
+      "run_id": "0acd8c12-55d0-4dc7-bc82-49ee9153c96f",
+      "step": 4,
+      "input": "Quero falar com uma pessoa.",
+      "reply": "Solicitei seu atendimento à equipe. Aguarde a continuidade por um atendente.",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atendeu ao pedido de falar com uma pessoa e encaminhou para atendimento humano, sem inventar informação comercial.",
+      "objective_failures": [],
+      "safety_reason": "customer_requested_human",
+      "budget_errors": [],
+      "preferences": {
+        "style": "social / dress",
+        "occasion": "social",
+        "attributes": [
+          "classic",
+          "social",
+          "dress",
+          "for_self",
+          "self"
+        ],
+        "budget_max": 3500.0,
+        "subject_brand": "Orient",
+        "explicit_no_preferences": [
+          "material",
+          "mechanism",
+          "strap"
+        ]
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "screenshot_orient_2500",
+      "run_id": "342786dd-b697-45e4-a8f9-3a49d81902ef",
+      "step": 0,
+      "input": "Olá",
+      "reply": "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. Como posso te ajudar hoje?",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atende ao critério: cumprimenta de forma adequada e não oferece produto nem pagamento.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {},
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "screenshot_orient_2500",
+      "run_id": "342786dd-b697-45e4-a8f9-3a49d81902ef",
+      "step": 1,
+      "input": "quero um relogio",
+      "reply": "Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atende ao critério avaliado e não apresenta erros factuais ou críticos relevantes.",
+      "objective_failures": [],
+      "safety_reason": "commerce_clarification",
+      "budget_errors": [],
+      "preferences": {},
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "screenshot_orient_2500",
+      "run_id": "342786dd-b697-45e4-a8f9-3a49d81902ef",
+      "step": 2,
+      "input": "orient",
+      "reply": "Você prefere algo mais perto de R$ 3.500 ou de R$ 5.500?",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta faz a qualificação de orçamento, mas falha no critério por não mencionar a marca Orient nem retomar o contexto do pedido.",
+      "objective_failures": [],
+      "safety_reason": "commerce_clarification",
+      "budget_errors": [],
+      "preferences": {
+        "subject_brand": "Orient"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "screenshot_orient_2500",
+      "run_id": "342786dd-b697-45e4-a8f9-3a49d81902ef",
+      "step": 3,
+      "input": "2500",
+      "reply": "Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta final é genérica e não aproveita o orçamento de R$ 2.500 nem a preferência por Orient de forma explícita. Não há erro crítico, mas o critério não foi atendido.",
+      "objective_failures": [],
+      "safety_reason": "commerce_clarification",
+      "budget_errors": [],
+      "preferences": {
+        "budget_max": 2500.0,
+        "subject_brand": "Orient"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "technical_and_reset",
+      "run_id": "e57ceaae-0d2e-4fd3-b2bc-8a9ef640a303",
+      "step": 0,
+      "input": "Quero um Citizen automático, não Eco-Drive, até R$ 3.000 no Pix.",
+      "reply": "Confirmei estas opções com automático, até R$ 3.000,00:\n\nRelógio Citizen Urban Diver Tiffany Automático Azul NJ0170-83X\nRef.: NJ0170-83X\nA prazo: R$ 2.999,99\nÀ vista no Pix: R$ 2.549,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-urban-diver-tiffany-automatico-azul-nj0170-83x\n\nRelógio Citizen Urban Diver Automático Amarelo NJ0170-83Z\nRef.: NJ0170-83Z\nA prazo: R$ 2.999,99\nÀ vista no Pix: R$ 2.549,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-urban-diver-automatico-amarelo-nj0170-83z",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atende ao pedido: manteve Citizen automático, não trouxe Eco-Drive/solar e ficou dentro do orçamento informado.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "mechanism": "automatic",
+        "attributes": [
+          "não Eco-Drive",
+          "Pix"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Citizen",
+        "budget_payment_basis": "pix"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": [
+          "6682",
+          "6684"
+        ]
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "technical_and_reset",
+      "run_id": "e57ceaae-0d2e-4fd3-b2bc-8a9ef640a303",
+      "step": 1,
+      "input": "Não é para presente, é para mim. Preto, pulseira de borracha, vidro mineral, 200 metros, movimento 8204.",
+      "reply": "Consultei as opções, mas ainda não consegui confirmar todos os critérios: automático, cristal mineral, até R$ 3.000,00. Posso continuar a busca mantendo essas exigências.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta final não atende ao critério porque reduziu a necessidade do cliente a uma busca genérica e omitiu as preferências centrais de marca, uso pessoal e atributos técnicos do relógio.",
+      "objective_failures": [],
+      "safety_reason": "catalog_requirements_unknown",
+      "budget_errors": [],
+      "preferences": {
+        "color": "preto",
+        "crystal": "mineral",
+        "material": "borracha",
+        "mechanism": "automatic",
+        "attributes": [
+          "não Eco-Drive",
+          "200 metros de resistência",
+          "movimento 8204",
+          "para uso próprio",
+          "self",
+          "required_strap_material:borracha"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Citizen",
+        "subject_model": "8204",
+        "budget_payment_basis": "pix"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "technical_and_reset",
+      "run_id": "e57ceaae-0d2e-4fd3-b2bc-8a9ef640a303",
+      "step": 2,
+      "input": "NY0120-01EE. Confirme cada característica e o preço no Pix.",
+      "reply": "Não consegui confirmar no catálogo disponível um relógio que atenda a todos esses critérios. Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta falhou em identificar e confirmar o item solicitado, apesar de haver evidência suficiente no catálogo para isso. Não houve erro crítico, mas houve uma afirmação objetiva incompatível com os dados disponíveis.",
+      "objective_failures": [],
+      "safety_reason": "answer_council_blocked",
+      "budget_errors": [],
+      "preferences": {
+        "color": "preto",
+        "crystal": "mineral",
+        "material": "borracha",
+        "mechanism": "automatic",
+        "attributes": [
+          "não Eco-Drive",
+          "200 metros de resistência",
+          "movimento 8204",
+          "para uso próprio",
+          "self",
+          "required_strap_material:borracha",
+          "uso próprio",
+          "somente"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Citizen",
+        "subject_model": "NY0120-01EE",
+        "subject_reference": "NY0120-01EE",
+        "budget_payment_basis": "pix"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": true,
+        "rejected_issues": [
+          "factual_failed_but_still_listing"
+        ],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "technical_and_reset",
+      "run_id": "e57ceaae-0d2e-4fd3-b2bc-8a9ef640a303",
+      "step": 3,
+      "input": "Reinicia a conversa",
+      "reply": "Claro, vamos começar uma nova busca. Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta atende ao critério: reinicia a conversa com nova busca, sem oferta comercial ou menção a pagamento.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {},
+      "final_validation": {
+        "passed": true,
+        "authority": "explicit_search_restart",
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "technical_and_reset",
+      "run_id": "e57ceaae-0d2e-4fd3-b2bc-8a9ef640a303",
+      "step": 4,
+      "input": "Quero um Orient clássico até R$ 2.500.",
+      "reply": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+      "automated_outcome": "failed",
+      "automated_summary": "Falha objetiva; avaliação generativa dispensada pela política de custo.",
+      "objective_failures": [
+        "unexpected_handoff_offer"
+      ],
+      "safety_reason": "critique_unavailable",
+      "budget_errors": [],
+      "preferences": {
+        "style": "social",
+        "budget_max": 2500.0,
+        "subject_brand": "Orient"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "orient_identity_negative",
+      "run_id": "fc25eae0-9733-4a5e-992e-27d434d58db0",
+      "step": 0,
+      "input": "Quero o Orient M-Force Land RA-AC0N02Y10B. Confirme cor, vidro, movimento, tamanho, Pix e prazo.",
+      "reply": "Sim, encontrei:\n\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B\nRef.: RA-AC0N02Y10B\nA prazo: R$ 3.699,99\nÀ vista no Pix: R$ 3.144,99\nLink: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta acertou a identificação do SKU e não inventou especificações técnicas. O principal problema é de completude em relação ao que o cliente pediu, mas isso não viola o critério avaliado.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "attributes": [
+          "cor",
+          "vidro",
+          "movimento",
+          "tamanho",
+          "pix",
+          "prazo",
+          "somente"
+        ],
+        "subject_brand": "Orient",
+        "subject_model": "M-Force Land",
+        "subject_reference": "RA-AC0N02Y10B"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": [
+          "10269"
+        ]
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-candidate",
+      "scenario": "orient_identity_negative",
+      "run_id": "fc25eae0-9733-4a5e-992e-27d434d58db0",
+      "step": 1,
+      "input": "Então é azul, mineral, até R$ 3.000 no Pix e chega amanhã?",
+      "reply": "Não cabe no orçamento: o preço no Pix supera o teto informado.\nEsta referência não atende ao critério de mostrador azul; a cor real é a registrada na ficha e no nome do produto.\nSim, encontrei:\n\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B\nRef.: RA-AC0N02Y10B\nA prazo: R$ 3.699,99\nÀ vista no Pix: R$ 3.144,99\nLink: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b\nVidro: cristal de safira.\nCor do mostrador: não confirmada em campo específico da ficha; confira a identificação do produto acima.\nDisponibilidade informada no catálogo: Disponível em 30 dias úteis.\nA data de entrega no seu endereço não está confirmada; depende da cotação para o CEP. Não posso garantir chegada amanhã.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta foi majoritariamente fiel ao catálogo, especialmente em preço, vidro e prazo. Porém falhou no tratamento da cor do mostrador, usando uma negativa genérica em vez de corrigir objetivamente para laranja.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "color": "azul",
+        "crystal": "mineral",
+        "budget_max": 3000.0,
+        "subject_ean": "4942715027704",
+        "subject_brand": "Orient",
+        "subject_reference": "RA-AC0N02Y10B",
+        "budget_payment_basis": "pix"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": [
+          "10269"
+        ]
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-final",
+      "scenario": "technical_and_reset_replay_4",
+      "run_id": "3e863f2b-a677-4098-b0d2-3cb4d7a5635d",
+      "step": 0,
+      "input": "Quero um Orient clássico até R$ 2.500.",
+      "reply": "Ainda não confirmei uma opção que atenda ao conjunto solicitado (marca: Orient; orçamento máximo: 2500.0). Você prefere manter esses requisitos ou flexibilizar algum?",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta respeita o reinício do contexto e não herda os atributos da busca anterior.",
+      "objective_failures": [],
+      "safety_reason": "adaptive_discovery_unconfirmed",
+      "budget_errors": [],
+      "preferences": {
+        "style": "social",
+        "budget_max": 2500.0,
+        "subject_brand": "Orient"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-final",
+      "scenario": "orient_identity_negative_replay_1",
+      "run_id": "67d25ac4-08ab-4b1c-a599-1d682754aaa5",
+      "step": 0,
+      "input": "Confirme cor, vidro, movimento, tamanho, Pix e prazo. Então é azul, mineral, até R$ 3.000 no Pix e chega amanhã?",
+      "reply": "Não cabe no orçamento: o preço no Pix supera o teto informado.\nEsta referência não atende ao critério de mostrador azul; a cor real é a registrada na ficha e no nome do produto.\nSim, encontrei:\n\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B\nRef.: RA-AC0N02Y10B\nA prazo: R$ 3.699,99\nÀ vista no Pix: R$ 3.144,99\nLink: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta final acertou ao não inventar preço ou prazo e ao corrigir cor/orçamento, mas foi incompleta: não enfrentou individualmente todas as incompatibilidades solicitadas para o modelo consultado.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "color": "azul",
+        "crystal": "mineral",
+        "mechanism": "automatic",
+        "attributes": [
+          "cor",
+          "vidro",
+          "movimento",
+          "tamanho",
+          "pix",
+          "prazo"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Orient",
+        "subject_model": "M-Force Land",
+        "subject_reference": "RA-AC0N02Y10B",
+        "budget_payment_basis": "pix"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": [
+          "10269"
+        ]
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-final",
+      "scenario": "screenshot_orient_2500_replay_3",
+      "run_id": "96085296-07cc-4864-a4d5-0fcf66d044a8",
+      "step": 0,
+      "input": "2500",
+      "reply": "Você já tem algum modelo em mente ou gostaria de uma sugestão?",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta final não aproveitou o orçamento informado nem preservou o contexto de Orient; ficou apenas na pergunta genérica de descoberta.",
+      "objective_failures": [],
+      "safety_reason": "commerce_clarification",
+      "budget_errors": [],
+      "preferences": {
+        "budget_max": 2500.0,
+        "subject_brand": "Orient"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-final",
+      "scenario": "technical_and_reset_replay_2",
+      "run_id": "b4ee14c5-d61c-4db6-a4f0-851fb777b97b",
+      "step": 0,
+      "input": "NY0120-01EE. Confirme cada característica e o preço no Pix.",
+      "reply": "Não consegui confirmar no catálogo disponível um relógio até R$ 3.000,00 que atenda a todos esses critérios. Posso manter esse teto e flexibilizar um critério por vez para te mostrar as opções mais próximas.",
+      "automated_outcome": "failed",
+      "automated_summary": "A resposta falhou em confirmar a referência solicitada com os dados disponíveis e trouxe uma negativa incompatível com o catálogo.",
+      "objective_failures": [],
+      "safety_reason": "answer_council_blocked",
+      "budget_errors": [],
+      "preferences": {
+        "color": "preto",
+        "crystal": "mineral",
+        "material": "borracha",
+        "mechanism": "automatic",
+        "attributes": [
+          "não Eco-Drive",
+          "200 metros de resistência",
+          "movimento 8204",
+          "para uso próprio",
+          "somente",
+          "required_strap_material:borracha"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Citizen",
+        "subject_reference": "NY0120-01EE",
+        "budget_payment_basis": "pix"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": true,
+        "rejected_issues": [
+          "presented_over_budget",
+          "fact_price_over_budget"
+        ],
+        "remaining_issues": [],
+        "delivered_product_ids": []
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-delivery",
+      "scenario": "orient_identity_negative_replay_1",
+      "run_id": "5d399929-87fb-4d77-9499-2e385531ed55",
+      "step": 0,
+      "input": "Confirme cor, vidro, movimento, tamanho, Pix e prazo. Então é azul, mineral, até R$ 3.000 no Pix e chega amanhã?",
+      "reply": "Esta referência não atende ao critério de mostrador azul.\nNão cabe no orçamento informado.\nSim, encontrei:\n\nRelógio Orient M-Force Land Automático Laranja RA-AC0N02Y10B\nRef.: RA-AC0N02Y10B\nA prazo: R$ 3.699,99\nÀ vista no Pix: R$ 3.144,99\nLink: https://www.newstorerj.com.br/relogios/relogios-orient/relogio-orient-m-force-land-automatico-laranja-ra-ac0n02y10b\nVidro: cristal de safira.\nMovimento: automático.\nDiâmetro da caixa: 45 mm.\nCor do mostrador: Laranja.\nDisponibilidade informada no catálogo: Disponível em 30 dias úteis.\nA data de entrega no seu endereço não está confirmada; depende da cotação para o CEP. Não posso garantir chegada amanhã.",
+      "automated_outcome": "inconclusive",
+      "automated_summary": null,
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "color": "azul",
+        "crystal": "mineral",
+        "budget_max": 3000.0,
+        "subject_brand": "Orient",
+        "subject_model": "M-Force Land",
+        "subject_reference": "RA-AC0N02Y10B",
+        "budget_payment_basis": "pix"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": [
+          "10269"
+        ]
+      },
+      "technical_completeness": null
+    },
+    {
+      "iteration": "consistency-root-cause-delivery",
+      "scenario": "technical_and_reset_replay_2",
+      "run_id": "7d9f0a6a-35df-496a-92bb-4f8bf03f6ef4",
+      "step": 0,
+      "input": "NY0120-01EE. Confirme cada característica e o preço no Pix.",
+      "reply": "Sim, encontrei:\n\nRelógio Citizen Promaster Marine Automático Preto NY0120-01EE\nRef.: NY0120-01EE\nA prazo: R$ 3.399,99\nÀ vista no Pix: R$ 2.889,99\nLink: https://www.newstorerj.com.br/relogios/relogios-citizen/relogio-citizen-promaster-marine-automatico-preto-ny0120-01ee\nVidro: cristal mineral.\nMovimento: automático.\nDiâmetro divergente no catálogo: 42 mm na descrição e 41 mm nas características; não confirmo uma medida única.\nResistência à água informada: 200 metros.\nCor do mostrador: Preto.\nPulseira: Borracha.\nCalibre/motor: Citizen Caliber 8204.",
+      "automated_outcome": "passed",
+      "automated_summary": "A resposta final está alinhada ao pedido: identifica a referência solicitada, confirma as características com suporte no catálogo e esclarece a divergência de diâmetro. O preço no Pix informado é compatível com o desconto publicado.",
+      "objective_failures": [],
+      "safety_reason": null,
+      "budget_errors": [],
+      "preferences": {
+        "color": "preto",
+        "crystal": "mineral",
+        "material": "borracha",
+        "mechanism": "automatic",
+        "attributes": [
+          "não Eco-Drive",
+          "200 metros de resistência",
+          "movimento 8204",
+          "para uso próprio",
+          "self",
+          "required_strap_material:borracha"
+        ],
+        "budget_max": 3000.0,
+        "subject_brand": "Citizen",
+        "subject_reference": "NY0120-01EE",
+        "budget_payment_basis": "pix"
+      },
+      "final_validation": {
+        "passed": true,
+        "corrected": false,
+        "rejected_issues": [],
+        "remaining_issues": [],
+        "delivered_product_ids": [
+          "11013"
+        ]
+      },
+      "technical_completeness": null
+    }
+  ]
+}

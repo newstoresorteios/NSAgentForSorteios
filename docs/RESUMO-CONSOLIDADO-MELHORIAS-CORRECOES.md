@@ -452,6 +452,110 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
 - Política de memória e limite de perguntas não foram revertidos. Validação local
   não substitui repetição dos roteiros com o modelo e o canal de produção.
 
+## Rodada real posterior ao push `a88e8d4` — teto adicional US$ 5
+
+Avaliação em deployment isolado, não promovido, usando OpenAI e catálogo reais,
+configuração publicada e ferramentas comerciais em modo somente leitura. Não
+valida transporte WhatsApp, áudio/imagem, pedidos ou checkout. Evidências:
+`docs/audits/2026-09-23/consistency-a88e8d4-live-evidence.json`.
+
+Encerrada com 16 turnos em 4 cenários, 51 chamadas reservadas e US$ 4,26891675
+de reserva conservadora (não é fatura). Não retomar esta campanha automaticamente.
+O encaminhamento humano foi respeitado no avaliador; entrega real não testada.
+
+Falhas observadas, ainda não corrigidas nesta rodada:
+
+- Orient + orçamento curto: depois de “2500”, a amostra preliminar ficou sem
+  compatíveis e o fluxo abriu busca completa, encerrando a qualificação. O turno
+  real do print (inbound 903, trace inbox-343, 24/09 02:32 UTC) sofreu veto do
+  double-check por `unanswered`; na repetição isolada a revisão aprovou a resposta
+  de busca sem confirmação. Não foi perda da marca ou do número do orçamento.
+- Citizen NY0120-01EE: resposta afirma superar R$ 3.000 apesar de apresentar
+  Pix R$ 2.889,99. A base de pagamento precisa persistir entre turnos; o executor
+  escolhe preço comum quando a interpretação atual não indica Pix.
+- Finalidade correta (`self`), mas `recipient="uso próprio"` também vira
+  `qual:name:uso próprio` e `customer_name`, contaminando identidade.
+- Reinício deixa `subject_reference` e `subject_ean` em preferências. Confirmado
+  tanto na execução Citizen quanto em reprodução determinística local.
+- Pedido explícito de estilo clássico não entrou na interpretação/estado em uma
+  indicação Orient; a resposta ofereceu um diver, reconhecendo a divergência.
+- Inspeção Orient encontra RA-AC0N02Y10B, mas não responde todas as características
+  solicitadas. No negativo combinado corrigiu preço/cor e omitiu vidro e prazo.
+- Ao mudar automático para quartzo e pedir para manter o restante, a interpretação
+  inseriu ausência de preferência de marca sem autorização e ofereceu Bulova no
+  lugar de Orient. Depois de liberar qualquer movimento, manteve quartzo no estado.
+
+O juiz automático não é um gate suficiente: marcou falha por não repetir “Orient”
+no texto apesar de preservá-lo no estado, e aprovou respostas incompletas. Não usar
+a taxa bruta de aprovação como maturidade. Os testes locais verdes anteriores não
+certificam estes fluxos reais. A rodada registra diagnóstico, não publica correções.
+
+## Correção das causas e repetição real — 24/09/2026, teto total US$ 10
+
+Esta etapa implementa as correções posteriores ao diagnóstico acima, sem promover
+deployment nem executar push. OpenAI e TRAYadaptor reais foram usados em candidatos
+isolados, com consultas comerciais somente leitura e conversas sintéticas.
+
+Causas corrigidas:
+
+- A amostra preliminar sem opções dentro do orçamento encerrava a qualificação.
+  A resposta curta ao orçamento agora mantém a busca e faz a pergunta de modelo.
+  O caso Orient/2500 preservou marca e valor em duas repetições reais, incluindo
+  histórico sintético de pedido enviado. O juiz textual deu falso negativo por
+  não repetir essas preferências na frase; as asserções objetivas passaram.
+- Pedido encerrado acionava limpeza da nova busca em todos os turnos. A limpeza
+  agora é idempotente por pedido; memória e fase não classificam pedido enviado
+  como checkout/pagamento pendente. O histórico do pedido continua disponível.
+- Preferências omitidas ou indiferença inferida pelo modelo apagavam marca e
+  restrições. A reconciliação usa a mensagem atual para manter, substituir ou
+  liberar cada dimensão. Liberação de movimento/pulseira não reativa restrições
+  históricas; troca para quartzo conserva Orient, aço e orçamento.
+- Estilo clássico/classic é normalizado como social/dress. Finalidade de uso não
+  vira nome do cliente; dados antigos de nome inválido são filtrados. Reinício
+  remove referência, EAN e base de orçamento anteriores. Calibre não vira SKU.
+- Orçamento Pix perdia a base de pagamento; verificadores também comparavam o
+  preço a prazo. A base persiste na busca, separada de seleção de pagamento.
+  Validação factual e conselho usam o mesmo cálculo publicado do preço mostrado,
+  inclusive após uma projeção remover o campo derivado `pix_price`.
+- Inspeção técnica podia ser substituída por preço/link em etapas posteriores.
+  A resposta final de SKU identificado usa fatos atuais, lê propriedades e linhas
+  rotuladas da descrição HTML, separa caixa/mostrador/pulseira e informa divergência
+  de diâmetro. Disponibilidade não é promessa de entrega no endereço.
+- Revisões generativas julgavam uma resposta determinística de busca inconclusiva
+  como falha de API e ofereciam atendente. A resposta publicada sem oferta é
+  preservada nesse caso delimitado; validadores de fatos e orçamento continuam.
+
+Evidências de cada iteração ficam em
+`docs/audits/2026-09-24/root-cause-live-evidence.json`. As falhas intermediárias
+permanecem registradas; os replays finais partem dos estados reais dessas conversas,
+não representam outra jornada completa do zero. Não usar aprovação automática
+isoladamente como índice de maturidade.
+
+Verificação local: 2.512 testes aprovados, 7 pulados; contrato de configuração
+válido (233 aliases), scanner de segredos aprovado e empacotamento dry-run aprovado.
+O gate de cobertura executado antes do último ajuste de entrega passou com 74,18%
+(mínimo 70%); após o ajuste a suíte completa foi repetida sem falhas.
+
+Limites: transporte real WhatsApp/Instagram, ManyChat, mídia, checkout e criação de
+pedidos não foram exercitados nesta rodada. Esta evidência não certifica ausência
+de erros em produção nem substitui a validação do canal após publicação.
+
+Fechamento: 22 turnos reais adicionais nesta etapa (16 na primeira candidata,
+4 replays focados e 2 repetições após correção da entrega). O Citizen NY0120-01EE
+passou na repetição final, inclusive no juiz automático: Pix R$ 2.889,99, mineral,
+automático, preto, borracha, 200 m, calibre 8204 e ressalva de 41/42 mm no cadastro.
+O Orient RA-AC0N02Y10B respondeu laranja, safira, automático, 45 mm, Pix R$ 3.144,99
+acima do teto e disponibilidade em 30 dias úteis, sem prometer chegada amanhã.
+Os validadores finais passaram; seu juiz externo não rodou por limite da campanha,
+portanto a classificação automática permanece **inconclusiva**, embora a resposta
+real tenha sido conferida manualmente.
+
+Reserva conservadora encerrada: US$ 4,26891675 (diagnóstico) + US$ 4,20220425
+(candidata) + US$ 1,49713950 (replays finais) = **US$ 9,96826050** de US$ 10.
+São 124 chamadas reservadas somando as três parcelas, não uma medição de fatura.
+Não retomar essas parcelas sem contabilizar esta reserva. Deployments temporários
+e credenciais locais da avaliação foram removidos; produção não foi promovida.
+
 ## Fontes oficiais usadas nesta consolidação
 
 - OpenAI Agents: https://developers.openai.com/api/docs/guides/agents

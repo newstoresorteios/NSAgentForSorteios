@@ -21,6 +21,7 @@ from ..config import get_settings
 from app.identity.greeting_policy import is_generic_greeting_reply
 from ..models import AgentResult, IncomingMessage, SalesInterpretation
 from app.catalog.product_retrieval import effective_price
+from app.catalog.retrieval.price import result_budget_price
 from .turn_contract import (
     TurnContract,
     checkout_target_conflicts,
@@ -328,7 +329,7 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
         over = [
             item
             for item in products
-            if (price := effective_price(item)) is not None
+            if (price := result_budget_price(item, result)) is not None
             and price > float(contract.budget_max)
         ]
         if over:
@@ -406,7 +407,7 @@ def check_fatos(result: AgentResult, contract: TurnContract) -> CheckerReport:
         issues.append("factual_failed_but_still_listing")
     if contract.budget_max is not None and not _explains_inspected_budget_miss(result):
         for item in products:
-            price = effective_price(item)
+            price = result_budget_price(item, result)
             if price is not None and price > float(contract.budget_max):
                 issues.append("fact_price_over_budget")
                 break

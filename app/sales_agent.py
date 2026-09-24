@@ -1093,6 +1093,8 @@ def _hydrate_sales_interpretation(
     from app.commerce.commerce_router import is_outbound_catalog_image_request
 
     open_sale = _open_sale_history(commerce_state)
+    from app.sales.search_continuity import reconcile_search_turn
+    semantic_plan = reconcile_search_turn(semantic_plan, commerce_state, message.text, recent_turns)
     try:
         semantic_plan = rehydrate_qualification_slots_from_turns(
             semantic_plan,
@@ -1135,6 +1137,7 @@ def _hydrate_sales_interpretation(
         commerce_state=commerce_state,
     )
     interpretation = _rehydrate_contact_preferences(interpretation, message)
+    interpretation = reconcile_search_turn(interpretation, commerce_state, message.text, recent_turns)
     if is_outbound_catalog_image_request(message.text):
         interpretation = interpretation.model_copy(update={"image_request": True})
     try:
