@@ -49,6 +49,46 @@ def test_catalog_clarification_is_not_vetoed_as_unanswered():
     assert report.skip_reason == "deterministic:commerce_clarification"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['shipped', 'delivered', 'completed', 'cancelled', 'refunded'])
+async def test_orient_qualification_with_historical_order_keeps_question(monkeypatch, status):
+    from app.verify.double_check import collect_phase1_risk_signals
+
+    async def forbidden(**kwargs):
+        pytest.fail('Historical order must not trigger a paid qualification veto')
+
+    monkeypatch.setattr('app.llm.openai_gateway.parse_structured_output', forbidden)
+    state = CommerceConversationState(order_id='25894', order_status_group=status,
+                                      dialogue_phase='discovery', purchase_stage='discovery')
+    reply = 'Tironi, qual faixa de investimento você tem em mente para o Orient?'
+    result = AgentResult(reply_text=reply, intent='commerce', safety_reason='commerce_clarification',
+                         response_metadata={'discovery_question': {'slot': 'budget', 'topic': 'orient'}})
+    incoming = IncomingMessage(text='Orient')
+    updated, report = await apply_double_check_async(incoming=incoming, result=result, commerce_state=state)
+    assert updated.reply_text == reply
+    assert report.skipped and not report.phase1_ran
+    assert 'order_or_checkout' not in collect_phase1_risk_signals(incoming=incoming, result=result, commerce_state=state)
+    assert state.order_id == '25894'
+
+
+@pytest.mark.parametrize('status,pending', [(None, None), ('awaiting_payment', None), ('shipped', 'awaiting_payment')])
+def test_active_order_or_new_checkout_still_requires_validation(status, pending):
+    from app.verify.double_check import _should_skip, collect_phase1_risk_signals
+    state = CommerceConversationState(order_id='25894', order_status_group=status, pending_action=pending)
+    result = AgentResult(reply_text='Qual faixa de investimento?', intent='commerce', safety_reason='commerce_clarification')
+    incoming = IncomingMessage(text='Orient')
+    assert _should_skip(incoming, result, state) is None
+    assert 'order_or_checkout' in collect_phase1_risk_signals(incoming=incoming, result=result, commerce_state=state)
+
+
+def test_question_about_historical_order_still_triggers_order_validation():
+    from app.verify.double_check import collect_phase1_risk_signals
+    signals = collect_phase1_risk_signals(incoming=IncomingMessage(text='qual o status do meu pedido?'),
+        result=AgentResult(reply_text='Vou verificar.',intent='commerce'),
+        commerce_state=CommerceConversationState(order_id='25894',order_status_group='shipped'))
+    assert 'inbound_asks_order' in signals
+
+
 def test_phase0_skips_greeting_and_raffle():
     greeting = AgentResult(
         reply_text="Olá!",

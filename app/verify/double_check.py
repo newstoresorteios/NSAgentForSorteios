@@ -136,6 +136,12 @@ _COMMERCIAL_RESUME_SOURCES = frozenset(
 )
 
 
+def _has_active_order(commerce_state: CommerceConversationState | None) -> bool:
+    from app.sales.dialogue_phase import is_terminal_order_state
+
+    return bool(getattr(commerce_state, "order_id", None)) and not is_terminal_order_state(commerce_state)
+
+
 def _live_purchase_context(
     commerce_state: CommerceConversationState | None,
     result: AgentResult,
@@ -147,7 +153,7 @@ def _live_purchase_context(
     return bool(
         _payment_url(commerce_state, result)
         or pending in _PURCHASE_PENDING
-        or getattr(commerce_state, "order_id", None)
+        or _has_active_order(commerce_state)
         or getattr(commerce_state, "last_presented_products", None)
         or phase in {"shortlist", "buy", "checkout"}
     )
@@ -450,7 +456,6 @@ def collect_phase1_risk_signals(
     text = incoming.text or ""
     payment_url = _payment_url(commerce_state, result)
     pending = str(getattr(commerce_state, "pending_action", None) or "")
-    order_id = str(getattr(commerce_state, "order_id", None) or "").strip()
     active = getattr(commerce_state, "active_product", None) if commerce_state else None
     if payment_url:
         signals.append("payment_url_present")
@@ -461,7 +466,7 @@ def collect_phase1_risk_signals(
     from app.sales.conversation_repair import is_conversation_repair
     if _PRICE_ASK_RE.search(text) and not is_conversation_repair(text):
         signals.append("inbound_asks_price")
-    if order_id or pending in _PURCHASE_PENDING:
+    if _has_active_order(commerce_state) or pending in _PURCHASE_PENDING:
         signals.append("order_or_checkout")
     if active is not None and pending in _PURCHASE_PENDING:
         signals.append("sku_lock")
