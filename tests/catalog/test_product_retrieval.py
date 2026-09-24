@@ -870,11 +870,11 @@ async def test_ready_broad_request_retrieves_without_new_clarification(
         if name == "list_categories":
             return {"categories": []}
         if name == "get_product":
-            return {"id": arguments["product_id"], "name": "Modelo atualizado", "current_price": 3000, "available": True, "stock": 2}
+            return {"id": arguments["product_id"], "name": "Modelo atualizado", "style": "Social", "current_price": 3000, "available": True, "stock": 2}
         return {
             "products": [
-                {"id": "1", "name": "Modelo Classic", "current_price": 3000},
-                {"id": "2", "name": "Modelo Urban", "current_price": 4000},
+                {"id": "1", "name": "Modelo Classic", "style": "Social", "current_price": 3000},
+                {"id": "2", "name": "Modelo Urban", "style": "Social", "current_price": 4000},
             ]
         }
 

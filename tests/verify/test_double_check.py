@@ -59,6 +59,7 @@ async def test_orient_qualification_with_historical_order_keeps_question(monkeyp
 
     monkeypatch.setattr('app.llm.openai_gateway.parse_structured_output', forbidden)
     state = CommerceConversationState(order_id='25894', order_status_group=status,
+                                      order_payment_url='https://example.com/historical-payment',
                                       dialogue_phase='discovery', purchase_stage='discovery')
     reply = 'Tironi, qual faixa de investimento você tem em mente para o Orient?'
     result = AgentResult(reply_text=reply, intent='commerce', safety_reason='commerce_clarification',
@@ -69,6 +70,16 @@ async def test_orient_qualification_with_historical_order_keeps_question(monkeyp
     assert report.skipped and not report.phase1_ran
     assert 'order_or_checkout' not in collect_phase1_risk_signals(incoming=incoming, result=result, commerce_state=state)
     assert state.order_id == '25894'
+    assert state.order_payment_url == 'https://example.com/historical-payment'
+
+
+def test_current_payment_evidence_survives_historical_order():
+    from app.verify.double_check import _payment_url
+    state = CommerceConversationState(order_id='25894', order_status_group='delivered',
+                                      order_payment_url='https://example.com/old')
+    result = AgentResult(reply_text='Pagamento', intent='commerce', commercial_data={
+        'payment': {'payment_url': 'https://example.com/new'}})
+    assert _payment_url(state, result) == 'https://example.com/new'
 
 
 @pytest.mark.parametrize('status,pending', [(None, None), ('awaiting_payment', None), ('shipped', 'awaiting_payment')])

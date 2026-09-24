@@ -181,8 +181,10 @@ def hard_filter_products(
         # A declared catalog style must have evidence, not merely lack a conflict.
         styles = {"aviador": ("aviador", "aviation", "pilot"),
                   "piloto": ("piloto", "pilot", "aviador"),
-                  "classico": ("classico", "classic", "dress"),
-                  "dress": ("dress", "social", "classico"),
+                  "classico": ("classico", "classic", "dress", "social"),
+                  "dress": ("classico", "classic", "dress", "social"),
+                  "social": ("classico", "classic", "dress", "social"),
+                  "classic": ("classico", "classic", "dress", "social"),
                   "esportivo": ("esportivo", "sport"),
                   "field": ("field", "militar"),
                   "militar": ("militar", "military", "field"),

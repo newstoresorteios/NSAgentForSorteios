@@ -438,6 +438,20 @@ confirmar o destino de alertas. Não enviar tokens pelo chat.
 - `docs/plano_evolucao_omnichannel_instagram.md`: roadmap ainda não encerrado.
 - `knowledge/newstore/*.md`: conhecimento de negócio usado pelo agente.
 
+## Revisão de consistência após `25806e2` e `c4ca27d`
+
+- Unificados os aliases clássico/classic/dress/social no filtro local, mantendo a
+  rejeição de estilos incompatíveis. A fixture de busca ampla agora fornece estilo
+  tanto na listagem quanto na ficha atualizada; suas asserções foram preservadas.
+- Qualificação distingue finalidade afirmada de negada; não escolhe entre duas
+  finalidades afirmadas conflitantes. “Tanto faz” limpa a finalidade anterior e uma
+  nova escolha explícita remove a marca de ausência de preferência.
+- Link de pagamento histórico de pedido encerrado não é evidência de pagamento
+  ativo no double-check. Dados de pagamento da resposta atual e pedidos ativos
+  continuam sujeitos às proteções existentes; o histórico não é apagado.
+- Política de memória e limite de perguntas não foram revertidos. Validação local
+  não substitui repetição dos roteiros com o modelo e o canal de produção.
+
 ## Fontes oficiais usadas nesta consolidação
 
 - OpenAI Agents: https://developers.openai.com/api/docs/guides/agents

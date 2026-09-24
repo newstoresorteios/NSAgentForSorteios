@@ -114,7 +114,11 @@ def _presented(result: AgentResult) -> list[dict[str, Any]]:
 
 
 def _payment_url(state: CommerceConversationState | None, result: AgentResult) -> str:
-    if state is not None:
+    from app.sales.dialogue_phase import is_terminal_order_state
+
+    # Historical links are not evidence of an active payment. Current response
+    # payment data below remains authoritative, including a new checkout.
+    if state is not None and not is_terminal_order_state(state):
         url = str(getattr(state, "order_payment_url", None) or "").strip()
         if url:
             return url
