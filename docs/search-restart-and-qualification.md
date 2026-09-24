@@ -39,3 +39,24 @@ Regressões locais sem chamadas pagas cobrem reinício seguido de marca curta,
 limpeza de requisitos antigos, preservação de CEP/pedido, preferências no prompt,
 estilo/gênero/movimento, presente, sem preferência, continuidade e schemas.
 Testes locais não certificam a redação de um modelo real nem o deploy em produção.
+
+
+## Recuperação de checkout e qualificação por marca (24/09/2026)
+
+A recuperação preenchia campos vazios com um carrinho de um pedido já encerrado.
+Como a limpeza desse pedido já estava marcada, o carrinho órfão permanecia e
+podia impedir a qualificação. A limpeza agora deixa uma barreira persistente
+contra essa recuperação e verifica novamente carrinhos órfãos. Um carrinho
+válido presente no estado atual continua disponível; a limpeza de um carrinho
+órfão preserva os dados de entrega.
+
+Pedidos que informam somente uma marca priorizam orçamento, quando ainda não
+respondido, mesmo se a amostra do catálogo tiver um único candidato. A finalidade
+pessoal/presente também pode ser perguntada quando faltam critérios de produto.
+Os caminhos de modelo exato, compra em andamento e pedido direto permanecem
+protegidos. As perguntas seguem a configuração existente.
+
+Validação local: 2.518 testes aprovados e 7 ignorados, sem chamadas pagas à
+OpenAI. As regressões incluem ciclos repetidos de salvar/recarregar o estado,
+carrinho novo após pedido histórico, marca com candidato único e pedido direto.
+Nenhuma rota comercial ou migração de banco foi adicionada nesta correção.

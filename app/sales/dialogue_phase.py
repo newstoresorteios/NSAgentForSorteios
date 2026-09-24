@@ -192,50 +192,67 @@ def is_browse_idle(
 def reconcile_checkout_context(state: CommerceConversationState, *, now: datetime | None = None) -> CommerceConversationState:
     """Remove orphaned/expired cart context without changing an existing order."""
     from app.catalog.specs.preference_normalize import normalize_model_identity
-    from app.configuration.runtime import policy
     updated = state.model_copy(deep=True)
     model = updated.active_preferences.get("subject_model")
     if isinstance(model, str):
         updated.active_preferences["subject_model"] = normalize_model_identity(model)
-    if is_terminal_order_state(updated):
+    terminal = is_terminal_order_state(updated)
+    if terminal:
         terminal_key = str(updated.order_id or updated.order_lookup_id or 'terminal')
         if updated.terminal_order_context_cleared_for == terminal_key:
             # The historical order must not erase a new search on every turn.
-            return updated
-        from app.commerce.cart_service import _clear_cart_session_state
-        from app.commerce.commerce_context import CheckoutDraft
+            # Still check for orphaned cart handles recovered from old snapshots.
+            terminal_key = None
+        if terminal_key is not None:
+            return _clear_terminal_checkout(updated, terminal_key, now=now)
+    if not terminal and (updated.order_id or updated.order_lookup_id or updated.order_payment_url or updated.order_creation_ambiguous):
+        return updated
+    return _reconcile_cart_handles(updated, now=now)
 
-        for field, value in _clear_cart_session_state(updated).items():
-            setattr(updated, field, value)
-        updated.active_product = None
-        updated.purchase_target = None
-        updated.last_presented_products = []
-        updated.active_preferences = _scrub_catalog_preferences(updated.active_preferences)
-        updated.checkout_draft = CheckoutDraft()
-        updated.pending_action = None
-        updated.pending_action_product_ids = []
-        updated.shipping_quotes = []
-        updated.selected_shipping = None
-        updated.dialogue_phase = "discovery"
-        updated.purchase_stage = "selection"
-        updated.context_repairs = ["terminal_order_checkout_cleared"]
-        updated.terminal_order_context_cleared_for = terminal_key
-        return updated
-    if updated.order_id or updated.order_lookup_id or updated.order_payment_url or updated.order_creation_ambiguous:
-        return updated
-    orphaned = bool((updated.cart_session_id or updated.dialogue_phase == "checkout")
-                    and not updated.cart_items and not updated.cart_product_id and updated.active_product is None)
+
+def _clear_terminal_checkout(
+    updated: CommerceConversationState, terminal_key: str, *, now: datetime | None = None,
+) -> CommerceConversationState:
+    from app.commerce.cart_service import _clear_cart_session_state
+    from app.commerce.commerce_context import CheckoutDraft
+
+    for field, value in _clear_cart_session_state(updated).items():
+        setattr(updated, field, value)
+    updated.active_product = None
+    updated.purchase_target = None
+    updated.last_presented_products = []
+    updated.active_preferences = _scrub_catalog_preferences(updated.active_preferences)
+    updated.checkout_draft = CheckoutDraft()
+    updated.pending_action = None
+    updated.pending_action_product_ids = []
+    updated.shipping_quotes = []
+    updated.selected_shipping = None
+    updated.dialogue_phase = "discovery"
+    updated.purchase_stage = "selection"
+    updated.context_repairs = ["terminal_order_checkout_cleared"]
+    updated.terminal_order_context_cleared_for = terminal_key
+    updated.checkout_context_cleared_at = _as_utc(now) or datetime.now(timezone.utc)
+    return updated
+
+
+def _reconcile_cart_handles(
+    updated: CommerceConversationState, *, now: datetime | None = None,
+) -> CommerceConversationState:
+    from app.configuration.runtime import policy
+    orphaned = bool((updated.cart_session_id or updated.cart_id or updated.dialogue_phase == "checkout"
+                     or updated.pending_action in _CHECKOUT_PENDING_ACTIONS)
+                    and not updated.cart_items and not updated.cart_product_id and updated.active_product is None
+                    and updated.purchase_target is None)
     stamped = _as_utc(updated.cart_context_updated_at)
     current = _as_utc(now) or datetime.now(timezone.utc)
     expired = bool(updated.cart_session_id and stamped and current - stamped >= timedelta(
         seconds=int(policy("checkoutContextMaxAgeSeconds"))))
     if orphaned or expired:
         from app.commerce.cart_service import _clear_cart_session_state
-        from app.commerce.commerce_context import CheckoutDraft
         for field, value in _clear_cart_session_state(updated).items():
             setattr(updated, field, value)
         updated.cart_context_updated_at = None
-        updated.checkout_draft = CheckoutDraft()
+        # Delivery/customer data is independent from a stale cart identity.
         updated.pending_action = None
         updated.pending_action_product_ids = []
         updated.shipping_quotes = []
@@ -247,6 +264,7 @@ def reconcile_checkout_context(state: CommerceConversationState, *, now: datetim
         updated.dialogue_phase = "shortlist" if updated.last_presented_products else "discovery"
         updated.purchase_stage = "selection"
         updated.context_repairs = ["expired_cart" if expired else "orphaned_cart"]
+        updated.checkout_context_cleared_at = current
     return updated
 
 

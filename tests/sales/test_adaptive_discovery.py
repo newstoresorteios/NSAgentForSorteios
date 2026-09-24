@@ -56,7 +56,7 @@ async def test_bare_budget_followup_recovers_brand_from_actual_discovery_query(a
 
 @pytest.mark.asyncio
 async def test_asks_difference_observed_in_catalog(adaptive):
-    result,calls=await run(interpretation(),[product(1,38),product(2,42)])
+    result,calls=await run(interpretation(preferences={'budget_max':6000}),[product(1,38),product(2,42)])
     q=result.response_metadata['discovery_question']
     assert q['slot']=='case_size'
     assert q['catalog_options']==['38 mm','42 mm']
@@ -120,7 +120,7 @@ async def test_budget_answer_keeps_ongoing_qualification_before_recommendation(a
 @pytest.mark.asyncio
 async def test_short_answer_reuses_pool_and_filters(adaptive):
     rows=[product(1,38),product(2,42)]
-    first,_=await run(interpretation(),rows)
+    first,_=await run(interpretation(preferences={'budget_max':6000}),rows)
     i=interpretation()
     second,calls=await run(i,rows,[turn(first)],text='38 mm')
     assert second is None and i._adaptive_ready
@@ -151,7 +151,7 @@ async def test_fourth_question_is_allowed_when_it_distinguishes_candidates(adapt
 @pytest.mark.asyncio
 async def test_unknown_answer_never_repeats_slot(adaptive):
     rows=[product(1,38),product(2,42)]
-    first,_=await run(interpretation(),rows)
+    first,_=await run(interpretation(preferences={'budget_max':6000}),rows)
     i=interpretation()
     result,calls=await run(i,rows,[turn(first)],text='não sei')
     assert result is None and i._adaptive_ready and not calls
@@ -215,7 +215,7 @@ async def test_price_widening_does_not_reuse_filtered_cache(adaptive):
 
 @pytest.mark.asyncio
 async def test_numeric_size_answer_preserves_requested_size(adaptive):
-    first,_=await run(interpretation(),[product(1,38),product(2,42)])
+    first,_=await run(interpretation(preferences={'budget_max':6000}),[product(1,38),product(2,42)])
     i=interpretation()
     _,calls=await run(i,[],[turn(first)],text='38')
     assert 'case_size:38-38mm' in i.preferences.attributes and not calls
@@ -260,7 +260,7 @@ async def test_full_handler_asks_then_searches_after_size(adaptive,monkeypatch):
     monkeypatch.setattr(openai_gateway,'generate_text_output',generate)
     async def handle(i,text,history):
         return await retrieve_catalog_or_clarify(message=IncomingMessage(text=text),facts={},customer_context={},interpretation=i,plan={'intent':'clarification','query':'Hamilton'},state=CommerceConversationState(),recent_turns=history,resolved_product=None)
-    first=await handle(interpretation(),'quero um Hamilton',[])
+    first=await handle(interpretation(preferences={'budget_max':6000}),'quero um Hamilton',[])
     assert first.response_metadata['discovery_question']['slot']=='case_size'
     final=await handle(interpretation(answer_strategy='clarify',needs_clarification=True),'38',[turn(first)])
     assert calls==['search_products','compiled']

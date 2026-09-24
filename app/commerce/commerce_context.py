@@ -168,6 +168,7 @@ class CommerceConversationState(BaseModel):
     cart_id: str | None = None
     cart_session_id: str | None = None
     cart_context_updated_at: datetime | None = None
+    checkout_context_cleared_at: datetime | None = None
     context_repairs: list[str] = Field(default_factory=list)
     terminal_order_context_cleared_for: str | None = None
     cart_url: str | None = None

@@ -255,8 +255,9 @@ def has_bound_sale_target(commerce_state: Any | None) -> bool:
     return any(
         (
             getattr(commerce_state, "active_product", None),
-            getattr(commerce_state, "cart_session_id", None),
-            getattr(commerce_state, "cart_id", None),
+            bool(getattr(commerce_state, "cart_session_id", None) or getattr(commerce_state, "cart_id", None))
+            and bool(getattr(commerce_state, "cart_items", None) or getattr(commerce_state, "cart_product_id", None)
+                     or getattr(commerce_state, "purchase_target", None)),
             not terminal_order and getattr(commerce_state, "order_id", None),
             not terminal_order and getattr(commerce_state, "order_lookup_id", None),
         )

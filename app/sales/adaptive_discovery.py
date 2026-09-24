@@ -360,6 +360,21 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
         known.add("budget")
     questions = {q["slot"]: q for q in contextual["questions"]}
     choices = []
+    # A small/sparse catalog sample is not evidence that we understand the
+    # customer's needs. Keep qualifying a brand-only request even if only one
+    # candidate happens to survive that sample.
+    has_product_criteria = bool(prefs.color or prefs.style or prefs.occasion or prefs.material
+        or prefs.mechanism or prefs.crystal or interpretation_case_size_range(interpretation, message_text=message.text)
+        or [a for a in prefs.attributes if not str(a).startswith(('qual:', 'somente:'))])
+    required_slot = None
+    if not has_product_criteria and 'budget' not in known and 'budget' not in asked and 'budget' in questions:
+        required_slot = 'budget'
+    elif (not has_product_criteria and 'budget' in known and 'model_intent' in asked
+          and 'purchase_purpose' not in known and 'purchase_purpose' not in asked
+          and 'purchase_purpose' in questions):
+        required_slot = 'purchase_purpose'
+    if required_slot:
+        choices.append((2000, 0, required_slot, []))
     if (interpretation.goal == "recommend" and "purchase_purpose" in questions and "purchase_purpose" not in known
             and "purchase_purpose" not in asked and len(matches) > 1):
         choices.append((1000, 0, "purchase_purpose", []))
@@ -376,7 +391,7 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
     needs_model = budget_needs_model and not choices
     if needs_model:
         choices.append((0, 0, 'model_intent', []))
-    if (len(matches) == 1 and not needs_model) or not choices:
+    if (len(matches) == 1 and not needs_model and not required_slot) or not choices:
         interpretation._adaptive_ready = True
         return None
     _, _, slot, options = max(choices)

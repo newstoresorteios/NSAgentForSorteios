@@ -49,7 +49,7 @@ def test_qualification_answers_are_distinct_and_filter_catalog():
 @pytest.mark.asyncio
 async def test_style_facet_continues_after_three_questions(adaptive):
     rows=[dict(product(1,38),style='Mergulho'),dict(product(2,38),style='Dress')]
-    first,_=await run(interpretation(),rows)
+    first,_=await run(interpretation(preferences={'budget_max':6000}),rows)
     assert first.response_metadata['discovery_question']['slot']=='style'
     q=first.response_metadata['discovery_question']
     q['adaptive']['asked']=['budget','color','occasion']
@@ -61,7 +61,7 @@ async def test_style_facet_continues_after_three_questions(adaptive):
 
 @pytest.mark.asyncio
 async def test_recommendation_asks_purpose_without_gender_assumption(adaptive):
-    first,_=await run(interpretation(goal='recommend'),[product(1,38),product(2,42)])
+    first,_=await run(interpretation(goal='recommend',preferences={'budget_max':6000}),[product(1,38),product(2,42)])
     assert first.response_metadata['discovery_question']['slot']=='purchase_purpose'
 
 

@@ -131,7 +131,8 @@ def _copy_missing_fields(base: dict[str, Any], donor: dict[str, Any], keys: tupl
         ):
             base[key] = donor[key]
     if (
-        base.get("pending_action") is None
+        "pending_action" in keys
+        and base.get("pending_action") is None
         and donor.get("pending_action") == "awaiting_payment"
     ):
         base["pending_action"] = "awaiting_payment"
@@ -181,12 +182,23 @@ def merge_commerce_states(
     donor_order = str(donor.get("order_id") or donor.get("order_lookup_id") or "")
     if latest_order and donor_order and latest_order != donor_order:
         return _strip_browse_memory(base) if base.get("forget_shortlist") else base
+    # Clearing a completed checkout is authoritative, not missing information.
+    # Keep its historical facts, but do not resurrect its cart/workflow from a
+    # richer older snapshot. A new cart already in primary remains untouched.
+    from app.sales.dialogue_phase import is_terminal_order_state
+    terminal = is_terminal_order_state(CommerceConversationState.from_payload(base))
+    recovery_keys = _ORDER_RECOVERY_KEYS
+    if terminal or base.get("checkout_context_cleared_at"):
+        recovery_keys = tuple(k for k in _ORDER_RECOVERY_KEYS if k not in {
+            "pending_action", "purchase_stage", "cart_session_id", "cart_url",
+            "checkout_draft", "purchase_target", "purchase_target_selected_at", "order_payment_url",
+        })
     if base.get("forget_shortlist"):
-        recovered = _copy_missing_fields(base, donor, _ORDER_RECOVERY_KEYS)
+        recovered = _copy_missing_fields(base, donor, recovery_keys)
         return _strip_browse_memory(recovered)
     # Order richness is not recency: a previous checkout must never replace
     # the latest budget, brand, phase, or an explicitly cleared shortlist.
-    return _copy_missing_fields(base, donor, _ORDER_RECOVERY_KEYS)
+    return _copy_missing_fields(base, donor, recovery_keys)
 
 
 def is_short_affirmation(text: str | None) -> bool:
