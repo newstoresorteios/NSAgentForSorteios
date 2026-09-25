@@ -52,7 +52,7 @@ def _lookup_ig_username(sender_id: str) -> str | None:
         with httpx.Client(timeout=2.0) as client:
             resp = client.get(
                 f"https://graph.instagram.com/v21.0/{sender_id}",
-                params={"fields": "username,name", "access_token": token},
+                params={"fields": "username,name"},
                 headers={"Authorization": f"Bearer {token}"},
             )
         data = resp.json() if resp.content else {}
@@ -704,7 +704,6 @@ async def send_meta_instagram_reply(
         for url in endpoints:
             resp = await client.post(
                 url,
-                params={"access_token": token},
                 json=payload,
                 headers={"Authorization": f"Bearer {token}"},
             )

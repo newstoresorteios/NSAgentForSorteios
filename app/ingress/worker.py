@@ -253,6 +253,22 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
         incoming.raw["inbound_id"] = inbound_id
         incoming.raw["inbox_id"] = inbox_id
 
+    # Story praise/reactions belong in the Central history, but an automated
+    # response is intrusive and can conflict with native social interactions.
+    from app.stories.instagram_story_intent import should_silence_story_feedback
+    if should_silence_story_feedback(incoming):
+        _mark_group_processed(grouped_inbox_ids, inbound_id)
+        log_event(
+            "inbox.skipped_story_feedback",
+            {"inbox_id": inbox_id, "channel": incoming.channel, "inbound_id": inbound_id},
+        )
+        return {
+            "ok": True,
+            "inbox_id": inbox_id,
+            "inbound_id": inbound_id,
+            "skipped": "story_feedback",
+        }
+
     try:
         from app.ops.human_takeover import human_takeover_active
 

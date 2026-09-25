@@ -2,7 +2,10 @@ from unittest.mock import AsyncMock
 import pytest
 from app.models import IncomingMessage
 from app.stories.instagram_story_models import InstagramStoryContext, StoryVisualUnderstanding, VisualProductRegion
-from app.stories.instagram_story_intent import should_route_story_question
+from app.stories.instagram_story_intent import (
+    should_route_story_question, should_silence_story_feedback,
+    story_requires_text_first,
+)
 from app.stories.instagram_story_service import _clarification_from_regions
 
 
@@ -14,8 +17,8 @@ def incoming(text):
 @pytest.mark.parametrize("text", [
     "Parabéns! Encontrar vocês foi um achado, indo para meu terceiro relógio!",
     "Ansioso, pedidos do dia 11/09, previsão de envio?",
-    "Obrigado! Quanto custa esse?",
     "Preciso da garantia do meu relógio",
+    "Felipe, qual o tamanho do seu pulso?",
 ])
 @pytest.mark.asyncio
 async def test_text_service_and_social_messages_bypass_all_visual_routes(monkeypatch, text):
@@ -30,9 +33,33 @@ async def test_text_service_and_social_messages_bypass_all_visual_routes(monkeyp
     vision.assert_not_called()
 
 
-@pytest.mark.parametrize("text", ["Quero um", "Quanto custa esse?", "Tem esse?", "Qual o modelo?"])
+@pytest.mark.parametrize("text", [
+    "Quero um", "Quanto custa esse?", "Obrigado! Quanto custa esse?",
+    "Tem esse?", "Qual o modelo?", "Qual o tamanho desse?",
+])
 def test_product_requests_keep_story_resolution(text):
     assert should_route_story_question(incoming(text))
+
+
+@pytest.mark.parametrize("text", [
+    "top, os envios!", "top o envio!", "Lindo!", "Amei", "Show demais", "🔥", "👏👏",
+])
+def test_social_story_feedback_is_recorded_without_auto_reply(text):
+    message = incoming(text)
+    assert should_silence_story_feedback(message)
+    assert story_requires_text_first(message)
+    assert not should_route_story_question(message)
+
+
+@pytest.mark.parametrize("text", [
+    "Qual o tamanho do seu pulso?", "Meu pedido não chegou", "Preciso de ajuda",
+    "Quando vocês enviam?", "Tem previsão de envio?", "Qual o valor da entrega?", "Bom dia",
+])
+def test_non_product_story_text_uses_normal_agent_without_being_silenced(text):
+    message = incoming(text)
+    assert story_requires_text_first(message)
+    assert not should_route_story_question(message)
+    assert not should_silence_story_feedback(message)
 
 
 def test_many_regions_do_not_leak_internal_labels_or_invent_binary_choice():

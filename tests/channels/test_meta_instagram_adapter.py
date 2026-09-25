@@ -337,3 +337,38 @@ def test_story_rollout_allows_meta_live_media(monkeypatch):
     assert allowed is True
     assert reason == "meta_live_media"
     get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_meta_send_keeps_access_token_out_of_url(monkeypatch):
+    from app.channels import meta_instagram as module
+    from app.models import AgentResult, IncomingMessage
+
+    calls = []
+    class Response:
+        status_code = 200
+        content = b'{"message_id":"ok"}'
+        def json(self):
+            return {"message_id": "ok"}
+    class Client:
+        def __init__(self, **_kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return None
+        async def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return Response()
+
+    monkeypatch.setattr("httpx.AsyncClient", Client)
+    monkeypatch.setattr(module, "get_settings", lambda: type("S", (), {
+        "meta_page_access_token": "IGAA-secret-token",
+        "meta_ig_business_account_id": "business-id",
+    })())
+    result = await module.send_meta_instagram_reply(
+        IncomingMessage(sender_external_id="recipient", sender_key="instagram:recipient"),
+        AgentResult(reply_text="Olá"),
+    )
+    assert result["ok"] is True
+    assert calls
+    assert all("IGAA-secret-token" not in url for url, _ in calls)
+    assert all("params" not in kwargs for _, kwargs in calls)
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer IGAA-secret-token"

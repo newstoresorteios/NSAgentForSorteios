@@ -143,3 +143,24 @@ def test_process_inbox_row_skips_caption_echo(monkeypatch):
     )
     assert result == {"ok": True, "inbox_id": 4, "skipped": "caption_echo"}
     assert marked == [4]
+
+
+def test_story_feedback_is_persisted_but_never_generates_or_sends(monkeypatch):
+    import asyncio
+    from app.ingress import worker as worker_mod
+    from app.stories.instagram_story_models import InstagramStoryContext
+
+    incoming = IncomingMessage(
+        provider="meta", channel="instagram", text="top, os envios!",
+        sender_key="instagram:user-1", conversation_id="ig:user-1",
+        instagram_story=InstagramStoryContext(replied_to_story=True, story_media_id="s1"),
+    )
+    monkeypatch.setattr(worker_mod, "incoming_from_inbox_payload", lambda *_: incoming)
+    monkeypatch.setattr(worker_mod, "attach_recent_image_for_followup", lambda item: item)
+    monkeypatch.setattr(worker_mod, "claim_inbound_message", lambda *_: (True, 77))
+    marked = []
+    monkeypatch.setattr(worker_mod, "mark_inbox_processed", lambda row_id, **kw: marked.append((row_id, kw)))
+
+    result = asyncio.run(worker_mod.process_inbox_row({"id": 9, "payload_json": {}, "attempts": 1}))
+    assert result == {"ok": True, "inbox_id": 9, "inbound_id": 77, "skipped": "story_feedback"}
+    assert marked == [(9, {"processed_inbound_id": 77})]
