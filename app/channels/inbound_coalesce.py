@@ -94,6 +94,13 @@ def recent_image_inbound_for_echo(
         return None
     if not row:
         return None
+    if isinstance(row, dict):
+        return {
+            "id": row["id"],
+            "text": row.get("text") or "",
+            "channel_metadata": _metadata_dict(row.get("channel_metadata")),
+            "created_at": row.get("created_at"),
+        }
     return {
         "id": row[0],
         "text": row[1] or "",

@@ -140,6 +140,10 @@ async def handle_sales_message_inner(
     )
     interpretation = normalize_identity(interpretation)
     state = commerce_state or CommerceConversationState()
+    from app.sales.service_intent_gate import service_intent_clarification
+    service_reply = service_intent_clarification(message.text, interpretation, state)
+    if service_reply is not None:
+        return service_reply
     from app.sales.purchase_selection import recover_purchase_target_for_checkout
     state = recover_purchase_target_for_checkout(
         interpretation,
@@ -333,6 +337,11 @@ async def handle_sales_message_inner(
         and interpretation.confirmation == "none"
     ):
         interpretation._clear_pending_action = True
+    service_reply = service_intent_clarification(
+        message.text, interpretation, state, catalog_fallback=True,
+    )
+    if service_reply is not None:
+        return service_reply
     return await sales._handle_sales_catalog_inner(
         message,
         facts,
