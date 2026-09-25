@@ -46,3 +46,19 @@ def ingress_settings(incoming, base):
     if not persona.configuration_bundle:
         raise RuntimeError('ingress_configuration_unavailable')
     return settings_from_bundle(base, persona.configuration_bundle)
+
+
+def stamp_silent_inbound_workspace(incoming, inbound_id: int | None) -> None:
+    """Resolve ownership even when the agent pipeline is intentionally skipped."""
+    from app.config import get_settings
+    if not getattr(get_settings(), "database_url", None):
+        return
+    if inbound_id is None:
+        raise ValueError("silent_inbound_id_missing")
+    workspace = resolve_conversation_workspace(incoming.conversation_id, incoming.channel)
+    if not workspace:
+        from app.persona.persona_runtime import load_persona_runtime
+        workspace = load_persona_runtime().flow_params_dict().get("workspace_id")
+    if not workspace:
+        raise ValueError("silent_inbound_workspace_unresolved")
+    stamp_inbound_workspace(inbound_id, workspace)

@@ -264,6 +264,13 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
 
     # Persist all Story input for the Central, but never analyze or reply to it.
     if silence_story:
+        from app.configuration.workspace import stamp_silent_inbound_workspace
+        try:
+            await asyncio.to_thread(stamp_silent_inbound_workspace, incoming, inbound_id)
+        except Exception as exc:
+            log_exception("inbox.story_workspace_failed", exc, {"inbox_id": inbox_id})
+            _mark_group_failed(grouped_inbox_ids, error="story_workspace_failed")
+            return {"ok": False, "inbox_id": inbox_id, "error": "story_workspace_failed"}
         _mark_group_processed(grouped_inbox_ids, inbound_id)
         log_event(
             "inbox.skipped_story_message",
