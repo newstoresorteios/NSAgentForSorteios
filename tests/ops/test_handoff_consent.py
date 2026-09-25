@@ -31,7 +31,8 @@ def test_ordinary_messages_and_refusals_are_not_direct_requests(text):
 
 
 @pytest.mark.parametrize('text', ['Quero falar com um atendente', 'Me transfere para a equipe',
-    'Gostaria de falar com uma pessoa', 'Quero um humano', 'Não consigo comprar, quero falar com atendente', 'Chame um atendente', 'atendente', 'falar com vendas'])
+    'Gostaria de falar com uma pessoa', 'Quero um humano', 'Não consigo comprar, quero falar com atendente', 'Chame um atendente', 'atendente', 'falar com vendas',
+    'Terei que falar com atendente físico.', 'Vou ter que conversar com uma pessoa'])
 def test_explicit_customer_requests(text):
     assert customer_requests_human(text)
     incoming = IncomingMessage(channel='whatsapp', text=text)

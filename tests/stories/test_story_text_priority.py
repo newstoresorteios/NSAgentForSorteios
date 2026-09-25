@@ -82,3 +82,14 @@ def test_two_distinct_regions_are_portuguese():
     _, reply = _clarification_from_regions(analysis)
     assert "branco à esquerda" in reply and "azul à direita" in reply
     assert "watch" not in reply
+
+
+def test_unmatched_visual_brand_is_not_asserted_to_customer():
+    analysis = StoryVisualUnderstanding(
+        watch_count=1,
+        visible_brands=["Sony"],
+        logo_hypotheses=["HydroConquest"],
+    )
+    _, reply = _clarification_from_regions(analysis)
+    assert "Identifiquei Sony" not in reply
+    assert "não consegui confirmar" in reply

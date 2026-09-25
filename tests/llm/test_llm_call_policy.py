@@ -106,6 +106,26 @@ def test_resolve_turn_critique_mode_keeps_shadow_without_commerce_stakes(monkeyp
     assert reason == "configured_shadow"
 
 
+def test_story_image_promotes_shadow_critique_to_enforce(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("AGENT_CRITIQUE_ENFORCE_ON_COMMERCE", "true")
+    get_settings.cache_clear()
+    mode, reason = resolve_turn_critique_mode(
+        incoming=IncomingMessage(
+            channel="instagram",
+            text="qual o preço?",
+            image_url="https://example.com/story.jpg",
+        ),
+        result=AgentResult(
+            reply_text="Identifiquei Sony neste Story.",
+            intent="commerce",
+        ),
+        configured_mode="shadow",
+    )
+    assert mode == "enforce"
+    assert reason == "commerce_promote:inbound_image_turn"
+
+
 def test_greeting_intent_skips_critique():
     skip, reason = is_low_risk_judge_skip(
         IncomingMessage(channel="whatsapp", text="quero ver relógios"),

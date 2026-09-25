@@ -204,6 +204,22 @@ def test_idle_position_pick_keeps_shortlist():
     ) is False
 
 
+def test_idle_after_sales_drops_stale_catalog_target_without_order():
+    old = datetime.now(timezone.utc) - timedelta(seconds=BROWSE_IDLE_SECONDS + 60)
+    state = _shortlist_state(
+        last_browse_at=old,
+        purchase_stage="after_sales",
+        order_id=None,
+        order_payment_url=None,
+        pending_action=None,
+    )
+    assert should_reset_browse_memory(
+        "Gostaria de saber qual opção seria plausível em relação à pulseira.",
+        conversation_id="thread-old",
+        state=state,
+    )
+
+
 def test_same_thread_new_catalog_ask_resets_shortlist():
     state = _shortlist_state()
     assert should_reset_browse_memory(

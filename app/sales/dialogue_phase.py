@@ -338,6 +338,18 @@ def should_reset_browse_memory(
         return True
     if not has_browse_memory(state):
         return False
+    if (
+        state is not None
+        and is_browse_idle(state, now=now)
+        and state.purchase_stage == "after_sales"
+        and not state.order_id
+        and not state.order_lookup_id
+        and not state.cart_session_id
+    ):
+        # A support topic may legitimately resume after days, but a stale
+        # catalog SKU must not become evidence for it.  Start from the current
+        # message and ask for the reference/order when needed.
+        return True
     if is_commerce_continuation(message_text):
         return False
     try:

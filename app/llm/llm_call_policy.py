@@ -48,6 +48,7 @@ _COMMERCE_ENFORCE_TRIGGERS = frozenset(
         "reply_contains_payment_link",
         "commerce_products_presented",
         "commerce_sku_or_reference",
+        "inbound_image_turn",
         "order_prepared_or_confirmed",
         "payment_consulted",
         "order_context_present",

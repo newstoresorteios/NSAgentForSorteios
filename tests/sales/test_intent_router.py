@@ -96,6 +96,33 @@ def test_purchase_close_skips_qualification_and_force_retrieval():
 
 
 @pytest.mark.offline_eval
+def test_after_sales_correction_never_asks_for_shortlist_position():
+    interpretation = _interp(
+        goal="after_sales",
+        purchase_stage="after_sales",
+        answer_strategy="acknowledge",
+        subject={"brand": "Frederique Constant", "product_type": "relógio"},
+        needs_clarification=False,
+    )
+    state = CommerceConversationState(
+        purchase_stage="after_sales",
+        active_product={"product_id": "11231", "name": "Pulseira Tissot", "brand": "Tissot"},
+        last_presented_products=[
+            {"position": 1, "product_id": "11231", "name": "Pulseira Tissot", "brand": "Tissot"}
+        ],
+    )
+    route = route_sales_intent(
+        interpretation=interpretation,
+        plan=_plan(intent="clarification", query=""),
+        message_text="Na verdade é sobre o Frederique Constant que veio com pulseira de metal.",
+        commerce_state=state,
+        recent_turns=[],
+    )
+    assert route.purchase_close is False
+    assert route.purchase_close_hold is False
+
+
+@pytest.mark.offline_eval
 def test_first_seiko_without_state_still_asks_qualification():
     interpretation = _interp(
         goal="discover",

@@ -26,6 +26,15 @@ def customer_requests_human(text: str | None) -> bool:
     rules = consent_rules()
     if re.search(rules['negative'], text):
         return False
+    # Natural statements of necessity are already an explicit request.  They
+    # must not be downgraded to a second confirmation question.
+    if re.search(
+        r"\b(?:tenho|terei|vou ter|preciso)\s+(?:mesmo\s+)?que\s+"
+        r"(?:falar|conversar)\s+com\s+(?:um |uma |o |a )?"
+        r"(?:atendente|humano|ser humano|pessoa|equipe|vendedor|vendas)\b",
+        text,
+    ):
+        return True
     return any(re.fullmatch(p,text) for p in rules['directFull']) or any(re.search(p,text) for p in rules['directSearch'])
 
 

@@ -229,6 +229,43 @@ def test_checkout_pending_without_cart_keeps_shortlist_and_active():
     assert updated.active_product.product_id == "aq1"
 
 
+def test_after_sales_brand_conflict_drops_stale_active_product():
+    from app.agents.commerce import _drop_conflicting_active_product
+
+    state = CommerceConversationState(
+        purchase_stage="after_sales",
+        order_id="ORDER-1",
+        active_product={
+            "product_id": "11231",
+            "name": "Pulseira de Couro Tissot PRX",
+            "brand": "Tissot",
+        },
+        last_presented_products=[
+            {
+                "position": 1,
+                "product_id": "11231",
+                "name": "Pulseira de Couro Tissot PRX",
+                "brand": "Tissot",
+            }
+        ],
+    )
+    interpretation = _interp(
+        goal="after_sales",
+        purchase_stage="after_sales",
+        subject={"brand": "Frederique Constant", "product_type": "relógio"},
+        active_topic="Frederique Constant",
+    )
+    cleaned = _drop_conflicting_active_product(
+        IncomingMessage(text="Na verdade é sobre o Frederique Constant."),
+        interpretation,
+        state,
+    )
+    assert cleaned.active_product is None
+    assert cleaned.last_presented_products == []
+    assert cleaned.active_topic == "Frederique Constant"
+    assert cleaned.order_id == "ORDER-1"
+
+
 def test_inspect_image_persists_active_and_one_item_list_when_shortlist_empty():
     previous = CommerceConversationState(active_domain="commerce")
     result = AgentResult(

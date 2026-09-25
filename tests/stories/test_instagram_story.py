@@ -679,10 +679,10 @@ def test_clarification_asks_reference_when_brand_already_known():
         dial_colors=["black"],
     )
     _options, reply = _clarification_from_regions(analysis)
-    assert "Bulova" in reply
+    assert "Bulova" not in reply
+    assert "não consegui confirmar" in reply
     assert "referência" in reply.lower()
-    assert "CONFIRA" in reply
-    assert "a marca ou a referência" not in reply
+    assert "print" in reply
 
 
 def test_visual_understanding_forbids_trusting_advertised_price_as_stock():

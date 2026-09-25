@@ -667,6 +667,15 @@ def blocks_persona_qualification_for_purchase(
     """Purchase closing / shortlist on screen must not reopen ChatBo discovery."""
     if interpretation is None or state is None:
         return False
+    # A previously displayed SKU is not a purchase-close signal during support
+    # or after-sales.  Treating it as one caused corrections and complaints to
+    # loop on "qual opção 1, 2 ou 3?".
+    if (
+        interpretation.goal == "after_sales"
+        or interpretation.purchase_stage == "after_sales"
+        or state.purchase_stage == "after_sales"
+    ):
+        return False
     try:
         from .dialogue_phase import session_in_checkout_phase
 

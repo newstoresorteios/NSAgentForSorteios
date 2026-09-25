@@ -255,16 +255,14 @@ def _clarification_from_regions(
             "Claro! Qual dos relógios do Story chamou sua atenção? "
             "Pode me indicar pela posição ou mandar um print marcando ele?"
         )
-    brands = [
-        str(raw).strip()
-        for raw in (*(analysis.visible_brands or []), *(analysis.logo_hypotheses or []))
-        if str(raw or "").strip()
-    ]
-    if brands:
-        brand = brands[0]
+    # Vision labels are search hints, not customer-facing identity evidence.
+    # Story artwork, a soundtrack card or a nearby logo can look like a watch
+    # brand.  Only a catalog match may authorize an identification claim.
+    if analysis.visible_brands or analysis.logo_hypotheses:
         return options, (
-            f"Identifiquei {brand} neste Story, mas não fechei o modelo exato no catálogo. "
-            "Me manda a referência ou o link do CONFIRA que eu confirmo o valor."
+            "A leitura visual sugeriu uma marca, mas não consegui confirmar o "
+            "relógio no catálogo. Pode me mandar a referência ou um print mais "
+            "nítido do mostrador?"
         )
     return options, (
         "Nesse Story a identificação ficou parcial. "
@@ -1154,13 +1152,13 @@ async def resolve_story_product_question(
     story = await _hydrate_story_media(story)
     from app.channels.meta_instagram import looks_like_video_url
 
-    prefer_thumbnail = story.media_type == "video" or looks_like_video_url(
-        story.operational_media_url()
-    )
-    if prefer_thumbnail and story.operational_thumbnail_url():
-        download_url = story.operational_thumbnail_url()
-    else:
-        download_url = story.operational_media_url() or story.operational_thumbnail_url()
+    # Prefer the actual media.  Selecting the thumbnail first made every video
+    # take the image-only path, so transient overlay text could be mistaken for
+    # the watch identity and representative frames were never extracted.
+    media_url = story.operational_media_url()
+    thumbnail_url = story.operational_thumbnail_url()
+    is_video = story.media_type == "video" or looks_like_video_url(media_url)
+    download_url = media_url or thumbnail_url
 
     if not download_url:
         if _story_store_url(story, incoming):
@@ -1280,7 +1278,7 @@ async def resolve_story_product_question(
                 )
 
         if analysis is None:
-            if media.content_type.startswith("video/"):
+            if is_video and media.content_type.startswith("video/"):
                 frames = await asyncio.to_thread(
                     extract_video_frames_best_effort,
                     media.content,

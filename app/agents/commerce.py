@@ -59,6 +59,36 @@ def _sales():
     return sales_mod
 
 
+def _drop_conflicting_active_product(
+    message: IncomingMessage,
+    interpretation: SalesInterpretation | None,
+    state: CommerceConversationState,
+) -> CommerceConversationState:
+    if interpretation is None or state.active_product is None:
+        return state
+    from app.catalog.retrieval.text import fold_text
+    from app.sales.dialogue_phase import reset_browse_memory_keep_orders
+
+    current_brand = fold_text(interpretation.subject.brand or "")
+    active_brand = fold_text(state.active_product.brand or "")
+    incoming_text = fold_text(message.text)
+    conflicts = bool(
+        current_brand
+        and active_brand
+        and current_brand != active_brand
+        and (
+            current_brand in incoming_text
+            or state.purchase_stage == "after_sales"
+            or interpretation.purchase_stage == "after_sales"
+        )
+    )
+    if not conflicts:
+        return state
+    cleaned = reset_browse_memory_keep_orders(state)
+    cleaned.active_topic = interpretation.active_topic or interpretation.subject.brand
+    return cleaned
+
+
 def __getattr__(name: str) -> Any:
     if name in _SALES_REEXPORTS:
         return getattr(_sales(), name)
@@ -120,6 +150,9 @@ async def handle_sales_message_inner(
         normalize_ready_requirement, recover_mentioned_product, try_availability_question)
     interpretation, state = normalize_followup(message.text, interpretation, state, recent_turns)
     interpretation = normalize_ready_requirement(message.text, interpretation, state, recent_turns)
+    # An explicit/current support brand outranks a stale active SKU. Keeping
+    # the old target poisoned Matheus' Frederique request with a Tissot strap.
+    state = _drop_conflicting_active_product(message, interpretation, state)
     from app.sales.contextual_questions import try_name_answer
     name_answer = try_name_answer(message, interpretation, state)
     if name_answer is not None:

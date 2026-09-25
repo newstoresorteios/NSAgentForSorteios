@@ -21,6 +21,10 @@ Extraia apenas o que é visualmente verificável.
 Escreva descrições e cores em português brasileiro; preserve os enums do schema.
 Cada product_region deve representar um relógio individual, nunca caixas ou grupos.
 Marca, coleção e modelo são hipóteses até validação no catálogo.
+Só preencha visible_brands/logo_hypotheses quando a marca estiver legível no
+próprio relógio (mostrador, fundo ou fecho). Ignore textos sobrepostos do Story,
+legendas, música, interface do Instagram, marca da loja, câmera e objetos ao redor.
+Em vídeo, prefira evidências que aparecem de forma consistente em mais de um frame.
 Não trate aparência semelhante como identificação exata.
 Se houver mais de um produto, represente a ambiguidade (multiple_products=true).
 Se houver preço escrito na arte, coloque em visible_advertised_price — isso NÃO é preço atual.
