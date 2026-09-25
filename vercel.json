@@ -1,17 +1,10 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
+  "functions": {
+    "api/index.py": {
+      "excludeFiles": "{tests/**,docs/**,.codex-remote-attachments/**,.pytest-*/**,supabase/.temp/**}"
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "api/index.py"
-    }
-  ],
+  },
   "crons": [
     {
       "path": "/api/cron/catalog-url-health",

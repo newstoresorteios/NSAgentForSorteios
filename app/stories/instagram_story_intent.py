@@ -19,7 +19,9 @@ _AVAIL_RE = re.compile(
 _LINK_RE = re.compile(r"\b(link|url|site|manda\s+o\s+link|envia\s+o\s+link)\b", re.I)
 _COLOR_RE = re.compile(r"\b(outra\s+cor|outras\s+cores|cor\s+diferente|cores?)\b", re.I)
 _MODEL_RE = re.compile(
-    r"\b(modelo|refer[eê]ncia|qual\s+(?:e|é)\s+(?:esse|este)|que\s+rel[oó]gio)\b",
+    r"\b(modelo|refer[eê]ncia|"
+    r"qual\s+(?:(?:e|é)\s+)?(?:esse|este)(?:\s+rel[oó]gio)?|"
+    r"que\s+rel[oó]gio(?:\s+(?:e|é)\s+(?:esse|este))?)\b",
     re.I,
 )
 _MECH_RE = re.compile(r"\b(autom[aá]tico|quartz|mecanismo|cron[oó]grafo)\b", re.I)

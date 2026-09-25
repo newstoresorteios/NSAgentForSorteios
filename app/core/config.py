@@ -900,7 +900,7 @@ class Settings(BaseSettings):
         alias="INSTAGRAM_STORY_ALLOWED_HOSTS",
     )
     instagram_story_video_frame_analysis_enabled: bool = Field(
-        default=False,
+        default=True,
         alias="INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED",
     )
     instagram_story_video_max_frames: int = Field(

@@ -1281,7 +1281,8 @@ async def resolve_story_product_question(
 
         if analysis is None:
             if media.content_type.startswith("video/"):
-                frames = extract_video_frames_best_effort(
+                frames = await asyncio.to_thread(
+                    extract_video_frames_best_effort,
                     media.content,
                     max_frames=int(
                         getattr(get_settings(), "instagram_story_video_max_frames", 3) or 3

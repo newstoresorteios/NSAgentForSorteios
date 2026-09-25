@@ -1,14 +1,15 @@
-"""Safe Instagram Story media download (SSRF-hardened, streaming).
+"""Safe Instagram Story media download and video frame extraction.
 
 Operational URLs keep signed query strings. Logs only use SafeMediaReference.
 
-INCOMPLETE: ``SupabasePrivateStoryMediaStorage.get_private`` and
-``extract_video_frames_best_effort`` are stubs. Do not treat them as ready.
+``SupabasePrivateStoryMediaStorage.get_private`` remains reserved because the
+current processing path never needs to expose stored media again.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import ipaddress
 import socket
 from dataclasses import dataclass
@@ -391,18 +392,62 @@ def extract_video_frames_best_effort(
     *,
     max_frames: int = 3,
 ) -> list[bytes]:
-    """Video frame extraction — disabled until a deploy-compatible decoder ships.
+    """Decode representative video frames to JPEG without writing to disk.
 
-    Set INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED=true only after OpenCV/ffmpeg
-    is validated on Render. Until then this returns [].
+    Decord ships a compact FFmpeg-backed decoder and supports in-memory files,
+    so no media is written to disk. Failures remain best-effort and never expose
+    media.
     """
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_video_frame_analysis_enabled", False)):
         return []
-    _ = content
-    _ = max_frames
-    # Intentionally empty: do not pretend frames were extracted.
-    return []
+    if not content:
+        return []
+
+    frame_limit = max(1, min(int(max_frames or 3), 5))
+    try:
+        from decord import VideoReader, cpu
+        from PIL import Image
+
+        reader = VideoReader(io.BytesIO(content), ctx=cpu(0), num_threads=1)
+        frame_count = len(reader)
+        if frame_count <= 0:
+            return []
+        frame_indexes = sorted(
+            {
+                min(
+                    frame_count - 1,
+                    max(0, int(frame_count * (index + 1) / (frame_limit + 1))),
+                )
+                for index in range(frame_limit)
+            }
+        )
+
+        encoded: list[bytes] = []
+        seen: set[str] = set()
+        # Fetch frames individually: this avoids the native get_batch deadlock
+        # reported for malformed containers while still seeking efficiently.
+        for frame_index in frame_indexes:
+            image = Image.fromarray(reader[frame_index].asnumpy()).convert("RGB")
+            image.thumbnail((1600, 1600))
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=85, optimize=True)
+            payload = output.getvalue()
+            digest = hashlib.sha256(payload).hexdigest()
+            if digest not in seen:
+                seen.add(digest)
+                encoded.append(payload)
+        log_event(
+            "instagram_story.video_frames_extracted",
+            {"frames": len(encoded), "requested": frame_limit},
+        )
+        return encoded
+    except Exception as exc:  # noqa: BLE001 - media decoding must degrade safely
+        log_event(
+            "instagram_story.video_frame_extraction_failed",
+            {"code": type(exc).__name__},
+        )
+        return []
 
 
 def safe_media_url_for_log(url: str | None) -> dict[str, Any]:

@@ -36,6 +36,7 @@ async def test_text_service_and_social_messages_bypass_all_visual_routes(monkeyp
 @pytest.mark.parametrize("text", [
     "Quero um", "Quanto custa esse?", "Obrigado! Quanto custa esse?",
     "Tem esse?", "Qual o modelo?", "Qual o tamanho desse?",
+    "Muito legal, qual esse relógio?", "Que relógio é esse?",
 ])
 def test_product_requests_keep_story_resolution(text):
     assert should_route_story_question(incoming(text))

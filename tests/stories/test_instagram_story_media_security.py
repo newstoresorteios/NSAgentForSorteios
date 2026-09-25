@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import socket
+import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,6 +12,7 @@ import pytest
 from app.stories.instagram_story_media import (
     StoryMediaError,
     download_story_media,
+    extract_video_frames_best_effort,
     validate_story_media_url,
     _sniff_mime,
 )
@@ -399,3 +402,41 @@ def test_sniff_mime_types():
     assert _sniff_mime(b"\x89PNG\r\n\x1a\n") == "image/png"
     assert _sniff_mime(b"GIF89a....") == "image/gif"
     assert _sniff_mime(b"RIFF....WEBP") == "image/webp"
+    assert _sniff_mime(b"\x00\x00\x00\x18ftypmp42") == "video/mp4"
+
+
+def test_video_frame_extraction_decodes_representative_jpegs(monkeypatch):
+    import numpy as np
+    from app.config import get_settings
+
+    monkeypatch.setenv("INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED", "true")
+    get_settings.cache_clear()
+
+    class FakeFrame:
+        def __init__(self, value: int):
+            self.value = value
+
+        def asnumpy(self):
+            return np.full((64, 64, 3), self.value, dtype=np.uint8)
+
+    class FakeVideoReader:
+        def __init__(self, *_args, **_kwargs):
+            self.frames = [FakeFrame(index * 20) for index in range(9)]
+
+        def __len__(self):
+            return len(self.frames)
+
+        def __getitem__(self, index):
+            return self.frames[index]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "decord",
+        SimpleNamespace(VideoReader=FakeVideoReader, cpu=lambda _index: "cpu"),
+    )
+
+    frames = extract_video_frames_best_effort(b"video", max_frames=3)
+
+    assert len(frames) == 3
+    assert all(frame.startswith(b"\xff\xd8") for frame in frames)
+    get_settings.cache_clear()
