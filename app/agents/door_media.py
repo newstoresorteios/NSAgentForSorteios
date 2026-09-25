@@ -20,6 +20,11 @@ async def try_media_routes(
     commerce_state: Any,
 ) -> AgentResult | None:
     door = _door()
+    from app.stories.instagram_story_intent import story_requires_text_first
+
+    if story_requires_text_first(message):
+        # Do not let Story thumbnails fall through to generic image search.
+        return None
     skip_generic_image = False
     try:
         from app.stories.instagram_story_intent import should_route_story_question

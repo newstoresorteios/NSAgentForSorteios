@@ -230,37 +230,31 @@ async def _list_real_variants(
 def _clarification_from_regions(
     analysis: StoryVisualUnderstanding,
 ) -> tuple[list[str], str]:
-    regions = list(analysis.product_regions or [])
-    options: list[str] = []
-    for region in regions[:4]:
-        if isinstance(region, VisualProductRegion):
-            bits = []
-            if region.label:
-                bits.append(region.label)
-            if region.dial_color:
-                bits.append(f"mostrador {region.dial_color}")
-            if region.position and region.position != "unknown":
-                bits.append(f"à {region.position}" if region.position in {"left", "right"} else region.position)
-            label = " — ".join(bits) if bits else f"produto {len(options) + 1}"
-            options.append(label)
-        elif isinstance(region, dict):
-            label = str(region.get("label") or "").strip()
-            dial = str(region.get("dial_color") or "").strip()
-            pos = str(region.get("position") or "").strip()
-            bits = [b for b in (label, f"mostrador {dial}" if dial else "", pos if pos and pos != "unknown" else "") if b]
-            options.append(" — ".join(bits) if bits else f"produto {len(options) + 1}")
-    if len(options) >= 2 and any("mostrador" in o or "left" in o or "right" in o or "esquerda" in o or "direita" in o for o in options):
-        reply = (
-            f"Nesse Story aparecem {len(options)} relógios. "
-            f"Você quer o {options[0]} ou o {options[1]}?"
-        )
-        return options, reply
+    # Internal visual labels may describe packaging or use English. Never
+    # concatenate them into customer copy; use only normalized visual facets.
+    positions = {"left": "à esquerda", "right": "à direita", "center": "no centro",
+                 "top": "na parte de cima", "bottom": "na parte de baixo"}
+    colors = {"blue": "azul", "light blue": "azul claro", "black": "preto",
+              "white": "branco", "silver": "prateado", "green": "verde",
+              "red": "vermelho", "orange": "laranja", "brown": "marrom",
+              "gold": "dourado", "pink": "rosa"}
+    options = []
+    for region in analysis.product_regions or []:
+        raw = region.model_dump() if isinstance(region, VisualProductRegion) else region
+        color = str(raw.get("dial_color") or "").strip().lower()
+        color = colors.get(color, color if color in colors.values() else "")
+        position = positions.get(raw.get("position"), "")
+        bits = [v for v in (f"mostrador {color}" if color else "", position) if v]
+        if bits:
+            options.append("relógio com " + " ".join(bits) if color else "relógio " + position)
+    if (analysis.watch_count == 2 and len(options) == 2
+            and len(set(options)) == 2):
+        return options, f"Claro! Você quer o {options[0]} ou o {options[1]}?"
     if analysis.watch_count > 1 or analysis.multiple_products:
-        reply = (
-            "Nesse Story aparecem mais de um relógio. "
-            "Você quer saber do primeiro ou do segundo?"
+        return [], (
+            "Claro! Qual dos relógios do Story chamou sua atenção? "
+            "Pode me indicar pela posição ou mandar um print marcando ele?"
         )
-        return options or ["primeiro", "segundo"], reply
     brands = [
         str(raw).strip()
         for raw in (*(analysis.visible_brands or []), *(analysis.logo_hypotheses or []))

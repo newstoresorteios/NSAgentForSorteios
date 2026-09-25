@@ -48,6 +48,24 @@ def detect_story_question_type(text: str | None) -> StoryQuestionType:
     return StoryQuestionType.GENERIC
 
 
+
+def story_requires_text_first(incoming: IncomingMessage) -> bool:
+    """Social feedback and service requests must reach the normal interpreter.
+
+    Story attachment is context, not an instruction to identify a product.
+    Mixed requests also keep their text instead of returning a visual-only reply.
+    """
+    story = getattr(incoming, "instagram_story", None)
+    if not isinstance(story, InstagramStoryContext):
+        return False
+    text = incoming.text or ""
+    return bool(re.search(
+        r"\b(parab[eé]ns|obrigad[oa]|elogio|atendimento|p[oó]s[- ]venda|"
+        r"pedido[s]?|rastreio|rastreamento|previs[aã]o\s+de\s+envio|"
+        r"meu\s+rel[oó]gio|troca|devolu[cç][aã]o|garantia|"
+        r"voc[eê]s\s+s[aã]o|adorei|amei)\b", text, re.I
+    ))
+
 def should_route_story_question(incoming: IncomingMessage) -> bool:
     story = getattr(incoming, "instagram_story", None)
     if not isinstance(story, InstagramStoryContext):
@@ -56,4 +74,4 @@ def should_route_story_question(incoming: IncomingMessage) -> bool:
         # Still route if explicit story mention in text + media id.
         if not (_STORY_HINT_RE.search(incoming.text or "") and story.story_media_id):
             return False
-    return True
+    return not story_requires_text_first(incoming)
