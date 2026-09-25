@@ -1,3 +1,4 @@
+import pytest
 from app.ingress.reconstruct import incoming_from_inbox_payload
 from app.channels.inbound_coalesce import attach_recent_image_for_followup
 from app.models import IncomingMessage
@@ -145,15 +146,17 @@ def test_process_inbox_row_skips_caption_echo(monkeypatch):
     assert marked == [4]
 
 
-def test_story_feedback_is_persisted_but_never_generates_or_sends(monkeypatch):
+@pytest.mark.parametrize("text", ["top, os envios!", "qual valor?", "Quero comprar", "Meu pedido não chegou", "🔥", ""])
+@pytest.mark.parametrize("media_type", ["image", "video"])
+def test_story_feedback_is_persisted_but_never_generates_or_sends(monkeypatch, text, media_type):
     import asyncio
     from app.ingress import worker as worker_mod
     from app.stories.instagram_story_models import InstagramStoryContext
 
     incoming = IncomingMessage(
-        provider="meta", channel="instagram", text="top, os envios!",
+        provider="meta", channel="instagram", text=text,
         sender_key="instagram:user-1", conversation_id="ig:user-1",
-        instagram_story=InstagramStoryContext(replied_to_story=True, story_media_id="s1"),
+        instagram_story=InstagramStoryContext(replied_to_story=True, story_media_id="s1", media_type=media_type),
     )
     monkeypatch.setattr(worker_mod, "incoming_from_inbox_payload", lambda *_: incoming)
     monkeypatch.setattr(worker_mod, "attach_recent_image_for_followup", lambda item: item)
@@ -162,5 +165,21 @@ def test_story_feedback_is_persisted_but_never_generates_or_sends(monkeypatch):
     monkeypatch.setattr(worker_mod, "mark_inbox_processed", lambda row_id, **kw: marked.append((row_id, kw)))
 
     result = asyncio.run(worker_mod.process_inbox_row({"id": 9, "payload_json": {}, "attempts": 1}))
-    assert result == {"ok": True, "inbox_id": 9, "inbound_id": 77, "skipped": "story_feedback"}
+    assert result == {"ok": True, "inbox_id": 9, "inbound_id": 77, "skipped": "story_message"}
     assert marked == [(9, {"processed_inbound_id": 77})]
+
+
+def test_plain_dm_is_not_silenced_even_when_text_mentions_story():
+    from app.stories.instagram_story_intent import should_silence_story_message
+    for text in ("qual valor?", "Vi um relógio no story", "oi"):
+        assert not should_silence_story_message(IncomingMessage(channel="instagram", text=text))
+
+
+def test_instagram_dm_cannot_be_merged_with_story(monkeypatch):
+    import asyncio
+    from app.ingress import worker
+    monkeypatch.setattr(worker, "claim_conversation_burst", lambda *a, **kw: pytest.fail("must not merge Instagram events"))
+    incoming = IncomingMessage(channel="instagram", text="oi")
+    merged, ids = asyncio.run(worker._claim_and_merge_burst({"id": 12}, incoming))
+    assert merged is incoming
+    assert ids == [12]

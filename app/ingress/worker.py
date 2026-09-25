@@ -63,6 +63,11 @@ def _merge_burst_messages(messages: list[IncomingMessage], inbox_ids: list[int])
 async def _claim_and_merge_burst(row: dict[str, Any], incoming: IncomingMessage) -> tuple[IncomingMessage, list[int]]:
     from app.configuration.runtime import ConfigurationUnavailable, policy
 
+    # Keep Instagram events separate: merging a Story with a normal DM would
+    # either silence the DM or let the Story reach the agent.
+    if str(incoming.channel or "").lower() == "instagram":
+        return incoming, [int(row["id"])]
+
     if not str(getattr(get_settings(), "database_url", "") or ""):
         return incoming, [int(row["id"])]
     try:
@@ -218,7 +223,10 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
 
     incoming, grouped_inbox_ids = await _claim_and_merge_burst(row, incoming)
 
-    if not (incoming.image_url or "").strip() and is_caption_echo_of_recent_image(
+    from app.stories.instagram_story_intent import should_silence_story_message
+    silence_story = should_silence_story_message(incoming)
+
+    if not silence_story and not (incoming.image_url or "").strip() and is_caption_echo_of_recent_image(
         incoming
     ):
         _mark_group_processed(grouped_inbox_ids)
@@ -228,7 +236,8 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
         )
         return {"ok": True, "inbox_id": inbox_id, "skipped": "caption_echo"}
 
-    incoming = attach_recent_image_for_followup(incoming)
+    if not silence_story:
+        incoming = attach_recent_image_for_followup(incoming)
 
     try:
         claimed, inbound_id = claim_inbound_message(incoming.model_dump(mode="json"))
@@ -253,20 +262,18 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
         incoming.raw["inbound_id"] = inbound_id
         incoming.raw["inbox_id"] = inbox_id
 
-    # Story praise/reactions belong in the Central history, but an automated
-    # response is intrusive and can conflict with native social interactions.
-    from app.stories.instagram_story_intent import should_silence_story_feedback
-    if should_silence_story_feedback(incoming):
+    # Persist all Story input for the Central, but never analyze or reply to it.
+    if silence_story:
         _mark_group_processed(grouped_inbox_ids, inbound_id)
         log_event(
-            "inbox.skipped_story_feedback",
+            "inbox.skipped_story_message",
             {"inbox_id": inbox_id, "channel": incoming.channel, "inbound_id": inbound_id},
         )
         return {
             "ok": True,
             "inbox_id": inbox_id,
             "inbound_id": inbound_id,
-            "skipped": "story_feedback",
+            "skipped": "story_message",
         }
 
     try:

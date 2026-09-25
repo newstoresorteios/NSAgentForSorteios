@@ -113,6 +113,17 @@ def should_silence_story_feedback(incoming: IncomingMessage) -> bool:
     return False
 
 
+def should_silence_story_message(incoming: IncomingMessage) -> bool:
+    """All explicitly Story-linked messages are handled outside the agent.
+
+    Do not infer this from text or conversation history: ordinary DMs stay active.
+    """
+    story = getattr(incoming, "instagram_story", None)
+    return isinstance(story, InstagramStoryContext) and bool(
+        story.replied_to_story or story.mentioned_in_story or story.story_media_id
+    )
+
+
 
 def story_requires_text_first(incoming: IncomingMessage) -> bool:
     """Non-product text must never be replaced by visual Story analysis.
