@@ -35,7 +35,7 @@ from app.stories.story_commercial_policy import (
     evidence_from_tray_product,
     validate_commercial_answer,
 )
-from app.stories.story_product_matcher import classify_match, match_story_to_catalog
+from app.stories.story_product_matcher import classify_match, match_story_to_catalog, product_scoped_analysis
 from app.stories.story_product_repository import StoryProductRepository
 from app.stories.story_tenant import resolve_story_tenant
 from app.stories.story_visual_analyzer import (
@@ -371,7 +371,7 @@ def _stored_vision_for_tray_retry(assoc: Any) -> StoryVisualUnderstanding | None
         or stored.visible_references
         or stored.collection_hypotheses
     ):
-        return stored
+        return product_scoped_analysis(stored)
     return None
 
 
@@ -497,6 +497,7 @@ async def _finalize_story_catalog_match(
 ) -> StoryResolutionResult:
     from app.tray.tray_tools import execute_tool as default_execute
 
+    analysis = product_scoped_analysis(analysis)
     tool = execute_tool or default_execute
     candidates = await match_story_to_catalog(
         tenant_id=tenant,

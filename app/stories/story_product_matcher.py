@@ -396,14 +396,38 @@ def _dial_color_score(analysis: StoryVisualUnderstanding, blob: str) -> float:
     return 0.0
 
 
+def product_scoped_analysis(analysis: StoryVisualUnderstanding) -> StoryVisualUnderstanding:
+    """Separate the watch's brand from logos belonging to the surrounding scene.
+
+    Applied to persisted analyses too: a prompt change cannot repair old vision.
+    Region hypotheses remain hypotheses, never confirmation of a catalog SKU.
+    """
+    scoped = {}
+    for region in analysis.product_regions:
+        brand = str(region.brand_hypothesis or "").strip()
+        if brand:
+            scoped.setdefault(_fold(brand), brand)
+    if len(scoped) != 1 or analysis.multiple_products or analysis.watch_count > 1:
+        return analysis
+    brand = next(iter(scoped.values()))
+    excluded = {
+        _fold(value) for value in (*analysis.visible_brands, *analysis.logo_hypotheses)
+        if _fold(value) != _fold(brand)
+    }
+    return analysis.model_copy(update={
+        "visible_brands": [brand],
+        "logo_hypotheses": [brand],
+        "visible_text": [value for value in analysis.visible_text if _fold(value) not in excluded],
+    })
+
+
 def tray_search_plan(analysis: StoryVisualUnderstanding) -> tuple[str | None, list[str]]:
     """Brand + distinctive model tokens for TRAYadaptor AND search (no stock filter)."""
-    brand: str | None = None
-    for raw in (*(analysis.visible_brands or []), *(analysis.logo_hypotheses or [])):
-        text = str(raw or "").strip()
-        if text:
-            brand = text
-            break
+    analysis = product_scoped_analysis(analysis)
+    brands = {_fold(raw): str(raw).strip() for raw in
+              (*analysis.visible_brands, *analysis.logo_hypotheses) if str(raw).strip()}
+    # Ambiguous scene brands must not become an arbitrary hard catalog filter.
+    brand: str | None = next(iter(brands.values())) if len(brands) == 1 else None
     tokens: list[str] = []
     seen: set[str] = set()
     brand_fold = _fold(brand)
@@ -601,8 +625,9 @@ def build_storefront_fallback_queries(
         queries.append(query)
 
     brand_str = str(brand or "").strip()
-    if not brand_str and analysis.visible_brands:
-        brand_str = str(analysis.visible_brands[0] or "").strip()
+    analysis = product_scoped_analysis(analysis)
+    if not brand_str:
+        brand_str = str(tray_search_plan(analysis)[0] or "")
 
     model_line = model_line_search_tokens(analysis)
     colors = _dial_color_search_tokens(analysis)
@@ -914,6 +939,7 @@ async def match_story_to_catalog(
     """
     if not str(tenant_id or "").strip():
         raise ValueError("tenant_id required")
+    analysis = product_scoped_analysis(analysis)
     _ = media_bytes
     settings = get_settings()
     limit = int(getattr(settings, "instagram_story_max_candidates", 10) or 10)
