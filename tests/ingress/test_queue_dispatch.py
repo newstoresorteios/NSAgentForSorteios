@@ -32,3 +32,30 @@ async def test_dispatch_drains_both_queues_when_one_worker_fails(monkeypatch):
     await dispatch.dispatch_pending_queues()
     inbox.assert_awaited_once_with(limit=3)
     outbox.assert_awaited_once_with(limit=3)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_defers_persona_resolution_until_workspace_is_known(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "app.config.get_settings",
+        lambda: SimpleNamespace(
+            database_url="postgresql://configured",
+            agent_db_persona_enabled=True,
+            agent_inbox_batch_size=2,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.persona.persona_runtime.load_persona_runtime",
+        lambda: (_ for _ in ()).throw(AssertionError("workspace-less persona lookup")),
+    )
+    inbox = AsyncMock(return_value={"claimed": 0})
+    outbox = AsyncMock(return_value={"claimed": 0})
+    monkeypatch.setattr("app.ingress.worker.process_inbox_batch", inbox)
+    monkeypatch.setattr("app.ingress.outbox_worker.process_outbox_batch", outbox)
+
+    await dispatch.dispatch_pending_queues()
+
+    inbox.assert_awaited_once_with(limit=2)
+    outbox.assert_awaited_once_with(limit=2)

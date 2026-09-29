@@ -36,24 +36,20 @@ async def dispatch_pending_queues() -> None:
     from app.ingress.outbox_worker import process_outbox_batch
     from app.ops.observability import log_exception
     from app.config import get_settings
-    from app.configuration.runtime import bind_bundle, reset_bundle, settings_from_bundle
     settings = get_settings()
-    tokens = None
-    if settings.database_url and settings.agent_db_persona_enabled:
-        from app.persona.persona_runtime import load_persona_runtime
-        runtime = await asyncio.to_thread(load_persona_runtime)
-        if runtime.configuration_bundle:
-            settings = settings_from_bundle(settings, runtime.configuration_bundle)
-            tokens = bind_bundle(runtime.configuration_bundle, settings)
+
+    # Do not resolve a global persona/configuration bundle here. In a
+    # multi-workspace database there can be several active personas, so a
+    # workspace-less lookup is intentionally ambiguous. Inbox processing
+    # resolves and binds the runtime after each row's workspace is known;
+    # outbox delivery does not need persona configuration.
     # Each queue already owns leases/idempotency. Bound the work attached to a
     # webhook; durable retries remain available if the process stops.
-    try:
-        results = await asyncio.gather(
-            process_inbox_batch(limit=settings.agent_inbox_batch_size),
-            process_outbox_batch(limit=settings.agent_inbox_batch_size), return_exceptions=True)
-    finally:
-        if tokens is not None:
-            reset_bundle(tokens)
+    results = await asyncio.gather(
+        process_inbox_batch(limit=settings.agent_inbox_batch_size),
+        process_outbox_batch(limit=settings.agent_inbox_batch_size),
+        return_exceptions=True,
+    )
     for name, result in zip(("inbox", "outbox"), results):
         if isinstance(result, Exception):
             log_exception("queue.immediate_dispatch_failed", result, {"queue": name})
