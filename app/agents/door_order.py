@@ -265,6 +265,14 @@ async def try_order_resume_route(
                 )
                 if (payment_result.commercial_data or {}).get("payment"):
                     result = payment_result
+        contextual_ids = {
+            str(value).strip()
+            for value in (context_handles.get("contextual_order_ids") or [])
+            if str(value).strip()
+        }
+        if contextual_ids:
+            result.response_metadata = dict(result.response_metadata or {})
+            result.response_metadata["order_reference_source"] = "assistant_order_id_prompt"
         return door._annotate_agent_result(
             result,
             domain="commerce",

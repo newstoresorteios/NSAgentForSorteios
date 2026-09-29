@@ -230,6 +230,16 @@ def is_order_lookup_request(
     folded = _fold_text(cleaned)
     if extract_order_reference(cleaned):
         return True
+    # A bare number is an order lookup only after the conversation recovery
+    # layer has bound that exact number from an explicit order-id question.
+    bare = re.fullmatch(r"\s*#?([0-9]{4,12})\s*", cleaned)
+    if bare and commerce_state is not None:
+        bound = {
+            str(commerce_state.order_id or "").strip(),
+            str(commerce_state.order_lookup_id or "").strip(),
+        }
+        if bare.group(1) in bound:
+            return True
     # Short follow-ups after an order was discussed in the same thread.
     followup_signals = (
         "como ficou",

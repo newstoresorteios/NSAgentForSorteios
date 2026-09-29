@@ -20,6 +20,15 @@ _ORDER_CODE_RE = re.compile(
     r"\b(?:pedido|order)[=:#\s-]*([A-F0-9]{10,}|[0-9]{5,})\b",
     re.I,
 )
+_BARE_ORDER_ID_RE = re.compile(r"^\s*#?([0-9]{4,12})\s*$")
+_ORDER_ID_PROMPT_RE = re.compile(
+    r"\b(?:n[uú]mero|c[oó]digo|id)\s+(?:do\s+)?pedido\b",
+    re.I,
+)
+_BUDGET_PROMPT_RE = re.compile(
+    r"\b(?:or[cç]amento|faixa\s+de\s+(?:pre[cç]o|investimento)|quanto\s+(?:quer|pretende)\s+(?:gastar|investir))\b",
+    re.I,
+)
 
 
 def _texts_from_turns(recent_turns: list[dict[str, Any]] | None) -> list[str]:
@@ -31,6 +40,36 @@ def _texts_from_turns(recent_turns: list[dict[str, Any]] | None) -> list[str]:
         if isinstance(content, str) and content.strip():
             texts.append(content)
     return texts
+
+
+def extract_contextual_order_reference(
+    text: str | None,
+    recent_turns: list[dict[str, Any]] | None,
+) -> str | None:
+    """Treat a bare number as an order id only after an explicit order-id prompt.
+
+    A 4–6 digit bare reply is otherwise ambiguous with a product budget.  The
+    immediately preceding meaningful turn must be the assistant asking for the
+    order number, and it must not also be a budget question.
+    """
+    match = _BARE_ORDER_ID_RE.fullmatch(str(text or ""))
+    if not match:
+        return None
+    previous: dict[str, Any] | None = None
+    for turn in reversed(recent_turns or []):
+        if not isinstance(turn, dict):
+            continue
+        content = str(turn.get("content") or "").strip()
+        if content:
+            previous = turn
+            break
+    if previous is None or str(previous.get("role") or "").casefold() != "assistant":
+        return None
+    prompt = str(previous.get("content") or "")
+    if not _ORDER_ID_PROMPT_RE.search(prompt) or _BUDGET_PROMPT_RE.search(prompt):
+        return None
+    candidates = order_reference_candidates(match.group(1))
+    return candidates[0] if candidates else None
 
 
 def extract_handles_from_conversation(
@@ -63,6 +102,13 @@ def extract_handles_from_conversation(
     blobs = list(_texts_from_turns(recent_turns))
     if message_text:
         blobs.append(message_text)
+
+    contextual_order_id = extract_contextual_order_reference(
+        message_text,
+        recent_turns,
+    )
+    if contextual_order_id:
+        order_ids.append(contextual_order_id)
 
     for blob in blobs:
         for match in _PAYMENT_URL_RE.finditer(blob):
@@ -100,6 +146,7 @@ def extract_handles_from_conversation(
 
     return {
         "order_ids": _unique(order_ids),
+        "contextual_order_ids": [contextual_order_id] if contextual_order_id else [],
         "payment_urls": _unique(payment_urls),
         "emails": _unique(emails),
         "documents": unique_docs,

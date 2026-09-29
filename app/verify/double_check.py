@@ -479,7 +479,18 @@ def collect_phase1_risk_signals(
     try:
         from app.sales.discovery import message_states_budget
 
-        if message_states_budget(text):
+        metadata = result.response_metadata or {}
+        commercial = result.commercial_data or {}
+        order_state = metadata.get("order_state")
+        order_state = order_state if isinstance(order_state, dict) else {}
+        is_order_lookup_result = bool(
+            metadata.get("order_reference_source")
+            or commercial.get("order_id")
+            or commercial.get("stage") == "order_status"
+            or order_state.get("order_id")
+            or order_state.get("order_lookup_id")
+        )
+        if message_states_budget(text) and not is_order_lookup_result:
             signals.append("inbound_budget")
     except Exception as exc:
         log_swallowed("double_check.budget_signal", exc)

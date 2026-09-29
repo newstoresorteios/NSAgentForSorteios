@@ -4,6 +4,7 @@ from app.commerce.commerce_context import CommerceConversationState
 from app.memory.context_resume import is_payment_link_request, is_unpaid_order_resume_request
 from app.models import AgentResult, IncomingMessage
 from app.commerce.order_context_recovery import (
+    extract_contextual_order_reference,
     extract_handles_from_conversation,
     hydrate_state_from_handles,
 )
@@ -42,6 +43,42 @@ def test_extracts_order_payment_and_customer_from_transcript():
     assert any("pedido=0CC131B51070AEF" in url for url in handles["payment_urls"])
     assert ("cpf", "07281035918") in handles["documents"]
     assert "tironinho@hotmail.com" in handles["emails"]
+
+
+def test_bare_number_after_order_prompt_is_order_not_budget():
+    turns = [
+        {"role": "user", "content": "Sobre um pedido"},
+        {
+            "role": "assistant",
+            "content": (
+                "Você pode me informar o número do pedido ou qual atendimento "
+                "anterior está retomando?"
+            ),
+        },
+    ]
+    assert extract_contextual_order_reference("26116", turns) == "26116"
+    handles = extract_handles_from_conversation(
+        state=CommerceConversationState(),
+        recent_turns=turns,
+        message_text="26116",
+    )
+    assert handles["order_ids"] == ["26116"]
+    assert handles["contextual_order_ids"] == ["26116"]
+    state = hydrate_state_from_handles(CommerceConversationState(), handles)
+    assert state.order_id == "26116"
+    assert is_order_lookup_request("26116", commerce_state=state) is True
+
+
+@pytest.mark.parametrize(
+    "turns",
+    [
+        [{"role": "assistant", "content": "Qual sua faixa de investimento?"}],
+        [{"role": "user", "content": "Meu orçamento"}],
+        [],
+    ],
+)
+def test_bare_number_without_order_prompt_remains_ambiguous(turns):
+    assert extract_contextual_order_reference("26116", turns) is None
 
 
 def test_hydrate_fills_missing_order_and_checkout_fields():

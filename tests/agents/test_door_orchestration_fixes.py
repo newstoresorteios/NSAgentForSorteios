@@ -98,6 +98,91 @@ async def test_live_inspect_without_url_does_not_recite_stale(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_contextual_bare_order_id_calls_tray_lookup(monkeypatch):
+    import app.openai_agent as openai_agent
+
+    calls: list[str] = []
+
+    async def fake_facts(*, state, execute, order_id=None, **_kwargs):
+        calls.append(str(order_id or state.order_id))
+        return AgentResult(
+            reply_text="Pedido 26116 em separação.",
+            intent="commerce",
+            commercial_data={"order_id": "26116", "status": "Em separação"},
+            response_metadata={"domain": "commerce", "used_tray": True},
+        )
+
+    monkeypatch.setattr(openai_agent, "get_order_facts", fake_facts)
+    result = await try_order_resume_route(
+        message=IncomingMessage(text="26116"),
+        commerce_state=CommerceConversationState(
+            order_id="26116",
+            order_lookup_id="26116",
+        ),
+        context_handles={
+            "order_ids": ["26116"],
+            "contextual_order_ids": ["26116"],
+        },
+        fresh_start=False,
+        soft_greeting=False,
+        resume_pending_order_early=False,
+        order_reference=None,
+    )
+    assert calls == ["26116"]
+    assert result.response_metadata["used_tray"] is True
+    assert result.response_metadata["order_reference_source"] == "assistant_order_id_prompt"
+
+
+@pytest.mark.asyncio
+async def test_real_incident_bare_number_uses_history_and_bypasses_budget(monkeypatch):
+    import app.openai_agent as openai_agent
+
+    calls: list[str] = []
+    history = [
+        {"role": "user", "content": "Sobre um pedido"},
+        {
+            "role": "assistant",
+            "content": (
+                "Você pode me informar o número do pedido ou qual atendimento "
+                "anterior está retomando?"
+            ),
+        },
+    ]
+
+    async def fake_facts(*, state, execute, order_id=None, **_kwargs):
+        calls.append(str(order_id or state.order_id))
+        return AgentResult(
+            reply_text="Pedido 26116 em separação.",
+            intent="commerce",
+            commercial_data={"order_id": "26116", "status": "Em separação"},
+            response_metadata={"domain": "commerce", "used_tray": True},
+        )
+
+    async def no_interpret(*_args, **_kwargs):
+        raise AssertionError("contextual order id must bypass budget interpretation")
+
+    monkeypatch.setattr(openai_agent, "load_recent_conversation_turns", lambda **_k: history)
+    monkeypatch.setattr(openai_agent, "detect_blocked_request", lambda _t: None)
+    monkeypatch.setattr(openai_agent, "should_request_human_handoff", lambda _m, **_k: None)
+    monkeypatch.setattr(openai_agent, "get_order_facts", fake_facts)
+    monkeypatch.setattr(openai_agent, "interpret_message", no_interpret)
+    monkeypatch.setattr(openai_agent, "handle_sales_message", no_interpret)
+
+    result = await openai_agent.generate_agent_reply_async(
+        IncomingMessage(
+            text="26116",
+            conversation_id="conv-order-26116",
+            sender_phone="5521999999999",
+        ),
+        {"_commerce_state": {}},
+    )
+
+    assert calls == ["26116"]
+    assert result.response_metadata["used_tray"] is True
+    assert result.response_metadata["order_reference_source"] == "assistant_order_id_prompt"
+
+
+@pytest.mark.asyncio
 async def test_sim_with_numeric_order_inspects_instead_of_stale_url(monkeypatch):
     import app.openai_agent as openai_agent
 

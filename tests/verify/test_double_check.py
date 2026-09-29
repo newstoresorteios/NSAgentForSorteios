@@ -100,6 +100,27 @@ def test_question_about_historical_order_still_triggers_order_validation():
     assert 'inbound_asks_order' in signals
 
 
+def test_contextual_order_number_is_not_flagged_as_budget():
+    from app.verify.double_check import collect_phase1_risk_signals
+
+    signals = collect_phase1_risk_signals(
+        incoming=IncomingMessage(text="26116"),
+        result=AgentResult(
+            reply_text="Pedido 26116 em separação.",
+            intent="commerce",
+            commercial_data={"order_id": "26116", "status": "Em separação"},
+            response_metadata={
+                "domain": "commerce",
+                "used_tray": True,
+                "order_reference_source": "assistant_order_id_prompt",
+            },
+        ),
+        commerce_state=CommerceConversationState(order_id="26116"),
+    )
+    assert "inbound_budget" not in signals
+    assert "order_or_checkout" in signals
+
+
 def test_phase0_skips_greeting_and_raffle():
     greeting = AgentResult(
         reply_text="Olá!",
