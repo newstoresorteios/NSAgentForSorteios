@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.configuration.workspace import resolve_conversation_workspace
+from app.configuration.workspace import resolve_conversation_workspace, resolve_ingress_workspace
 
 
 def install_repository(monkeypatch, rows):
@@ -56,6 +56,46 @@ def test_ambiguous_conversation_never_selects_an_arbitrary_workspace(monkeypatch
     install_repository(monkeypatch, [{"workspace_id": uuid4()}, {"workspace_id": uuid4()}])
     with pytest.raises(ValueError, match="ambiguous_conversation_workspace"):
         resolve_conversation_workspace("shared-external-id", None)
+
+
+def test_new_ingress_uses_the_single_connected_nsagent_workspace(monkeypatch):
+    workspace_id = UUID("10000000-0000-0000-0000-000000000001")
+    calls = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, query, params=None): calls.append(query)
+        def fetchall(self):
+            return [] if len(calls) == 1 else [{"workspace_id": workspace_id}]
+
+    @contextmanager
+    def get_conn():
+        yield SimpleNamespace(cursor=Cursor)
+
+    monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace(database_url="configured"))
+    monkeypatch.setattr("app.db.get_conn", get_conn)
+    assert resolve_ingress_workspace("ig:new-customer", "instagram") == str(workspace_id)
+
+
+def test_new_ingress_without_a_unique_connected_workspace_stays_unresolved(monkeypatch):
+    first, second = uuid4(), uuid4()
+    calls = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, query, params=None): calls.append(query)
+        def fetchall(self):
+            return [] if len(calls) == 1 else [{"workspace_id": first}, {"workspace_id": second}]
+
+    @contextmanager
+    def get_conn():
+        yield SimpleNamespace(cursor=Cursor)
+
+    monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace(database_url="configured"))
+    monkeypatch.setattr("app.db.get_conn", get_conn)
+    assert resolve_ingress_workspace("ig:new-customer", "instagram") is None
 
 
 @pytest.fixture

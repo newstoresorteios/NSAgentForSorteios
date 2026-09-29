@@ -10,16 +10,13 @@ from app.models import IncomingMessage
 from app.stories.instagram_story_models import InstagramStoryContext
 
 
-@pytest.mark.parametrize("known", [True, False])
-def test_story_is_scoped_before_marking_processed(monkeypatch, known):
+def test_story_is_scoped_before_marking_processed(monkeypatch):
     incoming = IncomingMessage(channel="instagram", conversation_id="ig:test", text="valor?",
         instagram_story=InstagramStoryContext(replied_to_story=True, story_media_id="s1"))
     monkeypatch.setattr(worker, "incoming_from_inbox_payload", lambda _: incoming)
     monkeypatch.setattr(worker, "claim_inbound_message", lambda _: (True, 940))
     monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace(database_url="test"))
-    monkeypatch.setattr(workspace, "resolve_conversation_workspace", lambda *a: "workspace" if known else None)
-    monkeypatch.setattr("app.persona.persona_runtime.load_persona_runtime", lambda: SimpleNamespace(
-        flow_params_dict=lambda: {"workspace_id": "workspace"}))
+    monkeypatch.setattr(workspace, "resolve_ingress_workspace", lambda *a: "workspace")
     calls = []
     monkeypatch.setattr(workspace, "stamp_inbound_workspace", lambda *a: calls.append(("stamp", a)))
     monkeypatch.setattr(worker, "mark_inbox_processed", lambda *a, **kw: calls.append(("processed", a)))
