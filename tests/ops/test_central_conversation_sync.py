@@ -73,6 +73,7 @@ def test_sync_reconciles_all_known_messages_idempotently(monkeypatch):
     assert "response.provider_send_ok = true" in sql
     assert sql.count("ON CONFLICT (external_id)") == 2
     assert "ORDER BY created_at DESC, id DESC" in sql
+    assert "NULLIF(conversation.last_message, '') IS NULL" in sql
 
 
 def test_workspace_stamp_triggers_central_sync_without_blocking(monkeypatch):

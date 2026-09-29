@@ -155,7 +155,8 @@ def sync_agent_conversation(inbound_id: int, workspace_id: str) -> dict[str, Any
                                           latest.created_at)
                 FROM latest
                 WHERE conversation.id = %(central_conversation_id)s::uuid
-                  AND (conversation.last_message_at IS NULL
+                  AND (NULLIF(conversation.last_message, '') IS NULL
+                       OR conversation.last_message_at IS NULL
                        OR conversation.last_message_at <= latest.created_at)
                 """,
                 sync_params,
