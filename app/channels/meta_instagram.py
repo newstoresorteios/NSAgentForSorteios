@@ -542,6 +542,7 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
             image_url = None
             attachment_type = None
             input_modality = "text"
+            story_mention_attachment: dict[str, Any] | None = None
             attachments = message.get("attachments")
             if isinstance(attachments, list):
                 for attachment in attachments:
@@ -554,7 +555,14 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                         else {}
                     )
                     url = str(payload_obj.get("url") or "").strip() or None
+                    if atype == "story_mention":
+                        story_mention_attachment = attachment
                     if atype in {"image", "story_mention"} and url:
+                        # Meta represents a reply/mention of a Story as an
+                        # attachment rather than ``reply_to.story`` in some
+                        # webhook variants. Preserve that provenance so the
+                        # inbox worker records it but never sends an automatic
+                        # answer based on an unverified image.
                         image_url = url
                         attachment_type = "image"
                         input_modality = "text_with_image" if text else "image"
@@ -610,6 +618,39 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                         "video" if media_kind == "video" else (attachment_type or "image")
                     )
                     input_modality = "text_with_image" if text else "image"
+
+            if story_ctx is None and story_mention_attachment is not None:
+                from pydantic import SecretStr
+
+                from app.stories.instagram_story_models import InstagramStoryContext
+                from app.stories.instagram_story_parser import safe_media_reference
+
+                attachment_payload = story_mention_attachment.get("payload")
+                if not isinstance(attachment_payload, dict):
+                    attachment_payload = {}
+                media_url = str(attachment_payload.get("url") or "").strip() or None
+                story_ctx = InstagramStoryContext(
+                    provider="meta",
+                    instagram_account_id=recipient_id or "",
+                    story_media_id=(
+                        str(
+                            attachment_payload.get("story_id")
+                            or attachment_payload.get("id")
+                            or story_mention_attachment.get("id")
+                            or ""
+                        ).strip()
+                        or None
+                    ),
+                    story_message_id=message_id,
+                    story_media_url_private=(SecretStr(media_url) if media_url else None),
+                    story_media_log_reference=(
+                        safe_media_reference(media_url) if media_url else None
+                    ),
+                    media_type="image",
+                    replied_to_story=False,
+                    mentioned_in_story=True,
+                    raw_reference={"attachment_type": "story_mention"},
+                )
 
             if not text and not image_url:
                 continue

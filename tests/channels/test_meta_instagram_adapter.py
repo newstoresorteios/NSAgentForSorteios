@@ -217,6 +217,34 @@ def test_parse_meta_story_reply_attachment():
     assert msg.instagram_story.story_media_id == "story-99"
 
 
+def test_parse_meta_story_mention_attachment_is_marked_as_story():
+    payload = {
+        "object": "instagram",
+        "entry": [{
+            "messaging": [{
+                "sender": {"id": "customer-1"},
+                "recipient": {"id": "business-1"},
+                "message": {
+                    "mid": "message-1",
+                    "attachments": [{
+                        "type": "story_mention",
+                        "payload": {"url": "https://cdn.example/story.jpg", "id": "story-1"},
+                    }],
+                },
+            }],
+        }],
+    }
+
+    messages = parse_meta_instagram_messaging(payload)
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.image_url == "https://cdn.example/story.jpg"
+    assert message.instagram_story is not None
+    assert message.instagram_story.mentioned_in_story is True
+    assert message.instagram_story.story_media_id == "story-1"
+
+
 def test_parse_meta_video_story_and_link_sticker():
     payload = {
         "object": "instagram",
