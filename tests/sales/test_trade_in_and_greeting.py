@@ -104,6 +104,78 @@ def test_fast_critique_dedupes_identical_greeting():
     assert verdict is not None
 
 
+def test_active_persona_owns_repeated_greeting_and_fast_dedupe():
+    from app.persona.persona_runtime import (
+        PersonaRuntimeConfig,
+        reset_persona_runtime,
+        set_persona_runtime,
+    )
+
+    official = (
+        "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. "
+        "Como posso te ajudar hoje?"
+    )
+    runtime = PersonaRuntimeConfig(
+        loaded=True,
+        enabled=True,
+        agent_display_name="Crono",
+        greeting_text=official,
+        tone="Consultivo",
+    )
+    token = set_persona_runtime(runtime)
+    try:
+        history = [{"role": "assistant", "content": official}]
+        followup = choose_greeting_reply(history)
+        assert "Crono" in followup
+        assert "assistente virtual da New Store Relógios" in followup
+        assert followup != "Oi! Sou o Crono. Em que posso te ajudar?"
+
+        fixed, verdict, skip = apply_fast_deterministic_critique(
+            incoming=IncomingMessage(channel="instagram", text="olá"),
+            result=AgentResult(
+                reply_text=official,
+                intent="general",
+                handoff_required=False,
+            ),
+            recent_turns=history,
+        )
+        assert skip == "fast_greeting_dedupe"
+        assert verdict is not None
+        assert fixed.reply_text == followup
+        assert fixed.reply_text != "Tudo bem! Pode me dizer o que você precisa?"
+        assert fixed.response_metadata["persona_applied_to_output"] is True
+        assert fixed.response_metadata["persona_render_path"] == "persona_greeting_dedupe"
+    finally:
+        reset_persona_runtime(token)
+
+
+def test_fast_critique_preserves_distinct_compiled_persona_greeting():
+    previous = (
+        "Olá! Eu sou o Crono, assistente virtual da New Store Relógios. "
+        "Como posso te ajudar hoje?"
+    )
+    generated = "Oi! Como posso te ajudar agora?"
+    result = AgentResult(
+        reply_text=generated,
+        intent="general",
+        handoff_required=False,
+        response_metadata={
+            "persona_applied_to_output": True,
+            "persona_render_path": "compiled_persona_greeting",
+        },
+    )
+
+    fixed, verdict, skip = apply_fast_deterministic_critique(
+        incoming=IncomingMessage(channel="instagram", text="olá"),
+        result=result,
+        recent_turns=[{"role": "assistant", "content": previous}],
+    )
+
+    assert fixed.reply_text == generated
+    assert verdict is None
+    assert skip is None
+
+
 def test_farewell_detector_and_reply():
     assert is_farewell_message("Até") is True
     assert is_farewell_message("até logo") is True

@@ -45,6 +45,9 @@ async def test_pipeline_attaches_safe_turn_summary(monkeypatch):
     assert summary["stage_durations_ms"]["catalog"] == 12.5
     assert "conversation_key" not in summary
     assert result.response_metadata["persona_runtime"]["workspace_id"] == "22222222-2222-2222-2222-222222222222"
+    assert result.response_metadata["persona_loaded_for_turn"] is True
+    assert result.response_metadata["persona_enabled_for_turn"] is False
+    assert result.response_metadata["persona_output_status"] == "not_recorded"
 
 
 def test_response_persistence_stamps_workspace_from_persona(monkeypatch):

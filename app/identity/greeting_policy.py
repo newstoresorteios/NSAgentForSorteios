@@ -24,6 +24,33 @@ def _FALLBACK_GREETING_VARIANTS():
     name = runtime.agent_display_name if runtime else policy('business.agent_name')
     return tuple(v.format(agent_name=name) for v in json.loads(policy('business.greeting_variants')))
 
+
+def _persona_followup_greeting_variants() -> tuple[str, ...]:
+    """Warm re-greetings derived from the active persona, not global copy.
+
+    The official greeting is suitable for the first contact. Repeating it on
+    every bare hello sounds robotic, but falling through to workspace-wide
+    ``business.greeting_variants`` also drops the persona's identity. Keep the
+    deterministic fallback safe while making the active persona the source of
+    identity and voice.
+    """
+    try:
+        from app.persona.persona_runtime import get_persona_runtime
+
+        runtime = get_persona_runtime()
+    except Exception as exc:
+        log_swallowed("greeting.persona_followups", exc)
+        return ()
+    if runtime is None or not runtime.enabled or not (runtime.greeting_text or "").strip():
+        return ()
+    name = str(runtime.agent_display_name or "").strip() or "Crono"
+    return (
+        f"Oi de novo! Sou o {name}, assistente virtual da New Store Relógios. "
+        "Fica à vontade para me contar o que você procura.",
+        "Estou por aqui! Pode me contar com calma como eu ajudo você?",
+        "Que bom falar com você de novo. Por onde você prefere começar?",
+    )
+
 _GREETING_BODY_RE = re.compile(
     r"^\s*(ol[aá]|oi|bom dia|boa tarde|boa noite)[!.,\s]*"
     r"(como posso (te )?ajudar|em que posso (te )?ajudar|"
@@ -137,13 +164,15 @@ def resolve_persona_greeting() -> str | None:
 
 
 def greeting_variants() -> tuple[str, ...]:
-    """Persona greeting first, then canned fallbacks (deduped)."""
+    """Persona greeting first; global copy is emergency fallback only."""
     ordered: list[str] = []
     seen: set[str] = set()
     primary = resolve_persona_greeting()
+    persona_followups = _persona_followup_greeting_variants()
+    fallbacks = persona_followups or _FALLBACK_GREETING_VARIANTS()
     for candidate in (
         primary,
-        *(_FALLBACK_GREETING_VARIANTS()),
+        *fallbacks,
     ):
         text = str(candidate or "").strip()
         if not text:

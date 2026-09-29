@@ -76,11 +76,13 @@ from app.sales_agent import (
 )
 from app.identity.greeting_policy import (
     GREETING_REPLY,
+    already_said,
     choose_farewell_reply,
     choose_greeting_reply,
     is_farewell_message,
     is_greeting_message as _is_greeting,
     resolve_address_name,
+    resolve_persona_greeting,
     sanitize_greeting_reply,
 )
 
@@ -472,7 +474,15 @@ async def _resolve_greeting_door(
     has_official_greeting = bool(
         runtime is not None and (runtime.greeting_text or "").strip()
     )
-    if has_official_greeting and greeting_mode != "persona_llm":
+    official_greeting = resolve_persona_greeting() if has_official_greeting else None
+    official_already_used = bool(
+        official_greeting and already_said(official_greeting, recent_turns)
+    )
+    if (
+        has_official_greeting
+        and greeting_mode != "persona_llm"
+        and not official_already_used
+    ):
         return _annotate_agent_result(
             AgentResult(
                 reply_text=choose_greeting_reply(recent_turns),
@@ -485,9 +495,14 @@ async def _resolve_greeting_door(
             used_openai_responder=False,
             used_tray=False,
             fallback_reason=fallback_reason,
+            persona_applied_to_output=True,
+            persona_render_path="published_greeting_text",
         )
     if (
-        greeting_mode == "persona_llm"
+        (
+            greeting_mode == "persona_llm"
+            or (greeting_mode == "persona_text" and official_already_used)
+        )
         and bool(getattr(settings, "agent_db_persona_enabled", False))
         and settings.openai_api_key
     ):
@@ -510,6 +525,8 @@ async def _resolve_greeting_door(
                     used_openai_responder=True,
                     used_tray=False,
                     fallback_reason=fallback_reason,
+                    persona_applied_to_output=True,
+                    persona_render_path="compiled_persona_greeting",
                 )
     return _annotate_agent_result(
         AgentResult(
@@ -523,6 +540,12 @@ async def _resolve_greeting_door(
         used_openai_responder=False,
         used_tray=False,
         fallback_reason=fallback_reason,
+        persona_applied_to_output=has_official_greeting,
+        persona_render_path=(
+            "persona_greeting_fallback"
+            if has_official_greeting
+            else "global_greeting_fallback"
+        ),
     )
 
 

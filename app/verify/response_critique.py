@@ -20,7 +20,11 @@ from app.commerce.commerce_context import (
     product_reference_from_product,
 )
 from app.config import get_settings
-from app.identity.greeting_policy import is_generic_greeting_reply
+from app.identity.greeting_policy import (
+    choose_greeting_reply,
+    is_generic_greeting_reply,
+    resolve_persona_greeting,
+)
 from app.verify import log_swallowed
 from app.verify.guardrails import detect_trade_in_or_appraisal_request
 from app.verify.persona_evidence import persona_evidence
@@ -204,16 +208,39 @@ def apply_fast_deterministic_critique(
 
     # 2) Do not re-send the same greeting this person already received.
     previous = _last_assistant_reply(recent_turns)
+    persona_rendered = bool(metadata.get("persona_applied_to_output"))
+    exact_repeat = bool(previous and _fold_reply(reply) == _fold_reply(previous))
     if (
         reply
         and previous
         and is_generic_greeting_reply(reply)
         and is_generic_greeting_reply(previous)
+        and (exact_repeat or not persona_rendered)
     ):
         fixed = result.model_copy(deep=True)
-        fixed.reply_text = "Tudo bem! Pode me dizer o que você precisa?"
+        # The critique layer must not erase the active persona with literal
+        # global copy. Include the rejected draft in the lookback so the
+        # persona-aware selector chooses a distinct continuation.
+        greeting_history = [
+            *(recent_turns or []),
+            {"role": "assistant", "content": reply},
+        ]
+        persona_applied = bool(resolve_persona_greeting())
+        fixed.reply_text = (
+            choose_greeting_reply(greeting_history)
+            if persona_applied
+            else operator_message(
+                "identity.greeting_policy.choose_greeting_reply.0cc3700da4"
+            )
+        )
         fixed.response_metadata = dict(fixed.response_metadata or {})
         fixed.response_metadata["fast_critique"] = "deduped_greeting"
+        fixed.response_metadata["persona_applied_to_output"] = persona_applied
+        fixed.response_metadata["persona_render_path"] = (
+            "persona_greeting_dedupe"
+            if persona_applied
+            else "global_greeting_dedupe_fallback"
+        )
         verdict = CritiqueVerdict(
             score=60,
             pass_check=True,

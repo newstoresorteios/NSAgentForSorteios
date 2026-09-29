@@ -247,6 +247,16 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
         if persona is not None:
             result.response_metadata = dict(result.response_metadata or {})
             result.response_metadata.setdefault("persona_runtime", persona.flow_params_dict())
+            result.response_metadata.setdefault("persona_loaded_for_turn", persona.loaded)
+            result.response_metadata.setdefault("persona_enabled_for_turn", persona.enabled)
+            result.response_metadata.setdefault(
+                "persona_output_status",
+                (
+                    "applied"
+                    if result.response_metadata.get("persona_applied_to_output") is True
+                    else "not_recorded"
+                ),
+            )
         runtime = get_current_turn()
         if runtime is not None:
             result.response_metadata = dict(result.response_metadata or {})
