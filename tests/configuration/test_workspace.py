@@ -5,7 +5,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.configuration.workspace import resolve_conversation_workspace, resolve_ingress_workspace
+from app.configuration.workspace import (
+    _incoming_account_ref,
+    resolve_conversation_workspace,
+    resolve_ingress_workspace,
+)
+from app.models import IncomingMessage
 
 
 def install_repository(monkeypatch, rows):
@@ -76,6 +81,46 @@ def test_new_ingress_uses_the_single_connected_nsagent_workspace(monkeypatch):
     monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace(database_url="configured"))
     monkeypatch.setattr("app.db.get_conn", get_conn)
     assert resolve_ingress_workspace("ig:new-customer", "instagram") == str(workspace_id)
+
+
+def test_new_meta_ingress_prefers_persisted_receiving_account_workspace(monkeypatch):
+    workspace_id = UUID("10000000-0000-0000-0000-000000000001")
+    calls = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def execute(self, query, params=None): calls.append((query, params))
+        def fetchall(self):
+            return [] if len(calls) == 1 else [{"workspace_id": workspace_id}]
+
+    @contextmanager
+    def get_conn():
+        yield SimpleNamespace(cursor=Cursor)
+
+    monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace(database_url="configured"))
+    monkeypatch.setattr("app.db.get_conn", get_conn)
+
+    assert resolve_ingress_workspace(
+        "ig:new-customer", "instagram", "17841404241547355"
+    ) == str(workspace_id)
+    assert len(calls) == 2
+    assert "raw->>'entry_id'" in calls[1][0]
+
+
+def test_incoming_account_ref_uses_authenticated_meta_recipient():
+    incoming = IncomingMessage(
+        provider="meta",
+        channel="instagram",
+        text="oi",
+        conversation_id="ig:customer",
+        raw={
+            "entry_id": "17841404241547355",
+            "meta_event": {"recipient": {"id": "fallback"}},
+        },
+    )
+
+    assert _incoming_account_ref(incoming) == "17841404241547355"
 
 
 def test_new_ingress_without_a_unique_connected_workspace_stays_unresolved(monkeypatch):

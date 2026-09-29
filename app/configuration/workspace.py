@@ -23,7 +23,11 @@ def resolve_conversation_workspace(conversation_id: str | None, channel: str | N
     return str(rows[0]["workspace_id"]) if rows else None
 
 
-def resolve_ingress_workspace(conversation_id: str | None, channel: str | None) -> str | None:
+def resolve_ingress_workspace(
+    conversation_id: str | None,
+    channel: str | None,
+    account_ref: str | None = None,
+) -> str | None:
     """Resolve ownership for a new inbound without guessing between tenants.
 
     An existing Central conversation is the authoritative mapping.  A new
@@ -43,6 +47,27 @@ def resolve_ingress_workspace(conversation_id: str | None, channel: str | None) 
     from app.db import get_conn
     with get_conn() as conn:
         with conn.cursor() as cur:
+            if account_ref:
+                cur.execute(
+                    """
+                    SELECT DISTINCT inbound.workspace_id
+                    FROM public.ai_inbound_messages AS inbound
+                    WHERE inbound.workspace_id IS NOT NULL
+                      AND inbound.provider = 'meta'
+                      AND inbound.channel = %(channel)s
+                      AND (
+                        inbound.raw->>'entry_id' = %(account_ref)s
+                        OR inbound.raw#>>'{meta_event,recipient,id}' = %(account_ref)s
+                      )
+                    LIMIT 2
+                    """,
+                    {"channel": channel, "account_ref": account_ref},
+                )
+                account_rows = list(cur.fetchall())
+                if len(account_rows) > 1:
+                    raise ValueError("ambiguous_ingress_account_workspace")
+                if account_rows:
+                    return str(account_rows[0]["workspace_id"])
             cur.execute(
                 """
                 SELECT DISTINCT agent.workspace_id
@@ -60,6 +85,20 @@ def resolve_ingress_workspace(conversation_id: str | None, channel: str | None) 
     if len(rows) != 1:
         return None
     return str(rows[0]["workspace_id"])
+
+
+def _incoming_account_ref(incoming) -> str | None:
+    """Return the authenticated receiving account carried by the provider payload."""
+    raw = incoming.raw if isinstance(getattr(incoming, "raw", None), dict) else {}
+    event = raw.get("meta_event") if isinstance(raw.get("meta_event"), dict) else {}
+    recipient = event.get("recipient") if isinstance(event.get("recipient"), dict) else {}
+    story = getattr(incoming, "instagram_story", None)
+    candidates = (
+        raw.get("entry_id"),
+        recipient.get("id"),
+        getattr(story, "instagram_account_id", None),
+    )
+    return next((str(value).strip() for value in candidates if str(value or "").strip()), None)
 
 
 def stamp_inbound_workspace(inbound_id: int | None, workspace_id: str | None) -> None:
@@ -106,7 +145,11 @@ def stamp_silent_inbound_workspace(incoming, inbound_id: int | None) -> None:
         return
     if inbound_id is None:
         raise ValueError("silent_inbound_id_missing")
-    workspace = resolve_ingress_workspace(incoming.conversation_id, incoming.channel)
+    workspace = resolve_ingress_workspace(
+        incoming.conversation_id,
+        incoming.channel,
+        _incoming_account_ref(incoming),
+    )
     if not workspace:
         raise ValueError("silent_inbound_workspace_unresolved")
     stamp_inbound_workspace(inbound_id, workspace)
