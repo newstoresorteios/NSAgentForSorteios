@@ -1689,6 +1689,7 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
         provider_response["_agent_metadata"] = safe_data["response_metadata"]
     safe_data["provider_response"] = to_jsonb(provider_response)
 
+    response_id: int | None = None
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1727,4 +1728,21 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
             )
 
             row = cur.fetchone()
-            return get_returning_id(row)
+            response_id = get_returning_id(row)
+
+    inbound_id = safe_data.get("inbound_id")
+    workspace_id = safe_data.get("workspace_id")
+    if response_id is not None and inbound_id is not None and workspace_id:
+        try:
+            from app.ops.central_conversation_sync import sync_agent_conversation
+
+            sync_agent_conversation(int(inbound_id), str(workspace_id))
+        except Exception as exc:  # Projection must never invalidate a sent reply.
+            from app.ops.observability import log_exception
+
+            log_exception(
+                "central.outbound_sync_failed",
+                exc,
+                {"inbound_id": inbound_id, "response_id": response_id},
+            )
+    return response_id

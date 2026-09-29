@@ -24,7 +24,7 @@ def resolve_conversation_workspace(conversation_id: str | None, channel: str | N
 
 
 def stamp_inbound_workspace(inbound_id: int | None, workspace_id: str | None) -> None:
-    """Persist server-resolved ownership without ever reassigning another workspace."""
+    """Persist ownership and immediately expose the message in the Central."""
     if inbound_id is None or not workspace_id:
         return
     from app.db import get_conn
@@ -33,6 +33,18 @@ def stamp_inbound_workspace(inbound_id: int | None, workspace_id: str | None) ->
             cur.execute("""UPDATE public.ai_inbound_messages SET workspace_id=%s::uuid
                 WHERE id=%s AND workspace_id IS NULL""", (workspace_id, inbound_id))
         conn.commit()
+    try:
+        from app.ops.central_conversation_sync import sync_agent_conversation
+
+        sync_agent_conversation(inbound_id, workspace_id)
+    except Exception as exc:  # Projection must never prevent the agent reply.
+        from app.ops.observability import log_exception
+
+        log_exception(
+            "central.inbound_sync_failed",
+            exc,
+            {"inbound_id": inbound_id, "workspace_id": workspace_id},
+        )
 
 
 def ingress_settings(incoming, base):
