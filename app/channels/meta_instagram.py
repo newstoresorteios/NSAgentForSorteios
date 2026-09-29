@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from urllib.parse import quote
 from typing import Any
 
 from app.config import get_settings
@@ -15,6 +16,7 @@ from app.models import AgentResult, IncomingMessage
 from app.ops.observability import log_event
 
 _IG_USERNAME_CACHE: dict[str, str] = {}
+_IG_PROFILE_CACHE: dict[str, dict[str, str]] = {}
 
 
 def _username_from_dict(value: Any) -> str | None:
@@ -37,37 +39,60 @@ def _instagram_username_hint(sender: dict, message: dict, event: dict) -> str | 
     return None
 
 
-def _lookup_ig_username(sender_id: str) -> str | None:
-    """Resolve Instagram handle from IGSID. Cached; never blocks the webhook for long."""
-    cached = _IG_USERNAME_CACHE.get(sender_id)
+def _lookup_ig_profile(sender_id: str) -> dict[str, str]:
+    """Resolve the public Instagram identity from IGSID without failing the webhook."""
+    cached = _IG_PROFILE_CACHE.get(sender_id)
     if cached:
         return cached
     settings = get_settings()
     token = str(getattr(settings, "meta_page_access_token", "") or "").strip()
     if not token or not sender_id:
-        return None
+        return {}
     try:
         import httpx
 
         with httpx.Client(timeout=2.0) as client:
             resp = client.get(
                 f"https://graph.instagram.com/v21.0/{sender_id}",
-                params={"fields": "username,name"},
+                params={"fields": "username,name,profile_pic"},
                 headers={"Authorization": f"Bearer {token}"},
             )
+            # Some token/account combinations do not expose profile_pic. Keep
+            # username resolution working instead of discarding the identity.
+            if resp.status_code >= 400:
+                resp = client.get(
+                    f"https://graph.instagram.com/v21.0/{sender_id}",
+                    params={"fields": "username,name"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
         data = resp.json() if resp.content else {}
         if not isinstance(data, dict):
-            return None
+            return {}
         username = str(data.get("username") or data.get("name") or "").strip().lstrip("@")
+        profile_pic = str(data.get("profile_pic") or "").strip()
+        profile: dict[str, str] = {}
         if username:
             _IG_USERNAME_CACHE[sender_id] = username
-            return username
+            profile["username"] = username
+            profile["profile_url"] = f"https://www.instagram.com/{quote(username, safe='._')}/"
+        if profile_pic.startswith(("https://", "http://")):
+            profile["profile_picture_url"] = profile_pic
+        if profile:
+            _IG_PROFILE_CACHE[sender_id] = profile
+        return profile
     except Exception as exc:
         from app.channels import log_swallowed
 
-        log_swallowed("meta.username_lookup", exc)
-        return None
-    return None
+        log_swallowed("meta.profile_lookup", exc)
+        return {}
+
+
+def _lookup_ig_username(sender_id: str) -> str | None:
+    """Backward-compatible username-only view of the profile lookup."""
+    cached = _IG_USERNAME_CACHE.get(sender_id)
+    if cached:
+        return cached
+    return _lookup_ig_profile(sender_id).get("username")
 
 
 def payload_skeleton(value: Any, *, depth: int = 0) -> Any:
@@ -533,7 +558,6 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
             if not normalized:
                 continue
             sender = normalized["sender"]
-            recipient = normalized["recipient"]
             message = normalized["message"]
             sender_id = normalized["sender_id"]
             recipient_id = normalized["recipient_id"] or account_id
@@ -658,9 +682,16 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
             if not text and image_url:
                 text = "[Imagem recebida via Instagram]"
 
-            username = _instagram_username_hint(sender, message, event) or _lookup_ig_username(
-                sender_id
-            )
+            username_hint = _instagram_username_hint(sender, message, event)
+            profile = _lookup_ig_profile(sender_id)
+            username = username_hint or profile.get("username")
+            if username and "profile_url" not in profile:
+                profile["profile_url"] = (
+                    f"https://www.instagram.com/{quote(username, safe='._')}/"
+                )
+            channel_metadata = {}
+            if profile.get("profile_picture_url"):
+                channel_metadata["profile_picture_url"] = profile["profile_picture_url"]
 
             messages.append(
                 IncomingMessage(
@@ -674,10 +705,12 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                     sender_external_id=sender_id or None,
                     sender_username=username,
                     sender_name=username,
+                    source_channel_link=profile.get("profile_url"),
                     text=text,
                     image_url=image_url,
                     attachment_type=attachment_type,
                     input_modality=input_modality,
+                    channel_metadata=channel_metadata,
                     instagram_story=story_ctx,
                     raw={"meta_event": event, "entry_id": entry.get("id")},
                 )

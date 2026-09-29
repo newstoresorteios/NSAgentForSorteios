@@ -24,7 +24,8 @@ def sync_agent_conversation(inbound_id: int, workspace_id: str) -> dict[str, Any
                        COALESCE(NULLIF(sender_username, ''),
                                 NULLIF(sender_name, ''),
                                 NULLIF(sender_key, ''),
-                                'Cliente') AS customer_name
+                                'Cliente') AS customer_name,
+                       NULLIF(channel_metadata->>'profile_picture_url', '') AS customer_avatar
                 FROM public.ai_inbound_messages
                 WHERE id = %(inbound_id)s
                   AND workspace_id = %(workspace_id)s::uuid
@@ -40,6 +41,7 @@ def sync_agent_conversation(inbound_id: int, workspace_id: str) -> dict[str, Any
                 "conversation_id": str(source["conversation_id"]),
                 "channel": str(source.get("channel") or "unknown"),
                 "customer_name": str(source.get("customer_name") or "Cliente")[:160],
+                "customer_avatar": source.get("customer_avatar"),
             }
 
             # Create only when ChatBo has not already created the thread.  The
@@ -47,9 +49,9 @@ def sync_agent_conversation(inbound_id: int, workspace_id: str) -> dict[str, Any
             cur.execute(
                 """
                 INSERT INTO public.conversas
-                    (customer_name, channel, external_thread_id, workspace_id,
+                    (customer_name, customer_avatar, channel, external_thread_id, workspace_id,
                      status, bot_activated)
-                SELECT %(customer_name)s, %(channel)s, %(conversation_id)s,
+                SELECT %(customer_name)s, %(customer_avatar)s, %(channel)s, %(conversation_id)s,
                        %(workspace_id)s::uuid, 'active', true
                 WHERE NOT EXISTS (
                     SELECT 1 FROM public.conversas
@@ -80,6 +82,16 @@ def sync_agent_conversation(inbound_id: int, workspace_id: str) -> dict[str, Any
                 raise RuntimeError("central_conversation_unavailable")
             conversation_id = str(conversation["id"])
             sync_params = {**params, "central_conversation_id": conversation_id}
+
+            cur.execute(
+                """
+                UPDATE public.conversas
+                SET customer_name = %(customer_name)s,
+                    customer_avatar = COALESCE(%(customer_avatar)s, customer_avatar)
+                WHERE id = %(central_conversation_id)s::uuid
+                """,
+                sync_params,
+            )
 
             # Reconcile the whole NSAgent history for the thread.  The global
             # external_id uniqueness makes retries and the external projector safe.

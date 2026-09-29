@@ -125,6 +125,33 @@ def test_parse_instagram_login_from_and_string_message():
     assert messages[0].sender_username == "cliente"
 
 
+def test_parse_instagram_adds_profile_picture_and_link(monkeypatch):
+    monkeypatch.setattr(
+        "app.channels.meta_instagram._lookup_ig_profile",
+        lambda _sender_id: {
+            "username": "cliente",
+            "profile_url": "https://www.instagram.com/cliente/",
+            "profile_picture_url": "https://cdn.example/avatar.jpg",
+        },
+    )
+    payload = {
+        "entry": [{
+            "id": "ig-biz",
+            "messaging": [{
+                "sender": {"id": "user-2"},
+                "recipient": {"id": "ig-biz"},
+                "message": {"mid": "m2", "text": "oi"},
+            }],
+        }],
+    }
+
+    message = parse_meta_instagram_messaging(payload)[0]
+
+    assert message.sender_username == "cliente"
+    assert message.source_channel_link == "https://www.instagram.com/cliente/"
+    assert message.channel_metadata["profile_picture_url"] == "https://cdn.example/avatar.jpg"
+
+
 def test_parse_message_edit_with_nested_sender_and_text():
     payload = {
         "object": "instagram",
