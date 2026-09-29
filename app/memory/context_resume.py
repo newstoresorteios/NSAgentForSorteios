@@ -178,6 +178,8 @@ def merge_commerce_states(
         return base
     if not base:
         return donor
+    if base.get("commercial_context_id") and base.get("commercial_context_id") != donor.get("commercial_context_id"):
+        return base
     latest_order = str(base.get("order_id") or base.get("order_lookup_id") or "")
     donor_order = str(donor.get("order_id") or donor.get("order_lookup_id") or "")
     if latest_order and donor_order and latest_order != donor_order:

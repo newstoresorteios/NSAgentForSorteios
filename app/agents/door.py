@@ -609,6 +609,10 @@ async def _generate_agent_reply_async_inner(
     commerce_state = CommerceConversationState.from_payload(
         customer_context.get("_commerce_state")
     )
+    from app.commerce.context_boundaries import reset_for_new_request, ambiguous_number_question
+    commerce_state, new_request = reset_for_new_request(
+        commerce_state, message.text, message.conversation_id, inbound_id,
+    )
     history_lookup = {
         "conversation_id": message.conversation_id,
         "sender_phone": message.sender_phone,
@@ -619,6 +623,9 @@ async def _generate_agent_reply_async_inner(
         "after_inbound_id": commerce_state.history_cut_inbound_id,
     }
     recovery_turns = load_recent_conversation_turns(**history_lookup)
+    recovery_turns = turns_for_conversation(recovery_turns, message.conversation_id)
+    if new_request:
+        recovery_turns = []
     from app.sales.dialogue_phase import is_open_sale_state
 
     thread_turns = turns_for_conversation(
@@ -709,6 +716,18 @@ async def _generate_agent_reply_async_inner(
         recent_turns=recovery_turns or recent_turns,
         message_text=message.text,
     )
+    confirmation = ambiguous_number_question(
+        message.text, recovery_turns or recent_turns, context_handles,
+    )
+    if not confirmation and context_handles.get("ambiguous_order_ids"):
+        confirmation = "Há mais de um pedido no histórico. Qual número de pedido você quer consultar agora?"
+    if confirmation:
+        return AgentResult(
+            reply_text=confirmation, intent="commerce",
+            safety_reason="context_confirmation_required",
+            response_metadata={"response_source": "context_confirmation",
+                               "commerce_state": commerce_state.model_dump(mode="json")},
+        )
     commerce_state = hydrate_state_from_handles(commerce_state, context_handles)
     already_reset = bool(
         isinstance(customer_context, dict)

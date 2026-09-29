@@ -160,8 +160,24 @@ def extract_handles_from_conversation(
         seen_docs.add(item)
         unique_docs.append(item)
 
+    from app.commerce.order_service import extract_order_reference, is_order_lookup_request
+    explicit_order = extract_order_reference(message_text) or contextual_order_id
+    numeric_orders = set(value for value in [*order_ids, *historical_order_ids] if value.isdigit())
+    ambiguous_orders = (
+        len(numeric_orders) > 1 and not explicit_order
+        and not (state and (state.order_id or state.order_lookup_id))
+        and is_order_lookup_request(
+            message_text, commerce_state=CommerceConversationState(order_lookup_id="context"),
+        )
+    )
+    if explicit_order:
+        order_ids = order_reference_candidates(explicit_order)
+    if ambiguous_orders:
+        order_ids = []
+        payment_urls = []
     return {
         "order_ids": _unique(order_ids),
+        "ambiguous_order_ids": sorted(numeric_orders) if ambiguous_orders else [],
         "contextual_order_ids": [contextual_order_id] if contextual_order_id else [],
         "payment_urls": _unique(payment_urls),
         "emails": _unique(emails),

@@ -337,7 +337,12 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
 
     commerce_state = reconcile_checkout_context(commerce_state)
 
-    browse_reset_this_turn = should_reset_browse_memory(
+    from app.commerce.context_boundaries import reset_for_new_request
+    commerce_state, new_commercial_request = reset_for_new_request(
+        commerce_state, incoming.text, incoming.conversation_id, inbound_id,
+    )
+
+    browse_reset_this_turn = new_commercial_request or should_reset_browse_memory(
         incoming.text,
         conversation_id=incoming.conversation_id,
         state=commerce_state,

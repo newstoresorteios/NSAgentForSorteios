@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from app.memory.context_resume import (
     is_generic_buy_continue,
@@ -97,6 +98,10 @@ async def try_order_resume_route(
     order_reference: Any,
 ) -> AgentResult | None:
     door = _door()
+    # A number matching an old order is not sufficient authority: the door has
+    # already asked for clarification or recognized a current budget answer.
+    if re.fullmatch(r"\s*#?\d{3,12}\s*", message.text or "") and not context_handles.get("contextual_order_ids"):
+        return None
     stored_payment = door.build_pending_payment_resume_result(commerce_state)
     # Goldens replay the stored link without Tray for an explicit link ask
     # or generic buy-continue. "sim" and status rechecks with a numeric
