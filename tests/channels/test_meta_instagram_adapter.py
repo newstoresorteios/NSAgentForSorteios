@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 
 from app.channels.meta_instagram import (
     handle_meta_verify_challenge,
@@ -8,6 +9,51 @@ from app.channels.meta_instagram import (
     payload_skeleton,
     verify_meta_signature,
 )
+
+
+class _ProfileResponse:
+    def __init__(self, status_code, data):
+        self.status_code = status_code
+        self._data = data
+        self.content = b"{}"
+
+    def json(self):
+        return self._data
+
+
+class _ProfileClient:
+    def __init__(self, *_args, **_kwargs):
+        self.calls = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def get(self, url, **_kwargs):
+        self.calls += 1
+        if "graph.instagram.com" in url:
+            return _ProfileResponse(400, {"error": {"code": 100}})
+        return _ProfileResponse(200, {
+            "username": "cliente",
+            "profile_pic": "https://cdn.example/avatar.jpg",
+        })
+
+
+def test_profile_lookup_falls_back_to_facebook_graph(monkeypatch):
+    from app.channels import meta_instagram
+
+    meta_instagram._IG_PROFILE_CACHE.clear()
+    meta_instagram._IG_USERNAME_CACHE.clear()
+    monkeypatch.setattr(meta_instagram, "get_settings", lambda: type("S", (), {
+        "meta_page_access_token": "secret-test-token",
+    })())
+    with patch("httpx.Client", _ProfileClient):
+        profile = meta_instagram._lookup_ig_profile("ig-user", force=True)
+
+    assert profile["username"] == "cliente"
+    assert profile["profile_picture_url"] == "https://cdn.example/avatar.jpg"
 
 
 def test_meta_signature_roundtrip():

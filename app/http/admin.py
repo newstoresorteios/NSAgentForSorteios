@@ -25,6 +25,16 @@ async def admin_cleanup_human_takeover(stale_days: int = 7, limit: int = 500):
     return cleanup_stale_takeover_state(stale_days=stale_days, limit=limit)
 
 
+@router.post(
+    "/instagram/profile-pictures/backfill",
+    dependencies=[Depends(verify_admin_token)],
+)
+async def admin_backfill_instagram_profile_pictures(limit: int = 25, max_age_days: int = 30):
+    from app.ops.instagram_profile_backfill import backfill_instagram_profile_pictures
+
+    return backfill_instagram_profile_pictures(limit=limit, max_age_days=max_age_days)
+
+
 @router.get(
     "/orders/{order_id}/tracking-audit",
     dependencies=[Depends(verify_admin_token)],

@@ -8,13 +8,12 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.config import get_settings as _get_settings
 from app.http.bindings import resolve
+from app.ingress.dispatch import verify_queue_dispatch
 from app.learning.remarketing import run_remarketing_batch
 from app.ops.observability import log_event
 from app.security import verify_remarketing_cron
 
 router = APIRouter(tags=["cron"])
-
-from app.ingress.dispatch import verify_queue_dispatch
 
 
 @router.post("/api/cron/process-queues", dependencies=[Depends(verify_queue_dispatch)])
@@ -252,6 +251,12 @@ async def cron_process_outbox():
     return await process_outbox_batch()
 
 
+async def cron_instagram_profile_picture_backfill():
+    from app.ops.instagram_profile_backfill import backfill_instagram_profile_pictures
+
+    return backfill_instagram_profile_pictures(limit=25, max_age_days=30)
+
+
 add_cron("/api/cron/catalog-url-health", catalog_url_health_cron)
 add_cron("/api/cron/tray-keepalive", tray_keepalive_cron)
 add_cron("/api/cron/tray-sync", tray_sync_cron)
@@ -262,3 +267,4 @@ add_cron("/api/cron/order-tracking-audit", order_tracking_audit_cron)
 add_cron("/api/cron/instagram-story-media-retention", cron_instagram_story_media_retention)
 add_cron("/api/cron/process-inbox", cron_process_inbox)
 add_cron("/api/cron/process-outbox", cron_process_outbox)
+add_cron("/api/cron/instagram-profile-picture-backfill", cron_instagram_profile_picture_backfill)

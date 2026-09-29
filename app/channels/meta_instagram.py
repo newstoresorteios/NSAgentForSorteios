@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 from urllib.parse import quote
 from typing import Any
 
@@ -16,7 +17,9 @@ from app.models import AgentResult, IncomingMessage
 from app.ops.observability import log_event
 
 _IG_USERNAME_CACHE: dict[str, str] = {}
-_IG_PROFILE_CACHE: dict[str, dict[str, str]] = {}
+_IG_PROFILE_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+_PROFILE_CACHE_SECONDS = 6 * 60 * 60
+_INCOMPLETE_PROFILE_CACHE_SECONDS = 5 * 60
 
 
 def _username_from_dict(value: Any) -> str | None:
@@ -39,11 +42,18 @@ def _instagram_username_hint(sender: dict, message: dict, event: dict) -> str | 
     return None
 
 
-def _lookup_ig_profile(sender_id: str) -> dict[str, str]:
+def _lookup_ig_profile(sender_id: str, *, force: bool = False) -> dict[str, str]:
     """Resolve the public Instagram identity from IGSID without failing the webhook."""
     cached = _IG_PROFILE_CACHE.get(sender_id)
-    if cached:
-        return cached
+    if cached and not force:
+        cached_at, cached_profile = cached
+        ttl = (
+            _PROFILE_CACHE_SECONDS
+            if cached_profile.get("profile_picture_url")
+            else _INCOMPLETE_PROFILE_CACHE_SECONDS
+        )
+        if time.monotonic() - cached_at < ttl:
+            return dict(cached_profile)
     settings = get_settings()
     token = str(getattr(settings, "meta_page_access_token", "") or "").strip()
     if not token or not sender_id:
@@ -51,23 +61,54 @@ def _lookup_ig_profile(sender_id: str) -> dict[str, str]:
     try:
         import httpx
 
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(
-                f"https://graph.instagram.com/v21.0/{sender_id}",
-                params={"fields": "username,name,profile_pic"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            # Some token/account combinations do not expose profile_pic. Keep
-            # username resolution working instead of discarding the identity.
-            if resp.status_code >= 400:
-                resp = client.get(
-                    f"https://graph.instagram.com/v21.0/{sender_id}",
-                    params={"fields": "username,name"},
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-        data = resp.json() if resp.content else {}
-        if not isinstance(data, dict):
-            return {}
+        profile_data: dict[str, Any] = {}
+        diagnostics: list[dict[str, Any]] = []
+        endpoints = (
+            "https://graph.instagram.com/v21.0",
+            "https://graph.facebook.com/v21.0",
+        )
+        with httpx.Client(timeout=2.5) as client:
+            for endpoint in endpoints:
+                try:
+                    resp = client.get(
+                        f"{endpoint}/{sender_id}",
+                        params={"fields": "username,name,profile_pic"},
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    data = resp.json() if resp.content else {}
+                    error = data.get("error") if isinstance(data, dict) else None
+                    diagnostics.append({
+                        "host": endpoint.split("//", 1)[-1].split("/", 1)[0],
+                        "status": resp.status_code,
+                        "error_code": error.get("code") if isinstance(error, dict) else None,
+                        "has_profile_pic": bool(data.get("profile_pic")) if isinstance(data, dict) else False,
+                    })
+                    if isinstance(data, dict) and not error:
+                        profile_data.update(data)
+                    if profile_data.get("profile_pic"):
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    diagnostics.append({
+                        "host": endpoint.split("//", 1)[-1].split("/", 1)[0],
+                        "error_type": type(exc).__name__,
+                    })
+
+            if not profile_data:
+                for endpoint in endpoints:
+                    try:
+                        resp = client.get(
+                            f"{endpoint}/{sender_id}",
+                            params={"fields": "username,name"},
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                        data = resp.json() if resp.content else {}
+                        if isinstance(data, dict) and not data.get("error"):
+                            profile_data.update(data)
+                            break
+                    except Exception:  # noqa: BLE001
+                        continue
+
+        data = profile_data
         username = str(data.get("username") or data.get("name") or "").strip().lstrip("@")
         profile_pic = str(data.get("profile_pic") or "").strip()
         profile: dict[str, str] = {}
@@ -78,7 +119,9 @@ def _lookup_ig_profile(sender_id: str) -> dict[str, str]:
         if profile_pic.startswith(("https://", "http://")):
             profile["profile_picture_url"] = profile_pic
         if profile:
-            _IG_PROFILE_CACHE[sender_id] = profile
+            _IG_PROFILE_CACHE[sender_id] = (time.monotonic(), dict(profile))
+        if not profile.get("profile_picture_url"):
+            log_event("meta.profile_picture.unavailable", {"attempts": diagnostics})
         return profile
     except Exception as exc:
         from app.channels import log_swallowed
