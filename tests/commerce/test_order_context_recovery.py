@@ -81,6 +81,54 @@ def test_bare_number_without_order_prompt_remains_ambiguous(turns):
     assert extract_contextual_order_reference("26116", turns) is None
 
 
+def test_dispatch_followup_recovers_earlier_answer_after_human_handoff():
+    turns = [
+        {"role": "user", "content": "Sobre um pedido"},
+        {"role": "assistant", "content": "Pode informar o número do pedido?"},
+        {"role": "user", "content": "26116"},
+        {"role": "assistant", "content": "Solicitei seu atendimento à equipe."},
+        {"role": "user", "content": "Demora assim mesmo?"},
+        {"role": "assistant", "content": "Felipe: Boa tarde!"},
+    ]
+    handles = extract_handles_from_conversation(
+        state=CommerceConversationState(), recent_turns=turns,
+        message_text="Despachou amigão ?",
+    )
+    assert handles["order_ids"] == ["26116"]
+    restored = hydrate_state_from_handles(CommerceConversationState(), handles)
+    assert restored.order_lookup_id == "26116"
+    assert is_order_lookup_request("Despachou amigão ?", commerce_state=restored)
+
+
+@pytest.mark.parametrize("turns", [
+    [{"role": "assistant", "content": "Qual sua faixa de investimento?"},
+     {"role": "user", "content": "2500"}],
+    [{"role": "user", "content": "26116"}],
+    [{"role": "assistant", "content": "Número do pedido?"},
+     {"role": "assistant", "content": "26116"}],
+    [{"role": "assistant", "content": "Número do pedido?"},
+     {"role": "user", "content": "26116"},
+     {"role": "assistant", "content": "Número do pedido?"},
+     {"role": "user", "content": "27222"}],
+])
+def test_historical_bare_numbers_require_unambiguous_customer_order_answer(turns):
+    handles = extract_handles_from_conversation(
+        state=CommerceConversationState(), recent_turns=turns,
+        message_text="Despachou?",
+    )
+    assert handles["order_ids"] == []
+
+
+def test_current_explicit_order_takes_precedence_over_old_bare_answer():
+    handles = extract_handles_from_conversation(
+        state=CommerceConversationState(),
+        recent_turns=[{"role": "assistant", "content": "Número do pedido?"},
+                      {"role": "user", "content": "26116"}],
+        message_text="E o pedido 27222?",
+    )
+    assert handles["order_ids"] == ["27222"]
+
+
 def test_hydrate_fills_missing_order_and_checkout_fields():
     state = CommerceConversationState()
     handles = {

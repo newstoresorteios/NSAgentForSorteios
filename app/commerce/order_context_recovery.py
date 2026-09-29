@@ -122,6 +122,22 @@ def extract_handles_from_conversation(
         if document:
             documents.append(document)
 
+    # Legacy turns may never have persisted the order id into commerce state.
+    # Recover a customer's bare answer with its original prompt, not the prompt
+    # preceding today's follow-up. The caller supplies session-scoped history.
+    historical_order_ids: list[str] = []
+    history = recent_turns or []
+    for index, turn in enumerate(history):
+        if not isinstance(turn, dict) or turn.get("role") != "user":
+            continue
+        recovered = extract_contextual_order_reference(turn.get("content"), history[:index])
+        if recovered and recovered not in historical_order_ids:
+            historical_order_ids.append(recovered)
+    # Never choose arbitrarily between multiple historical orders or override
+    # an explicit reference/current state with an older bare answer.
+    if not order_ids and len(historical_order_ids) == 1:
+        order_ids.extend(historical_order_ids)
+
     # Preserve first-seen order while deduping.
     def _unique(values: list[str]) -> list[str]:
         seen: set[str] = set()

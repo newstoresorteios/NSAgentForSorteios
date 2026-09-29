@@ -260,6 +260,9 @@ def is_order_lookup_request(
         "quando chega",
         "ja enviou",
         "foi enviado",
+        "despachou",
+        "foi despachado",
+        "ja despacharam",
     )
     if has_active_order_context(commerce_state) and any(
         signal in folded for signal in order_followup_signals
