@@ -18,6 +18,40 @@ def _sales():
     return sales_mod
 
 
+def _shipping_destination_clarification(
+    interpretation: SalesInterpretation,
+) -> AgentResult | None:
+    """Preserve the interpreter's destination question before freight lookup.
+
+    A quote without a Brazilian CEP and a bound cart cannot be grounded by the
+    Tray adaptor.  Returning the contextual question also preserves the
+    customer's language and prevents the generic regional delivery copy from
+    answering an international enquiry.
+    """
+    if str(interpretation.shipping_zipcode or "").strip():
+        return None
+    question = str(interpretation.clarification_question or "").strip()
+    if not question:
+        return None
+    return AgentResult(
+        reply_text=question,
+        intent="commerce",
+        safety_reason="shipping_destination_required",
+        commercial_data={
+            "success": False,
+            "stage": "shipping_guidance",
+            "shipping": {"quote_performed": False},
+        },
+        response_metadata={
+            "domain": "commerce",
+            "active_topic": "shipping",
+            "response_source": "shipping_contextual_clarification",
+            "used_tray": False,
+            "preserve_customer_language": True,
+        },
+    )
+
+
 async def try_commerce_confirmation(
     message: IncomingMessage,
     state: Any,
@@ -235,11 +269,13 @@ async def try_commerce_checkout_routes(
 
         if checkout_target_conflicts(interpretation, state):
             return None
-        shipping_result = await sales.quote_shipping(
-            state=state,
-            zipcode=interpretation.shipping_zipcode or "",
-            execute=sales.execute_tool,
-        )
+        shipping_result = _shipping_destination_clarification(interpretation)
+        if shipping_result is None:
+            shipping_result = await sales.quote_shipping(
+                state=state,
+                zipcode=interpretation.shipping_zipcode or "",
+                execute=sales.execute_tool,
+            )
         return await sales._respond_to_commerce_service(
             message=message,
             plan=plan,
