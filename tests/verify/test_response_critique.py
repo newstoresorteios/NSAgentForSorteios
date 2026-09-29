@@ -64,6 +64,26 @@ def test_unavailable_critique_keeps_factually_valid_catalog_answer():
     assert report.applied_handoff is False
 
 
+def test_unavailable_critique_keeps_deterministic_catalog_no_match():
+    from app.verify.response_critique import CritiqueLoopReport, _handle_unavailable_review
+
+    result = AgentResult(
+        reply_text="Não localizei agora uma opção que confirme 39 mm no bracelete.",
+        intent="commerce",
+        handoff_required=False,
+        safety_reason="product_not_found",
+        response_metadata={"response_source": "deterministic_fallback"},
+    )
+    report = CritiqueLoopReport(mode="enforce")
+
+    final = _handle_unavailable_review(result, report, "TimeoutError")
+
+    assert final.reply_text == result.reply_text
+    assert final.handoff_required is False
+    assert final.safety_reason == "product_not_found"
+    assert report.applied_handoff is False
+
+
 @pytest.mark.asyncio
 async def test_similar_search_relaxes_strict_tokens_once_and_keeps_budget():
     verdict = CritiqueVerdict(

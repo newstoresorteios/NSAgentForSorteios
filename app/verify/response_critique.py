@@ -1142,12 +1142,31 @@ def _handle_unavailable_review(result: AgentResult, report: CritiqueLoopReport, 
         for item in (result.commercial_data or {}).get("products", [])
         if isinstance(item, dict)
     ]
+    response_source = str(metadata.get("response_source") or "")
     # An unavailable prose review must not erase an answer already grounded by
     # the factual validator and live catalog evidence. The review can retry on a
     # later turn; sending a generic handoff here loses the customer's subject.
     if validation.get("valid") is True and products and not result.handoff_required:
         report.approved = None
         report.review_status = "unavailable"
+        return result
+    # The critique is an optional quality layer.  It must not turn an already
+    # deterministic catalog outcome (including an honest no-match) into a
+    # human handoff merely because that optional layer is unavailable.  Besides
+    # giving the customer a worse answer, a handoff clears the active product
+    # constraints and makes a following correction (e.g. "39 mm no bracelete")
+    # lose its context.
+    if (
+        not result.handoff_required
+        and result.intent == "commerce"
+        and response_source in {
+            "deterministic_fallback",
+            "technical_fallback",
+            "conversation_repair",
+            "published_availability_policy",
+            "published_discovery_policy",
+        }
+    ):
         return result
     if policy("critiqueUnavailableAction") == "grounded_fallback":
         if result.safety_reason in {"catalog_requirements_unknown", "catalog_requirements_no_match"}:
