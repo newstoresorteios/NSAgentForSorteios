@@ -43,6 +43,32 @@ def test_product_requests_keep_story_resolution(text):
 
 
 @pytest.mark.parametrize("text", [
+    "Não encontrei essa cor no site", "qual valor?", "Quero comprar",
+    "Meu pedido não chegou", "Obrigado! Quanto custa esse?",
+])
+def test_actionable_story_is_not_silenced(text):
+    from app.stories.instagram_story_intent import should_silence_story_message
+    assert not should_silence_story_message(incoming(text))
+
+
+@pytest.mark.asyncio
+async def test_color_complaint_reaches_story_visual_resolver(monkeypatch):
+    from app.agents.door_media import try_media_routes
+    from app.models import AgentResult
+    resolver = AsyncMock(return_value=type("Resolution", (), {
+        "product_payload": None, "failure_reason": None,
+    })())
+    monkeypatch.setattr("app.stories.instagram_story_service.resolve_story_product_question", resolver)
+    monkeypatch.setattr("app.stories.instagram_story_service.story_result_to_agent_result",
+                        lambda *a, **kw: AgentResult(reply_text="Consulta visual"))
+    item = incoming("Não encontrei essa cor no site")
+    item.image_url = "https://example.com/story.jpg"
+    result = await try_media_routes(item, None)
+    resolver.assert_awaited_once()
+    assert result.reply_text == "Consulta visual"
+
+
+@pytest.mark.parametrize("text", [
     "top, os envios!", "top o envio!", "Lindo!", "Amei", "Show demais", "🔥", "👏👏",
 ])
 def test_social_story_feedback_is_recorded_without_auto_reply(text):

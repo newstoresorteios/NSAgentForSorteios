@@ -114,13 +114,13 @@ def should_silence_story_feedback(incoming: IncomingMessage) -> bool:
 
 
 def should_silence_story_message(incoming: IncomingMessage) -> bool:
-    """All explicitly Story-linked messages are handled outside the agent.
-
-    Do not infer this from text or conversation history: ordinary DMs stay active.
-    """
+    """Keep empty reactions and social feedback silent, not customer requests."""
     story = getattr(incoming, "instagram_story", None)
-    return isinstance(story, InstagramStoryContext) and bool(
+    linked = isinstance(story, InstagramStoryContext) and bool(
         story.replied_to_story or story.mentioned_in_story or story.story_media_id
+    )
+    return linked and (
+        not str(incoming.text or "").strip() or should_silence_story_feedback(incoming)
     )
 
 

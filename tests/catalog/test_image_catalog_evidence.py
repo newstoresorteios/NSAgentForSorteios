@@ -38,9 +38,32 @@ def test_queries_prioritize_bezel_color_without_watch_specific_rules():
 
     assert image_search_queries(vision)[:3] == [
         'christopher ward c60 trident vermelho',
-        'christopher ward vermelho',
         'christopher ward c60 trident preto',
+        'christopher ward c60 trident',
     ]
+
+
+def test_boulton_family_is_searched_within_five_query_budget():
+    photo = hypothesis('Hamilton', 'American Classic Boulton', 'ivory')
+    photo.bezel_color = 'gold'
+    photo.strap_color = 'brown'
+    assert 'hamilton american classic boulton' in image_search_queries(photo)[:5]
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_photo_keeps_visual_details_through_final_guard(monkeypatch):
+    photo = hypothesis('Hamilton', 'American Classic Boulton', 'ivory')
+    photo.dial_color = 'ivory'
+    photo.strap_color = 'brown'
+    photo.reference = 'UNPROVEN-123'
+    monkeypatch.setattr(resolver, 'search_storefront', AsyncMock(return_value=[]))
+    result = await resolver.resolve_catalog_photo(incoming(), photo)
+    result.reply_text = 'SKU inventado UNPROVEN-123 disponível'
+    result = enforce_photo_identity(result)
+    assert 'marfim' in result.reply_text and 'marrom' in result.reply_text
+    assert 'UNPROVEN-123' not in result.reply_text
+    assert 'Boulton' not in result.reply_text
+    assert not result.commercial_data['products']
 
 
 @pytest.mark.asyncio

@@ -121,7 +121,8 @@ async def resolve_catalog_photo(incoming, identified) -> AgentResult:
         log_event('image.catalog_resolution_failed', {'error_type': type(exc).__name__})
     reason = ('image_catalog_ambiguous' if ambiguous else 'image_catalog_search_incomplete' if search_incomplete
               else 'image_catalog_unconfirmed')
-    return AgentResult(reply_text=copy(reason), intent='commerce',
+    from app.catalog.vision.description import unresolved_photo_reply
+    return AgentResult(reply_text=unresolved_photo_reply(reason, base['image_identify']), intent='commerce',
                        safety_reason=reason,
                        commercial_data={'products': [], 'match_status': 'unresolved'},
                        response_metadata={**base, 'catalog_search_incomplete': search_incomplete,

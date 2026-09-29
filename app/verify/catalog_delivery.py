@@ -82,7 +82,8 @@ def enforce_photo_identity(result):
             if md.get('catalog_search_incomplete')
             else 'image_catalog_unconfirmed'
         )
-        result.reply_text = message(unresolved_key)
+        from app.catalog.vision.description import unresolved_photo_reply
+        result.reply_text = unresolved_photo_reply(unresolved_key, md.get('image_identify'))
         result.commercial_data = {'products': [], 'match_status': 'unresolved'}
         result.safety_reason = unresolved_key
         md.update(presented_products=False, clear_presented_products=True,

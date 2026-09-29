@@ -279,7 +279,7 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
             {"inbox_id": inbox_id, "inbound_id": inbound_id},
         )
 
-    # Persist all Story input for the Central, but never analyze or reply to it.
+    # Persist silent Story reactions; actionable Story text reaches the agent.
     if silence_story:
         _mark_group_processed(grouped_inbox_ids, inbound_id)
         log_event(

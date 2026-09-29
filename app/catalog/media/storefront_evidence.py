@@ -98,6 +98,9 @@ def image_search_queries(identified) -> list[str]:
     # The model is a search hypothesis; never synthesize a SKU or replace a family.
     candidates = []
     for color in colors:
-        candidates.extend((f'{brand} {core} {color}', f'{brand} {color}'))
+        candidates.append(f'{brand} {core} {color}')
+    # Always try the model family before broad color-only probes consume the
+    # bounded query budget. Merchant titles often omit the photographed hue.
     candidates.extend((f'{brand} {core}', brand))
+    candidates.extend(f'{brand} {color}' for color in colors)
     return list(dict.fromkeys(' '.join(q.split()) for q in candidates if len(q.strip()) >= 3))

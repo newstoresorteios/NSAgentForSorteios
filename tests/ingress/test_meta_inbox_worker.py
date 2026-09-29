@@ -152,7 +152,7 @@ def test_process_inbox_row_skips_caption_echo(monkeypatch):
     assert marked == [4]
 
 
-@pytest.mark.parametrize("text", ["top, os envios!", "qual valor?", "Quero comprar", "Meu pedido não chegou", "🔥", ""])
+@pytest.mark.parametrize("text", ["top, os envios!", "🔥", ""])
 @pytest.mark.parametrize("media_type", ["image", "video"])
 def test_story_feedback_is_persisted_but_never_generates_or_sends(monkeypatch, text, media_type):
     import asyncio
