@@ -74,6 +74,33 @@ def _first_non_empty(*values: Any) -> str | None:
     return None
 
 
+_PROFILE_PICTURE_KEYS = frozenset({
+    "avatar", "avatarurl", "picture", "pictureurl", "profilepic",
+    "profilepicture", "profilepictureurl", "photo", "photourl", "userpic",
+})
+
+
+def _profile_picture_url(visitor: dict[str, Any]) -> str | None:
+    """Read a provider-supplied visitor photo without treating message media as an avatar."""
+    containers = [
+        visitor,
+        visitor.get("attributes"),
+        visitor.get("integrationAttributes"),
+        visitor.get("contactAttributes"),
+    ]
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for key, raw_value in container.items():
+            normalized_key = "".join(char for char in str(key).lower() if char.isalnum())
+            if normalized_key not in _PROFILE_PICTURE_KEYS:
+                continue
+            value = str(raw_value or "").strip()
+            if value.startswith(("https://", "http://")):
+                return value
+    return None
+
+
 def _message_type(message: dict[str, Any]) -> str:
     value = _first_non_empty(
         message.get("type"),
@@ -613,6 +640,9 @@ def parse_brevo_conversations_payload(payload: dict[str, Any]) -> IncomingMessag
         conversation_id,
     )
     channel_metadata: dict[str, Any] = {}
+    profile_picture_url = _profile_picture_url(visitor_obj)
+    if profile_picture_url:
+        channel_metadata["profile_picture_url"] = profile_picture_url
     if attachment_type:
         channel_metadata["attachment_type"] = attachment_type
     if image_url:

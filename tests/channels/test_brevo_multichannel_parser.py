@@ -102,3 +102,39 @@ def test_channel_aliases_and_sender_keys_are_collision_safe():
     assert build_sender_key("instagram", None, "123", "visitor", None) == "instagram:123"
     assert build_sender_key("facebook", None, "123", "visitor", None) == "facebook:123"
     assert build_sender_key("wa", "+55 (43) 99999-9999", None, None, None) == "whatsapp:5543999999999"
+
+
+def test_whatsapp_profile_picture_is_preserved_when_brevo_supplies_it():
+    incoming = parse_brevo_conversations_payload({
+        "eventName": "conversationStarted",
+        "conversationId": "conv-wa-photo",
+        "message": {"id": "msg-wa", "type": "visitor", "text": "Oi"},
+        "visitor": {
+            "id": "visitor-wa",
+            "source": "whatsapp",
+            "sourceConversationRef": "5511999999999",
+            "attributes": {"WHATSAPP": "+55 11 99999-9999"},
+            "integrationAttributes": {
+                "profile_picture_url": "https://cdn.example/whatsapp-avatar.jpg",
+            },
+        },
+    })
+
+    assert incoming.channel == "whatsapp"
+    assert incoming.channel_metadata["profile_picture_url"] == (
+        "https://cdn.example/whatsapp-avatar.jpg"
+    )
+
+
+def test_customer_message_image_is_not_used_as_profile_picture():
+    incoming = parse_brevo_conversations_payload({
+        "eventName": "conversationStarted",
+        "message": {
+            "id": "msg-image",
+            "type": "visitor",
+            "file": {"link": "https://cdn.example/product.jpg", "mimeType": "image/jpeg"},
+        },
+        "visitor": {"id": "visitor-wa", "source": "whatsapp"},
+    })
+
+    assert incoming.channel_metadata.get("profile_picture_url") is None
