@@ -262,15 +262,25 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
         incoming.raw["inbound_id"] = inbound_id
         incoming.raw["inbox_id"] = inbox_id
 
-    # Persist all Story input for the Central, but never analyze or reply to it.
-    if silence_story:
-        from app.configuration.workspace import stamp_silent_inbound_workspace
-        try:
-            await asyncio.to_thread(stamp_silent_inbound_workspace, incoming, inbound_id)
-        except Exception as exc:
+    # Project every captured message before any intentional early return (Story,
+    # human takeover, duplicate response). The normal pipeline repeats this
+    # idempotently after persona resolution.
+    from app.configuration.workspace import stamp_silent_inbound_workspace
+    try:
+        await asyncio.to_thread(stamp_silent_inbound_workspace, incoming, inbound_id)
+    except Exception as exc:
+        if silence_story:
             log_exception("inbox.story_workspace_failed", exc, {"inbox_id": inbox_id})
             _mark_group_failed(grouped_inbox_ids, error="story_workspace_failed")
             return {"ok": False, "inbox_id": inbox_id, "error": "story_workspace_failed"}
+        log_exception(
+            "central.inbound_presync_failed",
+            exc,
+            {"inbox_id": inbox_id, "inbound_id": inbound_id},
+        )
+
+    # Persist all Story input for the Central, but never analyze or reply to it.
+    if silence_story:
         _mark_group_processed(grouped_inbox_ids, inbound_id)
         log_event(
             "inbox.skipped_story_message",

@@ -61,7 +61,7 @@ def ingress_settings(incoming, base):
 
 
 def stamp_silent_inbound_workspace(incoming, inbound_id: int | None) -> None:
-    """Resolve ownership even when the agent pipeline is intentionally skipped."""
+    """Resolve ownership before the agent pipeline or an intentional skip."""
     from app.config import get_settings
     if not getattr(get_settings(), "database_url", None):
         return

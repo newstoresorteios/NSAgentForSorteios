@@ -94,6 +94,11 @@ def test_meta_provider_respects_human_takeover(monkeypatch):
     monkeypatch.setattr(worker_mod, "claim_inbound_message", lambda *_args, **_kwargs: (True, 9))
     monkeypatch.setattr(worker_mod, "mark_inbox_processed", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(worker_mod, "mark_inbox_failed", lambda *_args, **_kwargs: None)
+    synced = []
+    monkeypatch.setattr(
+        "app.configuration.workspace.stamp_silent_inbound_workspace",
+        lambda incoming, inbound_id: synced.append((incoming.conversation_id, inbound_id)),
+    )
 
     result = asyncio.run(
         worker_mod.process_inbox_row({"id": 1, "payload_json": {}, "attempts": 1})
@@ -101,6 +106,7 @@ def test_meta_provider_respects_human_takeover(monkeypatch):
     assert result["ok"] is True
     assert result.get("skipped") == "human_takeover"
     assert result.get("inbound_id") == 9
+    assert synced == [("ig:user-1", 9)]
 
 
 def test_process_inbox_row_skips_caption_echo(monkeypatch):
