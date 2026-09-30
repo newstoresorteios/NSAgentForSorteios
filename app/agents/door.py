@@ -592,6 +592,11 @@ async def _generate_agent_reply_async_inner(
         return unresolved
 
     from app.persona.institutional_route import answer_institutional
+    from app.sales.ready_delivery import try_ready_delivery
+    ready_delivery = await try_ready_delivery(message)
+    if ready_delivery is not None:
+        return _annotate_agent_result(ready_delivery)
+
     institutional = await answer_institutional(message)
     if institutional is not None:
         return _annotate_agent_result(institutional)
