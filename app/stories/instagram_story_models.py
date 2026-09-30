@@ -236,6 +236,9 @@ class StoryConversationReference(BaseModel):
     clarification_options: list[str] = Field(default_factory=list)
     followup_terms: list[str] = Field(default_factory=list)
     clarification_rounds: int = 0
+    catalog_query_base: str = ""
+    catalog_query: str = ""
+    selected_option: str | None = None
 
 
 class StoryResolutionResult(BaseModel):
@@ -251,6 +254,7 @@ class StoryResolutionResult(BaseModel):
     needs_clarification: bool = False
     clarification_options: list[str] = Field(default_factory=list)
     followup_terms: list[str] = Field(default_factory=list)
+    catalog_query_base: str = ""
     factual_evidence: list[dict[str, Any]] = Field(default_factory=list)
     failure_reason: str | None = None
     question_type: StoryQuestionType = StoryQuestionType.GENERIC

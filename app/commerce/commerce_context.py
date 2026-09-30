@@ -161,6 +161,7 @@ class CommerceConversationState(BaseModel):
     # A new order/budget context must not be replenished from an older snapshot.
     commercial_context_id: str | None = None
     last_story_product: dict[str, Any] | None = None
+    ready_delivery_context: dict[str, Any] | None = None
     # found_available | found_unknown | found_unavailable | plausible_matches | None
     product_resolution_state: str | None = None
     active_preferences: dict[str, Any] = Field(default_factory=dict)
@@ -649,6 +650,9 @@ def evolve_commerce_state(
         state.active_domain = domain
     if domain != "commerce":
         return state
+
+    # A different commercial route ends the storefront continuation.
+    state.ready_delivery_context = metadata.get("ready_delivery_context")
 
     cart_state = metadata.get("cart_state")
     cart_materially_changed = _cart_state_materially_changed(

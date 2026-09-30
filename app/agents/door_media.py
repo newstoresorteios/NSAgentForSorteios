@@ -35,10 +35,11 @@ async def try_media_routes(
 ) -> AgentResult | None:
     door = _door()
     from app.stories.story_followup import unresolved_story_followup
+    from app.sales.ready_delivery import enrich_story_ready_delivery
 
     followup = unresolved_story_followup(message, commerce_state)
     if followup is not None:
-        return followup
+        return await enrich_story_ready_delivery(message, followup)
     unresolved = unresolved_publication_reply(message)
     if unresolved is not None:
         return unresolved
@@ -67,6 +68,7 @@ async def try_media_routes(
                     incoming=message,
                 )
                 if story_agent is not None:
+                    story_agent = await enrich_story_ready_delivery(message, story_agent)
                     return door._annotate_agent_result(
                         story_agent,
                         domain="commerce",

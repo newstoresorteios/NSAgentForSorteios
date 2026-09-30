@@ -39,7 +39,9 @@ def unresolved_story_followup(incoming, state):
     related = bool(terms.intersection(ref.get("followup_terms") or []))
     selection_words = set("o a os as um uma eu quero esse este aquele de do da no na com por favor mostrador relogio azul preto prata prateado branco verde marrom dourado rosa esquerda direita centro primeiro segundo terceiro quanto custa valor preco link manda envia".split())
     selection_only = bool(selection and terms.issubset(selection_words))
-    if not selection_only and not related and not re.fullmatch(r"\s*\d{2}\s*mm[.!?]?\s*", text):
+    from app.sales.ready_delivery_context import PRICE_FOLLOWUP
+    price_followup = bool(ref.get('selected_option') and re.fullmatch(PRICE_FOLLOWUP, text.strip()))
+    if not selection_only and not related and not price_followup and not re.fullmatch(r"\s*\d{2}\s*mm[.!?]?\s*", text):
         return None
     options = [v for v in ref.get("clarification_options", []) if str(v).startswith("relógio ")][:5]
     rounds = int(ref.get("clarification_rounds") or 0)
@@ -50,7 +52,9 @@ def unresolved_story_followup(incoming, state):
         reply = ("Ainda não confirmei a referência exata do relógio desse Story. "
                  "Pode enviar um print marcando o relógio ou a referência? "
                  "Também posso pedir ajuda a um atendente para confirmar a versão certa.")
-    updated = {**ref, "clarification_rounds": min(rounds + 1, 2)}
+    from app.stories.story_catalog_context import refine_story_reference
+    updated = refine_story_reference(ref, incoming.text)
+    updated["clarification_rounds"] = min(rounds + 1, 2)
     return AgentResult(reply_text=reply, intent="commerce", safety_reason="ambiguous",
                        response_metadata={"domain": "commerce", "response_source": "instagram_story_followup",
                                           "instagram_story": True, "story_match_status": "ambiguous",

@@ -282,6 +282,11 @@ def _followup_terms(analysis: StoryVisualUnderstanding) -> list[str]:
                              if token not in brands | {"relogio", "watch", "automatic", "automatico"}))[:12]
 
 
+def _catalog_query_base(analysis: StoryVisualUnderstanding) -> str:
+    from app.stories.story_catalog_context import catalog_hints
+    return catalog_hints(analysis)
+
+
 def _compose_reply(
     *,
     question_type: Any,
@@ -463,6 +468,10 @@ def _reuse_assoc_result(
     variant_lines: list[str] | None = None,
 ) -> StoryResolutionResult:
     status = assoc.match_status
+    try:
+        analysis = StoryVisualUnderstanding.model_validate(getattr(assoc, "visual_analysis", None) or {})
+    except (TypeError, ValueError):
+        analysis = StoryVisualUnderstanding()
     return StoryResolutionResult(
         resolved=bool(product) and not tray_failed and status in {"matched", "manually_confirmed"},
         tenant_id=tenant,
@@ -475,6 +484,8 @@ def _reuse_assoc_result(
         candidates=candidates or [],
         needs_clarification=status in {"ambiguous", "not_found", "failed", "processing", "expired"},
         clarification_options=clarification_options or [],
+        followup_terms=_followup_terms(analysis),
+        catalog_query_base=_catalog_query_base(analysis),
         factual_evidence=evidence,
         question_type=question_type,
         product_payload=product,
@@ -666,6 +677,7 @@ async def _finalize_story_catalog_match(
             needs_clarification=True,
             clarification_options=clar_options or options,
             followup_terms=_followup_terms(analysis),
+            catalog_query_base=_catalog_query_base(analysis),
             candidates=candidates[:5],
             confidence=candidates[0].score if candidates else 0.0,
             question_type=question_type,
@@ -697,6 +709,7 @@ async def _finalize_story_catalog_match(
         needs_clarification=True,
         clarification_options=options,
         followup_terms=_followup_terms(analysis),
+        catalog_query_base=_catalog_query_base(analysis),
         candidates=candidates[:5],
         question_type=question_type,
         reply_hint=_compose_reply(
@@ -1561,7 +1574,11 @@ def story_result_to_agent_result(
             conversation_id=incoming.conversation_id, sender_key=incoming.sender_key,
             clarification_options=resolution.clarification_options[:5],
             followup_terms=resolution.followup_terms,
+            catalog_query_base=resolution.catalog_query_base,
+            catalog_query=resolution.catalog_query_base,
         ).model_dump(mode="json")
+        from app.stories.story_catalog_context import refine_story_reference
+        metadata["last_story_product"] = refine_story_reference(metadata["last_story_product"], incoming.text)
         metadata.update(clear_active_product=True, clear_presented_products=True,
                         clear_pending_action=True, product_resolution_state="unresolved")
         if resolution.clarification_options:

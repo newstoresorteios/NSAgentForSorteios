@@ -746,6 +746,10 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         result.response_metadata = response_metadata
     outbound_snapshot = {
         "institutional_evidence": response_metadata.get("institutional_evidence", []),
+        "ready_delivery_check": {
+            key: (response_metadata.get("ready_delivery_check") or {}).get(key)
+            for key in ("source", "complete", "checked_at", "stock_confirmed", "result_count")
+        } if response_metadata.get("ready_delivery_check") else None,
         "domain": response_metadata.get("domain"),
         "goal": response_metadata.get("goal"),
         "intent": result.intent,
