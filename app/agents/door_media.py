@@ -34,6 +34,11 @@ async def try_media_routes(
     commerce_state: Any,
 ) -> AgentResult | None:
     door = _door()
+    from app.stories.story_followup import unresolved_story_followup
+
+    followup = unresolved_story_followup(message, commerce_state)
+    if followup is not None:
+        return followup
     unresolved = unresolved_publication_reply(message)
     if unresolved is not None:
         return unresolved
@@ -133,6 +138,8 @@ async def try_media_routes(
             runtime.execution_path = "complex"
         image_result = await door.handle_image_product_search(message)
         if image_result is not None:
+            if image_result.response_metadata.get("support_document") or image_result.safety_reason == "image_not_watch":
+                return image_result
             image_result.response_metadata['image_evidence_guard'] = True
             return door._annotate_agent_result(
                 image_result,

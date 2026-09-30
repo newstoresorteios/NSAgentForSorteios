@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -247,9 +248,10 @@ def _clarification_from_regions(
         bits = [v for v in (f"mostrador {color}" if color else "", position) if v]
         if bits:
             options.append("relógio com " + " ".join(bits) if color else "relógio " + position)
-    if (analysis.watch_count == 2 and len(options) == 2
-            and len(set(options)) == 2):
-        return options, f"Claro! Você quer o {options[0]} ou o {options[1]}?"
+    options = list(dict.fromkeys(options))[:5]
+    if len(options) > 1 and len(options) == analysis.watch_count:
+        listed = ", ".join(options[:-1]) + " ou " + options[-1]
+        return options, f"Claro! Qual você quer: {listed}?"
     if analysis.watch_count > 1 or analysis.multiple_products:
         return [], (
             "Claro! Qual dos relógios do Story chamou sua atenção? "
@@ -268,6 +270,16 @@ def _clarification_from_regions(
         "Nesse Story a identificação ficou parcial. "
         "Pode me dizer a marca ou a referência?"
     )
+
+
+def _followup_terms(analysis: StoryVisualUnderstanding) -> list[str]:
+    from app.catalog.retrieval.text import fold_text
+
+    # Hints bind a short follow-up to an unresolved Story, never to a SKU.
+    text = " ".join([*analysis.collection_hypotheses, *analysis.model_hypotheses])
+    brands = set(re.findall(r"[a-z0-9]+", fold_text(" ".join(analysis.visible_brands))))
+    return list(dict.fromkeys(token for token in re.findall(r"[a-z0-9]{3,24}", fold_text(text))
+                             if token not in brands | {"relogio", "watch", "automatic", "automatico"}))[:12]
 
 
 def _compose_reply(
@@ -653,6 +665,7 @@ async def _finalize_story_catalog_match(
             match_status="ambiguous",
             needs_clarification=True,
             clarification_options=clar_options or options,
+            followup_terms=_followup_terms(analysis),
             candidates=candidates[:5],
             confidence=candidates[0].score if candidates else 0.0,
             question_type=question_type,
@@ -675,13 +688,15 @@ async def _finalize_story_catalog_match(
         story_media_id=media_id,
         explanation={"candidate_count": len(candidates)},
     )
-    _, not_found_reply = _clarification_from_regions(analysis)
+    options, not_found_reply = _clarification_from_regions(analysis)
     return StoryResolutionResult(
         resolved=False,
         tenant_id=tenant,
         story_media_id=media_id,
         match_status="not_found",
         needs_clarification=True,
+        clarification_options=options,
+        followup_terms=_followup_terms(analysis),
         candidates=candidates[:5],
         question_type=question_type,
         reply_hint=_compose_reply(
@@ -1292,7 +1307,7 @@ async def resolve_story_product_question(
                     extract_video_frames_best_effort,
                     media.content,
                     max_frames=int(
-                        getattr(get_settings(), "instagram_story_video_max_frames", 3) or 3
+                        getattr(get_settings(), "instagram_story_video_max_frames", 5) or 5
                     ),
                 )
                 thumb_url = story.operational_thumbnail_url()
@@ -1381,13 +1396,7 @@ async def resolve_story_product_question(
                     {"count": metrics["story_visual_analysis_calls"]},
                 )
     except StoryMediaError as exc:
-        if exc.code in {
-            "host_not_allowed",
-            "scheme_not_https",
-            "private_ip_blocked",
-            "redirect_host_not_allowed",
-            "redirect_private_ip",
-        }:
+        if exc.code not in {"http_403", "http_404", "http_410"}:
             repo.mark_failed(
                 tenant_id=tenant,
                 provider=provider,
@@ -1420,7 +1429,7 @@ async def resolve_story_product_question(
                 product=None,
                 status="failed",
                 candidates=[],
-                expired=True,
+                expired=status == "expired",
             ),
             shadow_only=shadow_only,
             metrics=metrics,
@@ -1542,6 +1551,23 @@ def story_result_to_agent_result(
         "story_media_id": resolution.story_media_id,
     }
     commercial: dict[str, Any] = {}
+    if resolution.needs_clarification and resolution.match_status in {"ambiguous", "not_found"}:
+        # Keep unresolved context too. Losing it lets a reply such as "PRX
+        # 35mm" become an unrelated catalog search for a different finish.
+        metadata["last_story_product"] = StoryConversationReference(
+            story_media_id=resolution.story_media_id, tenant_id=tenant,
+            match_status=resolution.match_status,
+            resolved_at=resolution.resolved_at or datetime.now(timezone.utc),
+            conversation_id=incoming.conversation_id, sender_key=incoming.sender_key,
+            clarification_options=resolution.clarification_options[:5],
+            followup_terms=resolution.followup_terms,
+        ).model_dump(mode="json")
+        metadata.update(clear_active_product=True, clear_presented_products=True,
+                        clear_pending_action=True, product_resolution_state="unresolved")
+        if resolution.clarification_options:
+            # reply_hint is deterministic and based on normalized colors/
+            # positions, not raw vision prose or catalog candidate identifiers.
+            metadata["story_clarification_reply"] = reply
     if resolution.product_payload and evidence and evidence.authorizes_price():
         commercial["products"] = [resolution.product_payload]
         metadata["presented_products"] = True

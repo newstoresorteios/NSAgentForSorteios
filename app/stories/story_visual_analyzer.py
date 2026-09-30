@@ -101,6 +101,9 @@ async def analyze_story_image(
     parsed = parse_result.parsed
     if not isinstance(parsed, StoryVisualUnderstanding):
         raise ValueError("story_visual_schema_missing")
+    # The model sees JPEG frames, but the source remains a video. Keeping the
+    # transport type prevents valid video analyses from being invalidated.
+    parsed.media_type = media_type
     if parsed.visible_advertised_price:
         parsed.ambiguity_reasons = list(
             dict.fromkeys(

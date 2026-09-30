@@ -56,9 +56,10 @@ def test_actionable_story_is_scoped_and_reaches_pipeline(monkeypatch):
     monkeypatch.setattr(worker, "_customer_context_for", AsyncMock(return_value={}))
     calls = []
     monkeypatch.setattr(workspace, "stamp_silent_inbound_workspace", lambda *args: calls.append('scoped'))
-    async def archive(inbound_id):
+    async def archive(inbound_id, *, incoming):
         assert inbound_id == 940
         assert calls == ['scoped']
+        incoming.attachment_type = 'video'
         calls.append('archived')
     monkeypatch.setattr('app.ops.instagram_media_archive.archive_instagram_inbound_media', archive)
     class ReachedPipeline(Exception):
@@ -66,6 +67,7 @@ def test_actionable_story_is_scoped_and_reaches_pipeline(monkeypatch):
     async def pipeline(value, context):
         assert calls == ['scoped', 'archived']
         assert value.text == 'valor?'
+        assert value.attachment_type == 'video'
         raise ReachedPipeline
     monkeypatch.setattr("app.message_pipeline.process_incoming_message", pipeline)
     processed = Mock()

@@ -60,7 +60,7 @@ async def validate_catalog_delivery(result):
 def enforce_photo_identity(result):
     """An image reviewer may not replace an uncertain draft with a catalog sibling."""
     md = result.response_metadata
-    if not md.get('image_evidence_guard'):
+    if not md.get('image_evidence_guard') or md.get('support_document') or result.safety_reason == 'image_not_watch':
         return result
     proof = md.get('image_catalog_proof') or {}
     products = (result.commercial_data or {}).get('products') or []
@@ -95,6 +95,11 @@ def enforce_photo_identity(result):
 
 
 def apply_output_style(result):
+    if not result.commercial_data and result.response_metadata.get("actor_type") != "human":
+        # Avoid using the generic CRM label as a person's name. Keep ordinary
+        # mentions ("atendimento ao cliente") and catalog text untouched.
+        import re
+        result.reply_text = re.sub(r",\s*cliente(?=[.!?]|$)", "", result.reply_text, flags=re.I)
     try:
         if policy('responsePlainTextEnabled'):
             result.reply_text = result.reply_text.replace('*', '')

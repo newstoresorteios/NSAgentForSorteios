@@ -148,6 +148,9 @@ async def test_last_enrichment_cannot_restore_hidden_products(monkeypatch, appro
     async def enrich(incoming,result):
         result.reply_text = "Vou solicitar ajuda da equipe."
         result.handoff_required = True
+        result.reply_audio_url = 'https://example.test/rejected-draft.mp3'
+        result.reply_modality = 'audio'
+        result.response_metadata['outbound_image_urls'] = ['https://images.tcdn.com.br/rejected-product.jpg']
         return result
     monkeypatch.setattr(pipeline,"enrich_agent_result",enrich)
     result = await pipeline.process_incoming_message(IncomingMessage(text=ASK),{})
@@ -156,3 +159,5 @@ async def test_last_enrichment_cannot_restore_hidden_products(monkeypatch, appro
     assert result.response_metadata["commerce_state"]["last_presented_products"] == []
     assert not result.response_metadata["presented_products"]
     assert result.response_metadata["final_response_validation"]["delivered_product_ids"] == []
+    assert result.reply_modality == 'text' and result.reply_audio_url is None
+    assert not result.response_metadata.get('outbound_image_urls')

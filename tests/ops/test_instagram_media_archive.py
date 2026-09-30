@@ -19,13 +19,19 @@ def row(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_archives_actual_video_bytes_under_resolved_workspace(monkeypatch, row):
-    media = SimpleNamespace(storage_path='supabase://private/stored', content_type='video/mp4', byte_count=120)
+    media = SimpleNamespace(content=b'video', sha256='a' * 64, content_type='video/mp4', byte_count=120)
     download = AsyncMock(return_value=media)
     monkeypatch.setattr(archive, 'download_story_media', download)
+    storage = SimpleNamespace(put_private=AsyncMock(return_value='supabase://private/stored'), last_error=None)
+    factory = Mock(return_value=storage)
+    monkeypatch.setattr(archive, 'SupabasePrivateStoryMediaStorage', factory)
     assert await archive.archive_instagram_inbound_media(1031) == 'stored'
     assert download.call_args.kwargs['tenant_id'] == 'workspace-a'
-    assert download.call_args.kwargs['storage'].bucket == 'conversation-media'
-    archive._save.assert_called_once_with(row, path=media.storage_path, mime='video/mp4', byte_count=120)
+    assert download.call_args.kwargs['persist'] is False
+    assert download.call_args.kwargs['max_bytes'] == 16_777_216
+    factory.assert_called_once_with(bucket='conversation-media')
+    storage.put_private.assert_awaited_once_with(content=b'video', content_type='video/mp4', sha256='a' * 64, tenant_id='workspace-a')
+    archive._save.assert_called_once_with(row, path='supabase://private/stored', mime='video/mp4', byte_count=120)
 
 
 @pytest.mark.asyncio
@@ -70,3 +76,27 @@ async def test_backfill_is_bounded_and_partial_failure_is_reported(monkeypatch):
     monkeypatch.setattr(archive, 'archive_instagram_inbound_media', AsyncMock(side_effect=['stored', 'unavailable']))
     result = await archive.backfill_instagram_media(limit=2, workspace_id='workspace-a')
     assert result == {'scanned': 2, 'stored': 1, 'already_stored': 0, 'unavailable': 1}
+
+
+@pytest.mark.asyncio
+async def test_storage_failure_keeps_sniffed_video_type_for_agent_and_central(monkeypatch, row):
+    from app.models import IncomingMessage
+    from app.stories.instagram_story_models import InstagramStoryContext
+    incoming = IncomingMessage(attachment_type='image', instagram_story=InstagramStoryContext(media_type='image'))
+    media = SimpleNamespace(content=b'video', sha256='a' * 64, content_type='video/mp4', byte_count=13_196_560)
+    monkeypatch.setattr(archive, 'download_story_media', AsyncMock(return_value=media))
+    storage = SimpleNamespace(put_private=AsyncMock(return_value=None), last_error='storage_upload_http_403')
+    monkeypatch.setattr(archive, 'SupabasePrivateStoryMediaStorage', lambda **kw: storage)
+    assert await archive.archive_instagram_inbound_media(1031, incoming=incoming) == 'unavailable'
+    assert incoming.attachment_type == incoming.instagram_story.media_type == 'video'
+    assert incoming.image_mime_type == 'video/mp4'
+    archive._save.assert_called_once_with(row, error='storage_upload_http_403', mime='video/mp4', byte_count=13_196_560)
+
+
+@pytest.mark.asyncio
+async def test_retry_uses_archived_mime_without_downloading(monkeypatch, row):
+    from app.models import IncomingMessage
+    row['channel_metadata'].update(media_storage_path='existing', media_content_type='video/mp4')
+    incoming = IncomingMessage(attachment_type='image')
+    assert await archive.archive_instagram_inbound_media(1031, incoming=incoming) == 'already_stored'
+    assert incoming.attachment_type == 'video'

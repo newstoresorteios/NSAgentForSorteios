@@ -46,6 +46,12 @@ def apply_failure_explanation(result: AgentResult) -> AgentResult:
         result.response_metadata.get("story_match_status")
         if result.response_metadata.get("instagram_story") is True else None
     )
+    clarification = result.response_metadata.get("story_clarification_reply")
+    if story_status in {"ambiguous", "not_found"} and clarification:
+        result.response_metadata["failure_explanation"] = explanation
+        result.response_metadata["failure_next_step"] = clarification
+        result.reply_text = clarification
+        return result
     help_text = (
         "Você pode indicar um relógio pela cor ou posição, ou enviar um print mais nítido."
         if story_status == "ambiguous" else

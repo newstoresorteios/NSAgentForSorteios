@@ -231,6 +231,11 @@ class StoryConversationReference(BaseModel):
     match_status: str = "pending"
     confidence: float = 0.0
     resolved_at: datetime | None = None
+    conversation_id: str | None = None
+    sender_key: str | None = None
+    clarification_options: list[str] = Field(default_factory=list)
+    followup_terms: list[str] = Field(default_factory=list)
+    clarification_rounds: int = 0
 
 
 class StoryResolutionResult(BaseModel):
@@ -245,6 +250,7 @@ class StoryResolutionResult(BaseModel):
     candidates: list[StoryProductCandidate] = Field(default_factory=list)
     needs_clarification: bool = False
     clarification_options: list[str] = Field(default_factory=list)
+    followup_terms: list[str] = Field(default_factory=list)
     factual_evidence: list[dict[str, Any]] = Field(default_factory=list)
     failure_reason: str | None = None
     question_type: StoryQuestionType = StoryQuestionType.GENERIC

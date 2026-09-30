@@ -915,7 +915,29 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         from app.channels.product_photos import attach_presented_product_photos
         result = attach_presented_product_photos(incoming, result)
         # Audio must reflect the final, identified text, not an earlier draft.
+        delivery_text = result.reply_text
+        delivery_handoff = result.handoff_required
         result = await enrich_agent_result(incoming, result)
+        if result.reply_text != delivery_text or result.handoff_required != delivery_handoff:
+            # A late enrichment must not bypass consent or leave an invisible
+            # catalog selection in memory. Never send audio of a rejected draft.
+            result = enrich_handoff_metadata(incoming, result)
+            result, commerce_state = finalize_response(
+                result, incoming=incoming, interpretation=interpretation,
+                previous_state=commerce_state_before_evolve,
+            )
+            result = _attach_commerce_metadata(incoming, commerce_state, result)
+            result = apply_agent_disclosure(
+                result, incoming=incoming,
+                recent_turns=customer_context.get("_conversation_turns"),
+            )
+            result.response_metadata.pop("outbound_image_urls", None)
+            result.response_metadata.pop("outbound_image_url", None)
+            result = attach_presented_product_photos(incoming, result)
+            result.reply_modality = "text"
+            result.reply_audio_bytes = None
+            result.reply_audio_mime_type = None
+            result.reply_audio_url = None
         if runtime is not None:
             runtime.outbound_snapshot.update(
                 safety_reason=result.safety_reason, handoff_required=result.handoff_required,

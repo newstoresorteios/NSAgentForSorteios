@@ -284,7 +284,7 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
     if incoming.channel == 'instagram' and incoming.image_url and inbound_id:
         try:
             from app.ops.instagram_media_archive import archive_instagram_inbound_media
-            await archive_instagram_inbound_media(inbound_id)
+            await archive_instagram_inbound_media(inbound_id, incoming=incoming)
         except Exception as exc:
             log_event('instagram.media_archive.failed', {'error_type': type(exc).__name__})
 

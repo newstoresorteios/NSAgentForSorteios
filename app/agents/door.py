@@ -695,6 +695,10 @@ async def _generate_agent_reply_async_inner(
             "channel": message.channel,
         },
     )
+    from app.sales.after_sales_support import try_import_support
+    import_support = try_import_support(message, recovery_turns, commerce_state)
+    if import_support is not None:
+        return import_support
     tax = await try_tax_document_route(message, commerce_state)
     if tax is not None:
         return tax

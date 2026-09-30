@@ -82,7 +82,14 @@ def apply_agent_disclosure(
     )
     already_introduced = bool(re.search(r"\b(?:sou|somos)\b[^\n]{0,120}assistente virtual", text, re.I))
     prefix = introduction if first and not already_introduced else header
-    result.reply_text = f"{prefix}\n\n{text}"
+    name = header.split(" · ", 1)[0]
+    own_introduction = bool(re.search(r"\bsou\s+(?:o\s+)?" + re.escape(name) + r"\s*,\s*assistente virtual", text, re.I))
+    if already_introduced and own_introduction:
+        # Preserve the published greeting, add disclosure inline rather than
+        # introducing the same assistant twice in the same reply.
+        result.reply_text = re.sub(r"assistente virtual(?!\s*\(IA\))", "assistente virtual (IA)", text, count=1, flags=re.I)
+    else:
+        result.reply_text = f"{prefix}\n\n{text}"
     metadata["agent_disclosure"] = {
         "version": 1, "applied": True, "actor_type": "ai", "header": header,
         "introduction": introduction, "introduced": first or already_introduced,

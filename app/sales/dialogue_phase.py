@@ -391,6 +391,7 @@ def reset_browse_memory_keep_orders(
     updated.dialogue_phase = "discovery"
     updated.forget_shortlist = True
     updated.product_resolution_state = None
+    updated.last_story_product = None
     updated.closed_by_farewell = False
     updated.last_browse_at = None
     updated.active_preferences = _scrub_catalog_preferences(updated.active_preferences)

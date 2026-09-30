@@ -36,7 +36,7 @@ _PURCHASE_RE = re.compile(
 )
 _STORY_HINT_RE = re.compile(r"\b(story|storie|stories)\b", re.I)
 _SOCIAL_FEEDBACK_RE = re.compile(
-    r"\b(?:top|show|lind[oa]|maravilhos[oa]|perfeit[oa]|amei|adorei|"
+    r"\b(?:top|show|lind[oa]|lind[ií]ssim[oa]|bel[ií]ssim[oa]|maravilhos[oa]|perfeit[oa]|amei|adorei|"
     r"parab[eé]ns|obrigad[oa]|sensacional|massa|legal|demais)\b",
     re.I,
 )

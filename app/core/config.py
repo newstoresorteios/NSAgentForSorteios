@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -793,7 +793,8 @@ class Settings(BaseSettings):
     public_url: str = Field(default="", alias="PUBLIC_URL")
 
     supabase_url: str = Field(default="", alias="SUPABASE_URL")
-    supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
+    supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY", validation_alias=AliasChoices(
+        "SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY"))
     supabase_audio_bucket: str = Field(default="agent-audio", alias="SUPABASE_AUDIO_BUCKET")
 
     # Agent-owned Postgres (ai_* tables, sessions, memory, image index).
@@ -878,7 +879,7 @@ class Settings(BaseSettings):
         alias="INSTAGRAM_STORY_MEDIA_STORAGE_ENABLED",
     )
     instagram_story_media_max_bytes: int = Field(
-        default=12_582_912,
+        default=16_777_216,
         alias="INSTAGRAM_STORY_MEDIA_MAX_BYTES",
         ge=1024,
         le=52_428_800,
@@ -904,7 +905,7 @@ class Settings(BaseSettings):
         alias="INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED",
     )
     instagram_story_video_max_frames: int = Field(
-        default=3,
+        default=5,
         alias="INSTAGRAM_STORY_VIDEO_MAX_FRAMES",
         ge=1,
         le=5,

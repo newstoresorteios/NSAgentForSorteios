@@ -513,6 +513,11 @@ def should_run_phase1_double_check(
         return False, "phase0_applied", []
     if report.issues:
         return False, "phase0_already_vetoed", []
+    if (result.response_metadata or {}).get("response_source") in {"import_support", "support_document"}:
+        # This server-authored copy distinguishes published policy from an
+        # unverified shipment. Phase 0 still runs; no LLM may turn it into a
+        # catalog failure merely because the customer mentions payment.
+        return False, "deterministic_support", []
     if critique_regenerated:
         return False, "skipped_after_critique_regenerate", []
     if int(openai_call_count or 0) >= _PHASE1_BUDGET_CEILING:

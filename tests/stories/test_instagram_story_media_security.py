@@ -462,3 +462,42 @@ async def test_private_storage_refuses_public_bucket(monkeypatch, public, expect
     assert bool(path) == (not public)
     if path:
         assert path == 'supabase://conversation-media/private/instagram-stories/workspace-a/' + 'a' * 48
+
+
+@pytest.mark.asyncio
+async def test_default_limit_accepts_observed_13mb_video_without_archiving_twice(monkeypatch, allow_cdn):
+    from unittest.mock import AsyncMock
+    from app.stories import instagram_story_media as media_mod
+    from app.core.config import Settings
+    settings = Settings(_env_file=None)
+    settings.instagram_story_media_max_bytes = 16_777_216
+    monkeypatch.setattr(media_mod, 'get_settings', lambda: settings)
+    content = b'\x00\x00\x00\x18ftypmp42' + b'\x00' * (13_196_560 - 12)
+    stream = AsyncMock(return_value=(200, content, 'video/mp4', ''))
+    monkeypatch.setattr(media_mod, '_stream_once', stream)
+    storage = SimpleNamespace(put_private=AsyncMock())
+    downloaded = await download_story_media('https://scontent.cdninstagram.com/story',
+                                             tenant_id='shop', storage=storage, persist=False)
+    assert downloaded.content_type == 'video/mp4'
+    assert downloaded.byte_count == 13_196_560
+    assert stream.call_args.kwargs['max_bytes'] == 16_777_216
+    storage.put_private.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('bucket_status,upload_status,expected', [(403, 200, 'storage_bucket_http_403'),
+    (200, 413, 'storage_upload_http_413'), (200, 403, 'storage_upload_http_403')])
+async def test_storage_errors_are_precise_and_do_not_include_response_secrets(monkeypatch, bucket_status, upload_status, expected):
+    from unittest.mock import AsyncMock
+    from app.stories import instagram_story_media as media_mod
+    monkeypatch.setattr(media_mod, 'get_settings', lambda: SimpleNamespace(
+        supabase_url='https://project.supabase.co', supabase_service_key='test-only'))
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.get = AsyncMock(return_value=SimpleNamespace(status_code=bucket_status, json=lambda: {'public': False}))
+    client.post = AsyncMock(return_value=SimpleNamespace(status_code=upload_status, text='sensitive response'))
+    monkeypatch.setattr(media_mod.httpx, 'AsyncClient', lambda **kwargs: client)
+    storage = media_mod.SupabasePrivateStoryMediaStorage(bucket='conversation-media')
+    assert await storage.put_private(content=b'video', content_type='video/mp4', sha256='a' * 64, tenant_id='shop') is None
+    assert storage.last_error == expected

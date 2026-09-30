@@ -76,6 +76,12 @@ class SupabasePrivateStoryMediaStorage:
 
     def __init__(self, *, bucket: str | None = None):
         self.bucket = bucket
+        self.last_error: str | None = None
+
+    def _failed(self, code: str) -> None:
+        self.last_error = code
+        log_event("instagram_story.media_storage_failed", {"code": code})
+        return None
 
     async def put_private(
         self,
@@ -86,8 +92,9 @@ class SupabasePrivateStoryMediaStorage:
         tenant_id: str,
     ) -> str | None:
         settings = get_settings()
+        self.last_error = None
         if not settings.supabase_url or not settings.supabase_service_key:
-            return None
+            return self._failed("storage_credentials_missing")
         bucket = str(
             self.bucket
             or getattr(settings, "instagram_story_storage_bucket", None)
@@ -96,9 +103,9 @@ class SupabasePrivateStoryMediaStorage:
         ).strip()
         if not bucket:
             # Do not reuse the public audio bucket as a silent fallback.
-            return None
+            return self._failed("storage_bucket_missing")
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', tenant_id) or not re.fullmatch(r'[a-f0-9]{64}', sha256):
-            return None
+            return self._failed("storage_identity_invalid")
         object_name = f"private/instagram-stories/{tenant_id}/{sha256[:48]}"
         upload_url = (
             f"{settings.supabase_url.rstrip('/')}/storage/v1/object/"
@@ -115,9 +122,10 @@ class SupabasePrivateStoryMediaStorage:
                     f"{settings.supabase_url.rstrip('/')}/storage/v1/bucket/{bucket}",
                     headers=auth_headers,
                 )
-                if bucket_info.status_code != 200 or bucket_info.json().get('public') is not False:
-                    log_event("instagram_story.media_storage_failed", {"code": "private_bucket_required"})
-                    return None
+                if bucket_info.status_code != 200:
+                    return self._failed(f"storage_bucket_http_{bucket_info.status_code}")
+                if bucket_info.json().get('public') is not False:
+                    return self._failed("private_bucket_required")
                 response = await client.post(
                     upload_url,
                     content=content,
@@ -128,18 +136,10 @@ class SupabasePrivateStoryMediaStorage:
                     },
                 )
                 if response.status_code >= 400:
-                    log_event(
-                        "instagram_story.media_storage_failed",
-                        {"code": f"http_{response.status_code}"},
-                    )
-                    return None
+                    return self._failed(f"storage_upload_http_{response.status_code}")
             return f"supabase://{bucket}/{object_name}"
         except Exception as exc:  # noqa: BLE001
-            log_event(
-                "instagram_story.media_storage_failed",
-                {"code": type(exc).__name__},
-            )
-            return None
+            return self._failed(type(exc).__name__)
 
     async def get_private(self, *, storage_path: str) -> bytes | None:
         return None  # reserved — callers should not need public fetch
@@ -304,9 +304,11 @@ async def download_story_media(
     *,
     tenant_id: str = "unknown",
     storage: StoryMediaStorage | None = None,
+    persist: bool = True,
+    max_bytes: int | None = None,
 ) -> DownloadedStoryMedia:
     settings = get_settings()
-    max_bytes = int(getattr(settings, "instagram_story_media_max_bytes", 12_582_912) or 12_582_912)
+    max_bytes = max_bytes or int(getattr(settings, "instagram_story_media_max_bytes", 16_777_216) or 16_777_216)
     timeout = float(getattr(settings, "instagram_story_media_timeout_seconds", 10) or 10)
     max_redirects = 3
 
@@ -368,7 +370,7 @@ async def download_story_media(
 
                 digest = hashlib.sha256(content).hexdigest()
                 storage_path = None
-                if bool(getattr(settings, "instagram_story_media_storage_enabled", True)):
+                if persist and bool(getattr(settings, "instagram_story_media_storage_enabled", True)):
                     backend = storage or SupabasePrivateStoryMediaStorage()
                     storage_path = await backend.put_private(
                         content=content,
@@ -409,7 +411,7 @@ async def download_story_media(
 def extract_video_frames_best_effort(
     content: bytes,
     *,
-    max_frames: int = 3,
+    max_frames: int = 5,
 ) -> list[bytes]:
     """Decode representative video frames to JPEG without writing to disk.
 
@@ -423,7 +425,7 @@ def extract_video_frames_best_effort(
     if not content:
         return []
 
-    frame_limit = max(1, min(int(max_frames or 3), 5))
+    frame_limit = max(1, min(int(max_frames or 5), 5))
     try:
         from decord import VideoReader, cpu
         from PIL import Image
@@ -436,7 +438,10 @@ def extract_video_frames_best_effort(
             {
                 min(
                     frame_count - 1,
-                    max(0, int(frame_count * (index + 1) / (frame_limit + 1))),
+                    # Cover the opening and closing product shots as well as
+                    # the middle. A single requested frame stays centered.
+                    max(0, round((frame_count - 1) * (0.05 + 0.9 * index / (frame_limit - 1))))
+                    if frame_limit > 1 else frame_count // 2,
                 )
                 for index in range(frame_limit)
             }
