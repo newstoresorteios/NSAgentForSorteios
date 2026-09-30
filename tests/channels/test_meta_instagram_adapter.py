@@ -369,18 +369,18 @@ def _manychat_event(text, *, story=None, echo=False):
 
 @pytest.mark.parametrize('text', ['valor', 'VALOR', ' Valor \n'])
 @pytest.mark.parametrize('envelope', ['messaging', 'standby', 'changes'])
-def test_manychat_owns_exact_story_keyword_only(text, envelope, monkeypatch):
+def test_story_price_keyword_reaches_agent_ingress(text, envelope, monkeypatch):
     events = []
     monkeypatch.setattr('app.channels.meta_instagram.log_event', lambda name, data: events.append((name, data)))
-    def unexpected_lookup(_):
-        pytest.fail('ManyChat keyword must be filtered before profile/API work')
-    monkeypatch.setattr('app.channels.meta_instagram._lookup_ig_username', unexpected_lookup)
+    monkeypatch.setattr('app.channels.meta_instagram._lookup_ig_profile', lambda _: {})
     event = _manychat_event(text, story={'id': 'story-99'})
     entry = ({'changes': [{'field': 'messages', 'value': event}]} if envelope == 'changes'
              else {envelope: [event]})
-    assert instagram_event_skip_reason(event) == 'manychat_story_keyword'
-    assert parse_meta_instagram_messaging({'entry': [entry]}) == []
-    assert any(data.get('reason') == 'manychat_story_keyword' for _, data in events)
+    assert instagram_event_skip_reason(event) == 'parsed'
+    messages = parse_meta_instagram_messaging({'entry': [entry]})
+    assert len(messages) == 1 and messages[0].text.strip() == text.strip()
+    assert messages[0].instagram_story.story_media_id == 'story-99'
+    assert not any(data.get('reason') == 'manychat_story_keyword' for _, data in events)
 
 
 @pytest.mark.parametrize('text,story', [
@@ -388,7 +388,7 @@ def test_manychat_owns_exact_story_keyword_only(text, envelope, monkeypatch):
     ('valor e prazo?', {'id': 'story-99'}), ('tem safira?', {'id': 'story-99'}),
     ('valor?', {'id': 'story-99'}),
 ])
-def test_manychat_filter_preserves_other_questions_and_regular_dms(text, story):
+def test_story_ingress_preserves_other_questions_and_regular_dms(text, story):
     event = _manychat_event(text, story=story)
     assert instagram_event_skip_reason(event) == 'parsed'
     messages = parse_meta_instagram_messaging({'entry': [{'messaging': [event]}]})
@@ -401,7 +401,7 @@ def test_manychat_echo_is_ignored_without_pausing_followup():
     followup = _manychat_event('E o prazo de entrega?')
     assert instagram_event_skip_reason(echo) == 'echo'
     messages = parse_meta_instagram_messaging({'entry': [{'messaging': [keyword, echo, followup]}]})
-    assert [m.text for m in messages] == ['E o prazo de entrega?']
+    assert [m.text for m in messages] == ['valor', 'E o prazo de entrega?']
 
 
 def test_story_rollout_allows_meta_live_media(monkeypatch):

@@ -89,3 +89,28 @@ async def test_provider_does_not_send_unqueued_confirmation(monkeypatch, channel
         monkeypatch.setattr(brevo_client, "get_settings", lambda: SimpleNamespace(dry_run=False, brevo_reply_mode="conversations"))
         sent = await brevo_client.send_brevo_reply(incoming, result)
         assert not sent.ok and sent.error == "human_handoff_queue_unavailable"
+
+
+@pytest.mark.parametrize("status", ["ambiguous", "not_found", "expired", "failed"])
+def test_story_failure_always_has_identified_reply_and_consented_next_step(status):
+    incoming = IncomingMessage(channel="instagram", text="qual o valor desses?")
+    result = AgentResult(reply_text="", intent="commerce", safety_reason=status,
+                         response_metadata={"instagram_story": True, "story_match_status": status})
+    result = enrich_handoff_metadata(incoming, result, recent_turns=[])
+    result = apply_agent_disclosure(result, incoming=incoming)
+    assert "assistente virtual (ia)" in result.reply_text.lower()
+    assert result.response_metadata["failure_explanation"]
+    assert result.response_metadata["handoff"]["offer"]
+    assert not result.handoff_required
+    assert "R$" not in result.reply_text
+    replay = result_from_outbox_row({"reply_payload": build_outbound_envelope(incoming, result)})
+    assert replay.reply_text == result.reply_text
+    assert replay.response_metadata["handoff"]["offer"]
+
+
+def test_ambiguous_non_story_and_matched_story_keep_their_answer():
+    for metadata in ({}, {"instagram_story": True, "story_match_status": "matched"}):
+        result = AgentResult(reply_text="Resposta confirmada", intent="commerce",
+                             safety_reason="ambiguous", response_metadata=metadata)
+        result = enrich_handoff_metadata(IncomingMessage(channel="instagram", text="qual valor?"), result, recent_turns=[])
+        assert result.reply_text == "Resposta confirmada"

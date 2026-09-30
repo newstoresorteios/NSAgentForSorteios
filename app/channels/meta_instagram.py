@@ -162,15 +162,9 @@ def payload_skeleton(value: Any, *, depth: int = 0) -> Any:
 def instagram_event_skip_reason(event: dict[str, Any]) -> str:
     normalized = _normalize_instagram_event(event)
     if normalized:
-        message = normalized['message']
-        reply_to = message.get('reply_to')
-        story = reply_to.get('story') if isinstance(reply_to, dict) else None
-        # ManyChat owns only the agreed exact story keyword, not ordinary DMs
-        # or subsequent questions. No conversation-wide pause is created.
-        if (str(message.get('text') or '').strip().casefold() == 'valor'
-                and isinstance(story, dict)
-                and any(str(story.get(key) or '').strip() for key in ('id', 'url'))):
-            return 'manychat_story_keyword'
+        # Story price requests belong to the same durable ingress as other DMs.
+        # Do not drop "valor" before persistence/recognition. Echo filtering and
+        # the downstream human-takeover/consent protections remain unchanged.
         return "parsed"
     raw_message = event.get("message")
     if isinstance(raw_message, dict) and raw_message.get("is_echo"):
