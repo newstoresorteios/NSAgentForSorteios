@@ -585,6 +585,12 @@ async def _generate_agent_reply_async_inner(
     if early is not None:
         return early
 
+    # A newly shared publication without media cannot select an old SKU or order.
+    from app.agents.door_media import unresolved_publication_reply
+    unresolved = unresolved_publication_reply(message)
+    if unresolved is not None:
+        return unresolved
+
     from app.persona.institutional_route import answer_institutional
     institutional = await answer_institutional(message)
     if institutional is not None:

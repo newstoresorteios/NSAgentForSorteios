@@ -550,7 +550,7 @@ async def _finalize_story_catalog_match(
             match_source=(
                 "visual_exact_reference"
                 if any(
-                    r.startswith(("ean:", "sku:", "reference:", "tray_brand_model:"))
+                    r.startswith(("ean:", "sku:", "reference:"))
                     for r in top.match_reasons
                 )
                 else "visual_similarity"
@@ -948,7 +948,11 @@ async def resolve_story_product_question(
             variant_lines=variant_lines,
         )
 
-    if assoc and assoc.match_status in {"ambiguous", "not_found"}:
+    needs_video_reanalysis = bool(
+        assoc and str(assoc.media_mime or "").startswith("video/")
+        and (assoc.visual_analysis or {}).get("media_type") != "video"
+    )
+    if assoc and assoc.match_status in {"ambiguous", "not_found"} and not needs_video_reanalysis:
         # Re-query live Tray with stored vision; do not spend a second OpenAI vision call.
         stored = _stored_vision_for_tray_retry(assoc)
         if stored is not None:
@@ -1151,14 +1155,12 @@ async def resolve_story_product_question(
     media_mime: str | None = None
     media_bytes: int | None = None
     story = await _hydrate_story_media(story)
-    from app.channels.meta_instagram import looks_like_video_url
 
     # Prefer the actual media.  Selecting the thumbnail first made every video
     # take the image-only path, so transient overlay text could be mistaken for
     # the watch identity and representative frames were never extracted.
     media_url = story.operational_media_url()
     thumbnail_url = story.operational_thumbnail_url()
-    is_video = story.media_type == "video" or looks_like_video_url(media_url)
     download_url = media_url or thumbnail_url
 
     if not download_url:
@@ -1266,12 +1268,16 @@ async def resolve_story_product_question(
             )
 
         analysis = get_cached_visual_analysis(tenant_id=tenant, media_sha256=media_sha)
+        if media.content_type.startswith("video/") and analysis is not None and analysis.media_type != "video":
+            analysis = None
         if analysis is not None:
             metrics["story_media_cache_hit"] = 1
         else:
             analysis = repo.find_visual_analysis_by_hash(
                 tenant_id=tenant, media_sha256=media_sha
             )
+            if media.content_type.startswith("video/") and analysis is not None and analysis.media_type != "video":
+                analysis = None
             if analysis is not None:
                 metrics["story_db_analysis_cache_hit"] = 1
                 put_cached_visual_analysis(
@@ -1279,7 +1285,9 @@ async def resolve_story_product_question(
                 )
 
         if analysis is None:
-            if is_video and media.content_type.startswith("video/"):
+            # Opaque signed CDN URLs often look like images. Downloaded MIME
+            # (validated against bytes) decides whether decoding is required.
+            if media.content_type.startswith("video/"):
                 frames = await asyncio.to_thread(
                     extract_video_frames_best_effort,
                     media.content,

@@ -57,7 +57,7 @@ def classify_match(
     reasons = " ".join(top1.match_reasons).casefold()
     is_exact = any(
         token in reasons
-        for token in ("ean:", "sku:", "reference:", "hash:", "tray_brand_model:", "store_url:")
+        for token in ("ean:", "sku:", "reference:", "hash:", "store_url:")
     )
     if multiple_products:
         exactish = [
@@ -65,7 +65,7 @@ def classify_match(
             for cand in ordered
             if any(
                 token in " ".join(cand.match_reasons).casefold()
-                for token in ("ean:", "sku:", "reference:", "tray_brand_model:", "store_url:")
+                for token in ("ean:", "sku:", "reference:", "store_url:")
             )
         ]
         unique_ids = {cand.product_id for cand in exactish[:4] if cand.product_id}
@@ -152,6 +152,7 @@ def _score_components(
     product_id: str,
     variant_id: str | None,
     exact: float = 0.0,
+    query_evidence: float = 0.0,
     visual: float = 0.0,
     lexical: float = 0.0,
     brand: float = 0.0,
@@ -167,7 +168,7 @@ def _score_components(
         0.0,
         min(
             1.0,
-            exact
+            exact + query_evidence
             + visual * 0.35
             + lexical * 0.15
             + brand * 0.1
@@ -185,6 +186,7 @@ def _score_components(
         product_id=product_id,
         variant_id=variant_id,
         exact_identifier_score=exact,
+        query_evidence_score=query_evidence,
         visual_similarity_score=visual,
         lexical_score=lexical,
         brand_score=brand,
@@ -780,7 +782,9 @@ def tray_search_jobs(
     model_line_has_ref = any(
         re.search(r"[a-z]\d", _fold(token), re.IGNORECASE) for token in model_line
     )
-    prefer_model_line_first = len(model_line) >= 3 or model_line_has_ref
+    identity_modifiers = {"gmt", "chrono", "cronografo", "chronograph", "mk2", "rocks"}
+    prefer_model_line_first = (len(model_line) >= 3 or model_line_has_ref
+                               or any(_fold(token) in identity_modifiers for token in model_line))
 
     # CONFIRA / pasted product URL is the strongest catalog signal — never drop it.
     if slug_brand or slug_tokens:
@@ -1275,6 +1279,8 @@ async def match_story_to_catalog(
                 material_conflicts.append("missing_line:rocks")
             if "mk2" in evidence_blob and "mk2" not in blob:
                 material_conflicts.append("missing_line:mk2")
+            if re.search(r"\bgmt\b", evidence_blob) and not re.search(r"\bgmt\b", blob):
+                material_conflicts.append("missing_line:gmt")
             line_locked = ("rocks" in evidence_blob and "rocks" in blob) or (
                 "mk2" in evidence_blob and "mk2" in blob
             )
@@ -1291,7 +1297,7 @@ async def match_story_to_catalog(
                 and (not color_required or color >= 0.8 or line_locked)
                 and "size_mismatch" not in material_conflicts
                 and "missing_line:rocks" not in material_conflicts
-                and "missing_line:mk2" not in material_conflicts
+                and not any(conflict.startswith("missing_line:") for conflict in material_conflicts)
             )
             if color_required and color < 0.8 and not url_hit and not line_locked:
                 strong = False
@@ -1315,11 +1321,10 @@ async def match_story_to_catalog(
                     catalog_item_key=catalog_item_key_for(pid, vid),
                     product_id=pid,
                     variant_id=vid,
-                    exact=(
-                        0.96
-                        if url_hit
-                        else (0.7 if material_conflicts else (0.92 if strong else 0.0))
-                    ),
+                    exact=0.96 if url_hit else 0.0,
+                    # A brand/family/color query is not a reference read from
+                    # the watch. Keep ranking evidence separate from exact IDs.
+                    query_evidence=0.0 if url_hit else (0.5 if material_conflicts else (0.92 if strong else 0.0)),
                     lexical=min(0.6, 0.2 * max(hits, 1) - rank_penalty),
                     brand=0.85 if brand_ok else 0.2,
                     model=min(0.8, 0.25 * hits),
@@ -1459,7 +1464,8 @@ async def match_story_to_catalog(
         # Never drop a distinctive-token job (Rocks/MK2/SKU) because an earlier
         # C63+verde page color-locked on a similar 39 mm listing.
         distinctive_job = any(
-            _fold(token) in {"rocks", "mk2"} or _is_sku_like(token) for token in tokens
+            _fold(token) in {"rocks", "mk2", "gmt", "chrono", "cronografo", "chronograph"}
+            or _is_sku_like(token) for token in tokens
         )
         if color_locked and not distinctive_job:
             continue

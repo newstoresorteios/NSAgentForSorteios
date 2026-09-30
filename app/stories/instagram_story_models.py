@@ -160,6 +160,7 @@ class StoryCandidateScore(BaseModel):
     product_id: str
     variant_id: str | None = None
     exact_identifier_score: float = 0.0
+    query_evidence_score: float = 0.0
     visual_similarity_score: float = 0.0
     lexical_score: float = 0.0
     brand_score: float = 0.0
@@ -193,6 +194,7 @@ class StoryProductAssociation(BaseModel):
     story_message_id: str | None = None
     story_permalink: str | None = None
     media_type: str = "unknown"
+    media_mime: str | None = None
     source_timestamp: datetime | None = None
     story_expires_at: datetime | None = None
     media_storage_path: str | None = None

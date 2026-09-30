@@ -40,6 +40,8 @@ async def analyze_story_image(
     media_type: str = "image",
     extra_frame_bytes: list[bytes] | None = None,
 ) -> StoryVisualUnderstanding:
+    if not content_type.startswith("image/"):
+        raise ValueError("story_visual_requires_decoded_image")
     settings = get_settings()
     detail = str(getattr(settings, "instagram_story_analysis_detail", "high") or "high")
     version = str(getattr(settings, "instagram_story_analysis_version", "v2") or "v2")
@@ -66,7 +68,7 @@ async def analyze_story_image(
             "image_url": {"url": data_url, "detail": detail},
         },
     ]
-    for frame in (extra_frame_bytes or [])[:2]:
+    for frame in (extra_frame_bytes or [])[:4]:
         if not frame:
             continue
         frame_url = f"data:image/jpeg;base64,{base64.b64encode(frame).decode('ascii')}"

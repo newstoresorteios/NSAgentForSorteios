@@ -83,6 +83,8 @@ def image_search_eligible(message: IncomingMessage) -> bool:
     if not (message.image_url or "").strip():
         return False
     attachment = (message.attachment_type or "").lower()
+    if attachment == "video":
+        return False
     modality = (message.input_modality or "").lower()
     if attachment == "image":
         return True

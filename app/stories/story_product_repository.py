@@ -22,6 +22,7 @@ def _row_to_association(row: dict[str, Any] | None) -> StoryProductAssociation |
         story_message_id=row.get("story_message_id"),
         story_permalink=row.get("story_permalink"),
         media_type=str(row.get("media_type") or "unknown"),
+        media_mime=row.get("media_mime"),
         source_timestamp=row.get("source_timestamp"),
         story_expires_at=row.get("story_expires_at"),
         media_storage_path=row.get("media_storage_path"),
@@ -190,6 +191,11 @@ class StoryProductRepository:
                           AND story_media_id = %s
                           AND (
                                 match_status IN ('pending', 'failed', 'expired')
+                             OR (
+                                    match_status IN ('ambiguous', 'not_found')
+                                AND media_mime LIKE 'video/%%'
+                                AND COALESCE(visual_analysis->>'media_type', '') <> 'video'
+                             )
                              OR (
                                     match_status = 'processing'
                                 AND (

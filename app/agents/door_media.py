@@ -15,11 +15,28 @@ def _door():
     return door_mod
 
 
+def unresolved_publication_reply(message: IncomingMessage) -> AgentResult | None:
+    from app.channels.instagram_media_reference import has_unresolved_instagram_publication
+
+    if not has_unresolved_instagram_publication(message):
+        return None
+    return AgentResult(
+        reply_text="Recebi o link do Instagram, mas não consegui acessar a imagem ou o vídeo dessa publicação. "
+                   "Pode enviar um print do relógio ou informar a marca e a referência?",
+        intent="commerce",
+        safety_reason="instagram_media_unviewable",
+        response_metadata={"response_source": "instagram_unresolved_publication", "image_evidence_guard": True},
+    )
+
+
 async def try_media_routes(
     message: IncomingMessage,
     commerce_state: Any,
 ) -> AgentResult | None:
     door = _door()
+    unresolved = unresolved_publication_reply(message)
+    if unresolved is not None:
+        return unresolved
     from app.stories.instagram_story_intent import story_requires_text_first
 
     if story_requires_text_first(message):
@@ -93,7 +110,16 @@ async def try_media_routes(
                 fallback_reason="story_route_error",
             )
 
-    if not skip_generic_image and door.image_search_eligible(message):
+    if skip_generic_image or (message.attachment_type or "").lower() == "video":
+        return AgentResult(
+            reply_text="Não consegui identificar com segurança o relógio dessa mídia. "
+                       "Pode enviar um print nítido do mostrador ou a referência do modelo?",
+            intent="commerce",
+            safety_reason="instagram_media_unviewable",
+            response_metadata={"response_source": "unresolved_media", "image_evidence_guard": True},
+        )
+
+    if door.image_search_eligible(message):
         from app.llm.llm_call_policy import build_llm_call_budget
         from app.ops.runtime_context import get_current_turn
 

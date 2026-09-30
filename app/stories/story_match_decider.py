@@ -393,6 +393,9 @@ def score_catalog_overlap(
         and len(t) >= 4
     ]
     missing_distinctive = [t for t in distinctive if not _token_in_blob(blob, t)]
+    if "gmt" in positives and not re.search(r"\bgmt\b", blob):
+        score -= 0.35
+        conflicts.append("missing_line:gmt")
     if "rocks" in positives and not _token_in_blob(blob, "rocks"):
         score -= 0.35
         conflicts.append("missing_line:rocks")

@@ -609,6 +609,7 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
             image_url = None
             attachment_type = None
             input_modality = "text"
+            unresolved_shared_media = False
             story_mention_attachment: dict[str, Any] | None = None
             attachments = message.get("attachments")
             if isinstance(attachments, list):
@@ -622,6 +623,20 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                         else {}
                     )
                     url = str(payload_obj.get("url") or "").strip() or None
+                    from app.channels.instagram_media_reference import is_instagram_publication_url
+
+                    if atype in {"share", "ig_reel"}:
+                        # A permalink is HTML, not an image. Preserve the message
+                        # even when Meta supplies no downloadable media.
+                        if not url or is_instagram_publication_url(url):
+                            unresolved_shared_media = True
+                            if url and url not in text:
+                                text = f"{text}\n{url}".strip()
+                            continue
+                        # Shared CDN media can be an opaque image OR video;
+                        # its bytes must decide the type, never the URL alone.
+                        unresolved_shared_media = True
+                        continue
                     if atype == "story_mention":
                         story_mention_attachment = attachment
                     if atype in {"image", "story_mention"} and url:
@@ -713,12 +728,16 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                     story_media_log_reference=(
                         safe_media_reference(media_url) if media_url else None
                     ),
-                    media_type="image",
+                    media_type=infer_story_media_type(
+                        url=media_url, explicit=attachment_payload.get("media_type")
+                    ),
                     replied_to_story=False,
                     mentioned_in_story=True,
                     raw_reference={"attachment_type": "story_mention"},
                 )
 
+            if unresolved_shared_media and not text:
+                text = "[Publicação compartilhada via Instagram]"
             if not text and not image_url:
                 continue
 
@@ -733,6 +752,8 @@ def parse_meta_instagram_messaging(payload: dict[str, Any]) -> list[IncomingMess
                     f"https://www.instagram.com/{quote(username, safe='._')}/"
                 )
             channel_metadata = {}
+            if unresolved_shared_media and not image_url:
+                channel_metadata["instagram_media_unresolved"] = True
             if profile.get("profile_picture_url"):
                 channel_metadata["profile_picture_url"] = profile["profile_picture_url"]
 
