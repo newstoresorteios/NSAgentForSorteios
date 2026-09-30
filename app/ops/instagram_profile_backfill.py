@@ -9,7 +9,7 @@ from app.ops.observability import log_event
 
 
 def backfill_instagram_profile_pictures(
-    *, limit: int = 25, max_age_days: int = 30,
+    *, limit: int = 25, max_age_days: int = 30, workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Refresh recent Instagram contacts still missing an avatar.
 
@@ -25,19 +25,20 @@ def backfill_instagram_profile_pictures(
             cur.execute(
                 """
                 WITH latest AS (
-                    SELECT DISTINCT ON (conversation_id)
+                    SELECT DISTINCT ON (workspace_id, conversation_id)
                            id, conversation_id, workspace_id, sender_external_id,
                            visitor_id, sender_username, channel_metadata, created_at
                     FROM public.ai_inbound_messages
                     WHERE channel = 'instagram'
                       AND workspace_id IS NOT NULL
+                      AND (%(workspace_id)s::uuid IS NULL OR workspace_id = %(workspace_id)s::uuid)
                       AND conversation_id IS NOT NULL
                       AND created_at >= NOW() - (%(max_age_days)s * INTERVAL '1 day')
-                    ORDER BY conversation_id, created_at DESC
+                    ORDER BY workspace_id, conversation_id, created_at DESC, id DESC
                 )
                 SELECT inbound.id, inbound.conversation_id, inbound.workspace_id,
                        inbound.sender_external_id, inbound.visitor_id,
-                       inbound.sender_username,
+                       inbound.sender_username, known.picture AS stored_picture,
                        (conversation.customer_avatar IS NULL) AS avatar_missing
                 FROM latest AS inbound
                 JOIN public.conversas AS conversation
@@ -45,6 +46,15 @@ def backfill_instagram_profile_pictures(
                  AND conversation.channel = 'instagram'
                  AND conversation.external_thread_id = inbound.conversation_id
                  AND conversation.merged_into IS NULL
+                LEFT JOIN LATERAL (
+                    SELECT NULLIF(previous.channel_metadata->>'profile_picture_url', '') AS picture
+                    FROM public.ai_inbound_messages AS previous
+                    WHERE previous.workspace_id = inbound.workspace_id
+                      AND previous.conversation_id = inbound.conversation_id
+                      AND previous.channel = 'instagram'
+                      AND NULLIF(previous.channel_metadata->>'profile_picture_url', '') IS NOT NULL
+                    ORDER BY previous.created_at DESC, previous.id DESC LIMIT 1
+                ) AS known ON TRUE
                 WHERE (
                       NULLIF(inbound.channel_metadata->>'profile_picture_checked_at', '') IS NULL
                       OR (inbound.channel_metadata->>'profile_picture_checked_at')::timestamptz
@@ -56,7 +66,7 @@ def backfill_instagram_profile_pictures(
                     inbound.created_at DESC
                 LIMIT %(limit)s
                 """,
-                {"limit": safe_limit, "max_age_days": safe_days},
+                {"limit": safe_limit, "max_age_days": safe_days, "workspace_id": workspace_id},
             )
             candidates = list(cur.fetchall() or [])
 
@@ -77,7 +87,9 @@ def backfill_instagram_profile_pictures(
             continue
         try:
             profile = _lookup_ig_profile(sender_id, force=True)
-            picture = profile.get("profile_picture_url")
+            picture = profile.get("profile_picture_url") or candidate.get('stored_picture')
+            if picture and not str(picture).startswith('https://'):
+                picture = None
             profile_link = profile.get("profile_url")
             with get_conn() as conn:
                 with conn.cursor() as cur:
@@ -85,9 +97,11 @@ def backfill_instagram_profile_pictures(
                         """
                         UPDATE public.ai_inbound_messages
                         SET channel_metadata = COALESCE(channel_metadata, '{}'::jsonb)
-                            || jsonb_build_object('profile_picture_checked_at', NOW())
-                            || CASE WHEN %(picture)s IS NOT NULL
-                                    THEN jsonb_build_object('profile_picture_url', %(picture)s)
+                            || jsonb_build_object('profile_picture_checked_at', NOW(),
+                                'profile_picture_status', CASE WHEN %(picture)s::text IS NOT NULL
+                                    THEN 'available' ELSE 'unavailable' END)
+                            || CASE WHEN %(picture)s::text IS NOT NULL
+                                    THEN jsonb_build_object('profile_picture_url', %(picture)s::text)
                                     ELSE '{}'::jsonb END,
                             source_channel_link = COALESCE(%(profile_link)s, source_channel_link)
                         WHERE id = %(inbound_id)s

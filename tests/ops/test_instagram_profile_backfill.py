@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import pytest
 
 from app.ops.instagram_profile_backfill import backfill_instagram_profile_pictures
 
@@ -33,7 +34,8 @@ class _Connection:
         self.committed = True
 
 
-def test_backfill_updates_inbound_and_central_conversation(monkeypatch):
+@pytest.mark.parametrize('api_picture', [True, False])
+def test_backfill_updates_inbound_and_central_conversation(monkeypatch, api_picture):
     candidate = {
         "id": 1029,
         "conversation_id": "ig:1052648647582097",
@@ -41,8 +43,10 @@ def test_backfill_updates_inbound_and_central_conversation(monkeypatch):
         "sender_external_id": "1052648647582097",
         "visitor_id": "1052648647582097",
         "sender_username": "cliente",
+        "stored_picture": "https://cdn.example/previous.jpg",
     }
-    connections = [_Connection([candidate]), _Connection([])]
+    selection, update = _Connection([candidate]), _Connection([])
+    connections = [selection, update]
 
     @contextmanager
     def fake_conn():
@@ -52,7 +56,7 @@ def test_backfill_updates_inbound_and_central_conversation(monkeypatch):
     monkeypatch.setattr(
         "app.ops.instagram_profile_backfill._lookup_ig_profile",
         lambda _sender_id, force=False: {
-            "profile_picture_url": "https://cdn.example/avatar.jpg",
+            "profile_picture_url": "https://cdn.example/avatar.jpg" if api_picture else None,
             "profile_url": "https://www.instagram.com/cliente/",
         },
     )
@@ -60,7 +64,13 @@ def test_backfill_updates_inbound_and_central_conversation(monkeypatch):
         "app.ops.instagram_profile_backfill.log_event", lambda *_args: None,
     )
 
-    result = backfill_instagram_profile_pictures(limit=10)
+    result = backfill_instagram_profile_pictures(limit=10, workspace_id=candidate['workspace_id'])
+    assert selection.cursor_instance.queries[0][1]['workspace_id'] == candidate['workspace_id']
+    assert 'DISTINCT ON (workspace_id, conversation_id)' in selection.cursor_instance.queries[0][0]
+    assert update.cursor_instance.queries[0][1]['picture'] == (
+        'https://cdn.example/avatar.jpg' if api_picture else candidate['stored_picture'])
+    assert '%(picture)s::text IS NOT NULL' in update.cursor_instance.queries[0][0]
+    assert update.committed
 
     assert result == {
         "ok": True,

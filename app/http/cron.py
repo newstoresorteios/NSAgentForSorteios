@@ -252,9 +252,15 @@ async def cron_process_outbox():
 
 
 async def cron_instagram_profile_picture_backfill():
+    import asyncio
     from app.ops.instagram_profile_backfill import backfill_instagram_profile_pictures
 
-    return backfill_instagram_profile_pictures(limit=25, max_age_days=30)
+    return await asyncio.to_thread(backfill_instagram_profile_pictures, limit=25, max_age_days=30)
+
+
+async def cron_instagram_media_backfill():
+    from app.ops.instagram_media_archive import backfill_instagram_media
+    return await backfill_instagram_media()
 
 
 add_cron("/api/cron/catalog-url-health", catalog_url_health_cron)
@@ -268,3 +274,4 @@ add_cron("/api/cron/instagram-story-media-retention", cron_instagram_story_media
 add_cron("/api/cron/process-inbox", cron_process_inbox)
 add_cron("/api/cron/process-outbox", cron_process_outbox)
 add_cron("/api/cron/instagram-profile-picture-backfill", cron_instagram_profile_picture_backfill)
+add_cron("/api/cron/instagram-media-backfill", cron_instagram_media_backfill)

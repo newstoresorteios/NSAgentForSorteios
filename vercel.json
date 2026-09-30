@@ -39,6 +39,10 @@
       "schedule": "45 4 * * *"
     },
     {
+      "path": "/api/cron/instagram-media-backfill",
+      "schedule": "50 4 * * *"
+    },
+    {
       "path": "/api/cron/process-inbox",
       "schedule": "10 3 * * *"
     },

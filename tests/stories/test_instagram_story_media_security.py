@@ -412,6 +412,7 @@ def test_video_frame_extraction_decodes_representative_jpegs(monkeypatch):
     monkeypatch.setenv("INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED", "true")
     get_settings.cache_clear()
 
+
     class FakeFrame:
         def __init__(self, value: int):
             self.value = value
@@ -440,3 +441,24 @@ def test_video_frame_extraction_decodes_representative_jpegs(monkeypatch):
     assert len(frames) == 3
     assert all(frame.startswith(b"\xff\xd8") for frame in frames)
     get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('public,expected_uploads', [(True, 0), (False, 1)])
+async def test_private_storage_refuses_public_bucket(monkeypatch, public, expected_uploads):
+    from unittest.mock import AsyncMock
+    from app.stories import instagram_story_media as media_mod
+    settings = SimpleNamespace(supabase_url='https://project.supabase.co', supabase_service_key='secret')
+    monkeypatch.setattr(media_mod, 'get_settings', lambda: settings)
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.get = AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {'public': public}))
+    client.post = AsyncMock(return_value=SimpleNamespace(status_code=200))
+    monkeypatch.setattr(media_mod.httpx, 'AsyncClient', lambda **kwargs: client)
+    path = await media_mod.SupabasePrivateStoryMediaStorage(bucket='conversation-media').put_private(
+        content=b'video', content_type='video/mp4', sha256='a' * 64, tenant_id='workspace-a')
+    assert client.post.call_count == expected_uploads
+    assert bool(path) == (not public)
+    if path:
+        assert path == 'supabase://conversation-media/private/instagram-stories/workspace-a/' + 'a' * 48

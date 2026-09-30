@@ -279,6 +279,15 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
             {"inbox_id": inbox_id, "inbound_id": inbound_id},
         )
 
+    # Preserve attachments even when a human owns the conversation or the Story
+    # is a silent reaction. This never sends a reply or invokes visual inference.
+    if incoming.channel == 'instagram' and incoming.image_url and inbound_id:
+        try:
+            from app.ops.instagram_media_archive import archive_instagram_inbound_media
+            await archive_instagram_inbound_media(inbound_id)
+        except Exception as exc:
+            log_event('instagram.media_archive.failed', {'error_type': type(exc).__name__})
+
     # Persist silent Story reactions; actionable Story text reaches the agent.
     if silence_story:
         _mark_group_processed(grouped_inbox_ids, inbound_id)

@@ -12,6 +12,7 @@ import hashlib
 import io
 import ipaddress
 import socket
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlparse
@@ -73,6 +74,9 @@ class StoryMediaStorage(Protocol):
 class SupabasePrivateStoryMediaStorage:
     """Private object storage under a non-public prefix. Never returns signed URLs."""
 
+    def __init__(self, *, bucket: str | None = None):
+        self.bucket = bucket
+
     async def put_private(
         self,
         *,
@@ -85,12 +89,15 @@ class SupabasePrivateStoryMediaStorage:
         if not settings.supabase_url or not settings.supabase_service_key:
             return None
         bucket = str(
-            getattr(settings, "instagram_story_storage_bucket", None)
+            self.bucket
+            or getattr(settings, "instagram_story_storage_bucket", None)
             or getattr(settings, "supabase_story_media_bucket", None)
             or ""
         ).strip()
         if not bucket:
             # Do not reuse the public audio bucket as a silent fallback.
+            return None
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', tenant_id) or not re.fullmatch(r'[a-f0-9]{64}', sha256):
             return None
         object_name = f"private/instagram-stories/{tenant_id}/{sha256[:48]}"
         upload_url = (
@@ -99,11 +106,23 @@ class SupabasePrivateStoryMediaStorage:
         )
         try:
             async with httpx.AsyncClient(timeout=30) as client:
+                auth_headers = {
+                    "Authorization": f"Bearer {settings.supabase_service_key}",
+                    "apikey": settings.supabase_service_key,
+                }
+                # Refuse accidental archival into a public bucket.
+                bucket_info = await client.get(
+                    f"{settings.supabase_url.rstrip('/')}/storage/v1/bucket/{bucket}",
+                    headers=auth_headers,
+                )
+                if bucket_info.status_code != 200 or bucket_info.json().get('public') is not False:
+                    log_event("instagram_story.media_storage_failed", {"code": "private_bucket_required"})
+                    return None
                 response = await client.post(
                     upload_url,
                     content=content,
                     headers={
-                        "Authorization": f"Bearer {settings.supabase_service_key}",
+                        **auth_headers,
                         "Content-Type": content_type,
                         "x-upsert": "true",
                     },
