@@ -30,6 +30,14 @@ def test_guided_near_match_empty_is_not_found():
     assert result.safety_reason == "product_not_found"
 
 
+def test_single_product_disambiguation_uses_singular():
+    from app.commerce.commerce_router import _product_result
+    result = _product_result("product_disambiguation", [{"id": "10609", "name": "Tissot PRX 35mm"}])
+    assert result.reply_text.startswith("Encontrei uma possibilidade:")
+    assert result.reply_text.endswith("É esse o modelo que você procura?")
+    assert "algumas" not in result.reply_text and "desses" not in result.reply_text
+
+
 def test_guided_near_match_forbid_over_budget_is_honest_miss():
     from tests.sales.test_tray_query_authority import OMEGA_OVER_BUDGET
     from app.sales.tray_query_authority import (

@@ -465,7 +465,31 @@ def result_from_outbox_row(row: dict[str, Any]):
     data = dict(payload.get("result") or {}) if isinstance(payload, dict) else {}
     data["reply_text"] = str(row.get("reply_text") or data.get("reply_text") or "")
     data["intent"] = data.get("intent") or "commerce"
-    return AgentResult.model_validate(data)
+    result = AgentResult.model_validate(data)
+    if row.get("id") and row.get("lease_owner"):
+        result.response_metadata["_outbox_delivery"] = {
+            "id": row["id"], "owner": row["lease_owner"],
+            "parts": dict(payload.get("delivery_parts") or {}),
+        }
+    return result
+
+
+def record_delivery_part(context: dict[str, Any], key: str, receipt: dict[str, Any]) -> None:
+    """Checkpoint each acknowledged provider message under the current lease."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE public.ai_outbound_outbox
+                SET reply_payload = reply_payload || jsonb_build_object(
+                    'delivery_parts', COALESCE(reply_payload->'delivery_parts', '{}'::jsonb) || %(part)s::jsonb),
+                    updated_at = now()
+                WHERE id = %(id)s AND status = 'leased' AND lease_owner = %(owner)s
+                  AND lease_expires_at > now()
+                RETURNING id
+            """, {"id": context["id"], "owner": context["owner"], "part": to_jsonb({key: receipt})})
+            if not cur.fetchone():
+                raise RuntimeError("outbox_delivery_lease_lost")
+    context.setdefault("parts", {})[key] = receipt
 
 
 async def dispatch_accepted_outbound(outbox_id: int, send) -> dict[str, Any]:

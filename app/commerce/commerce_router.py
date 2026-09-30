@@ -535,11 +535,11 @@ def _product_lines(
 def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
     if not products:
         return AgentResult(reply_text=operator_message('commerce.commerce_router._product_result.7cc54b8858'), intent="commerce", handoff_required=False, safety_reason="product_not_found")
+    product_lines = _product_lines(products, compact=True)
     if action == "product_disambiguation":
-        prefix = "Encontrei algumas possibilidades:"
+        prefix = "Encontrei uma possibilidade:" if len(product_lines) == 1 else "Encontrei algumas possibilidades:"
     else:
         prefix = "Sim, encontrei:" if action != "product_price" else "Encontrei:"
-    product_lines = _product_lines(products, compact=True)
     presented_lines = (
         product_lines
         if len(product_lines) == 1
@@ -548,7 +548,7 @@ def _product_result(action: str, products: list[dict[str, Any]]) -> AgentResult:
             for position, line in enumerate(product_lines, start=1)
         ]
     )
-    suffix = "\n\nÉ algum desses?" if action == "product_disambiguation" else ""
+    suffix = ("\n\nÉ esse o modelo que você procura?" if len(product_lines) == 1 else "\n\nÉ algum desses?") if action == "product_disambiguation" else ""
     return AgentResult(
         reply_text=prefix + "\n\n" + "\n\n".join(presented_lines) + suffix,
         intent="commerce",

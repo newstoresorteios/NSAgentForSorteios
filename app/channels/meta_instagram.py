@@ -789,6 +789,47 @@ async def send_meta_instagram_reply(
     incoming: IncomingMessage,
     result: AgentResult,
 ) -> dict[str, Any]:
+    """Send text and native catalog photos, resuming acknowledged parts on retry."""
+    from app.channels.product_photos import outbound_catalog_photos
+    from app.evaluation.context import prohibit_side_effect
+    from app.ingress.outbox import record_delivery_part
+    prohibit_side_effect("channel_send")
+    photos = outbound_catalog_photos(result)
+    if not photos:
+        return await _send_meta_instagram_message(incoming, result)
+    context = result.response_metadata.get("_outbox_delivery") or {}
+    delivered = dict(context.get("parts") or {})
+    parts = [("text", {"text": result.reply_text}, None)] + [
+        (f"image:{index}", {"attachment": {"type": "image", "payload": {"url": url}}}, url)
+        for index, url in enumerate(photos)
+    ]
+    for key, message, photo_url in parts:
+        if key in delivered:
+            continue
+        try:
+            sent = await _send_meta_instagram_message(incoming, result, message=message)
+        except Exception as exc:
+            sent = {"ok": False, "error": type(exc).__name__}
+        if not sent.get("ok"):
+            return {**sent, "text_delivered": "text" in delivered,
+                    "media_messages": [p for p in delivered.values() if p.get("url")]}
+        receipt = {"message_id": (sent.get("provider_response") or {}).get("message_id")}
+        if photo_url:
+            receipt.update(url=photo_url, type="image")
+        if context:
+            record_delivery_part(context, key, receipt)
+        delivered[key] = receipt
+    return {"ok": True, "text_delivered": True,
+            "provider_response": delivered.get("text", {}),
+            "media_messages": [p for p in delivered.values() if p.get("url")]}
+
+
+async def _send_meta_instagram_message(
+    incoming: IncomingMessage,
+    result: AgentResult,
+    *,
+    message: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Send text reply via Instagram Messaging Graph API."""
     import httpx
     from app.evaluation.context import prohibit_side_effect
@@ -818,7 +859,7 @@ async def send_meta_instagram_reply(
     payload = {
         "recipient": {"id": recipient_id},
         "messaging_type": "RESPONSE",
-        "message": {"text": text},
+        "message": message if message is not None else {"text": text},
     }
 
     # Instagram Login tokens (IGAA...) use graph.instagram.com /me first.

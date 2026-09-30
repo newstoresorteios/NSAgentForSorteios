@@ -912,6 +912,8 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             result, incoming=incoming,
             recent_turns=customer_context.get("_conversation_turns"),
         )
+        from app.channels.product_photos import attach_presented_product_photos
+        result = attach_presented_product_photos(incoming, result)
         # Audio must reflect the final, identified text, not an earlier draft.
         result = await enrich_agent_result(incoming, result)
         if runtime is not None:
