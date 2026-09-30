@@ -19,13 +19,26 @@ def build_outbound_envelope(incoming: Any, result: Any) -> dict[str, Any]:
         incoming_payload = incoming.model_dump(mode="json")
     elif isinstance(incoming, dict):
         incoming_payload = dict(incoming)
+    result_payload = result.model_dump(mode="json", exclude={"reply_audio_bytes"}) if hasattr(result, "model_dump") else {
+        "reply_text": getattr(result, "reply_text", None),
+        "intent": getattr(result, "intent", None),
+        "safety_reason": getattr(result, "safety_reason", None),
+    }
+    metadata = getattr(result, "response_metadata", {}) or {}
+    # Operational snapshot only: never serialize prompts or the whole customer context.
+    result_payload["response_metadata"] = {
+        key: metadata[key] for key in (
+            "agent_disclosure", "actor_type", "handoff", "failure_explanation",
+            "failure_next_step", "outbound_image_url", "outbound_image_urls",
+        ) if key in metadata
+    }
+    result_payload["response_metadata"]["reply_audio_size"] = (
+        len(getattr(result, "reply_audio_bytes", None) or b"")
+        or metadata.get("reply_audio_size", 0)
+    )
     return {
         "incoming": incoming_payload,
-        "result": result.model_dump(mode="json") if hasattr(result, "model_dump") else {
-            "reply_text": getattr(result, "reply_text", None),
-            "intent": getattr(result, "intent", None),
-            "safety_reason": getattr(result, "safety_reason", None),
-        },
+        "result": result_payload,
         "provider": incoming_payload.get("provider"),
         "channel": incoming_payload.get("channel"),
     }

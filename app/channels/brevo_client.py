@@ -347,7 +347,7 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
     ):
         audio_file = _build_brevo_audio_file(
             url=result.reply_audio_url,
-            size=len(result.reply_audio_bytes or b""),
+            size=len(result.reply_audio_bytes or b"") or int(result.response_metadata.get("reply_audio_size") or 0),
             filename="resposta.ogg" if result.reply_audio_url.endswith(".ogg") else "resposta.mp3",
             mime_type=result.reply_audio_mime_type or "audio/ogg; codecs=opus",
         )
@@ -366,6 +366,11 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
 
     if incoming.channel in {"instagram", "facebook", "widget"} and audio_file:
         audio_file = None
+
+    if not settings.dry_run and mode != "dry_run" and isinstance(result, AgentResult):
+        from app.ops.handoff_service import ensure_handoff_queued
+        if not ensure_handoff_queued(incoming, result):
+            return BrevoSendResult(ok=False, dry_run=False, error="human_handoff_queue_unavailable")
 
     if settings.dry_run or mode == "dry_run":
         sent = BrevoSendResult(

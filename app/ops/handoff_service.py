@@ -74,7 +74,9 @@ def enrich_handoff_metadata(
     metadata = dict(result.response_metadata or {})
     previous = metadata.get("handoff") if isinstance(metadata.get("handoff"), dict) else {}
     reason = result.safety_reason or previous.get("reason") or confirmed
-    proposed = bool(result.handoff_required or previous.get("required") or previous.get("offer")
+    from app.ops.failure_explanation import apply_failure_explanation, failure_explanation
+    failure = failure_explanation(result)
+    proposed = bool(failure or result.handoff_required or previous.get("required") or previous.get("offer")
                     or result.safety_reason in _INTEGRATION_HANDOFF_REASONS or promises_handoff(result.reply_text))
     if not proposed and not confirmed:
         return result
@@ -83,10 +85,15 @@ def enrich_handoff_metadata(
         result.reply_text = message("handoff_requested")
     else:
         # Replace any premature transfer promise produced by tools, policies or validators.
-        result.reply_text = offer_text()
+        if failure:
+            result = apply_failure_explanation(result)
+            result.reply_text = f"{result.reply_text}\n\n{offer_text()}"
+        else:
+            result.reply_text = offer_text()
     result.handoff_required = bool(confirmed)
     result.intent = "handoff"
     result.safety_reason = reason or "human_review_needed"
+    metadata.update(result.response_metadata)
     metadata["handoff"] = {
         **previous,
         "required": bool(confirmed), "offer": not bool(confirmed),
@@ -119,10 +126,27 @@ def apply_integration_failure_handoff(result: AgentResult) -> AgentResult:
     reason = (result.safety_reason or "").strip()
     if reason not in _INTEGRATION_HANDOFF_REASONS:
         return result
-    return build_human_handoff_result(
+    handoff = build_human_handoff_result(
         reason=f"integration_failure:{reason}",
         reply_text=None,
     )
+    from app.ops.failure_explanation import apply_failure_explanation
+    handoff = apply_failure_explanation(handoff)
+    handoff.reply_text = f"{handoff.reply_text}\n\n{offer_text()}"
+    handoff.response_metadata = {**result.response_metadata, **handoff.response_metadata}
+    if handoff.response_metadata.get("agent_disclosure"):
+        from app.identity.agent_disclosure import apply_agent_disclosure
+        handoff = apply_agent_disclosure(handoff)
+    return handoff
+
+
+def ensure_handoff_queued(incoming: IncomingMessage, result: AgentResult) -> bool:
+    """Never deliver a transfer confirmation before the tenant-scoped queue write."""
+    payload = handoff_provider_payload(result)
+    if payload is None:
+        return not result.handoff_required
+    from app.ops.handoff_queue import mark_conversa_for_human_handoff
+    return bool(mark_conversa_for_human_handoff(incoming, reason=payload["consent_reason"]))
 
 
 def handoff_provider_payload(result: AgentResult) -> dict[str, Any] | None:

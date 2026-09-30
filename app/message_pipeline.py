@@ -85,6 +85,9 @@ async def prepare_incoming_message(incoming: IncomingMessage) -> IncomingMessage
 
 
 async def enrich_agent_result(incoming: IncomingMessage, result: AgentResult) -> AgentResult:
+    from app.channels.channel_profiles import get_channel_profile
+    if not get_channel_profile(incoming.channel).allow_audio_reply:
+        return result
     settings = get_settings()
     if incoming.input_modality != "audio":
         return result
@@ -892,10 +895,9 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
                 log_exception("memory.pipeline.error", exc)
 
     with runtime_stage("enrich_result"):
-        enriched = await enrich_agent_result(incoming, result)
         result = compose_outbound_reply(
             incoming,
-            enriched,
+            result,
             max_reply_chars=max_reply_chars,
         )
         result = await validate_catalog_delivery(result)
@@ -905,6 +907,13 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
         )
         result = _attach_commerce_metadata(incoming, commerce_state, result)
         result = enrich_handoff_metadata(incoming, result)
+        from app.identity.agent_disclosure import apply_agent_disclosure
+        result = apply_agent_disclosure(
+            result, incoming=incoming,
+            recent_turns=customer_context.get("_conversation_turns"),
+        )
+        # Audio must reflect the final, identified text, not an earlier draft.
+        result = await enrich_agent_result(incoming, result)
         if runtime is not None:
             runtime.outbound_snapshot.update(
                 safety_reason=result.safety_reason, handoff_required=result.handoff_required,

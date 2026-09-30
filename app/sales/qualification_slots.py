@@ -16,7 +16,7 @@ SHIPPING_CITY = "shipping_city"
 URGENCY = "urgency"
 
 _QUESTION_SLOT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
-    (CUSTOMER_NAME, ("como posso te chamar", "chamar", "seu nome", "te chamar")),
+    (CUSTOMER_NAME, ("como posso te chamar", "como devo te chamar", "qual seu nome", "qual e seu nome", "me diga seu nome", "pode informar seu nome")),
     (SHIPPING_CITY, ("para qual cidade", "cidade seria", "cidade", "entrega")),
     (
         URGENCY,
@@ -422,6 +422,9 @@ def extract_introduced_name(text: str | None) -> str | None:
 def _is_plausible_name(text: str) -> bool:
     cleaned = " ".join(str(text or "").strip().split())
     if not cleaned or len(cleaned) > 48:
+        return False
+    from app.identity.greeting_policy import is_any_greeting, is_farewell_message
+    if is_any_greeting(cleaned) or is_farewell_message(cleaned):
         return False
     folded = _fold(cleaned)
     if folded in _GENDER_LABELS or folded in {

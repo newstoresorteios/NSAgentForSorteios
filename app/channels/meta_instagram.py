@@ -797,6 +797,8 @@ async def send_meta_instagram_reply(
 ) -> dict[str, Any]:
     """Send text reply via Instagram Messaging Graph API."""
     import httpx
+    from app.evaluation.context import prohibit_side_effect
+    prohibit_side_effect("channel_send")
 
     settings = get_settings()
     token = str(getattr(settings, "meta_page_access_token", "") or "").strip()
@@ -813,7 +815,12 @@ async def send_meta_instagram_reply(
     ig_account_id = str(
         getattr(settings, "meta_ig_business_account_id", "") or ""
     ).strip()
-    text = (result.reply_text or "")[:2000]
+    text = result.reply_text or ""
+    if len(text) > 2000:
+        return {"ok": False, "error": "meta_reply_too_long"}
+    from app.ops.handoff_service import ensure_handoff_queued
+    if not ensure_handoff_queued(incoming, result):
+        return {"ok": False, "error": "human_handoff_queue_unavailable"}
     payload = {
         "recipient": {"id": recipient_id},
         "messaging_type": "RESPONSE",
