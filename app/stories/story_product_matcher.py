@@ -306,6 +306,7 @@ _COLOR_SYNONYMS: dict[str, tuple[str, ...]] = {
     "branco": ("branco", "white"),
     "silver": ("prata", "silver"),
     "prata": ("prata", "silver"),
+    "prateado": ("prata", "prateado", "silver"),
     "gold": ("dourado", "gold"),
     "dourado": ("dourado", "gold"),
     "brown": ("marrom", "brown"),
@@ -1122,6 +1123,7 @@ async def match_story_to_catalog(
                 *(analysis.collection_hypotheses or []),
                 *(analysis.visible_skus or []),
                 *(analysis.visible_references or []),
+                *(analysis.mechanisms_suggested or []),
             ]
         )
     )

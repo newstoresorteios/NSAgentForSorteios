@@ -192,9 +192,21 @@ class StoryProductRepository:
                           AND (
                                 match_status IN ('pending', 'failed', 'expired')
                              OR (
-                                    match_status IN ('ambiguous', 'not_found')
+                                    (
+                                        match_status IN ('ambiguous', 'not_found')
+                                     OR (
+                                            match_status = 'matched'
+                                        AND (
+                                            COALESCE((visual_analysis->>'watch_count')::int, 0) > 1
+                                            OR visual_analysis @> '{"multiple_products": true}'::jsonb
+                                        )
+                                     )
+                                    )
                                 AND media_mime LIKE 'video/%%'
-                                AND COALESCE(visual_analysis->>'media_type', '') <> 'video'
+                                AND (
+                                    COALESCE(visual_analysis->>'media_type', '') <> 'video'
+                                    OR COALESCE(visual_analysis->>'evidence_version', '') <> 'multimodal-v1'
+                                )
                              )
                              OR (
                                     match_status = 'processing'

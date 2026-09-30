@@ -1,0 +1,73 @@
+"""Customer selection of a visual region, never confirmation of a catalog SKU."""
+from __future__ import annotations
+
+import re
+from app.catalog.retrieval.text import fold_text
+
+
+def normalize_color(value: str | None) -> str:
+    text = re.sub(r"[-_\u2010-\u2015]+", " ", fold_text(value or ""))
+    text = " ".join(text.split())
+    return {
+        "blue": "azul", "light blue": "azul claro", "ice blue": "azul claro",
+        "azul gelo": "azul claro", "black": "preto", "white": "branco",
+        "silver": "prateado", "prata": "prateado", "green": "verde",
+        "red": "vermelho", "orange": "laranja", "brown": "marrom",
+        "gold": "dourado", "pink": "rosa", "grey": "cinza", "gray": "cinza",
+    }.get(text, text)
+
+
+def color_family(value: str | None) -> str:
+    color = normalize_color(value).split(" ")[0]
+    return "prata" if color == "prateado" else color
+
+
+def selected_region(analysis, text):
+    value = fold_text(text or "")
+    if re.search(r"\b(?:nao|menos|exceto|outra|outro)\b", value):
+        return None
+    colors = re.findall(r"\b(?:azul(?:[ -]claro)?|preto|branco|prata|prateado|verde|rosa|cinza|dourado|marrom)\b", value)
+    positions = re.findall(r"\b(?:centro|cima|baixo|esquerda|direita)\b", value)
+    if len(set(map(normalize_color, colors))) > 1 or len(set(positions)) > 1:
+        return None
+    if not colors and not positions:
+        return None
+    position_map = {"center": "centro", "top": "cima", "bottom": "baixo", "left": "esquerda", "right": "direita"}
+    matches = [r for r in analysis.product_regions
+               if (not colors or (normalize_color(r.dial_color) == normalize_color(colors[0])
+                   if " " in normalize_color(colors[0]) else color_family(r.dial_color) == color_family(colors[0])))
+               and (not positions or position_map.get(r.position) == positions[0])]
+    return matches[0] if len(matches) == 1 else None
+
+
+def scope_visual_selection(analysis, text):
+    region = selected_region(analysis, text)
+    if region is None or len(analysis.product_regions) <= 1:
+        return analysis, region
+    # Never combine the blue watch with a reference/brand read on its neighbour.
+    scoped = analysis.model_copy(deep=True, update={
+        "watch_count": 1, "multiple_products": False, "product_regions": [region],
+        "dial_colors": [normalize_color(region.dial_color)] if region.dial_color else [],
+        "strap_colors": [normalize_color(region.strap_color)] if region.strap_color else [],
+        "visible_brands": [region.brand_hypothesis] if region.brand_hypothesis else [],
+        "logo_hypotheses": [region.brand_hypothesis] if region.brand_hypothesis else [],
+        "collection_hypotheses": [region.reference_hypothesis] if region.reference_hypothesis else [],
+        "model_hypotheses": [region.reference_hypothesis] if region.reference_hypothesis else [],
+        "visible_text": region.visible_text, "visible_references": [], "visible_skus": [], "visible_eans": [],
+        # These scene-level attributes have no reliable per-watch assignment.
+        "materials": [], "strap_types": [], "case_shapes": [], "visible_advertised_price": None,
+        "mechanisms_suggested": region.mechanisms_suggested,
+        "visual_description": region.label,
+    })
+    return scoped, region
+
+
+def reference_in_workspace(ref, runtime):
+    if not runtime or not runtime.loaded or not runtime.enabled or not runtime.workspace_id or runtime.load_error:
+        return False
+    workspace = str(runtime.workspace_id)
+    # Legacy UUID references remain supported. Aliases need an explicit, server-stamped workspace.
+    if ref.get("workspace_id"):
+        return (ref["workspace_id"] == workspace
+                and ref.get("tenant_id") in {workspace, runtime.tenant_id})
+    return ref.get("tenant_id") == workspace

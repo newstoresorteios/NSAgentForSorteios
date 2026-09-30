@@ -11,7 +11,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_serializer
+from pydantic import BaseModel, Field, SecretStr, model_serializer, field_validator
 
 
 class StoryQuestionType(str, Enum):
@@ -47,6 +47,15 @@ class VisualProductRegion(BaseModel):
     strap_color: str | None = None
     brand_hypothesis: str | None = None
     reference_hypothesis: str | None = None
+    visible_text: list[str] = Field(default_factory=list)
+    mechanisms_suggested: list[str] = Field(default_factory=list)
+    frame_indexes: list[int] = Field(default_factory=list)
+
+    @field_validator("dial_color", "strap_color")
+    @classmethod
+    def normalized_color(cls, value):
+        from app.stories.story_selection import normalize_color
+        return normalize_color(value) if value else value
 
 
 class StoryMediaItem(BaseModel):
@@ -153,6 +162,17 @@ class StoryVisualUnderstanding(BaseModel):
     image_quality: Literal["poor", "usable", "good"] = "usable"
     ambiguity_reasons: list[str] = Field(default_factory=list)
     visible_advertised_price: str | None = None
+    overlay_text: list[str] = Field(default_factory=list)
+    audio_transcript: str = ""
+    audio_status: str = "not_attempted"
+    frames_analyzed: int = 0
+    evidence_version: str = ""
+
+    @field_validator("dial_colors", "strap_colors")
+    @classmethod
+    def normalized_colors(cls, values):
+        from app.stories.story_selection import normalize_color
+        return list(dict.fromkeys(normalize_color(v) for v in values if v))
 
 
 class StoryCandidateScore(BaseModel):
@@ -225,6 +245,7 @@ class StoryProductAssociation(BaseModel):
 class StoryConversationReference(BaseModel):
     story_media_id: str
     tenant_id: str | None = None
+    workspace_id: str | None = None
     catalog_item_key: str | None = None
     product_id: str | None = None
     variant_id: str | None = None

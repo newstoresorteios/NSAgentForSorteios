@@ -905,11 +905,14 @@ class Settings(BaseSettings):
         alias="INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED",
     )
     instagram_story_video_max_frames: int = Field(
-        default=5,
+        default=8,
         alias="INSTAGRAM_STORY_VIDEO_MAX_FRAMES",
         ge=1,
-        le=5,
+        le=10,
     )
+    instagram_story_video_audio_enabled: bool = Field(default=True, alias="INSTAGRAM_STORY_VIDEO_AUDIO_ENABLED")
+    instagram_story_video_max_seconds: int = Field(default=120, ge=1, le=180, alias="INSTAGRAM_STORY_VIDEO_MAX_SECONDS")
+    instagram_story_audio_timeout_seconds: float = Field(default=12, ge=1, le=30, alias="INSTAGRAM_STORY_AUDIO_TIMEOUT_SECONDS")
     instagram_story_vision_model: str = Field(
         default="",
         alias="INSTAGRAM_STORY_VISION_MODEL",

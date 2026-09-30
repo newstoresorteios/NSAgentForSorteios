@@ -17,7 +17,8 @@ def unresolved_story_followup(incoming, state):
     if not isinstance(ref, dict) or ref.get("match_status") not in {"ambiguous", "not_found"}:
         return None
     runtime = get_persona_runtime()
-    if not runtime or not runtime.workspace_id or str(runtime.workspace_id) != ref.get("tenant_id"):
+    from app.stories.story_selection import reference_in_workspace
+    if not reference_in_workspace(ref, runtime):
         return None
     if (not incoming.conversation_id or incoming.conversation_id != ref.get("conversation_id")
             or incoming.sender_key != ref.get("sender_key")):
@@ -34,10 +35,10 @@ def unresolved_story_followup(incoming, state):
     if (len(text) > 160 or extract_reference_code(incoming.text)
             or re.search(r"https?://|\b(?:outro|outra|pedido|rastreio|imposto|atendente|humano)\b", text)):
         return None
-    selection = re.search(r"\b(?:azul|preto|prata|prateado|branco|verde|marrom|dourado|rosa|esquerda|direita|centro|primeiro|segundo|terceiro)\b", text)
+    selection = re.search(r"\b(?:azul|preto|prata|prateado|branco|verde|marrom|dourado|rosa|cinza|esquerda|direita|centro|cima|baixo|primeiro|segundo|terceiro)\b", text)
     terms = set(re.findall(r"[a-z0-9]+", text))
     related = bool(terms.intersection(ref.get("followup_terms") or []))
-    selection_words = set("o a os as um uma eu quero esse este aquele de do da no na com por favor mostrador relogio azul preto prata prateado branco verde marrom dourado rosa esquerda direita centro primeiro segundo terceiro quanto custa valor preco link manda envia".split())
+    selection_words = set("o a os as um uma eu quero esse este aquele de do da no na com por favor mostrador relogio azul claro escuro preto prata prateado branco verde marrom dourado rosa cinza esquerda direita centro cima baixo primeiro segundo terceiro quanto custa valor preco link manda envia".split())
     selection_only = bool(selection and terms.issubset(selection_words))
     from app.sales.ready_delivery_context import PRICE_FOLLOWUP
     price_followup = bool(ref.get('selected_option') and re.fullmatch(PRICE_FOLLOWUP, text.strip()))
@@ -58,6 +59,7 @@ def unresolved_story_followup(incoming, state):
     return AgentResult(reply_text=reply, intent="commerce", safety_reason="ambiguous",
                        response_metadata={"domain": "commerce", "response_source": "instagram_story_followup",
                                           "instagram_story": True, "story_match_status": "ambiguous",
+                                          "story_selection_pending": True,
                                           "story_clarification_reply": reply, "last_story_product": updated,
                                           "clear_active_product": True, "clear_presented_products": True,
                                           "clear_pending_action": True, "product_resolution_state": "unresolved"})

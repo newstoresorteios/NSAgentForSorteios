@@ -72,6 +72,10 @@ def enrich_handoff_metadata(
 ) -> AgentResult:
     confirmed = consent_reason(incoming, recent_turns)
     metadata = dict(result.response_metadata or {})
+    if (not confirmed and metadata.get("story_selection_pending") is True
+            and not result.handoff_required):
+        # Ordinary disambiguation is not a failed attendance or a transfer request.
+        return result
     previous = metadata.get("handoff") if isinstance(metadata.get("handoff"), dict) else {}
     reason = result.safety_reason or previous.get("reason") or confirmed
     from app.ops.failure_explanation import apply_failure_explanation, failure_explanation

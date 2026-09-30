@@ -256,11 +256,12 @@ def evaluate_structure_evidence(
     profile: StoryEvidenceProfile,
 ) -> StoryEvidenceProfile:
     """Path 2: structured vision fields (colors, shape, mechanism)."""
+    from app.stories.story_selection import color_family
     for raw in analysis.dial_colors or []:
-        for syn in _COLOR_SYNONYMS.get(_fold(raw), (_fold(raw),)):
+        for syn in _COLOR_SYNONYMS.get(color_family(raw), (color_family(raw),)):
             profile.colors.add(syn)
     for region in analysis.product_regions or []:
-        dial = _fold(getattr(region, "dial_color", None))
+        dial = color_family(getattr(region, "dial_color", None))
         if dial:
             profile.colors.update(_COLOR_SYNONYMS.get(dial, (dial,)))
     for shape in analysis.case_shapes or []:

@@ -70,9 +70,12 @@ async def enrich_story_ready_delivery(message, result):
     """Search the second storefront without upgrading a visual guess to a match."""
     ref = result.response_metadata.get('last_story_product')
     scope = scoped_context(message, '')
+    from app.stories.story_selection import reference_in_workspace
+    from app.persona.persona_runtime import get_persona_runtime
     if (not isinstance(ref, dict) or ref.get('match_status') not in {'ambiguous', 'not_found'}
             or not ref.get('catalog_query') or not enabled() or not scope
-            or any(ref.get(k) != scope[k] for k in ('tenant_id', 'conversation_id', 'sender_key'))):
+            or not reference_in_workspace(ref, get_persona_runtime())
+            or any(ref.get(k) != scope[k] for k in ('conversation_id', 'sender_key'))):
         return result
     evidence = await lookup(ref['catalog_query'])
     selected = ref.get('selected_option')

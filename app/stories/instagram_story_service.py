@@ -242,8 +242,9 @@ def _clarification_from_regions(
     options = []
     for region in analysis.product_regions or []:
         raw = region.model_dump() if isinstance(region, VisualProductRegion) else region
-        color = str(raw.get("dial_color") or "").strip().lower()
-        color = colors.get(color, color if color in colors.values() else "")
+        from app.stories.story_selection import normalize_color
+        color = normalize_color(raw.get("dial_color"))
+        color = colors.get(color, color if color in {*colors.values(), "cinza"} else "")
         position = positions.get(raw.get("position"), "")
         bits = [v for v in (f"mostrador {color}" if color else "", position) if v]
         if bits:
@@ -517,9 +518,18 @@ async def _finalize_story_catalog_match(
     metrics: dict[str, Any],
     execute_tool: Any | None,
     store_url: str | None = None,
+    customer_text: str = "",
 ) -> StoryResolutionResult:
     from app.tray.tray_tools import execute_tool as default_execute
 
+    from app.stories.story_selection import scope_visual_selection
+    scene = analysis
+    analysis, selected = scope_visual_selection(analysis, customer_text)
+    scoped_selection = selected is not None and (scene.watch_count > 1 or scene.multiple_products)
+    if scoped_selection:
+        # A selected watch belongs to this customer's turn, not to every viewer of the Story.
+        repo.mark_ambiguous(tenant_id=tenant, provider=provider, instagram_account_id=account,
+                            story_media_id=media_id, explanation={"reason": "customer_scoped_selection"})
     analysis = product_scoped_analysis(analysis)
     tool = execute_tool or default_execute
     candidates = await match_story_to_catalog(
@@ -529,6 +539,14 @@ async def _finalize_story_catalog_match(
         media_bytes=None,
         store_url=store_url,
     )
+    if selected and selected.dial_color:
+        from app.stories.story_selection import color_family
+        wanted = color_family(selected.dial_color)
+        def compatible_color(candidate):
+            listing = " ".join(r[8:] for r in candidate.match_reasons if r.startswith("listing:"))
+            seen = set(re.findall(r"\b(?:azul|preto|branco|verde|rosa|cinza|prata|prateado|dourado|marrom)\b", listing.lower()))
+            return not seen or wanted in {color_family(v) for v in seen}
+        candidates = [candidate for candidate in candidates if compatible_color(candidate)]
     repo.save_candidates(
         tenant_id=tenant,
         provider=provider,
@@ -562,25 +580,26 @@ async def _finalize_story_catalog_match(
         log_event("story_match_source", {"source": candidates[0].source})
 
     if status == "matched" and top is not None:
-        repo.confirm_match(
-            tenant_id=tenant,
-            provider=provider,
-            instagram_account_id=account,
-            story_media_id=media_id,
-            catalog_item_key=top.catalog_item_key,
-            product_id=top.product_id,
-            variant_id=top.variant_id,
-            match_source=(
-                "visual_exact_reference"
-                if any(
-                    r.startswith(("ean:", "sku:", "reference:"))
-                    for r in top.match_reasons
-                )
-                else "visual_similarity"
-            ),
-            match_confidence=top.score,
-            explanation={"reasons": top.match_reasons},
-        )
+        if not scoped_selection:
+            repo.confirm_match(
+                tenant_id=tenant,
+                provider=provider,
+                instagram_account_id=account,
+                story_media_id=media_id,
+                catalog_item_key=top.catalog_item_key,
+                product_id=top.product_id,
+                variant_id=top.variant_id,
+                match_source=(
+                    "visual_exact_reference"
+                    if any(
+                        r.startswith(("ean:", "sku:", "reference:"))
+                        for r in top.match_reasons
+                    )
+                    else "visual_similarity"
+                ),
+                match_confidence=top.score,
+                explanation={"reasons": top.match_reasons},
+            )
         product, tray_failed, _code, evidence = await _revalidate_matched_story_product(
             product_id=top.product_id,
             variant_id=top.variant_id,
@@ -753,6 +772,14 @@ async def _hydrate_story_media(story: InstagramStoryContext) -> InstagramStoryCo
     return story.model_copy(update=updates)
 
 
+def _unsafe_shared_scene_match(assoc) -> bool:
+    """Automatic whole-scene SKU choices must not override each viewer's selection."""
+    if not assoc or assoc.match_status == "manually_confirmed":
+        return False
+    visual = assoc.visual_analysis or {}
+    return bool(visual.get("multiple_products") or (visual.get("watch_count") or 0) > 1)
+
+
 async def resolve_story_product_question(
     *,
     incoming: IncomingMessage,
@@ -879,6 +906,9 @@ async def resolve_story_product_question(
             source_timestamp=story.source_timestamp,
             story_expires_at=story.expires_at,
         )
+    if assoc and assoc.match_status == "matched" and _unsafe_shared_scene_match(assoc):
+        # A cached whole-Story association must not override a new viewer's choice.
+        assoc = assoc.model_copy(update={"match_status": "ambiguous"})
 
     async def _maybe_revalidate(product_id: str, variant_id: str | None):
         return await _revalidate_matched_story_product(
@@ -936,6 +966,7 @@ async def resolve_story_product_question(
                 shadow_only=shadow_only,
                 metrics=metrics,
                 execute_tool=execute_tool,
+                customer_text=incoming.text or "",
                 store_url=_story_store_url(story, incoming),
             )
         metrics["story_deterministic_matches"] = 1
@@ -978,7 +1009,8 @@ async def resolve_story_product_question(
 
     needs_video_reanalysis = bool(
         assoc and str(assoc.media_mime or "").startswith("video/")
-        and (assoc.visual_analysis or {}).get("media_type") != "video"
+        and ((assoc.visual_analysis or {}).get("media_type") != "video"
+             or (assoc.visual_analysis or {}).get("evidence_version") != "multimodal-v1")
     )
     if assoc and assoc.match_status in {"ambiguous", "not_found"} and not needs_video_reanalysis:
         # Re-query live Tray with stored vision; do not spend a second OpenAI vision call.
@@ -1003,6 +1035,7 @@ async def resolve_story_product_question(
                 metrics=metrics,
                 execute_tool=execute_tool,
                 store_url=_story_store_url(story, incoming),
+                customer_text=incoming.text or "",
             )
         if assoc.match_status == "ambiguous":
             metrics["story_ambiguous_matches"] = 1
@@ -1090,7 +1123,8 @@ async def resolve_story_product_question(
                 metrics=metrics,
             )
         # Fall through to reuse matched/ambiguous after wait.
-        if assoc and assoc.match_status in {"matched", "manually_confirmed"} and assoc.product_id:
+        if (assoc and assoc.match_status in {"matched", "manually_confirmed"}
+                and assoc.product_id and not _unsafe_shared_scene_match(assoc)):
             product, tray_failed, _code, evidence = await _maybe_revalidate(
                 assoc.product_id, assoc.variant_id
             )
@@ -1141,7 +1175,8 @@ async def resolve_story_product_question(
                 shadow_only=shadow_only,
                 metrics=metrics,
             )
-        if current and current.match_status in {"matched", "manually_confirmed"} and current.product_id:
+        if (current and current.match_status in {"matched", "manually_confirmed"}
+                and current.product_id and not _unsafe_shared_scene_match(current)):
             product, tray_failed, _code, evidence = await _maybe_revalidate(
                 current.product_id, current.variant_id
             )
@@ -1200,6 +1235,7 @@ async def resolve_story_product_question(
                 account=account,
                 media_id=media_id,
                 analysis=StoryVisualUnderstanding(),
+                customer_text=incoming.text or "",
                 question_type=question_type,
                 shadow_only=shadow_only,
                 metrics=metrics,
@@ -1252,7 +1288,7 @@ async def resolve_story_product_question(
 
         # Order: hash → confirmed association → L1 → L2 → OpenAI
         prior = repo.find_by_media_hash(tenant_id=tenant, media_sha256=media_sha)
-        if prior and prior.product_id:
+        if prior and prior.product_id and not _unsafe_shared_scene_match(prior):
             metrics["story_media_cache_hit"] = 1
             repo.confirm_match(
                 tenant_id=tenant,
@@ -1296,7 +1332,8 @@ async def resolve_story_product_question(
             )
 
         analysis = get_cached_visual_analysis(tenant_id=tenant, media_sha256=media_sha)
-        if media.content_type.startswith("video/") and analysis is not None and analysis.media_type != "video":
+        if media.content_type.startswith("video/") and analysis is not None and (
+                analysis.media_type != "video" or analysis.evidence_version != "multimodal-v1"):
             analysis = None
         if analysis is not None:
             metrics["story_media_cache_hit"] = 1
@@ -1304,7 +1341,8 @@ async def resolve_story_product_question(
             analysis = repo.find_visual_analysis_by_hash(
                 tenant_id=tenant, media_sha256=media_sha
             )
-            if media.content_type.startswith("video/") and analysis is not None and analysis.media_type != "video":
+            if media.content_type.startswith("video/") and analysis is not None and (
+                    analysis.media_type != "video" or analysis.evidence_version != "multimodal-v1"):
                 analysis = None
             if analysis is not None:
                 metrics["story_db_analysis_cache_hit"] = 1
@@ -1320,9 +1358,13 @@ async def resolve_story_product_question(
                     extract_video_frames_best_effort,
                     media.content,
                     max_frames=int(
-                        getattr(get_settings(), "instagram_story_video_max_frames", 5) or 5
+                        getattr(get_settings(), "instagram_story_video_max_frames", 8) or 8
                     ),
                 )
+                from app.stories.story_video_audio import transcribe_story_video
+                audio = await transcribe_story_video(media.content)
+                metrics["story_video_frames"] = len(frames)
+                metrics["story_audio_status"] = audio.status
                 thumb_url = story.operational_thumbnail_url()
                 if not frames and thumb_url:
                     thumb = await download_story_media(thumb_url, tenant_id=tenant)
@@ -1330,7 +1372,8 @@ async def resolve_story_product_question(
                         image_bytes=thumb.content,
                         content_type=thumb.content_type,
                         media_sha256=media_sha,
-                        media_type="image",
+                        media_type="video",
+                        audio_transcript=audio.transcript, audio_status=audio.status,
                     )
                     metrics["story_visual_analysis_calls"] = 1
                 elif frames:
@@ -1340,6 +1383,7 @@ async def resolve_story_product_question(
                         media_sha256=media_sha,
                         media_type="video",
                         extra_frame_bytes=frames[1:],
+                        audio_transcript=audio.transcript, audio_status=audio.status,
                     )
                     metrics["story_visual_analysis_calls"] = 1
                 else:
@@ -1351,7 +1395,8 @@ async def resolve_story_product_question(
                             image_bytes=thumb.content,
                             content_type=thumb.content_type,
                             media_sha256=media_sha,
-                            media_type="image",
+                            media_type="video",
+                            audio_transcript=audio.transcript, audio_status=audio.status,
                         )
                         metrics["story_visual_analysis_calls"] = 1
                     elif _story_store_url(story, incoming):
@@ -1362,6 +1407,7 @@ async def resolve_story_product_question(
                             account=account,
                             media_id=media_id,
                             analysis=StoryVisualUnderstanding(),
+                            customer_text=incoming.text or "",
                             question_type=question_type,
                             shadow_only=shadow_only,
                             metrics=metrics,
@@ -1494,6 +1540,7 @@ async def resolve_story_product_question(
         account=account,
         media_id=media_id,
         analysis=analysis,
+        customer_text=incoming.text or "",
         question_type=question_type,
         shadow_only=shadow_only,
         metrics=metrics,
@@ -1577,8 +1624,19 @@ def story_result_to_agent_result(
             catalog_query_base=resolution.catalog_query_base,
             catalog_query=resolution.catalog_query_base,
         ).model_dump(mode="json")
+        from app.persona.persona_runtime import get_persona_runtime
+        runtime = get_persona_runtime()
+        if (runtime and runtime.loaded and runtime.enabled and not runtime.load_error
+                and runtime.workspace_id and tenant in {runtime.tenant_id, str(runtime.workspace_id)}):
+            metadata["last_story_product"]["workspace_id"] = str(runtime.workspace_id)
         from app.stories.story_catalog_context import refine_story_reference
         metadata["last_story_product"] = refine_story_reference(metadata["last_story_product"], incoming.text)
+        selected = metadata["last_story_product"].get("selected_option")
+        if selected:
+            reply = (f"Entendi, você quer o {selected}. "
+                     "Ainda preciso confirmar a referência exata no catálogo para informar o valor correto. "
+                     "Pode enviar um close do mostrador ou a referência?")
+        metadata["story_selection_pending"] = True
         metadata.update(clear_active_product=True, clear_presented_products=True,
                         clear_pending_action=True, product_resolution_state="unresolved")
         if resolution.clarification_options:

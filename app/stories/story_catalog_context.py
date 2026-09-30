@@ -4,7 +4,7 @@ import re
 from app.catalog.retrieval.text import fold_text
 
 
-COLORS = r"azul(?: claro)?|preto|prateado|prata|branco|verde|marrom|dourado|rosa|vermelho|laranja"
+COLORS = r"azul(?: claro)?|preto|prateado|prata|branco|verde|marrom|dourado|rosa|vermelho|laranja|cinza"
 SIZE = r"\b\d{2}(?:[.,]\d)?\s*mm\b"
 
 
@@ -25,7 +25,7 @@ def catalog_hints(analysis):
 def refine_story_reference(ref, text):
     """Retain the size across 'PRX 35mm' -> 'o azul'; select only unique regions."""
     updated = dict(ref)
-    value = fold_text(text or "")
+    value = re.sub(r"[-_\u2010-\u2015]+", " ", fold_text(text or ""))
     base = str(ref.get("catalog_query_base") or "")[:200]
     if not base:
         # A mixed scene is searchable only when the customer names one of its
@@ -44,12 +44,18 @@ def refine_story_reference(ref, text):
     color = re.findall(r"\b(?:" + COLORS + r")\b", value)
     positions = re.findall(r"\b(?:esquerda|direita|centro|cima|baixo)\b", value)
     selectors = color + positions
-    if selectors:
-        normalize = lambda v: re.sub(r"\bprata\b", "prateado", fold_text(v))
+    if re.search(r"\b(?:nao|menos|exceto|outra|outro)\b", value):
+        updated["selected_option"] = None
+    elif selectors:
+        normalize = lambda v: re.sub(r"\bprata\b", "prateado", fold_text(v).replace("-", " "))
         matches = [v for v in options if all(normalize(s) in normalize(v) for s in selectors)]
         updated["selected_option"] = matches[0] if len(matches) == 1 else None
     selected = updated.get("selected_option")
     selected_colors = re.findall(r"\b(?:" + COLORS + r")\b", fold_text(selected or ""))
+    # Search the color family; catalog titles often say "azul" rather than "azul claro".
+    # Keep the precise shade in selected_option for visual comparison.
+    from app.stories.story_selection import color_family
+    selected_colors = list(dict.fromkeys(color_family(color) for color in selected_colors))
     updated["catalog_query_base"] = base.strip()
     # Size/color alone cannot safely identify a product family.
     meaningful = re.sub(SIZE, "", base).strip()

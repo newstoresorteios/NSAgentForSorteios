@@ -411,7 +411,7 @@ async def download_story_media(
 def extract_video_frames_best_effort(
     content: bytes,
     *,
-    max_frames: int = 5,
+    max_frames: int = 8,
 ) -> list[bytes]:
     """Decode representative video frames to JPEG without writing to disk.
 
@@ -425,7 +425,7 @@ def extract_video_frames_best_effort(
     if not content:
         return []
 
-    frame_limit = max(1, min(int(max_frames or 5), 5))
+    frame_limit = max(1, min(int(max_frames or 8), 10))
     try:
         from decord import VideoReader, cpu
         from PIL import Image
@@ -434,26 +434,46 @@ def extract_video_frames_best_effort(
         frame_count = len(reader)
         if frame_count <= 0:
             return []
+        sample_limit = min(40, frame_limit * 4)
         frame_indexes = sorted(
             {
                 min(
                     frame_count - 1,
-                    # Cover the opening and closing product shots as well as
-                    # the middle. A single requested frame stays centered.
-                    max(0, round((frame_count - 1) * (0.05 + 0.9 * index / (frame_limit - 1))))
-                    if frame_limit > 1 else frame_count // 2,
+                    # Cover opening, closing and intermediate product shots.
+                    max(0, round((frame_count - 1) * (0.02 + 0.96 * index / (sample_limit - 1))))
+                    if sample_limit > 1 else frame_count // 2,
                 )
-                for index in range(frame_limit)
+                for index in range(sample_limit)
             }
         )
 
+        import numpy as np
+        selected = []
+        # Retain only the best frame per time window, not all 40 decoded images.
+        # Fetch individually to avoid native get_batch hangs on malformed containers.
+        for index in range(frame_limit):
+            start = len(frame_indexes) * index // frame_limit
+            stop = len(frame_indexes) * (index + 1) // frame_limit
+            best = None
+            for frame_index in frame_indexes[start:stop]:
+                image = Image.fromarray(reader[frame_index].asnumpy()).convert("RGB")
+                image.thumbnail((1600, 1600))
+                gray = np.asarray(image.convert("L").resize((128, 128)), dtype=float)
+                sharpness = float(np.var(np.diff(gray, axis=0)) + np.var(np.diff(gray, axis=1)))
+                if not 4 < float(gray.mean()) < 251:
+                    sharpness = -1
+                if best is None or sharpness > best[1]:
+                    best = (frame_index, sharpness, image)
+            if best is not None:
+                selected.append(best)
         encoded: list[bytes] = []
         seen: set[str] = set()
-        # Fetch frames individually: this avoids the native get_batch deadlock
-        # reported for malformed containers while still seeking efficiently.
-        for frame_index in frame_indexes:
-            image = Image.fromarray(reader[frame_index].asnumpy()).convert("RGB")
-            image.thumbnail((1600, 1600))
+        thumbnails = []
+        for frame_index, sharpness, image in selected:
+            small = np.asarray(image.resize((32, 32)), dtype=float)
+            if any(float(np.mean(np.abs(small - previous))) < 2 for previous in thumbnails):
+                continue
+            thumbnails.append(small)
             output = io.BytesIO()
             image.save(output, format="JPEG", quality=85, optimize=True)
             payload = output.getvalue()
@@ -463,7 +483,8 @@ def extract_video_frames_best_effort(
                 encoded.append(payload)
         log_event(
             "instagram_story.video_frames_extracted",
-            {"frames": len(encoded), "requested": frame_limit},
+            {"frames": len(encoded), "requested": frame_limit, "sampled": len(frame_indexes),
+             "selection": "temporal_sharpness", "frame_indexes": [item[0] for item in selected]},
         )
         return encoded
     except Exception as exc:  # noqa: BLE001 - media decoding must degrade safely
