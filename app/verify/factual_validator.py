@@ -863,7 +863,12 @@ def validate_factual_response(
 
     if _PROMO_RE.search(text) and decision.domain == "commerce":
         report.checked_claims += 1
-        if pack.has_promotional_price:
+        from app.sales.policies.action_authority import verified_informational_payment_reply
+        if verified_informational_payment_reply(result):
+            report.supported_claims.append(
+                FactClaim(kind="promo", claim="payment_policy", reason="published_payment_policy")
+            )
+        elif pack.has_promotional_price:
             report.supported_claims.append(
                 FactClaim(kind="promo", claim="promo", reason="promo_supported")
             )

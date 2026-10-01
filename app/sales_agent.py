@@ -180,10 +180,13 @@ def _purchase_close_hold_reply(
         and not state.cart_session_id
         and (state.last_presented_products or state.active_product is not None)
     ):
-        return operator_message('sales_agent._purchase_close_hold_reply.915c8beed7')
+        from .sales.purchase_selection import purchase_selection_question
+        if state.last_presented_products:
+            return purchase_selection_question(state.last_presented_products)
+        return operator_message('sales.policies.action_authority.purchase_product_required_result.78d26293ee')
     if state is not None and state.cart_session_id:
         return checkout_channel_choice_prompt(state)
-    return operator_message('sales_agent._purchase_close_hold_reply.915c8beed7')
+    return operator_message('sales.policies.action_authority.purchase_product_required_result.78d26293ee')
 
 
 def deterministic_scope(text: str | None) -> dict[str, Any]:

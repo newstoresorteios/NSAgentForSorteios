@@ -39,6 +39,16 @@ def grounded_catalog_fallback(result):
 
 def finalize_response(result, *, incoming, interpretation, previous_state):
     from app.verify.catalog_delivery import enforce_photo_identity, apply_output_style
+    if result.response_metadata.get("read_only_payment_policy") and not result.handoff_required:
+        from app.sales.policies.action_authority import try_informational_payment
+        confirmed = try_informational_payment(incoming, result_interpretation(result) or interpretation, previous_state)
+        if confirmed is not None:
+            result.reply_text = confirmed.reply_text
+            result.commercial_data = confirmed.commercial_data
+            result.response_metadata["final_response_validation"] = {
+                "passed": True, "authority": "published_payment_policy", "delivered_product_ids": [],
+            }
+            return apply_output_style(result), previous_state.model_copy(deep=True)
     from app.sales.dialogue_phase import is_bare_commerce_restart, reset_browse_memory_keep_orders
     if (result.response_metadata.get('response_source') == 'commerce_search_restart'
             and is_bare_commerce_restart(incoming.text)):
@@ -71,6 +81,8 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
     result = enforce_offer(result, result_interpretation(result) or interpretation)
     from app.sales.inspection_copy import complete_inspection_copy
     result = complete_inspection_copy(result, result_interpretation(result) or interpretation, incoming.text)
+    from app.sales.product_policy import complete_product_policy_answer
+    result = complete_product_policy_answer(result, result_interpretation(result) or interpretation, incoming.text)
     metadata = result.response_metadata
     interpretation = result_interpretation(result) or interpretation
     from app.sales.contextual_questions import normalize_followup

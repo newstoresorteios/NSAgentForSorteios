@@ -108,6 +108,12 @@ def classify_sales_route_kind(
 
             log_swallowed("intent_router.reject_brands", exc)
         return "browse"
+    from .policies.action_authority import is_informational_payment_query
+    if (interpretation is not None and not interpretation.purchase_action
+            and not interpretation.checkout_action and is_informational_payment_query(interpretation,
+            purchase_action=interpretation.purchase_action,
+            has_purchase_requests=bool(interpretation.purchase_items))):
+        return "talk"
     try:
         from .purchase_selection import (
             is_bare_purchase_closing,
@@ -242,6 +248,20 @@ def route_sales_intent(
         and not session_in_checkout_phase(commerce_state)
         and (plan_intent == "clarification" or vague_query)
     )
+    from .policies.action_authority import is_informational_payment_query
+    informational_payment = (
+        not interpretation.purchase_action
+        and not interpretation.checkout_action
+        and is_informational_payment_query(interpretation,
+            purchase_action=interpretation.purchase_action,
+            has_purchase_requests=bool(interpretation.purchase_items))
+    )
+    if informational_payment or (interpretation.goal == "inspect" and not interpretation.purchase_action):
+        purchase_close = False
+        purchase_close_hold = False
+        skip_qualification = True
+        needs_clarification_before_retrieval = False
+        vague_query_clarification = False
     skip_catalog_fanout = should_skip_catalog_fanout(interpretation)
     if discovery_state and discovery_state.get("slot_answer_hold"):
         skip_catalog_fanout = True

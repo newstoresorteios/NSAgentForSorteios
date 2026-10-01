@@ -507,17 +507,21 @@ def inbound_from_memory(
         or getattr(commerce_state, "purchase_target", None)
     )
     live_checkout = bool(
-        getattr(commerce_state, "active_product", None)
-        or (cart_has_target and (
+        (cart_has_target and (
             getattr(commerce_state, "cart_id", None)
             or getattr(commerce_state, "cart_session_id", None)
         ))
         or (not terminal_order and (
             getattr(commerce_state, "order_id", None)
-            or getattr(commerce_state, "order_lookup_id", None)
         ))
-        or getattr(commerce_state, "pending_action", None)
-        or phase in {"shortlist", "buy", "checkout"}
+        or (not terminal_order and cart_has_target and (
+            phase == "checkout"
+            or getattr(commerce_state, "pending_action", None) in {
+                "create_cart", "confirm_purchase", "choose_checkout_channel",
+                "awaiting_shipping_zipcode", "awaiting_shipping_selection",
+                "awaiting_checkout_data", "awaiting_order_confirmation", "awaiting_payment",
+            }
+        ))
     )
     from .qualification_slots import has_bound_sale_target
 

@@ -420,6 +420,8 @@ async def sales_response_with_openai(
         return None
     from app.sales.inspection_copy import complete_inspection_copy
     completed = complete_inspection_copy(tray_result, interpretation, message.text)
+    from app.sales.product_policy import complete_product_policy_answer
+    completed = complete_product_policy_answer(completed, interpretation, message.text)
     if completed is not tray_result:
         return _mark_sales_result(
             completed, interpretation=interpretation, goal=plan.get('goal'),

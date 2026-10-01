@@ -106,7 +106,7 @@ async def handle_sales_message(
     sales = _sales()
     history_token = sales._sales_recent_turns.set(recent_turns)
     try:
-        return await handle_sales_message_inner(
+        result = await handle_sales_message_inner(
             message,
             facts,
             customer_context,
@@ -114,6 +114,12 @@ async def handle_sales_message(
             recent_turns=recent_turns,
             commerce_state=commerce_state,
         )
+        if result is not None:
+            from app.verify.final_response import result_interpretation
+            from app.sales.product_policy import complete_product_policy_answer
+            interp = result_interpretation(result)
+            result = complete_product_policy_answer(result, interp, message.text)
+        return result
     finally:
         sales._sales_recent_turns.reset(history_token)
 
@@ -135,6 +141,12 @@ async def handle_sales_message_inner(
     if priority is not None:
         return priority
 
+    from app.sales.policies.action_authority import try_informational_payment
+    if isinstance(semantic_plan, SalesInterpretation):
+        payment_policy = try_informational_payment(
+            message, semantic_plan, commerce_state or CommerceConversationState())
+        if payment_policy is not None:
+            return payment_policy
     interpretation = sales._hydrate_sales_interpretation(
         semantic_plan, message, recent_turns, commerce_state=commerce_state
     )
@@ -144,6 +156,11 @@ async def handle_sales_message_inner(
     service_reply = service_intent_clarification(message.text, interpretation, state)
     if service_reply is not None:
         return service_reply
+    from app.sales.product_policy import normalize_product_policy_lookup
+    interpretation = normalize_product_policy_lookup(message.text, interpretation)
+    payment_policy = try_informational_payment(message, interpretation, state)
+    if payment_policy is not None:
+        return payment_policy
     from app.sales.purchase_selection import recover_purchase_target_for_checkout
     state = recover_purchase_target_for_checkout(
         interpretation,

@@ -157,6 +157,8 @@ def parse_list_position_reference(text: str | None) -> int | None:
     if not raw:
         return None
     folded = _fold(raw)
+    # "Primeira compra" is a discount-policy topic, not shortlist position 1.
+    folded = re.sub(r"\bprimeir[ao]\s+(?:compra|pedido)\b", "", folded)
     # Avoid treating "quero um relógio" / budget amounts as position picks.
     if _NEW_BROWSE_RE.search(folded) and not re.search(
         r"\b(comprar|levar|pegar|ficar com)\s+(o|a|opcao|opção|numero|número|#)?\s*[1-5]\b",
@@ -354,19 +356,23 @@ def _create_cart_repair(
     return repaired
 
 
-def _ask_which_option_repair(
-    interpretation: SalesInterpretation,
-    presented: list[PresentedCommerceProduct],
-) -> SalesInterpretation:
+def purchase_selection_question(presented: list[PresentedCommerceProduct]) -> str:
     labels = []
     for item in presented[:3]:
         name = (item.name or item.brand or item.product_id or "").strip()
         labels.append(f"{item.position}. {name}" if item.position else name)
-    question = (
+    return (
         operator_message('sales.purchase_selection._ask_which_option_repair.2148b19bdc') + "\n".join(labels)
         if labels
-        else operator_message('sales.purchase_selection._ask_which_option_repair.3bc12d7456')
+        else operator_message('sales.policies.action_authority.purchase_product_required_result.78d26293ee')
     )
+
+
+def _ask_which_option_repair(
+    interpretation: SalesInterpretation,
+    presented: list[PresentedCommerceProduct],
+) -> SalesInterpretation:
+    question = purchase_selection_question(presented)
     repaired = interpretation.model_copy(
         update={
             "goal": "buy",
@@ -474,6 +480,12 @@ def repair_presented_purchase_selection(
     if interpretation is None or state is None:
         return interpretation
     if interpretation.domain != "commerce":
+        return interpretation
+    from .policies.action_authority import is_informational_payment_query
+    if (not interpretation.purchase_action and not interpretation.checkout_action
+            and is_informational_payment_query(interpretation,
+            purchase_action=interpretation.purchase_action,
+            has_purchase_requests=bool(interpretation.purchase_items))):
         return interpretation
     presented = _presented_from_state(state)
     refers_to_product = bool(
