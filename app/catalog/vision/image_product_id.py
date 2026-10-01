@@ -659,6 +659,8 @@ async def _disambiguate_with_visual(
 
 async def handle_image_product_search(
     message: IncomingMessage,
+    *,
+    story_reference: dict[str, Any] | None = None,
 ) -> AgentResult | None:
     """Identify a watch from an inbound image and search the Tray catalog."""
     if not image_search_eligible(message):
@@ -749,4 +751,8 @@ async def handle_image_product_search(
     # One identity authority for every photographed product. Neither text search
     # nor a generic response reviewer may turn a hypothesis into a confirmed SKU.
     from app.catalog.vision.catalog_evidence import resolve_catalog_photo
-    return await resolve_catalog_photo(message, identified)
+    return await resolve_catalog_photo(
+        message,
+        identified,
+        story_reference=story_reference,
+    )

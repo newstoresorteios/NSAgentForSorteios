@@ -261,6 +261,12 @@ class StoryConversationReference(BaseModel):
     catalog_query_base: str = ""
     catalog_query: str = ""
     selected_option: str | None = None
+    provider: str | None = None
+    instagram_account_id: str | None = None
+    analysis_job_id: int | None = None
+    story_regions: list[dict[str, Any]] = Field(default_factory=list)
+    selected_region_index: int | None = None
+    region_candidate_ids: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class StoryResolutionResult(BaseModel):
@@ -285,3 +291,8 @@ class StoryResolutionResult(BaseModel):
     shadow_only: bool = False
     metrics: dict[str, Any] = Field(default_factory=dict)
     resolved_at: datetime | None = None
+    provider: str | None = None
+    instagram_account_id: str | None = None
+    analysis_job_id: int | None = None
+    story_regions: list[dict[str, Any]] = Field(default_factory=list)
+    region_candidate_ids: dict[str, list[str]] = Field(default_factory=dict)

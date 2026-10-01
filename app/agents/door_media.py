@@ -34,12 +34,16 @@ async def try_media_routes(
     commerce_state: Any,
 ) -> AgentResult | None:
     door = _door()
-    from app.stories.story_followup import unresolved_story_followup
+    from app.stories.story_followup import active_story_reference, unresolved_story_followup
     from app.sales.ready_delivery import enrich_story_ready_delivery
 
     followup = unresolved_story_followup(message, commerce_state)
     if followup is not None:
         return await enrich_story_ready_delivery(message, followup)
+    story_photo_ref = (
+        active_story_reference(message, commerce_state, allow_image=True)
+        if message.image_url else None
+    )
     unresolved = unresolved_publication_reply(message)
     if unresolved is not None:
         return unresolved
@@ -138,7 +142,13 @@ async def try_media_routes(
             )
             runtime.promote_budget(int(image_budget.get("max_calls") or 0))
             runtime.execution_path = "complex"
-        image_result = await door.handle_image_product_search(message)
+        if story_photo_ref is not None:
+            image_result = await door.handle_image_product_search(
+                message,
+                story_reference=story_photo_ref,
+            )
+        else:
+            image_result = await door.handle_image_product_search(message)
         if image_result is not None:
             if image_result.response_metadata.get("support_document") or image_result.safety_reason == "image_not_watch":
                 return image_result

@@ -10,8 +10,8 @@ from app.models import AgentResult
 from app.persona.persona_runtime import get_persona_runtime
 
 
-def unresolved_story_followup(incoming, state):
-    if incoming.channel != "instagram" or incoming.instagram_story or incoming.image_url:
+def active_story_reference(incoming, state, *, allow_image=False):
+    if incoming.channel != "instagram" or incoming.instagram_story or (incoming.image_url and not allow_image):
         return None
     ref = getattr(state, "last_story_product", None)
     if not isinstance(ref, dict) or ref.get("match_status") not in {"ambiguous", "not_found"}:
@@ -30,12 +30,26 @@ def unresolved_story_followup(incoming, state):
         return None
     if not 0 <= age <= 86400:
         return None
+    if allow_image and re.search(
+        r"\b(?:outro|outra|novo|nova|diferente)\b",
+        fold_text(incoming.text or ""),
+    ):
+        return None
+    return ref
+
+
+def unresolved_story_followup(incoming, state):
+    ref = active_story_reference(incoming, state)
+    if ref is None:
+        return None
     text = fold_text(incoming.text or "")
     # A new subject, reference, link or photo must remain free to be searched.
     if (len(text) > 160 or extract_reference_code(incoming.text)
             or re.search(r"https?://|\b(?:outro|outra|pedido|rastreio|imposto|atendente|humano)\b", text)):
         return None
-    selection = re.search(r"\b(?:azul|preto|prata|prateado|branco|verde|marrom|dourado|rosa|cinza|esquerda|direita|centro|cima|baixo|primeiro|segundo|terceiro)\b", text)
+    from app.stories.story_selection import selected_region_from_reference
+    selected_region_index, selected_region = selected_region_from_reference(ref, incoming.text)
+    selection = selected_region or re.search(r"\b(?:azul|preto|prata|prateado|branco|verde|marrom|dourado|rosa|cinza|esquerda|direita|centro|cima|baixo|primeiro|segundo|terceiro)\b", text)
     terms = set(re.findall(r"[a-z0-9]+", text))
     related = bool(terms.intersection(ref.get("followup_terms") or []))
     selection_words = set("o a os as um uma eu quero esse este aquele de do da no na com por favor mostrador relogio azul claro escuro preto prata prateado branco verde marrom dourado rosa cinza esquerda direita centro cima baixo primeiro segundo terceiro quanto custa valor preco link manda envia".split())
@@ -55,6 +69,17 @@ def unresolved_story_followup(incoming, state):
                  "Também posso pedir ajuda a um atendente para confirmar a versão certa.")
     from app.stories.story_catalog_context import refine_story_reference
     updated = refine_story_reference(ref, incoming.text)
+    if selected_region is not None:
+        updated["selected_region_index"] = selected_region_index
+        brand = (selected_region.brand_hypothesis or "").strip()
+        model = (selected_region.reference_hypothesis or "").strip()
+        updated["selected_option"] = " ".join(part for part in (brand, model) if part).strip() or selected_region.label
+        label = updated["selected_option"] or "relógio indicado"
+        reply = (
+            f"Entendi, você está falando do {label} desse Story. "
+            "Ainda preciso confirmar a referência exata antes de informar valor ou estoque. "
+            "Pode enviar um print nítido do mostrador?"
+        )
     updated["clarification_rounds"] = min(rounds + 1, 2)
     return AgentResult(reply_text=reply, intent="commerce", safety_reason="ambiguous",
                        response_metadata={"domain": "commerce", "response_source": "instagram_story_followup",

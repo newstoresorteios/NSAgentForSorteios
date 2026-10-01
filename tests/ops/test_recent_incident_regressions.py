@@ -134,6 +134,41 @@ def test_prx_size_followup_keeps_story_choices_instead_of_gold_lady_sku(persona)
     assert 'prateado' not in selected.reply_text
 
 
+def test_paulo_mido_followup_stays_bound_to_selected_story_region(persona):
+    from app.stories.story_followup import unresolved_story_followup
+
+    incoming = IncomingMessage(
+        channel="instagram",
+        conversation_id="ig:1439474121294747",
+        sender_key="instagram:1439474121294747",
+        text="Do mido que está no seu pulso",
+    )
+    ref = {
+        "story_media_id": "18118620119283493",
+        "tenant_id": "shop",
+        "workspace_id": str(persona.workspace_id),
+        "match_status": "ambiguous",
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+        "conversation_id": incoming.conversation_id,
+        "sender_key": incoming.sender_key,
+        "followup_terms": ["mido", "baroncelli", "heritage", "traska"],
+        "clarification_options": [],
+        "story_regions": [
+            {"position": "center", "label": "watch on wrist", "dial_color": "white",
+             "strap_color": "brown", "brand_hypothesis": "Mido",
+             "reference_hypothesis": "Baroncelli Heritage"},
+            {"position": "left", "label": "white dial watch", "dial_color": "white",
+             "brand_hypothesis": "Traska", "reference_hypothesis": "Commuter"},
+        ],
+    }
+    result = unresolved_story_followup(incoming, SimpleNamespace(last_story_product=ref))
+    assert result is not None
+    assert "Mido Baroncelli Heritage" in result.reply_text
+    assert result.response_metadata["last_story_product"]["selected_region_index"] == 0
+    assert result.response_metadata["product_resolution_state"] == "unresolved"
+    assert not result.commercial_data
+
+
 @pytest.mark.parametrize('change', ['expired', 'workspace', 'conversation', 'new_product', 'other_brand_color', 'reference'])
 def test_story_context_does_not_cross_boundaries_or_capture_new_search(persona, change):
     from app.stories.story_followup import unresolved_story_followup

@@ -277,10 +277,18 @@ def _followup_terms(analysis: StoryVisualUnderstanding) -> list[str]:
     from app.catalog.retrieval.text import fold_text
 
     # Hints bind a short follow-up to an unresolved Story, never to a SKU.
-    text = " ".join([*analysis.collection_hypotheses, *analysis.model_hypotheses])
-    brands = set(re.findall(r"[a-z0-9]+", fold_text(" ".join(analysis.visible_brands))))
+    region_text = " ".join(
+        " ".join((region.brand_hypothesis or "", region.reference_hypothesis or "", region.label or ""))
+        for region in analysis.product_regions
+    )
+    text = " ".join([
+        *analysis.visible_brands,
+        *analysis.collection_hypotheses,
+        *analysis.model_hypotheses,
+        region_text,
+    ])
     return list(dict.fromkeys(token for token in re.findall(r"[a-z0-9]{3,24}", fold_text(text))
-                             if token not in brands | {"relogio", "watch", "automatic", "automatico"}))[:12]
+                             if token not in {"relogio", "watch", "automatic", "automatico"}))[:20]
 
 
 def _catalog_query_base(analysis: StoryVisualUnderstanding) -> str:
@@ -545,6 +553,17 @@ async def _finalize_story_catalog_match(
         media_bytes=None,
         store_url=store_url,
     ))
+    resolution_context = {
+        "provider": provider,
+        "instagram_account_id": account,
+        "analysis_job_id": metrics.get("story_analysis_job_id"),
+        "story_regions": [region.model_dump(mode="json") for region in scene.product_regions],
+        "region_candidate_ids": {
+            str(index): [str(item.get("product_id")) for item in values[:12] if item.get("product_id")]
+            for index, values in ((worker_evidence or {}).get("region_candidates") or {}).items()
+            if isinstance(values, list)
+        },
+    }
     if selected and selected.dial_color:
         from app.stories.story_selection import color_family
         wanted = color_family(selected.dial_color)
@@ -652,6 +671,7 @@ async def _finalize_story_catalog_match(
             shadow_only=shadow_only,
             metrics=metrics,
             resolved_at=datetime.now(timezone.utc),
+            **resolution_context,
         )
 
     if status == "ambiguous":
@@ -693,6 +713,7 @@ async def _finalize_story_catalog_match(
                 shadow_only=shadow_only,
                 metrics=metrics,
                 resolved_at=datetime.now(timezone.utc),
+                **resolution_context,
             )
         options = [
             c.catalog_item_key or c.product_id for c in candidates[:3] if c.product_id
@@ -730,6 +751,7 @@ async def _finalize_story_catalog_match(
             shadow_only=shadow_only,
             metrics=metrics,
             resolved_at=datetime.now(timezone.utc),
+            **resolution_context,
         )
 
     repo.mark_not_found(
@@ -761,6 +783,7 @@ async def _finalize_story_catalog_match(
         shadow_only=shadow_only,
         metrics=metrics,
         resolved_at=datetime.now(timezone.utc),
+        **resolution_context,
     )
 
 
@@ -1668,6 +1691,11 @@ def story_result_to_agent_result(
             followup_terms=resolution.followup_terms,
             catalog_query_base=resolution.catalog_query_base,
             catalog_query=resolution.catalog_query_base,
+            provider=resolution.provider,
+            instagram_account_id=resolution.instagram_account_id,
+            analysis_job_id=resolution.analysis_job_id,
+            story_regions=resolution.story_regions,
+            region_candidate_ids=resolution.region_candidate_ids,
         ).model_dump(mode="json")
         from app.persona.persona_runtime import get_persona_runtime
         runtime = get_persona_runtime()

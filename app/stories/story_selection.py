@@ -34,15 +34,50 @@ def selected_region(analysis, text):
         return None
     if len(set(map(normalize_color, colors))) > 1 or len(set(positions)) > 1:
         return None
-    if not colors and not positions and not named_brands:
+    model_matches = []
+    for region in analysis.product_regions:
+        hints = region.reference_hypothesis or ""
+        hint_tokens = {
+            token for token in re.findall(r"[a-z0-9]+", fold_text(hints))
+            if len(token) >= 4 and token not in {"watch", "relogio", "automatic", "automatico"}
+        }
+        if hint_tokens and hint_tokens.intersection(set(re.findall(r"[a-z0-9]+", value))):
+            model_matches.append(region)
+    if len(model_matches) > 1:
+        return None
+    if not colors and not positions and not named_brands and not model_matches:
         return None
     position_map = {"center": "centro", "top": "cima", "bottom": "baixo", "left": "esquerda", "right": "direita"}
     matches = [r for r in analysis.product_regions
                if (not colors or (normalize_color(r.dial_color) == normalize_color(colors[0])
                    if " " in normalize_color(colors[0]) else color_family(r.dial_color) == color_family(colors[0])))
                and (not named_brands or fold_text(r.brand_hypothesis or '') in named_brands)
+               and (not model_matches or r is model_matches[0])
                and (not positions or position_map.get(r.position) == positions[0])]
     return matches[0] if len(matches) == 1 else None
+
+
+def selected_region_from_reference(ref, text):
+    """Resolve a customer selector against the regions persisted for one Story."""
+    from app.stories.instagram_story_models import StoryVisualUnderstanding, VisualProductRegion
+
+    regions = []
+    for raw in ref.get("story_regions") or []:
+        try:
+            regions.append(VisualProductRegion.model_validate(raw))
+        except (TypeError, ValueError):
+            continue
+    if not regions:
+        return None, None
+    analysis = StoryVisualUnderstanding(
+        watch_count=len(regions),
+        multiple_products=len(regions) > 1,
+        product_regions=regions,
+    )
+    region = selected_region(analysis, text)
+    if region is None:
+        return None, None
+    return regions.index(region), region
 
 
 def scope_visual_selection(analysis, text):
