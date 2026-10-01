@@ -1,0 +1,20 @@
+[
+  {
+    "run": 36662411090,
+    "job": "quality",
+    "failures": [
+      "2026-09-30T03:01:32.0098257Z FAILED tests/ingress/test_silent_story_workspace.py::test_story_is_scoped_before_marking_processed - RuntimeError: DATABASE_URL is not configured",
+      "2026-09-30T03:01:32.0099337Z 1 failed, 1148 passed, 6 skipped, 2 warnings in 26.83s",
+      "2026-09-30T03:01:32.3449509Z ##[error]Process completed with exit code 1."
+    ]
+  },
+  {
+    "run": 36664554944,
+    "job": "quality",
+    "failures": [
+      "2026-09-30T03:29:28.6825951Z FAILED tests/ingress/test_silent_story_workspace.py::test_story_is_scoped_before_marking_processed - RuntimeError: DATABASE_URL is not configured",
+      "2026-09-30T03:29:28.6827906Z 1 failed, 1148 passed, 6 skipped, 2 warnings in 27.97s",
+      "2026-09-30T03:29:29.1139623Z ##[error]Process completed with exit code 1."
+    ]
+  }
+]

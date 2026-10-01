@@ -1,0 +1,221 @@
+{
+  "window": {
+    "start": "2026-09-30T03:00:00Z",
+    "end": "2026-10-01T03:00:00Z",
+    "timezone": "America/Sao_Paulo"
+  },
+  "scope": "NSAgent; dependent Chatbo backend and TRAYadaptor checks only. BI excluded by user.",
+  "production": {
+    "sha": "64615f2fcb14",
+    "config_version": 10,
+    "health_http": 200,
+    "configuration_warning_count": 1
+  },
+  "tests": {
+    "nsagent_c8ddcb5": {
+      "passed": 2791,
+      "failed": 2,
+      "skipped": 7
+    },
+    "nsagent_64615f2": {
+      "passed": 2795,
+      "failed": 2,
+      "skipped": 7
+    },
+    "backend": {
+      "passed": 273
+    },
+    "adapter": {
+      "passed": 264
+    },
+    "frontend": {
+      "passed": 22,
+      "build": "pass"
+    }
+  },
+  "queues": [
+    {
+      "n": 94,
+      "queue": "inbox",
+      "oldest": "2026-09-30T04:30:30.359658+00:00",
+      "status": "processed",
+      "last_update": "2026-10-01T02:52:34.002453+00:00"
+    },
+    {
+      "n": 78,
+      "queue": "outbox",
+      "oldest": "2026-09-30T04:30:31.420689+00:00",
+      "status": "sent",
+      "last_update": "2026-10-01T02:52:33.884856+00:00"
+    }
+  ],
+  "story_jobs": [
+    {
+      "id": 1,
+      "archived": true,
+      "candidates": 1,
+      "created_at": "2026-10-01T01:01:21.000156+00:00",
+      "media_mime": "video/mp4",
+      "media_type": "video",
+      "updated_at": "2026-10-01T01:02:35.485187+00:00",
+      "media_bytes": 13196560,
+      "audio_status": "transcribed",
+      "approved_count": 0,
+      "evidence_version": "story-worker-v1"
+    },
+    {
+      "id": 2,
+      "archived": true,
+      "candidates": 9,
+      "created_at": "2026-10-01T01:14:30.462463+00:00",
+      "media_mime": "video/mp4",
+      "media_type": "video",
+      "updated_at": "2026-10-01T01:16:41.337511+00:00",
+      "media_bytes": 13196560,
+      "audio_status": "transcribed",
+      "approved_count": 0,
+      "evidence_version": "story-worker-v2"
+    },
+    {
+      "id": 3,
+      "archived": true,
+      "candidates": 9,
+      "created_at": "2026-10-01T01:22:43.131436+00:00",
+      "media_mime": "video/mp4",
+      "media_type": "video",
+      "updated_at": "2026-10-01T01:36:52.166062+00:00",
+      "media_bytes": 13196560,
+      "audio_status": "transcribed",
+      "approved_count": 0,
+      "evidence_version": "story-worker-v3"
+    },
+    {
+      "id": 6,
+      "archived": true,
+      "candidates": 9,
+      "created_at": "2026-10-01T02:17:02.179983+00:00",
+      "media_mime": "video/mp4",
+      "media_type": "video",
+      "updated_at": "2026-10-01T02:20:33.896876+00:00",
+      "media_bytes": 13196560,
+      "audio_status": "transcribed",
+      "approved_count": 0,
+      "evidence_version": "story-worker-v4"
+    }
+  ],
+  "newstore_responses": [
+    {
+      "n": 42,
+      "sent": 42,
+      "channel": "instagram",
+      "handoffs": 2,
+      "workspace_id": "b3d7eed2-1cd0-45ac-82c7-8a8e8c0430b8"
+    }
+  ],
+  "response_sources": [
+    {
+      "n": 10,
+      "last": "2026-10-01T02:20:38.188897+00:00",
+      "first": "2026-09-30T16:31:37.058551+00:00",
+      "source": "instagram_story",
+      "disclosed": 10
+    },
+    {
+      "n": 4,
+      "last": "2026-09-30T23:26:27.766868+00:00",
+      "first": "2026-09-30T13:12:30.479442+00:00",
+      "source": "deterministic_fallback",
+      "disclosed": 3
+    },
+    {
+      "n": 10,
+      "last": "2026-10-01T02:51:54.899887+00:00",
+      "first": "2026-09-30T16:25:56.923923+00:00",
+      "source": "openai",
+      "disclosed": 10
+    },
+    {
+      "n": 3,
+      "last": "2026-10-01T02:41:19.05191+00:00",
+      "first": "2026-09-30T19:11:29.06372+00:00",
+      "source": "persona_greeting",
+      "disclosed": 3
+    },
+    {
+      "n": 4,
+      "last": "2026-09-30T20:43:50.151519+00:00",
+      "first": "2026-09-30T19:12:25.482194+00:00",
+      "source": "service_intent_clarification",
+      "disclosed": 4
+    },
+    {
+      "n": 4,
+      "last": "2026-10-01T02:52:33.898876+00:00",
+      "first": "2026-09-30T20:19:38.614736+00:00",
+      "source": "handoff",
+      "disclosed": 4
+    },
+    {
+      "n": 1,
+      "last": "2026-10-01T01:41:16.787898+00:00",
+      "first": "2026-10-01T01:41:16.787898+00:00",
+      "source": "image_catalog_evidence",
+      "disclosed": 1
+    },
+    {
+      "n": 3,
+      "last": "2026-09-30T23:25:17.858322+00:00",
+      "first": "2026-09-30T22:55:01.641682+00:00",
+      "source": "answer_council_fallback",
+      "disclosed": 3
+    },
+    {
+      "n": 1,
+      "last": "2026-10-01T02:21:46.110392+00:00",
+      "first": "2026-10-01T02:21:46.110392+00:00",
+      "source": "instagram_story_followup",
+      "disclosed": 1
+    },
+    {
+      "n": 2,
+      "last": "2026-09-30T19:13:56.071242+00:00",
+      "first": "2026-09-30T18:56:01.575242+00:00",
+      "source": "image_vision",
+      "disclosed": 2
+    }
+  ],
+  "learning_cursor": [
+    {
+      "tenant_id": "newstore",
+      "last_run_at": "2026-09-15T05:16:39.182878+00:00",
+      "last_response_at": "2026-09-12T16:05:42.156008+00:00",
+      "last_response_id": 778
+    }
+  ],
+  "story_reference_count": 0,
+  "cron_runs": [
+    {
+      "n": 120,
+      "last": "2026-10-01T02:59:57.886354+00:00",
+      "first": "2026-10-01T02:30:06.989819+00:00",
+      "status": "succeeded"
+    }
+  ],
+  "known_ci_causes": [
+    "catalog imports app.sales.after_sales_support",
+    "history integration assertion omits intentional AI identity prefix"
+  ],
+  "github_schedules": {
+    "remarketing_failures": 5,
+    "learning_failures": 5,
+    "cause": "Missing AGENT_BASE_URL or CRON_SECRET secrets",
+    "both_repository_secret_names_absent": true
+  },
+  "limitations": [
+    "No post-c8ddcb5 Story followup in observed production sample",
+    "All four stored Story jobs had zero approved identities; no story-worker-v5 completed result",
+    "UI display not exercised via authenticated browser",
+    "Vercel runtime log listing unavailable; production evidence from DB traces and health",
+    "Health reports one configuration warning; exact server diagnostic not accessed"
+  ]
+}

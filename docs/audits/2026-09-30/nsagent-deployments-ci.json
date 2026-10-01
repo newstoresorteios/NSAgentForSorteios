@@ -1,0 +1,516 @@
+{
+  "deployments": [
+    {
+      "id": 6774947706,
+      "sha": "c8ddcb5e51f8d26b7e5a3dc269c44551068e7397",
+      "environment": "Production",
+      "created_at": "2026-10-01T02:47:25Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T02:47:25Z",
+          "environment_url": "https://ns-agent-for-sorteios-4a0h9la0m-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6774814351,
+      "sha": "2a8fbcd5c154a0b8bd1430260f5862954a0dd239",
+      "environment": "Production",
+      "created_at": "2026-10-01T02:37:09Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T02:37:09Z",
+          "environment_url": "https://ns-agent-for-sorteios-d9e8z8let-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6774558341,
+      "sha": "6ddb2a648dd92f1accbed12626cfc2cc80f99421",
+      "environment": "Production",
+      "created_at": "2026-10-01T02:16:57Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T02:16:58Z",
+          "environment_url": "https://ns-agent-for-sorteios-b0d5jutjs-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6773871408,
+      "sha": "1a7c4234d3ec8bcc097720e4f483aa41856fe015",
+      "environment": "Production",
+      "created_at": "2026-10-01T01:22:12Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T01:22:12Z",
+          "environment_url": "https://ns-agent-for-sorteios-g70srij4o-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6773774419,
+      "sha": "d3beb2fd70449039162264e42786643b0a4d5df0",
+      "environment": "Production",
+      "created_at": "2026-10-01T01:14:54Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T01:14:54Z",
+          "environment_url": "https://ns-agent-for-sorteios-nx22g346r-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6773760707,
+      "sha": "a1b726144cf22223a84c0ac9cf4ea1d9b25e2c62",
+      "environment": "Production",
+      "created_at": "2026-10-01T01:13:45Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T01:13:48Z",
+          "environment_url": "https://ns-agent-for-sorteios-27vsotx2b-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6773585751,
+      "sha": "3e6d3dee1dd9f2eec67fec196d4965c47914831c",
+      "environment": "Production",
+      "created_at": "2026-10-01T01:00:12Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T01:00:12Z",
+          "environment_url": "https://ns-agent-for-sorteios-7k5kwx5ee-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6773573747,
+      "sha": "7ae82919a3ebdd823b53fc2d6b2d13175b905ae9",
+      "environment": "Production",
+      "created_at": "2026-10-01T00:59:20Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T00:59:20Z",
+          "environment_url": "https://ns-agent-for-sorteios-7ylxhpdb6-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6772947233,
+      "sha": "d3f263f71aff2feb02cb13734d06f309b8cf4b9a",
+      "environment": "Production",
+      "created_at": "2026-10-01T00:09:59Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T00:09:59Z",
+          "environment_url": "https://ns-agent-for-sorteios-j7r38yzri-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6772940455,
+      "sha": "181a11b559884708f763830b2a0984e35d7da40e",
+      "environment": "Production",
+      "created_at": "2026-10-01T00:09:27Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-10-01T00:09:28Z",
+          "environment_url": "https://ns-agent-for-sorteios-croqnqr0s-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6771756643,
+      "sha": "e1279685319f17dd4e3403f7893ae37411a6487b",
+      "environment": "Production",
+      "created_at": "2026-09-30T22:42:23Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T22:42:23Z",
+          "environment_url": "https://ns-agent-for-sorteios-ir1c1fmc8-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6770116812,
+      "sha": "2754cd316574cdb2ac645097c0b923bc14a686a2",
+      "environment": "Production",
+      "created_at": "2026-09-30T21:04:57Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T21:04:58Z",
+          "environment_url": "https://ns-agent-for-sorteios-lhkflgffm-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6769133138,
+      "sha": "7efd10b6238d00dec18c1e5355c378d3a5407084",
+      "environment": "Production",
+      "created_at": "2026-09-30T20:13:42Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T20:13:42Z",
+          "environment_url": "https://ns-agent-for-sorteios-4mveaiqqi-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6767944460,
+      "sha": "59c38c0ffa32c110aeeed0b2d681154d584d8877",
+      "environment": "Production",
+      "created_at": "2026-09-30T19:12:36Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T19:12:36Z",
+          "environment_url": "https://ns-agent-for-sorteios-m9isbftka-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6764968932,
+      "sha": "74f284ba75677fdccf7d0bbf118b8cbf9e54f374",
+      "environment": "Production",
+      "created_at": "2026-09-30T16:45:15Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T16:45:15Z",
+          "environment_url": "https://ns-agent-for-sorteios-qa3sx8kgl-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6764512752,
+      "sha": "3ceca7afe1d2bdf1157434b34d7ba1a17a87ee02",
+      "environment": "Production",
+      "created_at": "2026-09-30T16:23:23Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T16:23:23Z",
+          "environment_url": "https://ns-agent-for-sorteios-jgepvxuit-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6752839639,
+      "sha": "0b30134260a35f01b8733f551626bbbe90f64ad2",
+      "environment": "Production",
+      "created_at": "2026-09-30T06:14:10Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T06:14:11Z",
+          "environment_url": "https://ns-agent-for-sorteios-m9nt0yumz-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6750800305,
+      "sha": "b6ae0d3412dc7a4ce1a40f7af98ed0f0eaa3ff0f",
+      "environment": "Production",
+      "created_at": "2026-09-30T03:28:57Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T03:28:57Z",
+          "environment_url": "https://ns-agent-for-sorteios-ldv7efz8b-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    },
+    {
+      "id": 6750452894,
+      "sha": "7f79538fdfbceba63793b458e6c676a809fdeebc",
+      "environment": "Production",
+      "created_at": "2026-09-30T03:00:39Z",
+      "statuses": [
+        {
+          "state": "success",
+          "created_at": "2026-09-30T03:00:39Z",
+          "environment_url": "https://ns-agent-for-sorteios-ku58f0c0v-newstores-projects.vercel.app",
+          "description": "Deployment has completed"
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "id": 36807439694,
+      "head_sha": "c8ddcb5e51f8d26b7e5a3dc269c44551068e7397",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T02:46:52Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36807439694"
+    },
+    {
+      "id": 36806641153,
+      "head_sha": "2a8fbcd5c154a0b8bd1430260f5862954a0dd239",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T02:36:36Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36806641153"
+    },
+    {
+      "id": 36805035629,
+      "head_sha": "6ddb2a648dd92f1accbed12626cfc2cc80f99421",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T02:16:16Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36805035629"
+    },
+    {
+      "id": 36801135468,
+      "head_sha": "1a7c4234d3ec8bcc097720e4f483aa41856fe015",
+      "name": "Remarketing",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T01:26:53Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36801135468"
+    },
+    {
+      "id": 36800723749,
+      "head_sha": "1a7c4234d3ec8bcc097720e4f483aa41856fe015",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T01:21:39Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36800723749"
+    },
+    {
+      "id": 36800131483,
+      "head_sha": "d3beb2fd70449039162264e42786643b0a4d5df0",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T01:14:21Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36800131483"
+    },
+    {
+      "id": 36800039347,
+      "head_sha": "a1b726144cf22223a84c0ac9cf4ea1d9b25e2c62",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T01:13:10Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36800039347"
+    },
+    {
+      "id": 36798914820,
+      "head_sha": "3e6d3dee1dd9f2eec67fec196d4965c47914831c",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T00:59:41Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36798914820"
+    },
+    {
+      "id": 36798835076,
+      "head_sha": "7ae82919a3ebdd823b53fc2d6b2d13175b905ae9",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T00:58:39Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36798835076"
+    },
+    {
+      "id": 36795356545,
+      "head_sha": "d3f263f71aff2feb02cb13734d06f309b8cf4b9a",
+      "name": "Attendance Learning",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T00:16:39Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36795356545"
+    },
+    {
+      "id": 36794708258,
+      "head_sha": "d3f263f71aff2feb02cb13734d06f309b8cf4b9a",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T00:09:12Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36794708258"
+    },
+    {
+      "id": 36794688464,
+      "head_sha": "181a11b559884708f763830b2a0984e35d7da40e",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T00:08:58Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36794688464"
+    },
+    {
+      "id": 36787049542,
+      "head_sha": "e1279685319f17dd4e3403f7893ae37411a6487b",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T22:41:55Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36787049542"
+    },
+    {
+      "id": 36784863031,
+      "head_sha": "2754cd316574cdb2ac645097c0b923bc14a686a2",
+      "name": "Remarketing",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T22:19:10Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36784863031"
+    },
+    {
+      "id": 36777015213,
+      "head_sha": "2754cd316574cdb2ac645097c0b923bc14a686a2",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T21:04:28Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36777015213"
+    },
+    {
+      "id": 36775059351,
+      "head_sha": "7efd10b6238d00dec18c1e5355c378d3a5407084",
+      "name": "Attendance Learning",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T20:47:14Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36775059351"
+    },
+    {
+      "id": 36771070653,
+      "head_sha": "7efd10b6238d00dec18c1e5355c378d3a5407084",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T20:13:13Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36771070653"
+    },
+    {
+      "id": 36763983362,
+      "head_sha": "59c38c0ffa32c110aeeed0b2d681154d584d8877",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T19:11:58Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36763983362"
+    },
+    {
+      "id": 36756093367,
+      "head_sha": "74f284ba75677fdccf7d0bbf118b8cbf9e54f374",
+      "name": "Remarketing",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T18:05:36Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36756093367"
+    },
+    {
+      "id": 36746427895,
+      "head_sha": "74f284ba75677fdccf7d0bbf118b8cbf9e54f374",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T16:44:38Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36746427895"
+    },
+    {
+      "id": 36743465727,
+      "head_sha": "3ceca7afe1d2bdf1157434b34d7ba1a17a87ee02",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T16:20:24Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36743465727"
+    },
+    {
+      "id": 36741577544,
+      "head_sha": "0b30134260a35f01b8733f551626bbbe90f64ad2",
+      "name": "Attendance Learning",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T16:04:55Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36741577544"
+    },
+    {
+      "id": 36714120391,
+      "head_sha": "0b30134260a35f01b8733f551626bbbe90f64ad2",
+      "name": "Remarketing",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T12:20:51Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36714120391"
+    },
+    {
+      "id": 36697288981,
+      "head_sha": "0b30134260a35f01b8733f551626bbbe90f64ad2",
+      "name": "Attendance Learning",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T09:37:28Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36697288981"
+    },
+    {
+      "id": 36677105209,
+      "head_sha": "0b30134260a35f01b8733f551626bbbe90f64ad2",
+      "name": "CI",
+      "conclusion": "success",
+      "created_at": "2026-09-30T06:13:04Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36677105209"
+    },
+    {
+      "id": 36675400086,
+      "head_sha": "b6ae0d3412dc7a4ce1a40f7af98ed0f0eaa3ff0f",
+      "name": "Remarketing",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T05:52:10Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36675400086"
+    },
+    {
+      "id": 36664554944,
+      "head_sha": "b6ae0d3412dc7a4ce1a40f7af98ed0f0eaa3ff0f",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T03:28:32Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36664554944"
+    },
+    {
+      "id": 36663002389,
+      "head_sha": "7f79538fdfbceba63793b458e6c676a809fdeebc",
+      "name": "Attendance Learning",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T03:07:43Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36663002389"
+    },
+    {
+      "id": 36662411090,
+      "head_sha": "7f79538fdfbceba63793b458e6c676a809fdeebc",
+      "name": "CI",
+      "conclusion": "failure",
+      "created_at": "2026-09-30T03:00:12Z",
+      "html_url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36662411090"
+    }
+  ],
+  "supplemental_after_midnight": {
+    "id": 6775108027,
+    "sha": "64615f2fcb142d8e9b7e036b25bd6a5fefb8967f",
+    "created_at": "2026-10-01T03:00:30Z",
+    "statuses": [
+      {
+        "state": "success",
+        "created_at": "2026-10-01T03:00:30Z",
+        "environment_url": "https://ns-agent-for-sorteios-hp3bk36q9-newstores-projects.vercel.app"
+      }
+    ]
+  }
+}
