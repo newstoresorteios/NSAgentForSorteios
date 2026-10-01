@@ -27,6 +27,14 @@ def refine_story_reference(ref, text):
     updated = dict(ref)
     value = re.sub(r"[-_\u2010-\u2015]+", " ", fold_text(text or ""))
     base = str(ref.get("catalog_query_base") or "")[:200]
+    brands = {fold_text(r.get('brand_hypothesis') or '') for r in ref.get('story_regions') or []
+              if isinstance(r, dict) and r.get('brand_hypothesis')}
+    named_brands = {b for b in brands if re.search(r'(?<!\w)' + re.escape(b) + r'(?!\w)', value)}
+    if len(named_brands) == 1 and not any(
+            re.search(r'(?<!\w)' + re.escape(b) + r'(?!\w)', fold_text(base)) for b in named_brands):
+        base = next(iter(named_brands))
+        updated['selected_option'] = None
+        updated['selected_region_index'] = None
     from app.stories.story_selection import selected_region_from_reference
     region_index, region = selected_region_from_reference(ref, text)
     from app.sales.ready_delivery_context import PRICE_FOLLOWUP
@@ -89,6 +97,10 @@ def refine_story_reference(ref, text):
     elif selected and ref.get("selected_region_index") is not None:
         # Retain the selected region's color on short price/link follow-ups.
         selected_colors = re.findall(r"\b(?:" + COLORS + r")\b", fold_text(ref.get("catalog_query") or ""))
+    elif len(set(color)) == 1 and not re.search(r"\b(?:nao|menos|exceto)\b", value):
+        selected_colors = color
+    elif not color and base == ref.get('catalog_query_base'):
+        selected_colors = re.findall(r"\b(?:" + COLORS + r")\b", fold_text(ref.get('catalog_query') or ''))
     # Search the color family; catalog titles often say "azul" rather than "azul claro".
     # Keep the precise shade in selected_option for visual comparison.
     from app.stories.story_selection import color_family

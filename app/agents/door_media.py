@@ -39,7 +39,7 @@ async def try_media_routes(
 
     followup = unresolved_story_followup(message, commerce_state)
     if followup is not None:
-        return await enrich_story_ready_delivery(message, followup)
+        return await enrich_story_ready_delivery(message, followup, execute_tool=door.execute_tool)
     story_photo_ref = (
         active_story_reference(message, commerce_state, allow_image=True)
         if message.image_url else None
@@ -72,7 +72,7 @@ async def try_media_routes(
                     incoming=message,
                 )
                 if story_agent is not None:
-                    story_agent = await enrich_story_ready_delivery(message, story_agent)
+                    story_agent = await enrich_story_ready_delivery(message, story_agent, execute_tool=door.execute_tool)
                     return door._annotate_agent_result(
                         story_agent,
                         domain="commerce",

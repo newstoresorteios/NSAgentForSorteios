@@ -69,10 +69,20 @@ def selected_region_from_reference(ref, text):
             continue
     if not regions:
         return None, None
+    # A short color answer belongs to the brand already named by the customer,
+    # not another watch of that color in the same scene.
+    value = fold_text(text or '')
+    brands = {fold_text(r.brand_hypothesis) for r in regions if r.brand_hypothesis}
+    named = {b for b in brands if re.search(r'(?<!\w)' + re.escape(b) + r'(?!\w)', value)}
+    prior = fold_text(ref.get('catalog_query_base') or '')
+    prior_brands = {b for b in brands if re.search(r'(?<!\w)' + re.escape(b) + r'(?!\w)', prior)}
+    scoped_regions = regions
+    if not named and len(prior_brands) == 1:
+        scoped_regions = [r for r in regions if fold_text(r.brand_hypothesis or '') in prior_brands]
     analysis = StoryVisualUnderstanding(
-        watch_count=len(regions),
-        multiple_products=len(regions) > 1,
-        product_regions=regions,
+        watch_count=len(scoped_regions),
+        multiple_products=len(scoped_regions) > 1,
+        product_regions=scoped_regions,
     )
     region = selected_region(analysis, text)
     if region is None:

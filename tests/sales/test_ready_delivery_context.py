@@ -16,6 +16,8 @@ from app.stories.instagram_story_service import story_result_to_agent_result
 def runtime(monkeypatch):
     token = set_persona_runtime(PersonaRuntimeConfig(loaded=True, enabled=True, workspace_id='shop'))
     monkeypatch.setattr('app.persona.site_knowledge.STORE_PRONTA_ENTREGA_URL', lambda: 'https://www.newstorerj.com/pronta-entrega')
+    monkeypatch.setattr('app.stories.story_highlight_references.current_workspace_reference', lambda *a, **kw: None)
+    monkeypatch.setattr('app.agents.door.execute_tool', AsyncMock(return_value={'products': []}))
     yield
     reset_persona_runtime(token)
 
@@ -54,7 +56,8 @@ async def test_story_then_size_then_color_uses_com_without_inventing_identity(ru
     followup = unresolved_story_followup(incoming('PRX 35mm'), state)
     followup = await enrich_story_ready_delivery(incoming('PRX 35mm'), followup)
     assert lookup.call_args.args[0] == 'tissot prx 35mm'
-    assert 'qual você quer' in followup.reply_text
+    assert 'A foto do anúncio' in followup.reply_text
+    assert '/prx-azul' in followup.reply_text
     state = evolve_commerce_state(state, followup)
     selected = unresolved_story_followup(incoming('o azul'), state)
     selected = await enrich_story_ready_delivery(incoming('o azul'), selected)

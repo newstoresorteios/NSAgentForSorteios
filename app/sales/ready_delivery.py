@@ -66,22 +66,30 @@ async def try_ready_delivery(message, state=None):
     return AgentResult(reply_text=reply, intent='sales', response_metadata=metadata)
 
 
-async def enrich_story_ready_delivery(message, result):
+async def enrich_story_ready_delivery(message, result, *, execute_tool=None):
     """Search the second storefront without upgrading a visual guess to a match."""
     ref = result.response_metadata.get('last_story_product')
     scope = scoped_context(message, '')
     from app.stories.story_selection import reference_in_workspace
     from app.persona.persona_runtime import get_persona_runtime
     if (not isinstance(ref, dict) or ref.get('match_status') not in {'ambiguous', 'not_found'}
-            or not ref.get('catalog_query') or not enabled() or not scope
+            or not ref.get('catalog_query') or not scope
             or not reference_in_workspace(ref, get_persona_runtime())
             or any(ref.get(k) != scope[k] for k in ('conversation_id', 'sender_key'))):
         return result
+    from app.stories.story_followup_catalog import lookup_story_options, present_story_options
+    catalog = await lookup_story_options(ref, execute_tool=execute_tool)
+    result.response_metadata['story_catalog_check'] = catalog
+    if catalog['products']:
+        return present_story_options(result, catalog)
+    if not enabled():
+        return result
     evidence = await lookup(ref['catalog_query'])
     selected = ref.get('selected_option')
+    show_options = bool(selected or result.response_metadata.get('response_source') == 'instagram_story_followup')
     if not evidence['complete']:
         prefix = 'Não consegui consultar a lista de pronta entrega agora; isso não significa que a peça esteja esgotada.'
-    elif selected and evidence['products']:
+    elif show_options and evidence['products']:
         prefix = listing(evidence)
         question = ('A foto do anúncio corresponde ao que você escolheu?' if len(evidence['products']) == 1
                     else 'Qual dessas opções corresponde ao relógio que você escolheu?')
@@ -96,7 +104,7 @@ async def enrich_story_ready_delivery(message, result):
         # A storefront alternative must not replace the grounded visual hypothesis.
         reply = result.reply_text + '\n\n' + prefix
     else:
-        reply = prefix if selected and evidence['complete'] and evidence['products'] else prefix + '\n\n' + result.reply_text
+        reply = prefix if show_options and evidence['complete'] and evidence['products'] else prefix + '\n\n' + result.reply_text
     result.reply_text = reply
     result.response_metadata.update(story_clarification_reply=reply, ready_delivery_check=evidence,
                                     catalog_source=SOURCE)
