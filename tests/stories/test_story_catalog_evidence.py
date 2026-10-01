@@ -121,3 +121,38 @@ async def test_selection_uses_its_region_even_when_another_brand_has_the_same_co
     assert [c.product_id for c in result.candidates] == ['2']
     assert not result.resolved
     repo.confirm_match.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_independent_review_cannot_move_candidates_or_frames_between_watches(monkeypatch):
+    from app.stories import story_identity_verifier as verifier
+    scene = StoryVisualUnderstanding(watch_count=2, multiple_products=True, media_type='video',
+        product_regions=[VisualProductRegion(dial_color='branco', strap_color='marrom', frame_indexes=[1]),
+                         VisualProductRegion(dial_color='azul', strap_color='prateado', frame_indexes=[2, 5, 7])])
+    candidates = [StoryProductCandidate(catalog_item_key=f'tray:{i}', product_id=str(i)) for i in (1, 2)]
+    regions = {str(i): [c.model_dump()] for i, c in enumerate(candidates)}
+    calls = []
+    async def parse(**kw):
+        assert kw['text_format'] is verifier.RegionIdentityReview
+        parts = kw['messages'][1]['content']
+        texts = [p['text'] for p in parts if p['type'] == 'text']
+        body = ' '.join(texts)
+        assert 'PRIVATE-REF' not in body
+        is_first = 'product_id=1' in body
+        expected = ['Frame original 1'] if is_first else ['Frame original 2', 'Frame original 5', 'Frame original 7']
+        assert [t for t in texts if t.startswith('Frame original')] == expected
+        assert not ('product_id=1' in body and 'product_id=2' in body)
+        calls.append(body)
+        pid, allowed_frame = ('1', 1) if is_first else ('2', 5)
+        return SimpleNamespace(parsed=verifier.RegionIdentityReview(checks=[
+            verifier.RegionIdentityCheck(product_id=pid, verdict='uncertain', visual_support_frame_indexes=[allowed_frame]),
+            verifier.RegionIdentityCheck(product_id='2' if is_first else '1', verdict='consistent'),
+            verifier.RegionIdentityCheck(product_id=pid, verdict='consistent', supporting_frame_indexes=[0])]))
+    async def tool(name, args):
+        return {'id': args['product_id'], 'reference': 'PRIVATE-REF',
+                'primary_image_url': 'https://images.tcdn.com.br/' + args['product_id'] + '.jpg'}
+    monkeypatch.setattr(verifier, 'parse_structured_output', parse)
+    approved, reviews = await verifier.verify_identities(analysis=scene, frames=[b'frame'] * 8,
+        candidates=candidates, execute_tool=tool, region_candidates=regions)
+    assert len(calls) == 2 and not approved
+    assert [(r['product_id'], r['region_index']) for r in reviews] == [('1', 0), ('2', 1)]

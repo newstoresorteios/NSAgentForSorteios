@@ -83,7 +83,7 @@ async def analyze_job(job):
     binding = bind_bundle(bundle, settings_from_bundle(get_settings(), bundle))
     persona_token = set_persona_runtime(persona)
     runtime = set_current_turn(TurnRuntimeContext(trace_id=f"story-job-{job['id']}",
-        llm_budget=LLMCallBudget(max_calls=10, enforce=True)))
+        llm_budget=LLMCallBudget(max_calls=14, enforce=True)))
     media = None
     descriptor = {}
     try:
@@ -175,7 +175,7 @@ async def analyze_job(job):
             raise StoryMediaError('catalog_candidates_unavailable')
         from app.stories.story_identity_verifier import verify_identities
         approved, reviews = await verify_identities(analysis=analysis, frames=frames,
-            candidates=candidates, execute_tool=execute_tool)
+            candidates=candidates, execute_tool=execute_tool, region_candidates=region_candidates)
         result = {'schema': jobs.EVIDENCE_VERSION, 'analysis': analysis.model_dump(mode='json'),
                   'approved_identities': approved, 'identity_reviews': reviews,
                   'candidates': [c.model_dump(mode='json') for c in candidates],
