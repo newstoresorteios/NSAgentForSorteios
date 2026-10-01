@@ -150,6 +150,16 @@ async def try_media_routes(
         else:
             image_result = await door.handle_image_product_search(message)
         if image_result is not None:
+            if image_result.safety_reason == "image_not_watch":
+                from app.catalog.vision.prompt import ImageProductIdentification
+                from app.sales.after_sales_support import support_document_reply
+
+                evidence = image_result.response_metadata.get("image_identify")
+                if evidence:
+                    support = support_document_reply(ImageProductIdentification.model_validate(evidence))
+                    if support is not None:
+                        support.response_metadata["image_identify"] = evidence
+                        return support
             if image_result.response_metadata.get("support_document") or image_result.safety_reason == "image_not_watch":
                 return image_result
             image_result.response_metadata['image_evidence_guard'] = True

@@ -176,10 +176,14 @@ async def test_real_webhook_flow_persists_and_reloads_context_for_followup(monke
     assert state["responses"][0]["provider_send_ok"] is True
     assert state["responses"][0]["provider_response"]["_agent_context"]["commerce_state"]["active_domain"] == "commerce"
     assert state["responses"][1]["reply_text"] != sales_agent.OUT_OF_SCOPE_REPLY()
+    assert state["responses"][0]["reply_text"] == (
+        "Olá! Sou o assistente virtual (IA).\n\n"
+        "Você prefere um estilo mais esportivo, social ou casual?"
+    )
     second_messages = interpreter_requests[1]
     assert second_messages[2:] == [
         {"role": "user", "content": "quero comprar um relógio"},
-        {"role": "assistant", "content": "Você prefere um estilo mais esportivo, social ou casual?"},
+        {"role": "assistant", "content": state["responses"][0]["reply_text"]},
         {"role": "user", "content": "[enviada agora]\nesportivo"},
     ]
     assert second_messages[1]["role"] == "system"

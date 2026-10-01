@@ -714,11 +714,6 @@ async def handle_image_product_search(
         )
 
     if not identified.is_watch:
-        from app.sales.after_sales_support import support_document_reply
-        support = support_document_reply(identified)
-        if support is not None:
-            support.response_metadata["image_identify"] = identified.model_dump(mode="json")
-            return support
         return _clarification_result(
             reason="image_not_watch",
             identified=identified,
