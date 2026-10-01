@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from typing import Any, Literal
 
 from openai import APIError
@@ -80,6 +82,7 @@ def _response_source(result: AgentResult) -> str:
 def is_low_risk_judge_skip(
     incoming: IncomingMessage | None,
     result: AgentResult | None,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, str | None]:
     """Paths that must not spend a judge LLM call (Phase 9)."""
     if result is None:
@@ -88,6 +91,25 @@ def is_low_risk_judge_skip(
         return True, 'deterministic_image_evidence'
     if result.handoff_required:
         return True, "human_handoff"
+    if recent_turns:
+        try:
+            from app.sales.conversation_repair import is_conversation_repair
+
+            if incoming is not None and is_conversation_repair(
+                incoming.text, recent_turns=recent_turns
+            ):
+                return False, None
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            log_swallowed("judge.conversation_repair_gate", exc)
+        if _reply_repeats_prior_question(result.reply_text or "", recent_turns):
+            return False, None
+    if (
+        result.safety_reason == "commerce_clarification"
+        and _has_assistant_context(recent_turns)
+    ):
+        # A clarification can be safe factually and still ignore an answer that
+        # already exists in the thread. Review it with the conversation attached.
+        return False, None
     source = _response_source(result)
     if source in _COMMERCIAL_RESUME_SOURCES:
         reply = result.reply_text or ""
@@ -135,6 +157,8 @@ def collect_judge_risk_signals(
     factual_valid: bool,
     openai_call_count: int,
     threshold: int = 70,
+    incoming: IncomingMessage | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     signals: list[str] = []
     metadata = result.response_metadata or {}
@@ -213,7 +237,88 @@ def collect_judge_risk_signals(
                 signals.append("low_interpretation_confidence")
         except (TypeError, ValueError) as exc:
             log_swallowed("judge.confidence", exc)
+    if result.safety_reason == "commerce_clarification" and _has_assistant_context(
+        recent_turns
+    ):
+        signals.append("contextual_clarification_requires_review")
+    if incoming is not None and recent_turns:
+        try:
+            from app.sales.conversation_repair import is_conversation_repair
+
+            if is_conversation_repair(incoming.text, recent_turns=recent_turns):
+                signals.append("conversation_repair_requested")
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            log_swallowed("judge.conversation_repair_signal", exc)
+        if _reply_repeats_prior_question(reply, recent_turns):
+            signals.append("repeated_clarification_question")
     return signals
+
+
+def _has_assistant_context(recent_turns: list[dict[str, Any]] | None) -> bool:
+    return any(
+        isinstance(turn, dict)
+        and turn.get("role") == "assistant"
+        and str(turn.get("content") or turn.get("text") or "").strip()
+        for turn in (recent_turns or [])
+    )
+
+
+def _normalise_for_similarity(value: str) -> str:
+    folded = unicodedata.normalize("NFKD", value.casefold())
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", folded).strip()
+
+
+def _reply_repeats_prior_question(
+    reply: str,
+    recent_turns: list[dict[str, Any]] | None,
+) -> bool:
+    current = _normalise_for_similarity(reply)
+    if len(current) < 20 or "?" not in reply:
+        return False
+    latest_assistant = next(
+        (
+            turn
+            for turn in reversed(recent_turns or [])
+            if isinstance(turn, dict) and turn.get("role") == "assistant"
+        ),
+        None,
+    )
+    if latest_assistant is None:
+        return False
+    previous_text = str(
+        latest_assistant.get("content") or latest_assistant.get("text") or ""
+    )
+    previous = _normalise_for_similarity(previous_text)
+    return bool(
+        "?" in previous_text
+        and len(previous) >= 20
+        and SequenceMatcher(None, current, previous).ratio() >= 0.84
+    )
+
+
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+_CPF_RE = re.compile(r"(?<!\d)(?:\d{3}[. ]?\d{3}[. ]?\d{3}[- ]?\d{2})(?!\d)")
+
+
+def _judge_history_payload(
+    recent_turns: list[dict[str, Any]] | None,
+) -> list[dict[str, str]]:
+    """Bound history sent to the judge and remove common direct identifiers."""
+    safe: list[dict[str, str]] = []
+    for turn in (recent_turns or [])[-6:]:
+        if not isinstance(turn, dict):
+            continue
+        role = str(turn.get("role") or "").casefold()
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(turn.get("content") or turn.get("text") or "").strip()
+        if not content:
+            continue
+        content = _EMAIL_RE.sub("[e-mail removido]", content)
+        content = _CPF_RE.sub("[CPF removido]", content)
+        safe.append({"role": role, "content": content[:700]})
+    return safe
 
 
 def pending_side_effect(metadata: dict[str, Any]) -> bool:
@@ -240,6 +345,7 @@ def should_trigger_judge(
     threshold: int = 70,
     incoming: IncomingMessage | None = None,
     result: AgentResult | None = None,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, str | None]:
     # Compatibility: older callers only pass scalars.
     if result is None:
@@ -248,7 +354,7 @@ def should_trigger_judge(
             intent="general",
             handoff_required=handoff_required,
         )
-    skip, skip_reason = is_low_risk_judge_skip(incoming, result)
+    skip, skip_reason = is_low_risk_judge_skip(incoming, result, recent_turns)
     if skip:
         return False, skip_reason
     signals = collect_judge_risk_signals(
@@ -257,6 +363,8 @@ def should_trigger_judge(
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
         threshold=threshold,
+        incoming=incoming,
+        recent_turns=recent_turns,
     )
     if not signals:
         return False, None
@@ -287,8 +395,12 @@ def _judge_evidence_payload(result: AgentResult) -> dict[str, Any]:
     }
 
 
-def _judge_must_fail_closed(result: AgentResult) -> bool:
-    """Do not pass a constrained catalog turn when the judge call itself failed."""
+def _judge_must_fail_closed(
+    result: AgentResult,
+    *,
+    contextual_review: bool = False,
+) -> bool:
+    """Require a passing review for constrained or context-sensitive turns."""
     meta = result.response_metadata or {}
     prefs = meta.get("active_preferences") or {}
     if not isinstance(prefs, dict):
@@ -296,6 +408,8 @@ def _judge_must_fail_closed(result: AgentResult) -> bool:
     if meta.get("hard_budget_max") is not None:
         return True
     if prefs.get("locked_identity") or prefs.get("color") or prefs.get("budget_max"):
+        return True
+    if contextual_review and result.safety_reason == "commerce_clarification":
         return True
     products = (result.commercial_data or {}).get("products") or []
     return bool(products and (prefs.get("color") or prefs.get("budget_max")))
@@ -307,11 +421,21 @@ def _failed_open_verdict(exc: BaseException, *, fail_closed: bool) -> JudgeVerdi
         pass_check=not fail_closed,
         issues=[f"judge_failed:{type(exc).__name__}"],
         summary=(
-            "Judge failed closed because the turn has sku/color/budget constraints."
+            "Judge failed closed because this turn requires quality review."
             if fail_closed
             else "Judge failed open; shadow/off keeps original reply."
         ),
     )
+
+
+def _apply_quality_handoff(result: AgentResult, report: JudgeReport) -> None:
+    result.reply_text = (
+        "Prefiro confirmar esses dados com a equipe antes de te responder "
+        "com segurança. Um atendente humano pode te ajudar agora."
+    )
+    result.handoff_required = True
+    result.safety_reason = "quality_judge_failed"
+    report.applied = True
 
 
 async def run_quality_judge(
@@ -322,6 +446,7 @@ async def run_quality_judge(
     risk_score: int = 0,
     factual_valid: bool = True,
     openai_call_count: int = 0,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> JudgeReport:
     report = JudgeReport(mode=mode)
     if mode == "off":
@@ -331,7 +456,7 @@ async def run_quality_judge(
     threshold = int(
         getattr(settings, "agent_quality_judge_risk_threshold", 70)
     )
-    skip, skip_reason = is_low_risk_judge_skip(incoming, result)
+    skip, skip_reason = is_low_risk_judge_skip(incoming, result, recent_turns)
     if skip:
         report.triggered = False
         report.skipped_reason = skip_reason
@@ -348,6 +473,8 @@ async def run_quality_judge(
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
         threshold=threshold,
+        incoming=incoming,
+        recent_turns=recent_turns,
     )
     triggered = bool(signals)
     report.triggered = triggered
@@ -361,17 +488,26 @@ async def run_quality_judge(
         return report
 
     if not settings.openai_api_key:
-        fail_closed = _judge_must_fail_closed(result)
+        contextual_review = "contextual_clarification_requires_review" in signals
+        fail_closed = _judge_must_fail_closed(
+            result, contextual_review=contextual_review
+        )
+        if contextual_review:
+            unavailable_summary = (
+                "Judge unavailable for a contextual clarification that needs review."
+            )
+        elif fail_closed:
+            unavailable_summary = "Judge unavailable on a constrained catalog turn."
+        else:
+            unavailable_summary = "Judge skipped because OpenAI is unavailable."
         report.verdict = JudgeVerdict(
             score=50,
             pass_check=not fail_closed,
             issues=["openai_unavailable"],
-            summary=(
-                "Judge unavailable on a constrained catalog turn."
-                if fail_closed
-                else "Judge skipped because OpenAI is unavailable."
-            ),
+            summary=unavailable_summary,
         )
+        if mode == "enforce" and not report.verdict.pass_check:
+            _apply_quality_handoff(result, report)
         return report
 
     try:
@@ -386,9 +522,13 @@ async def run_quality_judge(
                     "role": "system",
                     "content": (
                         "Avalie a qualidade e segurança da resposta do agente. "
-                        "Use apenas as evidências estruturadas fornecidas. "
-                        "Não reescreva a resposta. Marque pass_check=false apenas "
-                        "se houver risco factual, inventado ou incoerente."
+                        "Use apenas a mensagem atual, o histórico fornecido e as evidências estruturadas. "
+                        "Verifique também relevância para o pedido atual, uso de informações já dadas, "
+                        "continuidade e avanço da conversa. Uma pergunta de esclarecimento só é adequada "
+                        "quando falta uma informação material. Marque pass_check=false se a resposta "
+                        "ignorar uma resposta anterior, repetir uma pergunta já respondida, sair do assunto, "
+                        "inventar fatos ou não avançar apesar de já haver dados suficientes. Não penalize "
+                        "uma pergunta realmente necessária. Não reescreva a resposta."
                     ),
                 },
                 {
@@ -398,6 +538,7 @@ async def run_quality_judge(
                             "channel": incoming.channel,
                             "customer_message": incoming.text,
                             "agent_reply": result.reply_text,
+                            "recent_conversation": _judge_history_payload(recent_turns),
                             "intent": result.intent,
                             "safety_reason": result.safety_reason,
                             "risk_signals": signals,
@@ -422,8 +563,12 @@ async def run_quality_judge(
         TypeError,
         AttributeError,
     ) as exc:
+        contextual_review = "contextual_clarification_requires_review" in signals
         report.verdict = _failed_open_verdict(
-            exc, fail_closed=_judge_must_fail_closed(result)
+            exc,
+            fail_closed=_judge_must_fail_closed(
+                result, contextual_review=contextual_review
+            ),
         )
 
     if (
@@ -431,13 +576,7 @@ async def run_quality_judge(
         and report.verdict is not None
         and not report.verdict.pass_check
     ):
-        result.reply_text = (
-            "Prefiro confirmar esses dados com a equipe antes de te responder "
-            "com segurança. Um atendente humano pode te ajudar agora."
-        )
-        result.handoff_required = True
-        result.safety_reason = "quality_judge_failed"
-        report.applied = True
+        _apply_quality_handoff(result, report)
     return report
 
 

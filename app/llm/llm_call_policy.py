@@ -35,6 +35,9 @@ _CRITIQUE_TRIGGER_SIGNALS = frozenset(
         "inbound_image_turn",
         "multi_product_shortlist",
         "compliance_reresearch",
+        "contextual_clarification_requires_review",
+        "conversation_repair_requested",
+        "repeated_clarification_question",
     }
 )
 
@@ -63,8 +66,9 @@ def critique_risk_signals(
     risk_score: int = 0,
     factual_valid: bool = True,
     openai_call_count: int = 0,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> list[str]:
-    skip, _reason = is_low_risk_judge_skip(incoming, result)
+    skip, _reason = is_low_risk_judge_skip(incoming, result, recent_turns)
     if skip:
         return []
     settings = get_settings()
@@ -77,6 +81,8 @@ def critique_risk_signals(
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
         threshold=threshold,
+        incoming=incoming,
+        recent_turns=recent_turns,
     )
     if (incoming.image_url or "").strip():
         signals.append("inbound_image_turn")
@@ -208,6 +214,7 @@ def should_run_quality_judge(
     risk_score: int = 0,
     factual_valid: bool = True,
     openai_call_count: int = 0,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, str, list[str]]:
     """Judge: risk/sample only when mode ≠ off (default shadow)."""
     if judge_mode == "off":
@@ -220,6 +227,7 @@ def should_run_quality_judge(
         risk_score=risk_score,
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
+        recent_turns=recent_turns,
     )
     trigger_hits = [s for s in signals if s in _CRITIQUE_TRIGGER_SIGNALS]
     if trigger_hits:

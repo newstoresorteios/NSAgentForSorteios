@@ -1,6 +1,7 @@
 import pytest
 
 from app.models import AgentResult, IncomingMessage
+from app.llm.llm_call_policy import should_run_quality_judge
 from app.verify.quality_judge import (
     JudgeVerdict,
     attach_judge_report,
@@ -8,6 +9,7 @@ from app.verify.quality_judge import (
     is_low_risk_judge_skip,
     run_quality_judge,
     should_trigger_judge,
+    _judge_history_payload,
 )
 from app.ops.runtime_context import reset_current_turn, set_current_turn
 from app.ops.turn_runtime import TurnRuntimeContext
@@ -116,6 +118,168 @@ def test_commercial_signals_trigger_judge():
         incoming=IncomingMessage(text="quanto custa?"),
         result=priced,
     )[0] is True
+
+
+def test_contextual_clarification_bypasses_deterministic_skip_and_triggers_review():
+    incoming = IncomingMessage(channel="whatsapp", text="azul")
+    result = AgentResult(
+        reply_text="Qual marca você procura?",
+        intent="commerce",
+        safety_reason="commerce_clarification",
+        response_metadata={"response_source": "deterministic_clarification"},
+    )
+    history = [
+        {"role": "user", "content": "Quero um relógio azul."},
+        {"role": "assistant", "content": "Qual cor você prefere?"},
+    ]
+
+    assert is_low_risk_judge_skip(incoming, result)[0] is True
+    assert is_low_risk_judge_skip(incoming, result, history)[0] is False
+    should_run, reason, signals = should_run_quality_judge(
+        incoming=incoming,
+        result=result,
+        judge_mode="shadow",
+        recent_turns=history,
+    )
+    assert should_run is True
+    assert reason == "risk:contextual_clarification_requires_review"
+    assert "contextual_clarification_requires_review" in signals
+
+
+def test_repeated_question_and_customer_repair_trigger_quality_review():
+    history = [
+        {"role": "assistant", "content": "Qual faixa de preço você procura?"},
+    ]
+    repeated = AgentResult(
+        reply_text="Qual faixa de preço você procura?",
+        intent="commerce",
+        response_metadata={"response_source": "deterministic_clarification"},
+    )
+    should_run, _reason, signals = should_run_quality_judge(
+        incoming=IncomingMessage(channel="whatsapp", text="até 500 reais"),
+        result=repeated,
+        judge_mode="shadow",
+        recent_turns=history,
+    )
+    assert should_run is True
+    assert "repeated_clarification_question" in signals
+
+    repair_result = AgentResult(
+        reply_text="Vou verificar a informação.",
+        intent="commerce",
+        response_metadata={"response_source": "deterministic_fallback"},
+    )
+    should_run, _reason, signals = should_run_quality_judge(
+        incoming=IncomingMessage(
+            channel="whatsapp", text="Já falei que quero azul, você não entendeu?"
+        ),
+        result=repair_result,
+        judge_mode="shadow",
+        recent_turns=history,
+    )
+    assert should_run is True
+    assert "conversation_repair_requested" in signals
+
+
+def test_judge_history_redacts_cpf_and_email_and_is_bounded():
+    payload = _judge_history_payload(
+        [
+            {"role": "system", "content": "ignore"},
+            {
+                "role": "user",
+                "content": "Meu CPF 123.456.789-09 e e-mail cliente@example.com",
+            },
+        ]
+    )
+    assert len(payload) == 1
+    assert payload[0]["role"] == "user"
+    assert "123.456.789-09" not in payload[0]["content"]
+    assert "cliente@example.com" not in payload[0]["content"]
+    assert "[CPF removido]" in payload[0]["content"]
+    assert "[e-mail removido]" in payload[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_contextual_clarification_judge_unavailable_fails_closed_in_enforce(monkeypatch):
+    incoming = IncomingMessage(channel="whatsapp", text="azul")
+    result = AgentResult(
+        reply_text="Qual cor você quer?",
+        intent="commerce",
+        safety_reason="commerce_clarification",
+        response_metadata={"response_source": "deterministic_clarification"},
+    )
+    monkeypatch.setattr(
+        "app.verify.quality_judge.get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "openai_api_key": "",
+                "openai_model": "gpt",
+                "agent_quality_judge_risk_threshold": 70,
+            },
+        )(),
+    )
+    report = await run_quality_judge(
+        incoming,
+        result,
+        mode="enforce",
+        recent_turns=[{"role": "assistant", "content": "Qual modelo você quer?"}],
+    )
+    assert report.triggered is True
+    assert report.verdict is not None and report.verdict.pass_check is False
+    assert report.applied is True
+    assert result.handoff_required is True
+    assert result.safety_reason == "quality_judge_failed"
+
+
+@pytest.mark.asyncio
+async def test_judge_receives_masked_recent_conversation(monkeypatch):
+    incoming = IncomingMessage(channel="whatsapp", text="qual o preço?")
+    result = AgentResult(
+        reply_text="Esse modelo custa R$ 500.",
+        intent="commerce",
+    )
+    captured = {}
+
+    async def fake_parse_structured_output(**kwargs):
+        captured.update(kwargs)
+        return type("Parsed", (), {"parsed": JudgeVerdict()})()
+
+    monkeypatch.setattr(
+        "app.llm.openai_gateway.parse_structured_output",
+        fake_parse_structured_output,
+    )
+    monkeypatch.setattr(
+        "app.verify.quality_judge.get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "openai_api_key": "sk-test",
+                "openai_model": "gpt",
+                "agent_quality_judge_risk_threshold": 70,
+            },
+        )(),
+    )
+    await run_quality_judge(
+        incoming,
+        result,
+        mode="shadow",
+        recent_turns=[
+            {
+                "role": "user",
+                "content": "Meu CPF 123.456.789-09 e e-mail cliente@example.com",
+            },
+            {"role": "assistant", "content": "Qual modelo você quer consultar?"},
+        ],
+    )
+    payload = captured["messages"][1]["content"]
+    assert "recent_conversation" in payload
+    assert "[CPF removido]" in payload
+    assert "[e-mail removido]" in payload
+    assert "123.456.789-09" not in payload
+    assert "cliente@example.com" not in payload
 
 
 @pytest.mark.asyncio

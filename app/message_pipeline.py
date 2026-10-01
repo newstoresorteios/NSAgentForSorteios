@@ -667,6 +667,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             risk_score=decision.risk.score,
             factual_valid=factual_ok,
             openai_call_count=openai_calls,
+            recent_turns=model_turns,
         )
         critique_enforced = bool(
             critique_report
@@ -685,6 +686,7 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
                 risk_score=decision.risk.score,
                 factual_valid=factual_ok,
                 openai_call_count=openai_calls,
+                recent_turns=model_turns,
             )
             result = attach_judge_report(result, judge_report)
         elif judge_mode != "off":
