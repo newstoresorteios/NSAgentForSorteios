@@ -908,7 +908,9 @@ async def _route_after_interpret(
         else interpretation.domain
     )
     from app.sales.conversation_repair import is_conversation_repair
-    if scope_domain != "raffle" and is_conversation_repair(message.text, interpretation):
+    if scope_domain != "raffle" and is_conversation_repair(
+        message.text, interpretation, recent_turns=recovery_turns or recent_turns
+    ):
         scope_domain = "commerce"
     print("[agent.scope]", {"domain": scope_domain})
     if scope_domain == "out_of_scope":

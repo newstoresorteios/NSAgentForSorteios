@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from app.catalog.retrieval.text import fold_text
 from app.configuration.runtime import message, policy
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
@@ -20,10 +21,53 @@ def has_explicit_lookup_identity(text: str | None, interpretation: SalesInterpre
                 and fold_text(subject.model) in folded)
 
 
-def is_conversation_repair(text: str | None, interpretation: SalesInterpretation | None = None) -> bool:
+def _explicit_repair_signal(text: str | None) -> bool:
+    folded = fold_text(text)
+    if not folded:
+        return False
+    # These patterns describe what happened in the conversation rather than
+    # enumerating every spelling of an individual complaint.
+    correction = re.search(
+        r"\bja\b.{0,32}\b(?:falei|disse|respondi|informei|expliquei|mencionei)\b",
+        folded,
+    )
+    not_understood = re.search(
+        r"\b(?:nao\s+(?:te\s+)?entend[io]|(?:esta|ta|t[aá])\s+dificil\s+entender|"
+        r"dificil\s+(?:de\s+)?entender|voce\s+nao\s+(?:me\s+)?entend)\b",
+        folded,
+    )
+    profanity = re.search(r"\b(?:pqp|porra|caralho|cacete)\b", folded)
+    return bool(correction or not_understood or profanity)
+
+
+def _repeated_assistant_question(recent_turns) -> bool:
+    questions = [
+        re.sub(r"\s+", " ", fold_text(str(turn.get("content") or ""))).strip()
+        for turn in (recent_turns or [])
+        if isinstance(turn, dict) and turn.get("role") == "assistant"
+        and "?" in str(turn.get("content") or "")
+    ][-6:]
+    questions = [q for q in questions if len(q) >= 24]
+    for index, current in enumerate(questions):
+        if any(SequenceMatcher(None, current, earlier).ratio() >= 0.84
+               for earlier in questions[:index]):
+            return True
+    return False
+
+
+def is_conversation_repair(text: str | None, interpretation: SalesInterpretation | None = None,
+                           recent_turns=None) -> bool:
     if has_explicit_lookup_identity(text, interpretation) and interpretation.resolved_answer_strategy() == "search_catalog":
         return False
     if interpretation is not None and interpretation.conversation_feedback in {'misunderstood', 'repeated_question', 'frustrated'}:
+        return True
+    if _explicit_repair_signal(text):
+        return True
+    # A short "de novo?" after the same clarification was asked twice is
+    # feedback about the loop; ordinary short answers remain on the normal path.
+    folded = fold_text(text)
+    if (_repeated_assistant_question(recent_turns)
+            and re.search(r"\b(?:de novo|outra vez|novamente|ja respondi|ja falei)\b", folded)):
         return True
     folded = fold_text(text)
     phrases = str(policy("conversationRepairPhrases")).splitlines()
@@ -34,7 +78,7 @@ async def repair_conversation(*, incoming: IncomingMessage, interpretation: Sale
                               state, recent_turns=None) -> AgentResult | None:
     if interpretation.goal == 'after_sales':
         return None
-    if not is_conversation_repair(incoming.text, interpretation):
+    if not is_conversation_repair(incoming.text, interpretation, recent_turns):
         return None
     if interpretation.goal == 'inspect':
         from app.commerce.commerce_context import resolve_commerce_reference

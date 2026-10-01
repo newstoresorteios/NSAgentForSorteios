@@ -7,7 +7,7 @@ from app.commerce.commerce_context import CommerceConversationState, CommercePro
 from app.models import AgentResult, IncomingMessage, SalesInterpretation
 from app.catalog.specs.preference_normalize import normalize_sales_interpretation
 from app.sales.catalog_reference import resolve_catalog_reference
-from app.sales.conversation_repair import repair_conversation
+from app.sales.conversation_repair import is_conversation_repair, repair_conversation
 from app.sales.dialogue_phase import reconcile_checkout_context
 from app.verify.double_check import collect_phase1_risk_signals
 
@@ -45,6 +45,27 @@ def test_meta_correction_is_not_price_request(text):
     signals = collect_phase1_risk_signals(incoming=IncomingMessage(text=text),
         result=AgentResult(reply_text="Entendi", intent="commerce"))
     assert "inbound_asks_price" not in signals
+
+
+@pytest.mark.parametrize("text", [
+    "Já falei, é para casamento",
+    "Está difícil entender?",
+    "Não entendi",
+    "PQP, eu já respondi",
+])
+def test_common_misunderstanding_feedback_enters_repair(text):
+    assert is_conversation_repair(text, interpretation("acknowledge"))
+
+
+def test_repetition_signal_requires_a_repeated_assistant_question():
+    repeated = [
+        {"role": "assistant", "content": "Qual é a ocasião para eu sugerir o relógio?"},
+        {"role": "assistant", "content": "Qual é a ocasião para eu sugerir um relógio?"},
+    ]
+    assert not is_conversation_repair("Vocês perguntaram isso novamente", interpretation("acknowledge"))
+    assert is_conversation_repair(
+        "Vocês perguntaram isso novamente", interpretation("acknowledge"), recent_turns=repeated,
+    )
 
 
 def test_real_price_keeps_verification():
