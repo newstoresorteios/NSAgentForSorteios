@@ -946,6 +946,17 @@ async def match_story_to_catalog(
     if not str(tenant_id or "").strip():
         raise ValueError("tenant_id required")
     analysis = product_scoped_analysis(analysis)
+    if not store_url:
+        from app.stories.story_highlight_references import analysis_reference
+
+        highlight_reference = analysis_reference(analysis, tenant_id=tenant_id)
+        if highlight_reference is not None:
+            store_url = highlight_reference.product_url
+            log_event("story_highlight_reference_match", {
+                "reference_id": highlight_reference.id,
+                "name": highlight_reference.name[:120],
+                "matched_tokens": list(highlight_reference.matched_tokens),
+            })
     _ = media_bytes
     settings = get_settings()
     limit = int(getattr(settings, "instagram_story_max_candidates", 10) or 10)

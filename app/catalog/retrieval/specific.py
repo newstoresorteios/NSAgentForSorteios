@@ -67,6 +67,13 @@ async def resolve_products_from_message_text(
     )
 
     store_url = extract_store_product_url(blob)
+    reference_hint = None
+    if not store_url:
+        from app.stories.story_highlight_references import current_workspace_reference
+
+        reference_hint = current_workspace_reference(blob, tenant_id=tenant_id)
+        if reference_hint is not None:
+            store_url = reference_hint.product_url
     if store_url:
         ref = reference_from_store_url(store_url)
         if ref:
@@ -125,6 +132,7 @@ async def resolve_products_from_message_text(
             "[sales.retrieval.message_identity]",
             {
                 "had_url": bool(store_url),
+                "highlight_reference": bool(reference_hint),
                 "had_reference": bool(ref),
                 "resolved": len(products),
                 "ids": [str(p.get("id")) for p in products[:5]],

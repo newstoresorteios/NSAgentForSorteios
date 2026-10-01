@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.db import get_conn, to_jsonb
 from app.ops.observability import log_event
 
-EVIDENCE_VERSION = 'story-worker-v4'
+EVIDENCE_VERSION = 'story-worker-v5'
 META = 'id, workspace_id, tenant_id, provider, instagram_account_id, story_media_id, analysis_version, generation, status, source_inbound_id, media_storage_path, media_sha256, media_mime, media_bytes, attempts, lease_owner, expires_at, last_error'
 
 
