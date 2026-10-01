@@ -49,6 +49,15 @@ def test_money_with_deadline_still_parses():
     assert _extract_budget_max('Até R$ 5000, entrega em 30 dias úteis') == 5000
 
 
+@pytest.mark.parametrize('budget,expected', [(30, None), (5000, 5000)])
+def test_duration_repair_preserves_a_real_prior_budget(budget, expected):
+    from app.catalog.specs.preference_normalize import normalize_sales_interpretation
+    interp = SalesInterpretation(domain='commerce', goal='inspect', preferences={'budget_max': budget},
+        references_previous_context=True, needs_clarification=False, confidence=.99)
+    normalized = normalize_sales_interpretation(interp, message_text='O prazo é de até 30 dias úteis?')
+    assert normalized.preferences.budget_max == expected
+
+
 def test_deadline_question_is_answered_without_price_or_poisoned_budget():
     from app.sales.inspection_copy import complete_inspection_copy
     incoming = IncomingMessage(channel='whatsapp', text='Não entendi. O prazo no site é de entrega ou envio?')

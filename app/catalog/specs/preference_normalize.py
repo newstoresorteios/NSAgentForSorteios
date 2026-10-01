@@ -656,7 +656,10 @@ def normalize_sales_interpretation(
 
     # Reject a duration interpreted as money, including a carried-over duration.
     duration_context = ' '.join(filter(None, [message_text, context_text]))
+    duration_values = {float(v.replace(',', '.')) for v in re.findall(
+        r'\b(\d+(?:[.,]\d+)?)\s*(?:dias?|semanas?|meses|horas?)\b', duration_context, flags=re.I)}
     if (preferences.budget_max is not None
+            and float(preferences.budget_max) in duration_values
             and re.search(r'prazo|dias? uteis|envio|entrega', _fold(message_text))
             and _extract_budget_max(duration_context) is None
             and not re.search(r'orcamento|investimento|reais|r\$', _fold(duration_context))):
