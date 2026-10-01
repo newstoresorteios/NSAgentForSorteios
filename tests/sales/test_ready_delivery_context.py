@@ -232,3 +232,98 @@ async def test_story_enrichment_survives_output_pipeline(runtime, lookup, monkey
     assert turn.outbound_snapshot['ready_delivery_check']['complete'] is True
     assert turn.outbound_snapshot['ready_delivery_check']['source'].endswith('.com/pronta-entrega')
     assert 'query' not in turn.outbound_snapshot['ready_delivery_check']
+
+
+def mixed_mido_story():
+    from app.stories.instagram_story_models import VisualProductRegion
+    resolution = StoryResolutionResult(
+        tenant_id='shop', story_media_id='mixed-story', match_status='ambiguous',
+        needs_clarification=True, catalog_query_base='', followup_terms=['mido', 'traska', 'baroncelli', 'heritage'],
+        clarification_options=['product:1', 'product:2'], reply_hint='Qual relógio do Story?',
+        story_regions=[
+            VisualProductRegion(brand_hypothesis='Mido', reference_hypothesis='Baroncelli Heritage',
+                                dial_color='branco', label='Mido com pulseira marrom').model_dump(),
+            VisualProductRegion(brand_hypothesis='Traska', reference_hypothesis='Venturer',
+                                dial_color='azul', label='Traska azul').model_dump(),
+        ],
+    )
+    return story_result_to_agent_result(resolution, incoming=incoming('quanto esse?'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('listing_complete', [True, False])
+async def test_mido_selection_keeps_visual_model_through_lookup_and_validation(runtime, lookup, monkeypatch, approved_critique, listing_complete):
+    from types import SimpleNamespace
+    import app.message_pipeline as pipeline
+    from app.agents.door_media import try_media_routes
+    from app.persona.persona_runtime import get_persona_runtime
+    lookup.return_value['products'] = [{
+        'name': 'Mido Baroncelli Heritage Branco', 'reference': 'M027.407',
+        'url': 'https://www.newstorerj.com/mido-baroncelli', 'listedAvailable': True,
+    }]
+    state = evolve_commerce_state(CommerceConversationState(), mixed_mido_story())
+    selected = await try_media_routes(incoming('o mido'), state)
+    lookup.assert_awaited_once_with('mido baroncelli heritage branco')
+    ref = selected.response_metadata['last_story_product']
+    assert ref['selected_option'] == 'Mido Baroncelli Heritage'
+    assert ref['selected_region_index'] == 0 and ref['match_status'] == 'ambiguous'
+    selected.response_metadata['ready_delivery_check']['complete'] = listing_complete
+    monkeypatch.setattr(pipeline, 'get_settings', lambda: SimpleNamespace(
+        audio_inbound_enabled=False, audio_outbound_enabled=False,
+        agent_trusted_fact_domains='sorteionewstore.com.br,newstorerj.com.br',
+    ))
+    monkeypatch.setattr(pipeline, 'load_commerce_conversation_state', lambda **kw: {})
+    active_runtime = get_persona_runtime()
+    monkeypatch.setattr('app.persona.persona_runtime.load_persona_runtime', lambda **kw: active_runtime)
+    monkeypatch.setattr('app.configuration.workspace.resolve_conversation_workspace', lambda *a: None)
+    monkeypatch.setattr(pipeline, 'generate_agent_reply_async', AsyncMock(return_value=selected))
+    result = await pipeline.process_incoming_message(incoming('o mido'), {})
+    if not listing_complete:
+        assert 'print nítido' in result.reply_text
+        assert 'Só mais um pouco' not in result.reply_text
+        assert result.safety_reason == 'factual_validation_failed'
+        assert result.response_metadata['factual_fallback_active'] is True
+        assert not result.response_metadata.get('factual_validation_repaired')
+        assert result.response_metadata['rejected_draft_factual_validation']['violations']
+        return
+    assert 'https://www.newstorerj.com/mido-baroncelli' in result.reply_text
+    assert 'Ainda não confirmei' in result.reply_text
+    assert 'Só mais um pouco' not in result.reply_text
+    assert not result.response_metadata.get('factual_fallback_active')
+    assert not (result.commercial_data or {}).get('products') and not result.handoff_required
+    state = evolve_commerce_state(state, result)
+    followup = unresolved_story_followup(incoming('qual o valor?'), state)
+    await enrich_story_ready_delivery(incoming('qual o valor?'), followup)
+    assert lookup.call_args.args[0] == 'mido baroncelli heritage branco'
+
+
+@pytest.mark.asyncio
+async def test_selected_mido_without_match_asks_for_evidence_without_promising_wait(runtime, lookup):
+    lookup.return_value['products'] = []
+    state = evolve_commerce_state(CommerceConversationState(), mixed_mido_story())
+    result = unresolved_story_followup(incoming('o mido'), state)
+    result = await enrich_story_ready_delivery(incoming('o mido'), result)
+    lookup.assert_awaited_once_with('mido baroncelli heritage branco')
+    assert 'print nítido' in result.reply_text
+    assert 'não confirmei uma correspondência' in result.reply_text
+    assert 'Só mais um pouco' not in result.reply_text
+    assert not result.commercial_data
+
+
+def test_switching_story_region_does_not_keep_previous_model_or_size(runtime):
+    state = evolve_commerce_state(CommerceConversationState(), mixed_mido_story())
+    first = unresolved_story_followup(incoming('o mido 39mm'), state)
+    assert first.response_metadata['last_story_product']['catalog_query'] == 'mido baroncelli heritage 39mm branco'
+    state = evolve_commerce_state(state, first)
+    second = unresolved_story_followup(incoming('o traska'), state)
+    assert second.response_metadata['last_story_product']['catalog_query'] == 'traska venturer azul'
+
+
+def test_price_followup_repairs_previously_saved_brand_only_query(runtime):
+    first = mixed_mido_story()
+    ref = first.response_metadata['last_story_product']
+    ref.update(selected_region_index=0, selected_option='Mido Baroncelli Heritage',
+               catalog_query_base='mido', catalog_query='mido')
+    state = evolve_commerce_state(CommerceConversationState(), first)
+    result = unresolved_story_followup(incoming('qual o valor?'), state)
+    assert result.response_metadata['last_story_product']['catalog_query'] == 'mido baroncelli heritage branco'

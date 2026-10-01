@@ -331,8 +331,95 @@ def test_enforce_default_fallback_is_customer_friendly():
         mode="enforce",
     )
     assert validated.safety_reason == "factual_validation_failed"
-    assert "Só mais um pouco" in validated.reply_text
-    assert "encontrar exatamente qual relógio" in validated.reply_text
+    assert "Não consegui confirmar" in validated.reply_text
+    assert "atendente?" in validated.reply_text
+    assert "Só mais um pouco" not in validated.reply_text
+
+
+def test_revalidating_empty_fallback_preserves_original_failure():
+    result = AgentResult(
+        reply_text="Confira https://inventado.example/mido",
+        intent="commerce",
+        response_metadata={"domain": "commerce", "instagram_story": True},
+    )
+    decision = _decision(result)
+    result = apply_factual_validation(result, decision=decision, mode="enforce")
+    rejected = result.response_metadata["rejected_draft_factual_validation"]
+    assert rejected["violations"][0]["reason"] == "url_not_present_in_verified_facts"
+    assert "print nítido" in result.reply_text
+    result = apply_factual_validation(result, decision=decision, mode="enforce")
+    assert result.response_metadata["factual_validation"]["valid"]
+    assert result.response_metadata["factual_validation"]["checked_claims"] == 0
+    assert result.safety_reason == "factual_validation_failed"
+    assert result.response_metadata["factual_fallback_active"] is True
+    assert not result.response_metadata.get("factual_validation_repaired")
+    assert result.response_metadata["rejected_draft_factual_validation"] == rejected
+
+
+def test_real_factual_repair_keeps_original_failure_for_audit():
+    result = AgentResult(reply_text="Confira https://inventado.example/mido", intent="commerce")
+    decision = _decision(result)
+    result = apply_factual_validation(result, decision=decision, mode="enforce")
+    result.reply_text = "Confira https://www.newstorerj.com.br"
+    result = apply_factual_validation(result, decision=decision, mode="enforce")
+    assert result.safety_reason is None
+    assert result.response_metadata["factual_validation_repaired"] is True
+    assert result.response_metadata["factual_fallback_active"] is False
+    assert result.response_metadata["rejected_draft_factual_validation"]["violations"]
+
+
+def _ready_listing_result():
+    return AgentResult(
+        reply_text="Confira https://www.newstorerj.com/mido-baroncelli",
+        intent="commerce",
+        response_metadata={
+            "domain": "commerce", "response_source": "instagram_story_followup",
+            "instagram_story": True,
+            "catalog_source": "https://www.newstorerj.com/pronta-entrega",
+            "ready_delivery_check": {
+                "source": "https://www.newstorerj.com/pronta-entrega", "complete": True,
+                "products": [{"name": "Mido Baroncelli Heritage", "price": 999,
+                              "stock": 99, "id": "foreign-id",
+                              "url": "https://www.newstorerj.com/mido-baroncelli"}],
+            },
+        },
+    )
+
+
+def test_ready_listing_url_is_evidence_even_with_legacy_domain_configuration():
+    from app.verify.factual_validator import build_fact_pack
+    result = _ready_listing_result()
+    domains = {"sorteionewstore.com.br", "newstorerj.com.br"}
+    report = validate_factual_response(result, decision=_decision(result), trusted_domains=domains)
+    assert report.valid and report.checked_claims == 1
+    pack = build_fact_pack(result)
+    assert not pack.monetary_values and not pack.product_ids
+    assert pack.stock_available is None
+    assert {e.entity_type for e in pack.evidence} == {"url"}
+    assert not result.commercial_data
+
+
+@pytest.mark.parametrize("invalid_case", [
+    "incomplete", "wrong_source", "wrong_workspace_store", "unlisted_url", "foreign_host",
+])
+def test_ready_listing_does_not_authorize_unverified_links(monkeypatch, invalid_case):
+    result = _ready_listing_result()
+    evidence = result.response_metadata["ready_delivery_check"]
+    if invalid_case == "incomplete":
+        evidence["complete"] = False
+    elif invalid_case == "wrong_source":
+        evidence["source"] = "https://other.example/pronta-entrega"
+    elif invalid_case == "wrong_workspace_store":
+        monkeypatch.setattr("app.verify.factual_validator.STORE_PRONTA_ENTREGA_URL",
+                            lambda: "https://other.example/pronta-entrega")
+    elif invalid_case == "unlisted_url":
+        result.reply_text = "Confira https://www.newstorerj.com/inventado"
+    else:
+        result.reply_text = "Confira https://evil.example/mido"
+        evidence["products"][0]["url"] = "https://evil.example/mido"
+    report = validate_factual_response(result, decision=_decision(result))
+    assert not report.valid
+    assert any(v.reason == "url_not_present_in_verified_facts" for v in report.violations)
 
 
 def test_derived_pix_from_list_price_is_grounded():

@@ -554,6 +554,33 @@ def build_fact_pack(
     pack = FactPack(source_payload=source_payload)
     pack.trusted_urls.add(_clean_url(STORE_PRONTA_ENTREGA_URL()))
     _collect_facts(source_payload, pack=pack, used_tray=used_tray)
+    # The second storefront supplies public listing URLs, never authoritative
+    # price/stock/SKU data. Trust only the exact URLs returned by this lookup.
+    listing = metadata.get("ready_delivery_check")
+    if (
+        isinstance(listing, dict)
+        and listing.get("complete") is True
+        and listing.get("source") == STORE_PRONTA_ENTREGA_URL()
+        and metadata.get("catalog_source") == listing.get("source")
+        and metadata.get("response_source") in {
+            "ready_delivery_storefront", "instagram_story", "instagram_story_followup",
+        }
+    ):
+        source_host = urlparse(listing["source"]).hostname
+        for product in listing.get("products") or []:
+            if not isinstance(product, dict):
+                continue
+            url = str(product.get("url") or "")
+            parsed = urlparse(url)
+            if (parsed.scheme != "https" or parsed.hostname != source_host
+                    or parsed.username or parsed.password or parsed.netloc != source_host):
+                continue
+            pack.trusted_urls.add(_clean_url(url))
+            _append_evidence(
+                pack, source=FactSource.TRAY_ADAPTER, entity_type="url",
+                key="ready_delivery_check.products.url", value=url,
+                metadata={"evidence_type": "public_listing", "stock_confirmed": False},
+            )
     _ground_catalog_display_pix(pack, result, used_tray=used_tray)
 
     payment = (result.commercial_data or {}).get("payment")
@@ -745,7 +772,8 @@ def validate_factual_response(
         # An official hostname does not prove an invented product path exists.
         product_url_requires_evidence = (decision.domain == 'commerce'
                                          and bool(pack.product_ids or (result.commercial_data or {}).get('products')
-                                                  or (result.commercial_data or {}).get('product_link'))
+                                                  or (result.commercial_data or {}).get('product_link')
+                                                  or (result.response_metadata or {}).get('ready_delivery_check'))
                                          and urlparse(url).path.strip('/'))
         if url in pack.trusted_urls or (_trusted_domain(url, domains) and not product_url_requires_evidence):
             report.supported_claims.append(
@@ -1081,8 +1109,10 @@ def apply_factual_validation(
         "recommendation_budget_miss",
         "answer_council_blocked",
     }
-    if report.valid and result.safety_reason == 'factual_validation_failed':
+    if (report.valid and report.checked_claims
+            and result.safety_reason == 'factual_validation_failed'):
         result.response_metadata['factual_validation_repaired'] = True
+        result.response_metadata['factual_fallback_active'] = False
         result.safety_reason = None
     if (
         mode == "enforce"
@@ -1095,7 +1125,11 @@ def apply_factual_validation(
             or ""
         ).strip()
         result.reply_text = fallback or (
-            "Só mais um pouco, estou tentando encontrar exatamente qual relógio é esse."
+            "Ainda não confirmei a referência exata do relógio desse Story. "
+            "Pode enviar um print nítido do mostrador ou a referência?"
+            if (result.response_metadata or {}).get("instagram_story") else
+            "Não consegui confirmar essas informações com segurança. "
+            "Quer que eu peça ajuda a um atendente?"
         )
         result.reply_modality = "text"
         result.reply_audio_bytes = None
@@ -1103,6 +1137,11 @@ def apply_factual_validation(
         result.reply_audio_url = None
         result.safety_reason = "factual_validation_failed"
         report.fallback_applied = True
+        result.response_metadata["factual_fallback_active"] = True
+        result.response_metadata.pop("factual_validation_repaired", None)
+        result.response_metadata.setdefault(
+            "rejected_draft_factual_validation", report.model_dump(mode="json"),
+        )
         if fallback and (result.commercial_data or {}).get("products"):
             repaired = validate_factual_response(
                 result, decision=decision, mode=mode,
@@ -1111,6 +1150,7 @@ def apply_factual_validation(
             if repaired.valid and repaired.checked_claims:
                 result.response_metadata["rejected_draft_factual_validation"] = report.model_dump(mode="json")
                 result.response_metadata["factual_validation_repaired"] = True
+                result.response_metadata["factual_fallback_active"] = False
                 result.safety_reason = None
                 report = repaired
 
