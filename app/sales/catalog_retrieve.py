@@ -388,6 +388,7 @@ async def retrieve_catalog_or_clarify(
         tray_result,
         interpretation,
         sales.evolve_commerce_state(state, tray_result),
+        recent_turns=recent_turns,
     )
     print("[sales.agent] responder", {"source": "openai" if final else "deterministic_fallback"})
     if final:

@@ -30,6 +30,11 @@ from app.sales.discovery import (
     _persona_qualification_question,
 )
 from app.sales.result_utils import mark_sales_result as _mark_sales_result
+from app.sales.consultative_response import (
+    SALES_CONVERSATION_POLICY,
+    needs_consultative_response,
+    sales_conversation_brief,
+)
 
 
 def _responder_contract_for_turn(
@@ -304,7 +309,7 @@ async def generate_clarification_reply(
         persona_runtime = get_persona_runtime()
     except Exception:
         persona_runtime = None
-    persona_blocks: list[str] = [SALES_CLARIFICATION_INSTRUCTIONS()]
+    persona_blocks: list[str] = [SALES_CLARIFICATION_INSTRUCTIONS(), SALES_CONVERSATION_POLICY]
     if contextual_question:
         persona_blocks.append(operator_message("contextual_discovery_instruction"))
         if contextual_question.get("adaptive"):
@@ -325,6 +330,7 @@ async def generate_clarification_reply(
     request_context = {
         "current_message": message.text,
         "interpretation": interpretation.model_dump(),
+        "SALES_CONVERSATION": sales_conversation_brief(interpretation, None),
         "context_note": context_note,
         "persona_qualification_hint": persona_question,
         "question_to_ask": {k: v for k, v in (contextual_question or {}).items() if k != "adaptive"},
@@ -460,9 +466,15 @@ async def sales_response_with_openai(
             used_openai_responder=False,
             used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
         )
+    sales_brief = sales_conversation_brief(interpretation, state)
+    from app.sales.ready_delivery import public_listing_evidence
+    ready_listing = public_listing_evidence(tray_result)
+    products = (tray_result.commercial_data or {}).get("products") or []
     if deterministic_tray_copy_ready(tray_result, plan) and not (
         interpretation is not None and interpretation.references_previous_context
-    ) and not (tray_result.response_metadata or {}).get("technical_requirements"):
+    ) and not (tray_result.response_metadata or {}).get("technical_requirements") and not (
+        needs_consultative_response(sales_brief, len(products))
+    ):
         return _mark_sales_result(
             tray_result,
             interpretation=interpretation,
@@ -483,9 +495,19 @@ async def sales_response_with_openai(
         turn_contract = _responder_contract_for_turn(plan, state)
         responder_prompt = (
             f"{turn_contract}\n\n"
+            f"{SALES_CONVERSATION_POLICY}\n\n"
             f"{channel_system_hint(message.channel)}\n\n"
             f"{format_capability_catalog_for_prompt()}"
         )
+        if ready_listing:
+            responder_prompt += (
+                "\nNeste turno FACTS é exclusivamente a lista pública de pronta entrega da loja .com. "
+                "Não use preço, prazo, estoque ou IDs da loja .com.br, da memória ou do histórico. "
+                "Os produtos são anúncios, não confirmações de estoque final ou de chegada no prazo. "
+                "Preserve nome e URL de cada opção recebida e o link FACTS.source para o catálogo completo. "
+                "Não invente adequação ao evento ou ao pulso: só relacione características que "
+                "constam dos nomes dos anúncios. Não ofereça encaminhamento automático."
+            )
         if plan.get("goal") in {"recommend", "compare"} or plan.get("intent") in {
             "recommendation", "product_comparison",
         }:
@@ -539,20 +561,21 @@ async def sales_response_with_openai(
                         "original_message": message.text,
                         "message_sent_at": "agora",
                         "plan": plan,
+                        "SALES_CONVERSATION": sales_brief,
                         "dialogue_phase": (
                             state.prompt_contract_payload().get("dialogue_phase")
                             if state
                             else None
                         ),
                         "STATE_FACTS": (
-                            state.interpreter_payload() if state else {}
+                            state.interpreter_payload() if state and not ready_listing else {}
                         ),
                         "WORKING_MEMORY": (
-                            build_working_memory(state) if state else {}
+                            build_working_memory(state) if state and not ready_listing else {}
                         ),
                         "AVAILABLE_CAPABILITIES": build_capability_catalog(),
-                        "RESPONSE_CONTRACT": responder_contract(state),
-                        "FACTS": tray_result.commercial_data or {"summary": tray_result.reply_text},
+                        "RESPONSE_CONTRACT": responder_contract(None if ready_listing else state),
+                        "FACTS": ready_listing or tray_result.commercial_data or {"summary": tray_result.reply_text},
                         "RETRIEVAL_RESULT": {
                             "status": tray_result.safety_reason,
                             "summary": tray_result.reply_text,
@@ -615,11 +638,17 @@ async def sales_response_with_openai(
             content = text_result.text
         if not content or not content.strip():
             return None
+        if ready_listing:
+            from app.sales.ready_delivery import validate_listing_reply
+            content = validate_listing_reply(content, tray_result)
+            if content is None:
+                return None
         products = (tray_result.commercial_data or {}).get("products")
         is_recommendation = plan.get("goal") in {"recommend", "compare"} or plan.get("intent") in {
             "recommendation", "product_comparison",
         }
-        if is_recommendation and isinstance(products, list) and products and not recommendation_identifies_candidate(
+        is_catalog_presentation = is_recommendation or plan.get('intent') == 'product_search'
+        if is_catalog_presentation and isinstance(products, list) and products and not recommendation_identifies_candidate(
             content, [product for product in products if isinstance(product, dict)]
         ):
             # Do not claim that options were presented when the model only says
@@ -632,7 +661,8 @@ async def sales_response_with_openai(
                 response_source="deterministic_fallback",
                 used_openai_responder=False,
                 used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
-                fallback_reason="recommendation_missing_candidate_identity",
+                fallback_reason=("recommendation_missing_candidate_identity" if is_recommendation
+                                 else "catalog_missing_candidate_identity"),
             )
         final_result = AgentResult(
             reply_text=html.unescape(content.strip()),
@@ -654,7 +684,7 @@ async def sales_response_with_openai(
             final_result,
             interpretation=interpretation,
             goal=plan.get("goal"),
-            response_source="openai",
+            response_source="ready_delivery_storefront" if ready_listing else "openai",
             used_openai_responder=True,
             used_tray=bool(tray_result.response_metadata.get("used_tray", True)),
         )

@@ -6,6 +6,7 @@ from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
 from app.sales.ready_delivery_context import resolve_query, scoped_context
 
 SOURCE = 'https://www.newstorerj.com/pronta-entrega'
+LISTING_CAVEAT = 'O estoque final e a entrega no prazo precisam ser confirmados antes de fechar.'
 
 
 def enabled():
@@ -64,9 +65,99 @@ def public_listing_evidence(result):
     return evidence
 
 
-async def try_ready_delivery(message, state=None):
+def contextual_listing_query(message, query, interpretation):
+    """Keep the customer's occasion/deadline out of the storefront's AND search.
+
+    Only replace prose for a semantically understood contextual request. Other
+    requests keep the existing exact terms. Constraints this source cannot verify
+    return to normal retrieval instead of silently broadening the search.
+    """
+    if interpretation is None or interpretation.domain != 'commerce':
+        return query
+    preferences = interpretation.preferences
+    # Do not silently drop technical/product constraints that this public
+    # name-only endpoint cannot express. The normal retrieval retains them.
+    if any(value not in (None, '') for value in (
+        preferences.budget_min, preferences.budget_max, preferences.material,
+        preferences.mechanism, preferences.crystal, preferences.style,
+    )):
+        return None
+    import re
+    from app.sales.ready_delivery_context import SIZE
+    attributes = [value for value in preferences.attributes
+                  if value != 'ready_to_ship' and not value.startswith('qual:')]
+    if any(not re.fullmatch(SIZE, value) for value in attributes):
+        return None
+    if not (preferences.occasion or preferences.delivery_deadline_text):
+        return query
+    # resolve_query already selected/refined a scoped earlier product identity.
+    if query != message.text:
+        return query
+    subject = interpretation.subject
+    from app.catalog.retrieval.tokens import extract_reference_code, preference_color_tokens
+    terms = [subject.brand, subject.model, extract_reference_code(query) or subject.reference,
+             subject.ean, *preference_color_tokens(interpretation)]
+    terms.extend(re.findall(SIZE, query, re.I))
+    terms.extend(attributes)
+    # A generic request has no product identity; use the complete category.
+    return ' '.join(dict.fromkeys(str(term).strip() for term in terms if term))[:500] or 'pronta entrega'
+
+
+def validate_listing_reply(content, result):
+    """Keep public evidence separate from transactional/product-sheet claims."""
+    import html
+    import re
+    from app.catalog.retrieval.text import fold_text
+    from app.llm.agent_contracts import AgentDecision, RiskAssessment
+    from app.verify.factual_validator import validate_factual_response
+    from app.sales.responder import recommendation_identifies_candidate
+
+    evidence = public_listing_evidence(result)
+    if not evidence:
+        return None
+    content = html.unescape(content.strip())
+    # No generic "found options" response and no lost actionable links.
+    if any(not recommendation_identifies_candidate(content, [
+               {key: value for key, value in product.items() if key in {'name', 'reference'}}])
+           or product['url'] not in content for product in evidence['products']):
+        return None
+    positions = [content.index(product['url']) for product in evidence['products']]
+    if positions != sorted(positions):
+        return None
+    from app.ops.handoff_consent import promises_handoff
+    if promises_handoff(content):
+        return None
+    folded = fold_text(content)
+    # This source contains no fulfillment commitment, price, stock count or
+    # promotion. Do not let a stylistic rewrite upgrade public listing evidence.
+    if re.search(r'\b(?:em estoque|estoque confirmado|entrega garantida|envio imediato|'
+                 r'chega(?:ra|m)?|recebera|garantimos|reservad[oa]|'
+                 r'enviamos|entregamos|postamos|reais|parcelas|vezes sem juros)\b', folded):
+        return None
+    if SOURCE not in content:
+        content = content.rstrip() + '\nCatálogo completo: ' + SOURCE
+    if LISTING_CAVEAT not in content:
+        content = content.rstrip() + '\n' + LISTING_CAVEAT
+    candidate = result.model_copy(deep=True)
+    candidate.reply_text = content
+    report = validate_factual_response(candidate, mode='enforce', decision=AgentDecision(
+        domain='commerce', risk=RiskAssessment(required_validations=['catalog_facts'])))
+    return content if report.valid else None
+
+
+async def try_ready_delivery(message, state=None, *, interpretation=None, recent_turns=None):
+    if interpretation is not None and (
+        interpretation.domain != 'commerce' or interpretation.goal in {'buy', 'compare', 'after_sales'}
+        or any((interpretation.purchase_action, interpretation.checkout_action,
+                interpretation.shipping_action, interpretation.order_action,
+                interpretation.payment_action, interpretation.image_request))
+    ):
+        return None
     query = resolve_query(message, state)
     if not query or not enabled():
+        return None
+    query = contextual_listing_query(message, query, interpretation)
+    if not query:
         return None
     evidence = await lookup(query)
     metadata = {'domain': 'commerce', 'response_source': 'ready_delivery_storefront',
@@ -76,14 +167,31 @@ async def try_ready_delivery(message, state=None):
     if not evidence['complete']:
         reply = 'Não consegui consultar nossa lista de pronta entrega agora. Isso não significa que o relógio esteja esgotado. Posso encaminhar para o comercial verificar?'
     elif evidence['requires_model']:
-        reply = 'Qual modelo, referência e cor você procura à pronta entrega? Vou consultar a lista da nossa loja: ' + SOURCE
+        reply = 'Você pode ver o catálogo de pronta entrega aqui: ' + SOURCE + '\nTem algum modelo em mente?'
     elif evidence['products']:
-        reply = listing(evidence) + '\nO estoque final precisa ser confirmado antes de fechar. Quer que o comercial confirme a peça e te ajude com a compra?'
+        from app.sales.consultative_response import sales_conversation_brief
+        brief = sales_conversation_brief(interpretation, state)
+        occasion = brief['known_preferences'].get('occasion')
+        opening = ('Pensando em ' + ' '.join(str(occasion).split())[:120]
+                   + ', vamos começar pelas opções de pronta entrega.\n\n') if occasion else ''
+        reply = (opening + listing(evidence) + '\nCatálogo completo: ' + SOURCE
+                 + '\n' + LISTING_CAVEAT)
     else:
-        reply = 'Não encontrei essa combinação de modelo e cor disponível na nossa lista atual de pronta entrega. Posso encaminhar para o comercial verificar essa peça para você?'
-    if not evidence['requires_model']:
+        reply = ('A consulta não trouxe opções confirmadas agora.' if query == 'pronta entrega' else
+                 'Não encontrei essa combinação de modelo e cor disponível na nossa lista atual de pronta entrega.')
+        reply += '\nCatálogo completo: ' + SOURCE + '\nPosso encaminhar para o comercial verificar para você?'
+    if not evidence['requires_model'] and (not evidence['complete'] or not evidence['products']):
         metadata['handoff'] = {'offer': True, 'required': False}
-    return AgentResult(reply_text=reply, intent='sales', response_metadata=metadata)
+    result = AgentResult(reply_text=reply, intent='sales', response_metadata=metadata)
+    if (evidence['complete'] and evidence['products'] and not evidence['requires_model']
+            and interpretation is not None):
+        from app.sales.responder import sales_response_with_openai
+        generated = await sales_response_with_openai(
+            message, {'intent': 'product_search', 'goal': interpretation.goal or 'find'},
+            result, interpretation, state=state, recent_turns=recent_turns)
+        if generated is not None:
+            return generated
+    return result
 
 
 async def try_reference_ready_delivery(message, interpretation):
