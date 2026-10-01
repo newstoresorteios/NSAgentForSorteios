@@ -22,6 +22,7 @@ EXCLUDE_DIR_NAMES = frozenset(
     {
         ".git",
         ".vercel",
+        ".codex-tool-cache",
         ".pytest_cache",
         "__pycache__",
         ".venv",

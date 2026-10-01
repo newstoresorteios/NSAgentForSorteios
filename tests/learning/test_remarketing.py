@@ -340,7 +340,7 @@ def test_new_inbound_cancels_old_cycle_and_schedules_only_a_fresh_cycle(monkeypa
     cursor = MagicMock()
     cursor.__enter__.return_value = cursor
     cursor.fetchone.side_effect = (
-        {"id": 30, "marketing_status": "eligible"},
+        {"id": 30, "marketing_status": "eligible", "workspace_id": "workspace-a"},
         {"id": 40},
         {"id": 41},
     )
@@ -403,6 +403,7 @@ def test_new_inbound_cancels_old_cycle_and_schedules_only_a_fresh_cycle(monkeypa
     assert "RETURNING id" in fresh_cycle
     assert len(touch_inserts) == 3
     assert {call.args[1]["active_id"] for call in touch_inserts} == {41}
+    assert {call.args[1]["workspace_id"] for call in touch_inserts} == {"workspace-a"}
     assert [call.args[1]["touch_number"] for call in touch_inserts] == [1, 2, 3]
     normalized_touch_sql = " ".join(touch_inserts[0].args[0].split())
     assert (

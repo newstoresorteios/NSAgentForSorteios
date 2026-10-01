@@ -152,13 +152,14 @@ def sync_remarketing_interaction(
             cur.execute(
                 """
                 INSERT INTO public.ai_remarketing_contacts (
-                    channel, identity_key, sender_key, sender_external_id,
+                    workspace_id, channel, identity_key, sender_key, sender_external_id,
                     visitor_id, conversation_id, source_conversation_ref,
                     sender_phone, sender_name, marketing_status,
                     last_customer_message_at, messaging_window_expires_at,
                     opted_out_at
                 )
                 VALUES (
+                    (SELECT workspace_id FROM public.ai_inbound_messages WHERE id=%(inbound_id)s),
                     %(channel)s, %(identity_key)s, %(sender_key)s,
                     %(sender_external_id)s, %(visitor_id)s, %(conversation_id)s,
                     %(source_conversation_ref)s, %(sender_phone)s, %(sender_name)s,
@@ -167,6 +168,7 @@ def sync_remarketing_interaction(
                     CASE WHEN %(opted_out)s THEN %(now)s ELSE NULL END
                 )
                 ON CONFLICT (channel, identity_key) DO UPDATE SET
+                    workspace_id = COALESCE(ai_remarketing_contacts.workspace_id, EXCLUDED.workspace_id),
                     sender_key = COALESCE(EXCLUDED.sender_key, ai_remarketing_contacts.sender_key),
                     sender_external_id = COALESCE(
                         EXCLUDED.sender_external_id,
@@ -203,9 +205,12 @@ def sync_remarketing_interaction(
                         ELSE ai_remarketing_contacts.opted_out_at
                     END,
                     updated_at = %(now)s
-                RETURNING id, marketing_status
+                WHERE ai_remarketing_contacts.workspace_id IS NULL
+                   OR ai_remarketing_contacts.workspace_id = EXCLUDED.workspace_id
+                RETURNING id, marketing_status, workspace_id
                 """,
                 {
+                    "inbound_id": inbound_id,
                     "channel": incoming.channel,
                     "identity_key": identity_key,
                     "sender_key": incoming.sender_key,
@@ -313,6 +318,7 @@ def sync_remarketing_interaction(
                 return
 
             opportunity = {
+                "workspace_id": contact.get("workspace_id"),
                 "contact_id": contact_id,
                 "stage": _remarketing_stage(state),
                 "last_inbound_id": inbound_id,
@@ -348,12 +354,12 @@ def sync_remarketing_interaction(
                 cur.execute(
                     """
                     INSERT INTO public.ai_conversation_statuses (
-                        contact_id, status, stage, last_inbound_id,
+                        workspace_id, contact_id, status, stage, last_inbound_id,
                         cart_session_id, cart_url, order_id, payment_url,
                         product_name, last_customer_message_at, next_scheduled_at
                     )
                     VALUES (
-                        %(contact_id)s, 'active', %(stage)s, %(last_inbound_id)s,
+                        %(workspace_id)s::uuid, %(contact_id)s, 'active', %(stage)s, %(last_inbound_id)s,
                         %(cart_session_id)s, %(cart_url)s, %(order_id)s,
                         %(payment_url)s, %(product_name)s, %(now)s,
                         %(now)s + make_interval(hours => %(first_touch)s)
@@ -368,9 +374,10 @@ def sync_remarketing_interaction(
                 cur.execute(
                     """
                     INSERT INTO public.ai_remarketing_attempts (
-                        conversation_status_id, touch_number, scheduled_at
+                        workspace_id, conversation_status_id, touch_number, scheduled_at
                     )
                     VALUES (
+                        %(workspace_id)s::uuid,
                         %(active_id)s,
                         %(touch_number)s,
                         %(now)s + make_interval(hours => %(hour)s)
@@ -394,6 +401,7 @@ def sync_remarketing_interaction(
                         updated_at = %(now)s
                     """,
                     {
+                        "workspace_id": contact.get("workspace_id"),
                         "active_id": active_id,
                         "touch_number": touch_number,
                         "hour": hour,
