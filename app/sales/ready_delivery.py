@@ -44,6 +44,26 @@ def listing(evidence):
         f"• {p['name']}\n{p['url']}" for p in products)
 
 
+def public_listing_evidence(result):
+    """Return verified second-store evidence without importing first-store facts."""
+    metadata = result.response_metadata or {}
+    evidence = metadata.get('ready_delivery_check')
+    if (metadata.get('response_source') != 'ready_delivery_storefront'
+            or metadata.get('catalog_source') != SOURCE or not isinstance(evidence, dict)
+            or evidence.get('source') != SOURCE or evidence.get('complete') is not True):
+        return None
+    products = evidence.get('products')
+    if not isinstance(products, list) or not products:
+        return None
+    for product in products:
+        if not isinstance(product, dict) or not product.get('name'):
+            return None
+        url = urlparse(str(product.get('url') or ''))
+        if url.scheme != 'https' or url.netloc != 'www.newstorerj.com':
+            return None
+    return evidence
+
+
 async def try_ready_delivery(message, state=None):
     query = resolve_query(message, state)
     if not query or not enabled():
@@ -64,6 +84,65 @@ async def try_ready_delivery(message, state=None):
     if not evidence['requires_model']:
         metadata['handoff'] = {'offer': True, 'required': False}
     return AgentResult(reply_text=reply, intent='sales', response_metadata=metadata)
+
+
+async def try_reference_ready_delivery(message, interpretation):
+    """Resolve an explicit shopping identity in the preferred storefront first."""
+    from app.catalog.retrieval.tokens import extract_reference_code
+    from app.catalog.retrieval.text import fold_text
+    from app.persona.persona_runtime import get_persona_runtime
+    from app.sales.ready_delivery_context import BLOCKED, EXPLICIT
+    import re
+
+    runtime = get_persona_runtime()
+    if (interpretation is None or interpretation.domain != 'commerce'
+            or interpretation.goal not in {'find', 'inspect'}
+            or not runtime or not runtime.prefer_ready_stock or not scoped_context(message, '')
+            or not enabled() or message.image_url or message.instagram_story):
+        return None
+    if any((interpretation.purchase_action, interpretation.checkout_action,
+            interpretation.order_action, interpretation.shipping_action,
+            interpretation.payment_action, interpretation.image_request)):
+        return None
+    text = fold_text(message.text or '')
+    if (re.search(BLOCKED, text) or re.search(r'\bnao\b.{0,25}' + EXPLICIT, text)
+            or 'sob encomenda' in text or 'seminovo' in text or 'usado' in text):
+        return None
+    reference = extract_reference_code(message.text)
+    if not reference:
+        return None
+    if extract_reference_code(str(message.text).replace(reference, '', 1)):
+        return None
+    subject = interpretation.subject
+    if subject.reference and reference.casefold() != subject.reference.strip().casefold():
+        return None
+    # A factual/technical inspection must still reach the normal product sheet.
+    identity_words = set(re.findall(r'[a-z0-9]+', fold_text(' '.join(
+        str(value or '') for value in (subject.brand, subject.model, reference)))))
+    bare_identity = set(re.findall(r'[a-z0-9]+', text)).issubset(identity_words)
+    needed = set(interpretation.information_needed)
+    if interpretation.goal == 'inspect' and not (
+            bare_identity or needed and needed.issubset({'price', 'inventory'})):
+        return None
+    evidence = await lookup(reference)
+    if not evidence['complete']:
+        return None
+    # Do not replace the requested SKU with a family match or a foreign store ID.
+    evidence['products'] = [p for p in evidence['products']
+                            if str(p.get('reference') or '').strip().casefold() == reference.casefold()]
+    evidence['result_count'] = len(evidence['products'])
+    if not evidence['products']:
+        return None
+    return AgentResult(
+        reply_text=listing(evidence) + '\nConfira o preço e as condições atuais e compre pelo link do anúncio.',
+        intent='sales', response_metadata={
+            'domain': 'commerce', 'response_source': 'ready_delivery_storefront',
+            'catalog_source': SOURCE, 'ready_delivery_check': evidence,
+            'ready_delivery_context': scoped_context(message, reference),
+            'ready_delivery_exact_reference': reference,
+            'clear_active_product': True, 'clear_presented_products': True,
+        },
+    )
 
 
 async def enrich_story_ready_delivery(message, result, *, execute_tool=None):

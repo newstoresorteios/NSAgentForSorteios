@@ -234,6 +234,25 @@ async def _execute_compiled_product_retrieval_unlocked(
                 execute_tool=tool)
             result.response_metadata['identity_inspection'] = True
             return result
+        if len(matches) > 1:
+            # New and pre-owned listings can share a manufacturer reference.
+            # This is a selection to clarify, never a missing catalog identity.
+            options = []
+            for product in matches:
+                unavailable = product_availability_state(product) == "unavailable"
+                options.append(
+                    f"- {product.get('name') or identity}"
+                    + (" (indisponível no momento)" if unavailable else "")
+                )
+            return AgentResult(
+                reply_text=f"Encontrei mais de um cadastro para {identity}:\n"
+                           + "\n".join(options) + "\nQual deles você quer consultar?",
+                intent="commerce", safety_reason="ambiguous_product",
+                commercial_data={"products": matches, "match_status": "ambiguous"},
+                response_metadata={"identity_inspection": True, "presented_products": True,
+                                   "product_resolution_state": "plausible_matches",
+                                   "clear_active_product": True},
+            )
         return AgentResult(reply_text="Não consegui confirmar uma ficha única para essa referência no catálogo.",
                            intent="commerce", safety_reason="product_not_found")
     initial_plan = ProductRetrievalCompiler.compile(interpretation)

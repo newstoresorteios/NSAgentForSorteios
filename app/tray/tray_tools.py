@@ -465,6 +465,19 @@ async def _search_products_payload(
 
 
 async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, Any]:
+    identities = {
+        key: str(args[key]).strip()
+        for key in ("reference", "ean")
+        if args.get(key) is not None and str(args[key]).strip()
+    }
+    if identities:
+        # A supplied identifier is stronger than model-generated descriptors.
+        # In particular tokens used to bypass reference/EAN entirely, while
+        # name/model filters could reject the SKU due to catalog spelling.
+        # Keep commercial constraints (price, availability, etc.) intact.
+        for key in ("query", "name", "model", "brand", "brand_id", "tokens"):
+            args.pop(key, None)
+        args.update(identities)
     tokens = _parse_search_tokens(args.pop("tokens", None))
     brand = args.get("brand")
     match_mode = str(args.pop("match_mode", "all") or "all").strip().lower()
@@ -541,6 +554,16 @@ async def search_products(client: TrayAdapterClient, **args: Any) -> dict[str, A
             continue
         payload = await _search_products_payload(client, filters, limit)
         result = _reduce_products(payload, limit)
+        if identities:
+            excluded = {str(item) for item in (exclude_product_ids or [])}
+            result["products"] = [
+                product for product in result["products"]
+                if str(product.get("id")) not in excluded
+                and all(
+                    str(product.get(key) or "").strip().casefold() == value.casefold()
+                    for key, value in identities.items()
+                )
+            ]
         if result["products"] or len(attempts) == 1:
             return result
     return {"products": []}

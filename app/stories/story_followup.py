@@ -13,6 +13,11 @@ from app.persona.persona_runtime import get_persona_runtime
 def active_story_reference(incoming, state, *, allow_image=False):
     if incoming.channel != "instagram" or incoming.instagram_story or (incoming.image_url and not allow_image):
         return None
+    from app.sales.ready_delivery_context import valid_context
+    if not incoming.image_url and valid_context(incoming, state):
+        # A later storefront selection supersedes the unresolved Story. Price
+        # and link follow-ups belong to that store, not the old visual guess.
+        return None
     ref = getattr(state, "last_story_product", None)
     if not isinstance(ref, dict) or ref.get("match_status") not in {"ambiguous", "not_found"}:
         return None

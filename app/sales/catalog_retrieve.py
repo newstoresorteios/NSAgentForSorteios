@@ -33,6 +33,15 @@ async def retrieve_catalog_or_clarify(
     sales = _sales()
     from .intent_router import route_sales_intent
 
+    from .ready_delivery import try_reference_ready_delivery
+    ready_delivery = await try_reference_ready_delivery(message, interpretation)
+    if ready_delivery is not None:
+        return sales._mark_sales_result(
+            ready_delivery, interpretation=interpretation, goal=interpretation.goal,
+            response_source='ready_delivery_storefront', used_openai_responder=False,
+            used_tray=True,
+        )
+
     # A store-policy answer has no SKU/lookup/mutation requirement. A broad
     # "buy" goal from the interpreter must not turn it into product selection.
     if (interpretation is not None

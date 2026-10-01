@@ -742,6 +742,11 @@ def apply_search_products_to_result(
     search_query: str | None = None,
 ) -> AgentResult:
     """Replace commercial_data.products with critique search_products evidence."""
+    from app.sales.ready_delivery import public_listing_evidence
+    if public_listing_evidence(result):
+        # This search only knows .com.br IDs/prices. It cannot replace the
+        # separately verified .com listing, even for the same manufacturer SKU.
+        return result
     products = _products_from_search_payload(
         api_facts.get("search_products") if isinstance(api_facts, dict) else None
     )
@@ -882,6 +887,10 @@ async def _regenerate_reply(
         from app.llm.openai_errors import OpenAIGatewayError
         from app.llm.openai_gateway import generate_text_output
 
+        from app.sales.ready_delivery import public_listing_evidence
+        ready_listing = public_listing_evidence(result)
+        if ready_listing:
+            api_facts = {}
         search_query = None
         for item in verdict.recommended_apis:
             if item.name == "search_products":
@@ -896,8 +905,9 @@ async def _regenerate_reply(
             search_query=search_query,
         )
         working = working.model_copy(deep=True)
-        working.commercial_data = _merge_payment_and_order_facts(
-            working.commercial_data or {}, api_facts, commerce_state)
+        if not ready_listing:
+            working.commercial_data = _merge_payment_and_order_facts(
+                working.commercial_data or {}, api_facts, commerce_state)
         from app.catalog.retrieval.offer_contract import validate_recommendation
         from app.verify.final_response import result_interpretation
         working = validate_recommendation(working, result_interpretation(working),
@@ -916,6 +926,12 @@ async def _regenerate_reply(
                 "content": (
                     operator_message('verify.response_critique._regenerate_reply.2807ee309e')
                     + format_capability_catalog_for_prompt()
+                    + ("\nA resposta atual usa a lista de pronta entrega da loja .com. "
+                       "ready_delivery_evidence confirma nome, referência e link desse anúncio. "
+                       "Preserve esse link. Não use preço, prazo, estoque ou IDs da loja .com.br "
+                       "para esse anúncio, mesmo com a mesma referência. Não afirme que o produto "
+                       "não foi encontrado. Encaminhe a compra ao anúncio com as condições atuais."
+                       if ready_listing else "")
                 ),
             },
             {
@@ -934,6 +950,7 @@ async def _regenerate_reply(
                         ),
                         "commercial_data": working.commercial_data or {},
                         "story_visual_hypothesis": working.response_metadata.get('story_probable_identity') or {},
+                        "ready_delivery_evidence": ready_listing or {},
                         "search_products_empty": empty_search,
                         "api_facts": ({"validated_products": products} if working.response_metadata.get("offer_contract") else api_facts),
                         "published_persona": persona_evidence((working.commercial_data or {}).get('products')),

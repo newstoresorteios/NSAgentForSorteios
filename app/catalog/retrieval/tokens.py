@@ -30,6 +30,11 @@ _REFERENCE_CODE_RE = re.compile(
     r"[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,}"
     r"|"
     r"[A-Z0-9]{2,}(?:\.[A-Z0-9]{2,}){2,}"
+    r"|"
+    # Long compact references (H13519711, L47954782) need no separator.
+    # Five consecutive digits avoid treating short model families (PH2000M,
+    # C63, SUB300), dimensions or movement codes as exact product identities.
+    r"[A-Z]{1,5}\d{5,10}(?:[A-Z]\d{0,3})?"
     r")\b",
     re.IGNORECASE,
 )
