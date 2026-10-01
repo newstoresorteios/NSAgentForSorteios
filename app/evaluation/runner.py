@@ -3,9 +3,6 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from datetime import datetime, timezone
-import hashlib
-import json
-import os
 import time
 from uuid import uuid4
 
@@ -100,12 +97,16 @@ async def evaluate_case(workspace_id, case_id, request_id, *, repair=True):
     settings = settings_from_bundle(get_settings(), bundle)
     if not settings.openai_api_key:
         raise ValueError('evaluation_model_not_configured')
-    versions = {'persona': persona.persona_version_id, 'configuration': bundle['version'],
-                'configuration_hash': hashlib.sha256(json.dumps(bundle['values'], sort_keys=True).encode()).hexdigest(),
-                'case': case['fingerprint'], 'model': settings.openai_model,
-                'code': os.getenv('VERCEL_GIT_COMMIT_SHA') or os.getenv('GIT_COMMIT_SHA') or 'working_tree',
-                'deployment': os.getenv('VERCEL_URL') or 'local',
-                'catalog': 'current_read_only', 'mode': 'historical_context_replay'}
+    from app.evaluation.version_manifest import build_version_manifest
+    versions = build_version_manifest(
+        persona_version=persona.persona_version_id,
+        bundle=bundle,
+        model=settings.openai_model,
+        judge_model=bundle['values'].get('historyEvaluationModel'),
+        case_hash=case['fingerprint'],
+        mode='historical_context_replay',
+        extra={'catalog': 'current_read_only'},
+    )
     if not repository.start_run(workspace_id, case_id, request_id, versions):
         return {'id': request_id, 'status': 'already_requested'}
     binding = bind_bundle(bundle, settings)

@@ -71,9 +71,14 @@ async def run_campaign(suite, persona, *, output_dir, code_hash, overrides=None,
     if any(c.environment!='simulated_commerce' for c in suite.scenarios):
         raise ValueError('controlled_campaign_requires_simulated_commerce')
     settings=settings_from_bundle(get_settings(),bundle)
-    versions={'suite':fingerprint(suite.model_dump()),'persona':fingerprint(persona.flow_params_dict()),
+    from app.evaluation.version_manifest import source_tree_hash
+    versions={'manifest_version':1,'suite':fingerprint(suite.model_dump()),
+              'persona':fingerprint(persona.flow_params_dict()),
+              'configuration':bundle.get('version'),
               'configuration_hash':fingerprint(bundle['values']),'model':settings.openai_model,
-              'judge_model':bundle['values']['historyEvaluationModel'],'deployment':code_hash}
+              'judge_model':bundle['values']['historyEvaluationModel'],
+              'code':code_hash,'source_hash':source_tree_hash(str(Path(__file__).resolve().parents[2])),
+              'deployment':code_hash}
     root=Path(output_dir);root.mkdir(parents=True,exist_ok=True)
     reports={};repeats={};binding=bind_bundle(bundle,settings)
     try:

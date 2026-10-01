@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-import os
 
 from app.configuration.runtime import bind_bundle,reset_bundle,settings_from_bundle
 from app.config import get_settings
@@ -60,11 +59,16 @@ async def run_turn(workspace,suite_id,scenario_key,run_id,step_index):
         persona=apply_policy_overrides(persona,bundle['values'],source='regression_candidate')
     settings=settings_from_bundle(get_settings(),bundle)
     if not settings.openai_api_key: raise ValueError('regression_model_missing')
-    versions={'suite':suite_row['fingerprint'],'persona':persona.persona_version_id,
-              'configuration':bundle['version'],'configuration_hash':repository.fingerprint(bundle['values']),
-              'model':settings.openai_model,'judge_model':bundle['values']['historyEvaluationModel'],
-              'code':os.getenv('VERCEL_GIT_COMMIT_SHA') or 'working_tree',
-              'deployment':os.getenv('VERCEL_URL') or 'local','environment':scenario.environment}
+    from app.evaluation.version_manifest import build_version_manifest
+    versions = build_version_manifest(
+        persona_version=persona.persona_version_id,
+        bundle=bundle,
+        model=settings.openai_model,
+        judge_model=bundle['values']['historyEvaluationModel'],
+        case_hash=repository.fingerprint(scenario.model_dump(mode='json')),
+        mode='multi_turn_regression',
+        extra={'suite': suite_row['fingerprint'], 'environment': scenario.environment},
+    )
     row,claimed=repository.claim_turn(workspace,suite_id,scenario_key,run_id,step_index,versions)
     if not claimed: return public_run(row)
     history=replay_history(scenario.history, row['turns'])
