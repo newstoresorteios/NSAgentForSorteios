@@ -157,6 +157,8 @@ def record_pipeline_block_review(
         result_metadata=result_metadata,
         intent=intent,
         channel=channel,
+        customer_text=customer_text,
+        agent_reply=agent_reply,
     )
     row = {
         "workspace_id": (
@@ -255,7 +257,7 @@ def fetch_recent_reviews_for_cluster(
             cur.execute(
                 """
                 SELECT id, conversation_key, customer_text, agent_reply,
-                       outcome, failure_codes, workspace_id
+                       outcome, failure_codes, workspace_id, inbound_id, response_id
                 FROM public.ai_attendance_reviews
                 WHERE tenant_id = %s
                   AND created_at >= %s
@@ -271,7 +273,7 @@ def fetch_recent_reviews_for_cluster(
         if isinstance(row, dict):
             row = tuple(row.get(key) for key in (
                 "id", "conversation_key", "customer_text", "agent_reply",
-                "outcome", "failure_codes", "workspace_id",
+                "outcome", "failure_codes", "workspace_id", "inbound_id", "response_id",
             ))
         codes = row[5] if len(row) > 5 else []
         if isinstance(codes, str):
@@ -291,6 +293,8 @@ def fetch_recent_reviews_for_cluster(
             "outcome": row[4],
             "failure_codes": [str(item) for item in codes],
             "workspace_id": row[6] if len(row) > 6 else None,
+            "inbound_id": row[7] if len(row) > 7 else None,
+            "response_id": row[8] if len(row) > 8 else None,
         })
     return reviews
 
@@ -497,6 +501,8 @@ async def run_attendance_learning_batch(
             "agent_reply": row.get("agent_reply"),
             "conversation_id": row.get("conversation_id"),
             "workspace_id": _workspace_id(row),
+            "inbound_id": row.get("inbound_id"),
+            "response_id": row.get("response_id"),
         })
 
     try:
@@ -627,7 +633,8 @@ async def run_attendance_learning_batch(
                 evidence_count=evidence,
                 confidence=confidence,
                 importance=importance,
-                source_review_ids=review_ids[:40],
+                # Retain the complete evidence set for later manual approval.
+                source_review_ids=review_ids,
                 metadata={"failure_code": code, "reflected": True},
             )
         except Exception as exc:
@@ -671,25 +678,28 @@ async def run_attendance_learning_batch(
             else:
                 # A pending proposal must not enter the active experience bank.
                 continue
-            sample = cluster_reviews[0]
-            try:
-                upsert_learning_case(
-                    tenant_id=tenant_id,
-                    workspace_id=workspace_id,
-                    failure_code=code,
-                    conversation_key=str(sample.get("conversation_id") or "") or None,
-                    customer_excerpt=str(sample.get("customer_text") or ""),
-                    bad_reply=str(sample.get("agent_reply") or ""),
-                    correction=insight_text,
-                    insight_id=insight_id,
-                    importance=importance,
-                )
-            except Exception as exc:
-                print("[attendance.learning.case_error]", {
-                    "error_type": type(exc).__name__,
-                    "error": str(exc)[:160],
-                    "code": code,
-                })
+            for sample in cluster_reviews:
+                try:
+                    upsert_learning_case(
+                        tenant_id=tenant_id,
+                        workspace_id=workspace_id,
+                        failure_code=code,
+                        conversation_key=str(sample.get("conversation_id") or "") or None,
+                        customer_excerpt=str(sample.get("customer_text") or ""),
+                        bad_reply=str(sample.get("agent_reply") or ""),
+                        correction=insight_text,
+                        insight_id=insight_id,
+                        source_inbound_id=sample.get("inbound_id"),
+                        source_response_id=sample.get("response_id"),
+                        source_review_ids=[sample["id"]],
+                        importance=importance,
+                    )
+                except Exception as exc:
+                    print("[attendance.learning.case_error]", {
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:160],
+                        "code": code,
+                    })
 
     summary = {
         "ok": not errors,

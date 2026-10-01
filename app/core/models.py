@@ -24,7 +24,7 @@ class ProductPreferences(BaseModel):
     recipient: str | None = None
     attributes: list[str] = Field(default_factory=list)
     explicit_no_preferences: list[
-        Literal["budget", "brand", "color", "style", "material", "occasion", "recipient", "attributes", "case_size", "strap", "gender", "mechanism", "crystal", "purchase_purpose"]
+        Literal["budget", "brand", "color", "style", "material", "occasion", "recipient", "attributes", "case_size", "strap", "gender", "mechanism", "crystal", "purchase_purpose", "delivery_deadline_text", "delivery_mode"]
     ] = Field(default_factory=list)
 
 

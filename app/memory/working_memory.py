@@ -43,6 +43,12 @@ def build_working_memory(
         "active_domain": payload.active_domain,
         "active_topic": payload.active_topic,
         "commercial_context_id": payload.commercial_context_id,
+        "active_goal": payload.active_goal,
+        "pending_question": payload.pending_question,
+        "questions_asked": payload.questions_asked,
+        "delivery_requirement": payload.canonical_context()['delivery_requirement'],
+        "preference_provenance": payload.canonical_context()['preference_provenance'],
+        "human_attendance": payload.human_attendance,
         "active_preferences": {key: value for key, value in payload.active_preferences.items()
                                if key in {'subject_brand', 'subject_product_type', 'budget_min', 'budget_max',
                                           'color', 'style', 'material', 'occasion', 'mechanism', 'crystal',

@@ -38,10 +38,16 @@ def grounded_catalog_fallback(result):
 
 
 def finalize_response(result, *, incoming, interpretation, previous_state):
+    from app.sales.delivery_deadline import preference_update_context
+    from app.ops.handoff_service import attach_handoff_summary
+    result.response_metadata.setdefault('preference_update_context', preference_update_context(incoming))
+    attach_handoff_summary(incoming, result, previous_state)
     from app.verify.catalog_delivery import enforce_photo_identity, apply_output_style
     from app.sales.order_delivery_copy import complete_order_delivery_copy
     if not result.handoff_required:
-        result = complete_order_delivery_copy(result, incoming.text)
+        turn_time = result.response_metadata['preference_update_context']
+        result = complete_order_delivery_copy(result, incoming.text,
+            reference_at=turn_time.get('observed_at') if turn_time.get('time_source') == 'message' else None)
     metadata = result.response_metadata
     hypothesis = metadata.get('story_probable_identity') or {}
     if (metadata.get('instagram_story') is True and metadata.get('story_match_status') == 'ambiguous'
@@ -117,7 +123,8 @@ def finalize_response(result, *, incoming, interpretation, previous_state):
     interpretation, previous_state = normalize_followup(incoming.text, interpretation, previous_state)
     issues = list((metadata.get("final_response_validation") or {}).get("rejected_issues") or [])
     products = [p for p in (result.commercial_data or {}).get("products", []) if isinstance(p, dict)]
-    if metadata.get("variant_refinement") is True and len(products) == 1:
+    if (metadata.get("variant_refinement") is True and len(products) == 1
+            and not metadata.get("inspection_requested_facts_covered")):
         from app.commerce.commerce_router import variant_refinement_sales_reply
 
         variant_reply = variant_refinement_sales_reply(

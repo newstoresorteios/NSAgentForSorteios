@@ -134,6 +134,34 @@ def test_fallback_without_preferences_preserves_all_known_criteria():
     assert after.active_preferences == before.active_preferences
 
 
+@pytest.mark.asyncio
+async def test_repair_uses_occasion_and_deadline_without_asking_for_a_model(monkeypatch):
+    query = AsyncMock(return_value=AgentResult(reply_text="Opções verificadas", intent="commerce"))
+    monkeypatch.setattr("app.sales.product_lookup.execute_compiled_product_retrieval", query)
+    state = CommerceConversationState(active_preferences={"occasion": "casamento", "style": "social",
+        "delivery_mode": "ready_delivery", "delivery_deadline_text": "próximo final de semana"})
+    item = SalesInterpretation(domain="commerce", goal="find", confidence=.9,
+        references_previous_context=True, needs_clarification=False,
+        conversation_feedback="repeated_question", answer_strategy="acknowledge")
+    result = await repair_conversation(incoming=IncomingMessage(text="Já respondi isso"), interpretation=item, state=state)
+    assert query.await_count == 1
+    used = query.call_args.args[0]
+    assert used.preferences.occasion == "casamento"
+    assert used.preferences.delivery_deadline_text == "próximo final de semana"
+    assert not used.purchase_action and not used.checkout_action
+    assert "Opções verificadas" in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_delivery_timing_correction_remains_sku_inspection_not_recommendation():
+    state = CommerceConversationState(active_product=CommerceProductReference(product_id='123', name='Certina DS Action'))
+    item = SalesInterpretation(domain='commerce', goal='inspect', confidence=.9, references_previous_context=True,
+        needs_clarification=False, reference_type='current_product', conversation_feedback='misunderstood')
+    result = await repair_conversation(incoming=IncomingMessage(
+        text='Não entendi. Quero saber se o prazo é de entrega ou envio do produto.'), interpretation=item, state=state)
+    assert result is None  # The ordinary read-only inspection now answers the corrected question.
+
+
 def test_orphaned_cart_is_cleared_but_preferences_are_kept():
     state = CommerceConversationState(cart_session_id="old", dialogue_phase="checkout", pending_action="choose_checkout_channel",
                                      active_preferences={"subject_model": "Open Heart Open Heart", "color": "preto"})

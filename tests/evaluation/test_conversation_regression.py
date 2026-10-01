@@ -207,7 +207,7 @@ async def test_multiturn_uses_generated_reply_and_new_state_not_golden_history(m
     suite=RegressionSuite(name='x',version=1,categories=['a'],scenarios=[{'key':'one','category':'a',
         'split':'development','initial_state':{'active_product':{'product_id':'OLD'}},
         'steps':[{'input':'first','expected':{'requirements':['a']}},{'input':'second','expected':{'requirements':['b']}}]}])
-    persona=SimpleNamespace(enabled=True,workspace_id='w',persona_version_id=1,
+    persona=SimpleNamespace(enabled=True,workspace_id='w',persona_version_id=1,flow_params_dict=lambda: {'key': 'test'},
         configuration_bundle={'version':1,'values':{'historyEvaluationModel':'judge'}})
     monkeypatch.setattr(persona_module,'load_persona_runtime',lambda **_:persona)
     monkeypatch.setattr(runner,'settings_from_bundle',lambda *_:SimpleNamespace(openai_api_key='test',openai_model='test'))

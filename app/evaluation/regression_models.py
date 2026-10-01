@@ -23,6 +23,7 @@ class Expectations(BaseModel):
 class RegressionStep(BaseModel):
     model_config = ConfigDict(extra='forbid')
     input: str = Field(min_length=1, max_length=8000)
+    recorded_at: str | None = None
     expected: Expectations
 
 

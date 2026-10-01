@@ -165,6 +165,12 @@ class CommerceConversationState(BaseModel):
     # found_available | found_unknown | found_unavailable | plausible_matches | None
     product_resolution_state: str | None = None
     active_preferences: dict[str, Any] = Field(default_factory=dict)
+    preference_provenance: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    active_goal: str | None = None
+    pending_question: str | None = None
+    questions_asked: list[dict[str, Any]] = Field(default_factory=list)
+    delivery_requirement: dict[str, Any] | None = None
+    human_attendance: dict[str, Any] = Field(default_factory=dict)
     conversation_repair_attempts: int = 0
     dialogue_phase: Literal["discovery", "shortlist", "buy", "checkout"] | None = None
     purchase_stage: str | None = None
@@ -260,6 +266,27 @@ class CommerceConversationState(BaseModel):
         except (TypeError, ValueError):
             return cls()
 
+    def canonical_context(self) -> dict[str, Any]:
+        """One projection of the persisted state, not a second writable snapshot."""
+        deadline = self.delivery_requirement
+        if deadline and deadline.get('raw_text') != self.active_preferences.get('delivery_deadline_text'):
+            deadline = None
+        return {
+            'objective_id': self.commercial_context_id,
+            'goal': self.active_goal,
+            'topic': self.active_topic,
+            'constraints': self.active_preferences,
+            'preference_provenance': {key: value for key, value in self.preference_provenance.items()
+                if key in self.active_preferences or value.get('status') == 'removed'},
+            'product_focus': self.active_product.model_dump(mode='json', include={'name', 'reference', 'brand'}) if self.active_product else None,
+            'order_focus': {'order_id': self.order_id, 'status': self.order_status} if self.order_id else None,
+            'pending_action': self.pending_action,
+            'pending_question': self.pending_question,
+            'questions_asked': self.questions_asked,
+            'delivery_requirement': deadline,
+            'human_attendance': self.human_attendance,
+        }
+
     def interpreter_payload(self) -> dict[str, Any]:
         """Expose semantic identity without asking the model to handle internal IDs."""
         active = self.active_product
@@ -286,6 +313,7 @@ class CommerceConversationState(BaseModel):
                 for product in self.last_presented_products
             ],
             "active_preferences": self.active_preferences,
+            "conversation_context": self.canonical_context(),
             "dialogue_phase": self.dialogue_phase,
             "purchase_stage": self.purchase_stage,
             "has_cart": bool(self.cart_session_id and self.cart_url),
@@ -643,6 +671,10 @@ def evolve_commerce_state(
 ) -> CommerceConversationState:
     state = previous.model_copy(deep=True)
     metadata = result.response_metadata or {}
+    handoff = metadata.get('handoff')
+    if isinstance(handoff, dict):
+        state.human_attendance = {key: handoff.get(key) for key in
+                                 ('confirmed', 'consent_reason', 'required', 'offer')}
     repair = metadata.get("conversation_repair") or {}
     if 'attempt' in repair:
         state.conversation_repair_attempts = int(repair['attempt'] or 0)
@@ -923,9 +955,10 @@ def evolve_commerce_state(
     active_preferences = _compact_preferences(
         metadata.get("active_preferences", state.active_preferences)
     )
-    from app.sales.preference_state import merge_preferences
+    from app.sales.preference_state import merge_preferences, update_preference_provenance
+    prior_preferences = {} if metadata.get('dialogue_phase_reset') else state.active_preferences
     active_preferences = merge_preferences(
-        {} if metadata.get('dialogue_phase_reset') else state.active_preferences,
+        prior_preferences,
         active_preferences,
     )
     try:
@@ -934,13 +967,39 @@ def evolve_commerce_state(
         active_preferences = _compact_preferences(
             merge_persisted_qualification_slots(
                 active_preferences,
-                state.active_preferences,
+                prior_preferences,
             )
         )
     except Exception as exc:
         print("[commerce.qual_slots]", {"error_type": type(exc).__name__})
-    if active_preferences:
-        state.active_preferences = active_preferences
+    state.active_preferences = active_preferences
+    context = metadata.get('preference_update_context') or {}
+    state.preference_provenance = update_preference_provenance(
+        {} if metadata.get('dialogue_phase_reset') else state.preference_provenance,
+        prior_preferences, active_preferences, context)
+    deadline_text = active_preferences.get('delivery_deadline_text')
+    if not deadline_text:
+        state.delivery_requirement = None
+    elif not state.delivery_requirement or state.delivery_requirement.get('raw_text') != deadline_text:
+        from app.sales.delivery_deadline import resolve_delivery_requirement
+        state.delivery_requirement = resolve_delivery_requirement(deadline_text, context)
+    if metadata.get('dialogue_phase_reset'):
+        state.questions_asked = []
+        state.pending_question = None
+        state.active_goal = None
+    parsed_interpretation = metadata.get('interpretation')
+    goal = metadata.get('goal') or (parsed_interpretation.get('goal') if isinstance(parsed_interpretation, dict) else None)
+    if goal:
+        state.active_goal = str(goal)
+    marker = metadata.get('discovery_question')
+    if isinstance(marker, dict) and marker:
+        question = {**marker, 'inbound_id': context.get('inbound_id')}
+        if not state.questions_asked or state.questions_asked[-1] != question:
+            state.questions_asked = (state.questions_asked + [question])[-20:]
+    if result.safety_reason == 'commerce_clarification':
+        state.pending_question = result.reply_text[:500]
+    elif metadata.get('presented_products') or metadata.get('goal') or metadata.get('clear_pending_action'):
+        state.pending_question = None
 
     if metadata.get("clear_active_product"):
         state.active_product = None

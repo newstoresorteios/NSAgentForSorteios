@@ -366,10 +366,13 @@ async def test_batch_kill_switch_does_not_promote(monkeypatch):
 async def test_batch_advances_cursor_and_skips_duplicate_reviews(monkeypatch):
     from app.configuration.runtime import current_bundle
     bundle = current_bundle()
+    bundle = {**bundle, "values": {**(bundle.get("values") or {}),
+                                   "learningAutoPromote": True, "learningAutoActivate": True}}
     monkeypatch.setattr("app.configuration.repository.load_workspace_bundle", lambda *_a, **_k: bundle)
     monkeypatch.setattr("app.configuration.runtime.settings_from_bundle", lambda base, bundle: base)
     saved: dict = {}
     persist_calls: list[int] = []
+    materialized_cases: list[dict] = []
 
     monkeypatch.setattr(
         "app.learning.attendance_learning.get_settings",
@@ -468,7 +471,7 @@ async def test_batch_advances_cursor_and_skips_duplicate_reviews(monkeypatch):
     )
     monkeypatch.setattr(
         "app.learning.attendance_learning.upsert_learning_case",
-        lambda **_k: 1,
+        lambda **kwargs: materialized_cases.append(kwargs) or 1,
     )
     monkeypatch.setattr(
         "app.learning.constitution.get_settings",
@@ -483,6 +486,10 @@ async def test_batch_advances_cursor_and_skips_duplicate_reviews(monkeypatch):
     assert summary["reviews_written"] == 2
     assert summary["conversations"] == 1
     assert summary["reflections"] >= 1
+    assert materialized_cases
+    assert materialized_cases[0]["source_inbound_id"] == 1
+    assert materialized_cases[0]["source_response_id"] == 11
+    assert materialized_cases[0]["source_review_ids"] == [11]
 
 
 def test_classify_pipeline_block_scope_gate():

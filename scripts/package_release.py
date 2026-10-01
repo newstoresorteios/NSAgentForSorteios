@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import os
 import re
 import sys
 import zipfile
@@ -23,6 +24,11 @@ EXCLUDE_DIR_NAMES = frozenset(
         ".git",
         ".vercel",
         ".codex-tool-cache",
+        ".codex-remote-attachments",
+        ".tools",
+        ".proof-temp",
+        ".proof-results",
+        ".venv-sdk-pilot",
         ".pytest_cache",
         "__pycache__",
         ".venv",
@@ -46,6 +52,9 @@ EXCLUDE_FILE_GLOBS = (
     ".DS_Store",
     ".env",
     ".env.*",
+    ".pytest-*",
+    ".vercel-*.json",
+    ".vercel-*.jsonl",
 )
 
 ALLOW_ENV_EXAMPLE = ".env.example"
@@ -142,18 +151,17 @@ def _is_excluded_file(rel: Path) -> bool:
 
 def iter_release_files(root: Path) -> list[Path]:
     selected: list[Path] = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            rel = path.relative_to(root)
-        except ValueError:
-            continue
-        if any(part in EXCLUDE_DIR_NAMES for part in rel.parts):
-            continue
-        if _is_excluded_file(rel):
-            continue
-        selected.append(path)
+    for directory, child_dirs, filenames in os.walk(root, followlinks=False):
+        child_dirs[:] = [name for name in child_dirs
+                        if name not in EXCLUDE_DIR_NAMES
+                        and not name.startswith((".tmp", ".pytest-"))
+                        and not (Path(directory).name == "supabase" and name == ".temp")
+                        and not (Path(directory) / name).is_symlink()]
+        for name in filenames:
+            path = Path(directory) / name
+            if path.is_symlink() or _is_excluded_file(path.relative_to(root)):
+                continue
+            selected.append(path)
     return sorted(selected)
 
 

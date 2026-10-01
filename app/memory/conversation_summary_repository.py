@@ -7,6 +7,7 @@ from typing import Any
 
 from app.db import get_conn, to_jsonb
 from app.memory.memory_models import ConversationSummaryDelta
+from app.memory.workspace_scope import memory_workspace
 
 
 def close_resolved_questions(
@@ -25,8 +26,12 @@ def close_resolved_questions(
 def get_conversation_summary(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     conversation_key: str,
 ) -> dict[str, Any] | None:
+    workspace_id = memory_workspace(workspace_id)
+    if not workspace_id:
+        return None
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -34,10 +39,11 @@ def get_conversation_summary(
                 SELECT *
                 FROM public.ai_conversation_summaries
                 WHERE tenant_id = %s
+                  AND workspace_id = %s::uuid
                   AND conversation_key = %s
                 LIMIT 1
                 """,
-                (tenant_id, conversation_key),
+                (tenant_id, workspace_id, conversation_key),
             )
             row = cur.fetchone()
     return dict(row) if row else None
@@ -46,15 +52,18 @@ def get_conversation_summary(
 def apply_summary_delta(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     conversation_key: str,
     delta: ConversationSummaryDelta,
     inbound_id: int | None = None,
     response_id: int | None = None,
     max_chars: int = 2500,
 ) -> dict[str, Any]:
+    workspace_id = memory_workspace(workspace_id, required=True)
     now = datetime.now(timezone.utc)
     existing = get_conversation_summary(
         tenant_id=tenant_id,
+        workspace_id=workspace_id,
         conversation_key=conversation_key,
     )
 
@@ -117,6 +126,7 @@ def apply_summary_delta(
                         approximate_token_count = %s,
                         updated_at = %s
                     WHERE tenant_id = %s
+                  AND workspace_id = %s::uuid
                       AND conversation_key = %s
                       AND version = %s
                     RETURNING *
@@ -134,6 +144,7 @@ def apply_summary_delta(
                         token_approx,
                         now,
                         tenant_id,
+                        workspace_id,
                         conversation_key,
                         expected_version,
                     ),
@@ -142,16 +153,17 @@ def apply_summary_delta(
                 cur.execute(
                     """
                     INSERT INTO public.ai_conversation_summaries (
-                        tenant_id, conversation_key, current_goal, summary,
+                        tenant_id, workspace_id, conversation_key, current_goal, summary,
                         resolved_points, open_questions, user_corrections,
                         commitments, last_failure, last_inbound_id,
                         last_response_id, approximate_token_count
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     """,
                     (
                         tenant_id,
+                        workspace_id,
                         conversation_key,
                         current_goal,
                         summary,
@@ -169,6 +181,7 @@ def apply_summary_delta(
     if existing and not row:
         current = get_conversation_summary(
             tenant_id=tenant_id,
+        workspace_id=workspace_id,
             conversation_key=conversation_key,
         ) or dict(existing)
         current["cas_conflict"] = True

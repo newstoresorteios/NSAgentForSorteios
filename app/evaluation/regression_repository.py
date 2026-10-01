@@ -44,6 +44,8 @@ def claim_turn(workspace, suite_id, scenario_key, run_id, step_index, versions):
             raise ValueError('regression_run_scope_mismatch')
         row=dict(row)
         if step_index < row['next_step']: return row,False
+        if row.get('status', 'running') != 'running':
+            raise ValueError('regression_run_is_terminal')
         if row['versions'] != versions: raise ValueError('regression_configuration_changed')
         if step_index!=row['next_step'] or row['active_step'] is not None:
             raise ValueError('regression_turn_out_of_order_or_running')
@@ -58,12 +60,42 @@ def finish_turn(workspace,run_id,step_index,result,state,simulation_state,comple
             SET turns=turns || %s::jsonb, state=%s, simulation_state=%s,
                 next_step=next_step+1,active_step=NULL,active_since=NULL,
                 status=%s,finished_at=CASE WHEN %s THEN now() ELSE NULL END
-            WHERE id=%s::uuid AND workspace_id=%s::uuid AND active_step=%s RETURNING *''',
+            WHERE id=%s::uuid AND workspace_id=%s::uuid AND active_step=%s AND status='running' RETURNING *''',
             (to_jsonb([result]),to_jsonb(state),to_jsonb(simulation_state),
              'completed' if completed else 'running',completed,run_id,workspace,step_index))
         row=cur.fetchone()
         if not row: raise ValueError('regression_turn_claim_lost')
         return dict(row)
+
+
+def expire_stale_runs(workspace, *, min_age_seconds=900):
+    """Close abandoned attempts as inconclusive; never repeat potentially paid calls.
+
+    The 15-minute lower bound exceeds the bounded per-turn provider timeout.
+    A new attempt requires a new explicit run identity.
+    """
+    age = max(900, int(min_age_seconds))
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute('''UPDATE public.ai_regression_runs
+            SET status='completed', active_step=NULL, active_since=NULL, finished_at=now(),
+                turns=turns || jsonb_build_array(jsonb_build_object(
+                    'step',next_step,'input','','replay',jsonb_build_object('error','abandoned_execution'),
+                    'grade',jsonb_build_object('outcome','inconclusive','execution_errors',
+                        jsonb_build_array('abandoned_execution'),'critical_errors','[]'::jsonb)))
+            WHERE workspace_id=%s::uuid AND status='running'
+              AND coalesce(active_since,created_at) < now()-make_interval(secs => %s)
+            RETURNING id''', (workspace, age))
+        regression = [str(row['id']) for row in cur.fetchall()]
+        cur.execute('''UPDATE public.ai_conversation_evaluation_runs
+            SET status='error', finished_at=now(),
+                result=coalesce(result,'{}'::jsonb) ||
+                    jsonb_build_object('outcome','inconclusive','error','abandoned_execution','automatic_retry',false)
+            WHERE workspace_id=%s::uuid AND status='running'
+              AND created_at < now()-make_interval(secs => %s)
+            RETURNING id''', (workspace, age))
+        historical = [str(row['id']) for row in cur.fetchall()]
+    return {'regression_runs': regression, 'historical_runs': historical,
+            'outcome': 'inconclusive', 'automatic_retry': False, 'minimum_age_seconds': age}
 
 
 def get_run(workspace,run_id):

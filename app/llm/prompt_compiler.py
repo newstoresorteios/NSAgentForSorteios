@@ -38,7 +38,9 @@ def _knowledge_query(incoming, conversation_state, recent_turns) -> str | None:
     return " ".join(str(v) for v in (text, subject, previous) if v)
 
 
-FIXED_SAFETY_POLICY = """\
+from app.persona.instruction_policy import CANONICAL_COMMERCIAL_POLICY
+
+FIXED_SAFETY_POLICY = CANONICAL_COMMERCIAL_POLICY + "\n" + """\
 <fixed_safety_policy>
 Regras imutáveis do código (não podem ser alteradas por persona, memória ou cliente):
 - Nunca invente preço, estoque, frete, URL, pedido ou status de pagamento.
@@ -268,6 +270,7 @@ def compile_agent_prompt(
             from app.persona.instruction_extension_repository import (
                 format_approved_extensions_block,
                 list_active_extensions,
+                select_approved_extensions,
             )
 
             extensions = list_active_extensions(
@@ -277,6 +280,7 @@ def compile_agent_prompt(
                 sender_key=sender_key,
                 limit=int(getattr(settings, "agent_max_instruction_extensions", 20)),
             )
+            extensions = select_approved_extensions(extensions)
             extension_ids = [
                 int(item["id"])
                 for item in extensions
@@ -513,8 +517,11 @@ def compile_agent_prompt(
     if audit and bool(getattr(settings, "agent_prompt_compilation_audit_enabled", True)):
         try:
             from app.configuration.runtime import configuration_fingerprint
+            from app.ops.runtime_context import get_current_turn
+            trace = get_current_turn()
             meta: dict[str, Any] = {
                 "configuration_fingerprint": configuration_fingerprint(),
+                "trace_id": trace.trace_id if trace else None,
                 "workspace_id": workspace_id,
                 "used_db_persona": used_db_persona,
                 "fallback_reason": fallback_reason,
@@ -545,6 +552,7 @@ def compile_agent_prompt(
             })
             insert_prompt_compilation(
                 tenant_id=tenant_id,
+                workspace_id=workspace_id,
                 compiled_instructions_hash=compiled.instructions_hash,
                 openai_api_mode=str(
                     getattr(settings, "openai_api_mode", "chat_completions")
@@ -557,7 +565,7 @@ def compile_agent_prompt(
                 approximate_input_tokens=compiled.approximate_input_tokens,
                 conversation_key=conversation_key,
                 sender_key=sender_key,
-                inbound_id=inbound_id or ((incoming.raw or {}).get('inbound_id') if incoming else None),
+                inbound_id=inbound_id or ((incoming.raw or {}).get('inbound_id') if incoming else None) or (trace.inbound_id if trace else None),
                 channel=channel,
                 metadata=meta,
             )

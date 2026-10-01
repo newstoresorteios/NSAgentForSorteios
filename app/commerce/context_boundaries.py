@@ -48,4 +48,10 @@ def ambiguous_number_question(text, turns, handles):
     ))
     if previous.get("role") == "assistant" and budget_prompt and "pedido" not in prompt:
         return None
+    if (previous.get("role") == "assistant" and not budget_prompt
+            and re.search(r"\b(?:pedido|compra)\b", prompt)
+            and re.search(r"\b(?:cpf|cnpj|e-?mail|documento)\b", prompt)):
+        candidate = re.sub(r"\D", "", str(text))
+        return (f"Você quer consultar o pedido {candidate}? "
+                "Se era o CPF, preciso dos 11 dígitos.")
     return "Esse número é o número do pedido ou o valor que você pretende gastar?"

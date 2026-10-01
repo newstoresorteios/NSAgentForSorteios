@@ -257,10 +257,16 @@ def detect_trade_in_or_appraisal_request(text: str) -> bool:
     normalized = (text or "").lower()
     if not normalized:
         return False
-    if any(keyword in normalized for keyword in TRADE_IN_KEYWORDS):
+    # Social invitations in supplier pitches are not an offer to trade a watch.
+    # Remove only the idiom, retaining any actual trade request elsewhere.
+    normalized = re.sub(r"\btroca(?:r(?:mos)?|mos)?\s+(?:uma\s+)?ideia\b", "", normalized)
+    def mentions(term: str) -> bool:
+        return bool(re.search(r"(?<!\w)" + re.escape(term).replace(r"\ ", r"\s+") + r"(?!\w)", normalized))
+
+    if any(mentions(keyword) for keyword in TRADE_IN_KEYWORDS):
         # Avoid false positives like "trocar o estado" / cart quantity wording alone.
         commerce_cue = any(
-            term in normalized
+            mentions(term)
             for term in (
                 "relogio",
                 "relógio",
@@ -276,14 +282,14 @@ def detect_trade_in_or_appraisal_request(text: str) -> bool:
                 "peça",
                 "seminovo",
                 "usado",
-                "avali",
+                "avaliar",
                 "compra",
                 "comprando",
                 "compram",
             )
         )
         if commerce_cue or any(
-            term in normalized
+            mentions(term)
             for term in ("seminovo", "semi novo", "usado", "avaliacao", "avaliação", "avaliar")
         ):
             return True

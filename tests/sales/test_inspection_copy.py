@@ -61,3 +61,58 @@ def test_explicit_identity_inspection_does_not_need_contextual_route_marker():
     answer = complete_inspection_copy(original, i, 'Qual o vidro?')
     assert answer.response_metadata['identity_inspection'] is True
     assert 'mineral' in answer.reply_text
+
+
+def test_product_title_does_not_turn_availability_into_a_specification_question():
+    original = result(name='Seiko Presage Automático SSA459J1', available=True, availability='30 dias úteis',
+                      mechanism='automático com corda manual')
+    answer = complete_inspection_copy(original, interpretation(goal='inspect'),
+                                     'Tem Seiko Presage Automático SSA459J1 disponível?')
+    assert 'disponível no catálogo' in answer.reply_text
+    assert '30 dias úteis' in answer.reply_text
+    assert 'Movimento:' not in answer.reply_text
+
+
+def test_exact_lookup_answers_timing_and_keeps_identity_even_when_routed_as_find():
+    original = result(name='Certina DS Action', reference='ABC-123', availability='Disponível em 30 dias úteis')
+    original.response_metadata = {}
+    answer = complete_inspection_copy(original, interpretation(goal='find', subject={'reference': 'ABC-123'}),
+        'Quero saber se o prazo indicado no site é de entrega ou envio do produto.')
+    assert 'Certina DS Action' in answer.reply_text
+    assert '30 dias úteis' in answer.reply_text
+    assert 'nem uma data exata de postagem' in answer.reply_text
+    assert 'não confirma a data de entrega' in answer.reply_text
+    assert answer.response_metadata['identity_inspection']
+
+
+def test_quoted_available_in_thirty_days_is_timing_not_a_new_inventory_search():
+    answer = complete_inspection_copy(result(name='Certina DS Action', availability='Disponível em 30 dias úteis'),
+        interpretation(goal='inspect'), 'Disponível em 30 dias úteis quer dizer que recebo ou que será enviado nesse prazo?')
+    assert 'nem uma data exata de postagem' in answer.reply_text
+    assert 'não confirma a data de entrega' in answer.reply_text
+
+
+def test_misunderstood_timing_rephrases_explanation_without_repeating_cep_question():
+    item = interpretation(goal='inspect')
+    item.conversation_feedback = 'misunderstood'
+    answer = complete_inspection_copy(result(name='Certina', availability='Disponível em 30 dias úteis'),
+        item, 'Não entendi, esse prazo é de entrega ou envio?')
+    assert 'Vou separar as etapas' in answer.reply_text
+    assert 'postagem' in answer.reply_text and 'recebido' in answer.reply_text
+    assert 'qual é o seu CEP' not in answer.reply_text
+
+
+def test_automatic_and_manual_winding_are_distinct_compatible_facts():
+    answer = complete_inspection_copy(result(mechanism='automático com corda manual'),
+                                     interpretation(goal='inspect'), 'Qual o movimento?')
+    assert 'automático com capacidade de corda manual' in answer.reply_text
+    facts = answer.response_metadata['technical_facts']['movement']
+    assert facts['movement_types'] == ['automatic']
+    assert facts['manual_winding'] is True and facts['conflicting_types'] is False
+
+
+def test_conflicting_movement_types_are_still_reported_and_capability_not_invented():
+    answer = complete_inspection_copy(result(mechanism='automático e quartzo'),
+                                     interpretation(goal='inspect'), 'Qual o movimento?')
+    assert 'informações diferentes' in answer.reply_text
+    assert answer.response_metadata['technical_facts']['movement']['manual_winding'] is None

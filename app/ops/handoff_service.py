@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from app.models import AgentResult, IncomingMessage
 from app.persona.site_knowledge import (
@@ -11,7 +12,68 @@ from app.persona.site_knowledge import (
 from app.ops.handoff_consent import (
     CONFIRMED_REASONS, consent_reason, offer_text,
     is_handoff_acceptance, last_assistant_offered_handoff, promises_handoff,
+    resolve_handoff_history,
 )
+
+
+def _summary_text(value, limit=300):
+    text = str(value or '')
+    text = re.sub(r'\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b', '[e-mail informado]', text)
+    text = re.sub(r'(?<!\d)\d{3}[. ]?\d{3}[. ]?\d{3}[- ]?\d{2}(?!\d)', '[documento informado]', text)
+    text = re.sub(r'(?<!\d)\d{2}[. ]?\d{3}[. ]?\d{3}[/ ]?\d{4}[- ]?\d{2}(?!\d)', '[documento informado]', text)
+    return text[:limit]
+
+
+def build_handoff_summary(incoming, result, commerce_state=None):
+    """Factual internal brief; never a generated claim of a completed transfer."""
+    from app.commerce.commerce_context import CommerceConversationState, checkout_fields_view
+    state = CommerceConversationState.from_payload(commerce_state)
+    context = state.canonical_context()
+    handoff = (result.response_metadata or {}).get('handoff') or {}
+    allowed = {'subject_brand', 'subject_model', 'subject_reference', 'budget_min', 'budget_max',
+               'occasion', 'style', 'color', 'material', 'mechanism', 'crystal',
+               'delivery_deadline_text', 'delivery_mode', 'explicit_no_preferences'}
+    constraints = {key: (_summary_text(value) if isinstance(value, str) else value)
+                   for key, value in state.active_preferences.items() if key in allowed}
+    product = context['product_focus']
+    product = {key: _summary_text(value) for key, value in product.items() if value} if product else None
+    return {
+        'version': 1, 'source': 'persisted_conversation_state',
+        'customer_request': _summary_text(incoming.text, 500),
+        'objective': state.active_goal, 'constraints': constraints,
+        'product_focus': product,
+        'order_focus': context['order_focus'] if state.order_status or state.order_session_id else None,
+        'pending_action': state.pending_action,
+        'pending_question': _summary_text(state.pending_question) or None,
+        'delivery_requirement': context['delivery_requirement'],
+        'known_checkout_fields': [key for key, value in checkout_fields_view(state.checkout_draft).items() if value],
+        'consent': {'confirmed': handoff.get('confirmed') is True,
+                    'reason': handoff.get('consent_reason')},
+        'unresolved_reason': result.safety_reason,
+        'inbound_id': (incoming.raw or {}).get('inbound_id'),
+    }
+
+
+def attach_handoff_summary(incoming, result, commerce_state=None):
+    handoff = (result.response_metadata or {}).get('handoff')
+    if isinstance(handoff, dict) and (handoff.get('confirmed') or handoff.get('offer')):
+        handoff['summary'] = build_handoff_summary(incoming, result, commerce_state)
+    return result
+
+
+def _pending_offer_copy(result, commerce_state=None):
+    from app.commerce.commerce_context import CommerceConversationState
+    state = CommerceConversationState.from_payload(
+        commerce_state or (result.response_metadata or {}).get('commerce_state'))
+    prefs = state.active_preferences
+    known = []
+    if prefs.get('occasion'):
+        known.append('ocasião: ' + _summary_text(prefs['occasion'], 80))
+    if prefs.get('delivery_deadline_text'):
+        known.append('prazo desejado: ' + _summary_text(prefs['delivery_deadline_text'], 100))
+    acknowledgment = ('Você já informou ' + '; '.join(known) + '. ') if known else ''
+    return (acknowledgment + 'Ainda não consegui concluir esta consulta com segurança. '
+            'A opção de encaminhar à equipe continua disponível, se você quiser.')
 
 
 def should_request_human_handoff(
@@ -69,6 +131,7 @@ def enrich_handoff_metadata(
     result: AgentResult,
     *,
     recent_turns: list[dict[str, Any]] | None = None,
+    commerce_state=None,
 ) -> AgentResult:
     confirmed = consent_reason(incoming, recent_turns)
     metadata = dict(result.response_metadata or {})
@@ -92,6 +155,11 @@ def enrich_handoff_metadata(
         # This bounded lookup already explains its evidence and offers help.
         # A handoff offer must not erase the requested list or outage explanation.
         pass
+    elif last_assistant_offered_handoff(resolve_handoff_history(incoming, recent_turns)):
+        # Repeated failure must not erase the customer's constraints or ask the
+        # same transfer question. A fresh affirmative answer still grants consent.
+        result.reply_text = _pending_offer_copy(result, commerce_state)
+        metadata['handoff_offer_repeated'] = True
     else:
         # Replace any premature transfer promise produced by tools, policies or validators.
         if failure:
@@ -116,6 +184,8 @@ def enrich_handoff_metadata(
     }
     metadata.setdefault("domain", "guardrail")
     result.response_metadata = metadata
+    if commerce_state is not None or not previous.get('summary'):
+        attach_handoff_summary(incoming, result, commerce_state)
     return result
 
 
@@ -170,4 +240,5 @@ def handoff_provider_payload(result: AgentResult) -> dict[str, Any] | None:
         "reason": handoff.get("reason"),
         "provider_action": handoff.get("provider_action"),
         "contact_whatsapp": handoff.get("contact_whatsapp"),
+        "summary": handoff.get("summary"),
     }

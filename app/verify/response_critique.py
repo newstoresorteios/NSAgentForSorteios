@@ -6,7 +6,7 @@ import json
 from typing import Any, Awaitable, Callable, Literal
 
 from openai import APIError
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from app.llm.capability_catalog import (
     RETRYABLE_API_NAMES,
@@ -33,8 +33,12 @@ from app.models import AgentResult, IncomingMessage
 from app.verify.quality_judge import (
     JudgeReport,
     JudgeVerdict,
+    ReviewDimensions,
+    CONTEXT_REVIEW_INSTRUCTIONS,
     attach_judge_report,
+    collect_judge_risk_signals,
     is_low_risk_judge_skip,
+    requires_context_enforcement,
 )
 from app.ops.runtime_context import get_current_turn
 from app.persona.site_knowledge import TRADE_IN_HANDOFF_MESSAGE
@@ -45,7 +49,8 @@ from app.ops.turn_runtime import LLMCallBudgetExceeded
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 def critique_system_prompt() -> str:
-    return operator_message("critique_system") + '\n' + operator_message('critique_availability_evidence') + '\n' + operator_message('judge_commercial_policy')
+    return '\n'.join((operator_message("critique_system"), operator_message('critique_availability_evidence'),
+                      operator_message('judge_commercial_policy'), CONTEXT_REVIEW_INSTRUCTIONS))
 
 
 class ShippingQuoteProductArgument(BaseModel):
@@ -113,7 +118,14 @@ class CritiqueVerdict(BaseModel):
     recommended_apis: list[RecommendedApiCall] = Field(default_factory=list)
     retry_instruction: str = ""
     better_reply_hint: str = ""
+    dimensions: ReviewDimensions = Field(default_factory=ReviewDimensions)
     _execution_error: str | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def reject_failed_dimension(self):
+        if self.dimensions.has_failure():
+            self.pass_check = False
+        return self
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema, handler):
@@ -128,7 +140,7 @@ class CritiqueLoopReport(BaseModel):
     mode: Literal["off", "shadow", "enforce"] = "off"
     attempts: int = 0
     max_retries: int = 0
-    approved: bool | None = True
+    approved: bool | None = None
     review_status: str = "skipped"
     unavailable_reason: str | None = None
     configured_mode: str | None = None
@@ -138,6 +150,9 @@ class CritiqueLoopReport(BaseModel):
     regenerated: bool = False
     applied_handoff: bool = False
     applied_factual_fallback: bool = False
+    critical_context: bool = False
+    planned_review_calls: list[str] = Field(default_factory=list)
+    repair_budget_unavailable: bool = False
 
 
 def _last_assistant_reply(recent_turns: list[dict[str, Any]] | None) -> str | None:
@@ -488,6 +503,16 @@ async def run_critique_judge(
         parsed = parse_result.parsed
         if not isinstance(parsed, CritiqueVerdict):
             raise ValueError("critique_schema_missing")
+        parsed.dimensions.delivery = None  # Generation is not delivery confirmation.
+        signals = collect_judge_risk_signals(
+            result=result, incoming=incoming, recent_turns=recent_turns,
+            risk_score=0, factual_valid=True, openai_call_count=0,
+        )
+        if parsed.pass_check and set(signals) & {
+            "contextual_clarification_requires_review", "conversation_repair_requested",
+            "repeated_clarification_question",
+        } and not parsed.dimensions.context_verified():
+            parsed._execution_error = "context_review_dimensions_unverified"
         return parsed
     except (
         APIError,
@@ -1015,6 +1040,7 @@ async def apply_response_critique_loop(
         risk_score=risk_score,
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
+        recent_turns=recent_turns,
     )
     if critique_mode not in {"off", "shadow", "enforce"}:
         critique_mode = "shadow"
@@ -1038,8 +1064,12 @@ async def apply_response_critique_loop(
         recent_turns=recent_turns,
     )
     if fast_skip:
-        report.attempts = 1
-        report.approved = True
+        report.attempts = int(fast_verdict is not None)
+        report.approved = fast_verdict.pass_check if fast_verdict is not None else None
+        report.review_status = (
+            "approved" if report.approved is True else "rejected" if report.approved is False else "skipped"
+        )
+        report.applied_handoff = bool(fast_result.handoff_required and fast_verdict is not None)
         if fast_verdict is not None:
             report.verdicts.append(fast_verdict.model_dump(mode="json"))
         fast_result.response_metadata = dict(fast_result.response_metadata or {})
@@ -1054,7 +1084,7 @@ async def apply_response_critique_loop(
         print("[agent.critique.fast]", {"reason": fast_skip, "mode_reason": mode_reason})
         return fast_result, report
 
-    skip, skip_reason = is_low_risk_judge_skip(incoming, result)
+    skip, skip_reason = is_low_risk_judge_skip(incoming, result, recent_turns)
     if skip:
         result.response_metadata = dict(result.response_metadata or {})
         result.response_metadata["response_critique"] = {
@@ -1082,7 +1112,9 @@ async def apply_response_critique_loop(
         risk_score=risk_score,
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
+        recent_turns=recent_turns,
     )
+    report.critical_context = requires_context_enforcement(result, gate_signals)
     # Deterministic fail always warrants the LLM path in enforce (and observe in shadow).
     if seeded_fail:
         run_llm = True
@@ -1162,10 +1194,24 @@ def _handle_unavailable_review(result: AgentResult, report: CritiqueLoopReport, 
         if isinstance(item, dict)
     ]
     response_source = str(metadata.get("response_source") or "")
+    known_review_failure = any(not verdict.get("pass_check", True) for verdict in report.verdicts)
+    if known_review_failure or (report.critical_context and result.safety_reason == "commerce_clarification"):
+        result.reply_text = operator_message("critique_handoff")
+        result.handoff_required = True
+        result.safety_reason = "critique_unavailable"
+        report.applied_handoff = True
+        return result
     # An unavailable prose review must not erase an answer already grounded by
     # the factual validator and live catalog evidence. The review can retry on a
     # later turn; sending a generic handoff here loses the customer's subject.
-    if validation.get("valid") is True and products and not result.handoff_required:
+    ready = metadata.get("ready_delivery_check") or {}
+    grounded_public_listing = (
+        response_source == "ready_delivery_storefront"
+        and ready.get("complete") is True
+        and bool(ready.get("products"))
+        and ready.get("stock_confirmed") is False
+    )
+    if validation.get("valid") is True and (products or grounded_public_listing) and not result.handoff_required:
         report.approved = None
         report.review_status = "unavailable"
         return result
@@ -1229,9 +1275,28 @@ async def _run_response_critique_loop(
     runtime = get_current_turn()
     if runtime is not None and (current.reply_text or "").strip():
         runtime.llm_budget.response_available()
+    # Prefer funding the full useful correction. A valid first review still
+    # matters when repair cannot fit: an approved draft can be delivered without
+    # spending the extra calls, while a rejected draft must take the safe path.
+    planned_calls = [] if seed_verdict is not None else ["judge"]
+    if critique_mode == "enforce" and retries > 0:
+        planned_calls += ["response_composition", "judge"]
+        if runtime is not None:
+            from app.llm.llm_call_policy import resolve_turn_llm_budget
+            runtime.promote_budget(resolve_turn_llm_budget(complex_turn=True)["max_calls"])
+    report.planned_review_calls = planned_calls
+    budget_available = runtime is None or runtime.llm_budget.can_afford(planned_calls)
+    if (not budget_available and seed_verdict is None
+            and runtime.llm_budget.can_afford(["judge"])):
+        report.repair_budget_unavailable = True
+        report.planned_review_calls = ["judge"]
+        budget_available = True
+    if not budget_available:
+        runtime.register_avoided_llm_call("complete_review_budget_unavailable", intended_call_type="judge")
+        current = _handle_unavailable_review(current, report, "complete_review_budget_unavailable")
     seeds = _seed_args_from_context(state=commerce_state, result=current)
     attempt = 0
-    while True:
+    while budget_available:
         attempt += 1
         report.attempts = attempt
         if attempt == 1 and seed_verdict is not None:
@@ -1294,6 +1359,7 @@ async def _run_response_critique_loop(
             # initially fitted the normal budget. Respect the operator's cap.
             runtime.promote_budget(resolve_turn_llm_budget(complex_turn=True)["max_calls"])
         if runtime is not None and not runtime.llm_budget.can_afford(["response_composition", "judge"]):
+            report.repair_budget_unavailable = True
             runtime.register_avoided_llm_call("repair_requires_composition_and_review", intended_call_type="response_composition")
             current = _handle_unavailable_review(current, report, "repair_budget_unavailable")
             break
@@ -1313,6 +1379,7 @@ async def _run_response_critique_loop(
         )
         if regenerated is None:
             report.approved = False
+            report.review_status = "rejected"
             current.reply_text = operator_message("critique_handoff")
             current.handoff_required = True
             current.safety_reason = "response_critique_regenerate_failed"
@@ -1324,19 +1391,23 @@ async def _run_response_critique_loop(
 
     # Mirror into legacy quality_judge metadata for observability continuity.
     last = report.verdicts[-1] if report.verdicts else None
-    if last is not None and report.review_status != "unavailable":
+    if report.review_status in {"approved", "rejected", "unavailable"}:
         attach_judge_report(
             current,
             JudgeReport(
                 triggered=True,
                 mode=critique_mode,
                 reason="response_critique",
+                approved=report.approved,
+                review_status=report.review_status,
+                unavailable_reason=report.unavailable_reason,
                 verdict=JudgeVerdict(
                     score=int(last.get("score") or 0),
                     pass_check=bool(last.get("pass_check")),
                     issues=list(last.get("issues") or []),
                     summary=str(last.get("summary") or ""),
-                ),
+                    dimensions=last.get("dimensions") or {},
+                ) if last is not None and report.review_status != "unavailable" else None,
                 applied=report.applied_handoff,
             ),
         )

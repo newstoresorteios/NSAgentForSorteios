@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.db import get_conn, get_returning_id, to_jsonb
+from app.persona.instruction_policy import require_valid_instruction, validate_instruction
 
 
 def hash_instruction(text: str) -> str:
@@ -156,6 +157,18 @@ def approve_extension(
             target = cur.fetchone()
             if not target:
                 raise ValueError("extension_not_found")
+            cur.execute(
+                """SELECT id, instruction_text FROM public.ai_agent_instruction_extensions
+                   WHERE tenant_id = %s AND workspace_id IS NOT DISTINCT FROM %s::uuid
+                     AND status = 'active' AND id <> %s
+                     AND (expires_at IS NULL OR expires_at > now())""",
+                (tenant_id, target.get("workspace_id"), extension_id),
+            )
+            validation = require_valid_instruction(target["instruction_text"], list(cur.fetchall() or []))
+            cur.execute(
+                "UPDATE public.ai_agent_instruction_extensions SET metadata = COALESCE(metadata, '{}'::jsonb) || %s WHERE id = %s",
+                (to_jsonb({"policy_validation": validation}), extension_id),
+            )
             cur.execute(
                 """
                 UPDATE public.ai_agent_instruction_extensions
@@ -328,17 +341,21 @@ def reject_extension(
     return dict(row)
 
 
-def format_approved_extensions_block(extensions: list[dict[str, Any]]) -> str:
-    if not extensions:
-        return "<approved_instruction_extensions>\n</approved_instruction_extensions>"
-    lines = ["<approved_instruction_extensions>"]
-    seen = set()
+def select_approved_extensions(extensions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The compiler records these actual admitted IDs, not the original DB list."""
+    accepted = []
     for item in extensions:
+        text = (item.get("instruction_text") or "").strip()
+        if text and validate_instruction(text, accepted)["status"] == "passed":
+            accepted.append(item)
+    return accepted
+
+
+def format_approved_extensions_block(extensions: list[dict[str, Any]]) -> str:
+    lines = ["<approved_instruction_extensions>"]
+    for item in select_approved_extensions(extensions):
         key = item.get("extension_key") or "extension"
         text = (item.get("instruction_text") or "").strip()
-        normalized = ' '.join(text.casefold().split())
-        if text and normalized not in seen:
-            seen.add(normalized)
-            lines.append(f"- [{key}] {text}")
+        lines.append(f"- [{key}] {text}")
     lines.append("</approved_instruction_extensions>")
     return "\n".join(lines)

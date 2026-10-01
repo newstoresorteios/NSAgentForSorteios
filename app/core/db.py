@@ -474,9 +474,16 @@ def ensure_tables() -> None:
                     metadata jsonb NOT NULL DEFAULT '{}'::jsonb
                 );
 
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_contact_memory_active_key
-                ON public.ai_contact_memories(tenant_id, sender_key, memory_key)
-                WHERE status = 'active';
+                -- Never recreate the legacy global key after scoped migrations.
+                DO $memory_index$
+                BEGIN
+                  IF to_regclass('public.uq_ai_contact_memory_workspace_active_key') IS NULL THEN
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_contact_memory_active_key
+                    ON public.ai_contact_memories(tenant_id, sender_key, memory_key)
+                    WHERE status = 'active';
+                  END IF;
+                END
+                $memory_index$;
 
                 CREATE TABLE IF NOT EXISTS public.ai_conversation_summaries (
                     id bigserial PRIMARY KEY,
@@ -1677,7 +1684,7 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
         workspace_id = (
             persona_runtime.get("workspace_id")
             if isinstance(persona_runtime, dict)
-            else None
+            else safe_data.get("workspace_id")
         )
         try:
             safe_data["workspace_id"] = str(UUID(str(workspace_id))) if workspace_id else None
@@ -1733,6 +1740,14 @@ def insert_agent_response(data: dict[str, Any]) -> int | None:
     inbound_id = safe_data.get("inbound_id")
     workspace_id = safe_data.get("workspace_id")
     if response_id is not None and inbound_id is not None and workspace_id:
+        try:
+            from app.persona.prompt_trace_repository import link_prompt_response
+            link_prompt_response(workspace_id=str(workspace_id), inbound_id=int(inbound_id),
+                                 response_id=int(response_id))
+        except Exception as exc:
+            from app.ops.observability import log_exception
+            log_exception("prompt.response_link_failed", exc,
+                          {"inbound_id": inbound_id, "response_id": response_id})
         try:
             from app.ops.central_conversation_sync import sync_agent_conversation
 

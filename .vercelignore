@@ -4,7 +4,16 @@
 .venv
 venv
 .tools
+.proof-temp
+.proof-results
+.venv-sdk-pilot
 .codex-tool-cache
+.codex-remote-attachments
+.tmp*
+.pytest-*
+.vercel-*.json
+.vercel-*.jsonl
+supabase/.temp
 .pytest_cache
 __pycache__
 **/__pycache__

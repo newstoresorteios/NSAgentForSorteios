@@ -28,6 +28,35 @@ def labelled_fact(product, keys, labels):
     return next(iter(unique.values()), None)
 
 
+def inspection_question(text, product, interpretation):
+    """A named product is the subject, not a request for every word in its title."""
+    query = fold_text(text)
+    names = [product.get('name'), interpretation.subject.model, interpretation.subject.reference]
+    for name in sorted((fold_text(value) for value in names if value), key=len, reverse=True):
+        if len(name) >= 3:
+            query = re.sub(r'(?<!\w)' + re.escape(name) + r'(?!\w)', ' ', query)
+    return query
+
+
+def movement_facts(observed):
+    """Winding capability and energy source are different from movement type."""
+    values = set(observed)
+    types = values - {'solar'}
+    manual_winding = 'manual' in types
+    if 'automatic' in types:
+        types.discard('manual')
+    return {'movement_types': sorted(types), 'manual_winding': True if manual_winding else None,
+            'power_source': 'solar' if 'solar' in values else None,
+            'conflicting_types': len(types) > 1}
+
+
+def is_delivery_timing_question(text):
+    """A question about the meaning of a deadline does not authorize a purchase."""
+    query = fold_text(text)
+    return bool(re.search(r'prazo|dias uteis|postagem|data de (?:entrega|envio)|quando.{0,20}(?:chega|envia)', query)
+                and not re.search(r'quero comprar|vou levar|pode fechar|gere o carrinho', query))
+
+
 def complete_inspection_copy(result, interpretation, text):
     if interpretation is None:
         return result
@@ -36,12 +65,13 @@ def complete_inspection_copy(result, interpretation, text):
         return result
     product = products[0]
     identity = result.response_metadata.get('identity_inspection') or (
-        interpretation.goal == 'inspect' and interpretation.subject.reference
+        interpretation.subject.reference
         and fold_text(interpretation.subject.reference) == fold_text(product.get('reference')))
     if not identity:
         return result
-    query = fold_text(text)
+    query = inspection_question(text, product, interpretation)
     if (re.search(r'prazo|dias uteis|entrega|envio', query)
+            and not re.search(r'pronta entrega|estoque', query)
             and not re.search(r'preco|valor|orcamento|\br\$|reais|caracteristica|ficha tecnica|vidro|cristal|movimento|mecanismo|calibre|pulseira|caixa|mostrador|resistencia', query)):
         literal = str(product.get('availability') or '').strip()
         updated = result.model_copy(deep=True)
@@ -51,6 +81,15 @@ def complete_inspection_copy(result, interpretation, text):
             'Para consultar o transporte até você, qual é o seu CEP?'
             if literal else 'A ficha consultada não confirma o prazo de disponibilidade. '
             'Preciso confirmar esse prazo e consultar o transporte para informar a previsão de chegada.')
+        if interpretation.conversation_feedback and literal:
+            updated.reply_text = (
+                f'Vou separar as etapas: a disponibilidade cadastrada é “{literal}”. '
+                'A ficha não confirma a data de entrega no seu endereço nem uma data exata de postagem. '
+                'Portanto, esse texto sozinho não permite afirmar em que dia será enviado ou recebido; '
+                'é preciso confirmar a liberação do produto e o transporte para o seu endereço.')
+        label = product.get('name') or product.get('reference')
+        if label:
+            updated.reply_text = f'Sobre {label}:\n' + updated.reply_text
         updated.response_metadata.update(inspection_requested_facts_covered=True, identity_inspection=True)
         return updated
     all_details = bool(re.search(r'caracteristica|ficha tecnica|todos os detalhes', query))
@@ -59,6 +98,20 @@ def complete_inspection_copy(result, interpretation, text):
         'mechanism': all_details or bool(re.search(r'movimento|mecanismo|automatic|quartzo|eco.drive|calibre', query)),
     }
     lines = []
+    technical = {}
+    if re.search(r'\b(?:disponivel|disponibilidade|estoque|pronta entrega)\b', query):
+        available = product.get('available')
+        if available in (True, 1, '1'):
+            lines.append('O produto está disponível no catálogo consultado.')
+        elif available in (False, 0, '0'):
+            lines.append('O produto aparece indisponível no catálogo consultado.')
+        else:
+            lines.append('A consulta não confirmou a disponibilidade do produto.')
+        immediate = (product.get('commercial_availability') or {}).get('immediate_delivery_supported') is True
+        if immediate:
+            lines.append('A fonte comercial confirmou pronta entrega; a chegada no seu endereço ainda depende do transporte.')
+        elif product.get('availability'):
+            lines.append(f"Disponibilidade informada: {product['availability']}. Isso não confirma a data de chegada.")
     rules = feature_rules()
     for field, wanted in requested.items():
         if not wanted:
@@ -71,6 +124,11 @@ def complete_inspection_copy(result, interpretation, text):
         observed_values = set(fact['observed'])
         compatible = any(observed_values <= ({r['value']} | set(r.get('compatibleValues') or []))
                          for r in rules if r['field'] == field and r['value'] in observed_values)
+        if field == 'mechanism':
+            technical['movement'] = {**movement_facts(observed_values), 'source': fact.get('source')}
+            compatible = not technical['movement']['conflicting_types']
+            if observed_values == {'automatic', 'manual'}:
+                value = 'automático com capacidade de corda manual'
         if len(observed) > 1 and not compatible:
             value += ' (há informações diferentes no cadastro; não confirmo uma única especificação)'
         lines.append(f'{label}: {value}.')
@@ -120,4 +178,6 @@ def complete_inspection_copy(result, interpretation, text):
     updated.reply_text = base + '\n' + '\n'.join(lines)
     updated.response_metadata['inspection_requested_facts_covered'] = True
     updated.response_metadata['identity_inspection'] = True
+    if technical:
+        updated.response_metadata['technical_facts'] = technical
     return updated

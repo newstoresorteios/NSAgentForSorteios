@@ -900,12 +900,19 @@ async def _route_after_interpret(
     )
     if repairing:
         scope_domain = "commerce"
+    if (scope_domain == "commerce" and not interpretation.domain_change_explicit
+            and interpretation.references_previous_context and commerce_state.active_preferences):
+        from app.sales.preference_state import merge_preferences
+        interpretation = interpretation.model_copy(deep=True)
+        interpretation.preferences = type(interpretation.preferences).model_validate(merge_preferences(
+            commerce_state.active_preferences, interpretation.preferences.model_dump(mode="json")))
     # A catalogue shortcut must still understand this turn, retain its new
     # constraints, and allow feedback to reach the conversation repair policy.
     # The lookup stays before discovery so an inventory request is not an interview.
     if not repairing and scope_domain != "raffle" and interpretation.goal != "after_sales":
         from app.sales.ready_delivery import try_ready_delivery
         from app.sales.result_utils import mark_sales_result
+        from app.sales.delivery_deadline import preference_update_context
         ready_delivery = await try_ready_delivery(
             message, commerce_state, interpretation=interpretation, recent_turns=model_turns)
         if ready_delivery is not None:
@@ -916,6 +923,7 @@ async def _route_after_interpret(
                 used_openai_responder=bool(ready_delivery.response_metadata.get('used_openai_responder')),
                 used_tray=True,
             )
+            ready_delivery.response_metadata["preference_update_context"] = preference_update_context(message)
             return _annotate_agent_result(ready_delivery)
     print("[agent.scope]", {"domain": scope_domain})
     if scope_domain == "out_of_scope":
@@ -1038,6 +1046,12 @@ async def _route_after_interpret(
         )
     print("[openai.agent] routing", {"mode": "openai_text_only", "primary_intent": facts.get("primary_intent"), "has_openai_key": bool(get_settings().openai_api_key), "tray_tools_enabled": False})
     result = await generate_openai_reply_async(message, customer_context, facts)
+    if (result.safety_reason and interpretation.needs_clarification
+            and interpretation.clarification_question):
+        # Preserve the interpreted missing information when prose generation is
+        # unavailable; restarting with a greeting discards the customer's turn.
+        result.reply_text = interpretation.clarification_question
+        result.safety_reason = "contextual_clarification_fallback"
     return _annotate_agent_result(
         result,
         domain=scope_domain,

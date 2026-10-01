@@ -83,8 +83,10 @@ async def repair_conversation(*, incoming: IncomingMessage, interpretation: Sale
     if interpretation.goal == 'inspect':
         from app.commerce.commerce_context import resolve_commerce_reference
         from app.sales.purchase_selection import is_product_information_question
+        from app.sales.inspection_copy import is_delivery_timing_question
         target, _ = resolve_commerce_reference(interpretation,state)
-        if target is not None and is_product_information_question(incoming.text):
+        if target is not None and (is_product_information_question(incoming.text)
+                                   or is_delivery_timing_question(incoming.text)):
             # Let the ordinary SKU inspection answer the corrected question;
             # a complaint does not change "has sapphire?" into "find sapphire".
             return None
@@ -104,7 +106,10 @@ async def repair_conversation(*, incoming: IncomingMessage, interpretation: Sale
         if getattr(repaired.preferences, key) in (None, [], "") and prefs.get(key) is not None:
             setattr(repaired.preferences, key, prefs[key])
     from app.catalog.specs.requirements import normalize_requirements
-    known_criteria = normalize_requirements(repaired) or repaired.preferences.budget_max or repaired.preferences.color
+    known_criteria = (normalize_requirements(repaired) or repaired.preferences.budget_max
+                      or repaired.preferences.color or repaired.preferences.occasion
+                      or repaired.preferences.style or repaired.preferences.delivery_mode
+                      or repaired.preferences.delivery_deadline_text)
     if state.active_product and not (repaired.subject.reference or repaired.subject.model):
         repaired.subject.reference=state.active_product.reference
         repaired.subject.brand=repaired.subject.brand or state.active_product.brand

@@ -295,6 +295,7 @@ def find_persona_by_hash(
 def insert_prompt_compilation(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     compiled_instructions_hash: str,
     openai_api_mode: str,
     persona_version_id: int | None = None,
@@ -310,12 +311,21 @@ def insert_prompt_compilation(
     channel: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> int | None:
+    from app.memory.workspace_scope import memory_workspace
+    workspace_id = memory_workspace(workspace_id, required=True)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                operator_message('persona.persona_repository.insert_prompt_compilation.9111729e77'),
+                """INSERT INTO public.ai_prompt_compilations (
+                    tenant_id, workspace_id, conversation_key, sender_key, inbound_id, response_id,
+                    persona_version_id, instruction_extension_ids, contact_memory_ids,
+                    compiled_instructions_hash, instructions_char_count, input_char_count,
+                    approximate_input_tokens, channel, openai_api_mode, metadata
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id""",
                 (
                     tenant_id,
+                    workspace_id,
                     conversation_key,
                     sender_key,
                     inbound_id,

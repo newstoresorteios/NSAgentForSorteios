@@ -227,7 +227,9 @@ async def test_contextual_clarification_judge_unavailable_fails_closed_in_enforc
         recent_turns=[{"role": "assistant", "content": "Qual modelo você quer?"}],
     )
     assert report.triggered is True
-    assert report.verdict is not None and report.verdict.pass_check is False
+    assert report.verdict is None and report.approved is None
+    assert report.review_status == "unavailable"
+    assert report.unavailable_reason == "openai_unavailable"
     assert report.applied is True
     assert result.handoff_required is True
     assert result.safety_reason == "quality_judge_failed"
@@ -433,6 +435,6 @@ async def test_judge_schema_failure_fail_closed_on_locked_catalog(monkeypatch):
         openai_call_count=1,
     )
     assert report.triggered is True
-    assert report.verdict is not None
-    assert report.verdict.pass_check is False
-    assert any("judge_failed" in item for item in report.verdict.issues)
+    assert report.verdict is None and report.approved is None
+    assert report.review_status == "unavailable"
+    assert report.unavailable_reason == "ValueError"

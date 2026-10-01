@@ -310,11 +310,17 @@ async def try_contextual_question(incoming, interpretation, state, recent_turns)
 async def try_availability_question(incoming, interpretation, state, recent_turns):
     """Product lead-time questions are read-only, including an ambiguous list."""
     if (interpretation is None or incoming.image_url or interpretation.order_action
-            or state.order_id or state.cart_session_id):
+            or interpretation.goal == 'after_sales'):
         return None
     from app.sales.purchase_selection import is_product_information_question, match_presented_product_from_text
+    from app.sales.inspection_copy import is_delivery_timing_question
     rules = json.loads(policy('catalogAvailabilityRules'))
-    if not is_product_information_question(incoming.text) or not re.search(rules['question'], fold_text(incoming.text)):
+    if (is_delivery_timing_question(incoming.text) and interpretation.goal != 'inspect'
+            and not is_product_information_question(incoming.text)):
+        return None
+    if not is_delivery_timing_question(incoming.text) and (
+            not is_product_information_question(incoming.text)
+            or not re.search(rules['question'], fold_text(incoming.text))):
         return None
     named = match_presented_product_from_text(incoming.text, state.last_presented_products, active_product=state.active_product)
     from app.commerce.commerce_context import resolve_commerce_reference
@@ -351,6 +357,8 @@ async def try_availability_question(incoming, interpretation, state, recent_turn
         reply_text='\n\n'.join(copy('catalog_availability_item', name=p.get('name') or target.name or '',
             availability=p.get('availability') or copy('catalog_ready_unknown_note'),
             url=p.get('url') or p.get('product_url') or '') for target, p in zip(targets, products)))
+    if len(products) == 1:
+        base.response_metadata['identity_inspection'] = True
     if len(products)==1 and product_availability_state(products[0])=='unavailable':
         from app.sales.result_utils import mark_sales_result
         base.reply_text=(products[0].get('name') or targets[0].name or '')+'\n'+unavailable_product_reply(products)

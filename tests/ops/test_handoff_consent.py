@@ -105,3 +105,31 @@ def test_unflagged_model_transfer_promise_becomes_an_offer():
         AgentResult(reply_text='Vou te passar para o João da equipe.',intent='commerce'),recent_turns=[])
     assert not result.handoff_required and result.response_metadata['handoff']['offer']
     assert 'Quer que' in result.reply_text
+
+
+def test_acknowledging_confirmed_handoff_never_asks_for_consent_again():
+    history = [{'role': 'assistant', 'content': 'Solicitei seu atendimento à equipe.',
+                'metadata': {'handoff': {'confirmed': True, 'required': True,
+                                        'consent_reason': 'customer_requested_human'}}}]
+    incoming = IncomingMessage(text='Sim', channel='instagram')
+    result = enrich_handoff_metadata(incoming, AgentResult(reply_text='Qual a dúvida?'), recent_turns=history)
+    assert result.handoff_required
+    assert result.response_metadata['handoff']['confirmed']
+    assert not result.response_metadata['handoff']['offer']
+    assert '?' not in result.reply_text
+    assert consent_reason(incoming, []) is None
+
+
+def test_repeated_handoff_offer_keeps_known_request_without_repeating_question():
+    from app.commerce.commerce_context import CommerceConversationState
+    history = [{'role': 'assistant', 'content': offer_text(), 'metadata': {'handoff': {'offer': True}}}]
+    state = CommerceConversationState(active_preferences={'occasion': 'casamento', 'delivery_deadline_text': 'próxima semana'})
+    result = enrich_handoff_metadata(IncomingMessage(text='Já falei que tenho um casamento'),
+        AgentResult(reply_text='Transferir', handoff_required=True, safety_reason='critique_unavailable'),
+        recent_turns=history, commerce_state=state)
+    assert 'casamento' in result.reply_text and 'próxima semana' in result.reply_text
+    assert '?' not in result.reply_text
+    assert not result.handoff_required
+    assert result.response_metadata['handoff']['offer']
+    assert consent_reason(IncomingMessage(text='Sim'), [{'role': 'assistant', 'content': result.reply_text,
+        'metadata': result.response_metadata}]) == 'customer_accepted_handoff_offer'

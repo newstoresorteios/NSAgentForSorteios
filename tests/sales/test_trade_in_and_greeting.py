@@ -1,5 +1,7 @@
 """Trade-in / appraisal handoff and greeting dedupe."""
 
+import pytest
+
 from app.identity.greeting_policy import (
     already_said,
     choose_farewell_reply,
@@ -17,6 +19,34 @@ from app.persona.site_knowledge import TRADE_IN_HANDOFF_MESSAGE
 def test_detect_trade_in_seminovo_certina():
     text = "Bom dia vcs estão comprando Certina ds action seminovo comprado com vcs?"
     assert detect_trade_in_or_appraisal_request(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "Sou designer, desenvolvo marcas para relojoarias. Vamos trocarmos uma ideia?",
+    "Trabalho com marketing de relógios, podemos trocar uma ideia sobre sua marca?",
+    "Quero trocar uma ideia sobre esse modelo de relógio novo.",
+])
+def test_supplier_or_social_invitation_is_not_trade_in(text):
+    assert not detect_trade_in_or_appraisal_request(text)
+    assert should_request_human_handoff(IncomingMessage(text=text)) != "trade_in_or_appraisal"
+
+
+@pytest.mark.parametrize("text", [
+    "Aceitam troca de relógio Seiko?", "Quero avaliar meu Certina usado",
+    "Podemos trocar uma ideia? Tenho um relógio usado para troca.",
+])
+def test_actual_watch_trade_survives_social_phrase_filter(text):
+    assert detect_trade_in_or_appraisal_request(text)
+
+
+@pytest.mark.parametrize("text", ["SAIR", "sair!", "quero encerrar o atendimento", "finalizar a conversa"])
+def test_explicit_exit_is_a_farewell(text):
+    assert is_farewell_message(text)
+
+
+@pytest.mark.parametrize("text", ["Quanto vai sair esse relógio?", "Vai sair para entrega hoje?", "quero finalizar a compra"])
+def test_exit_words_in_commercial_requests_do_not_close(text):
+    assert not is_farewell_message(text)
 
 
 def test_trade_in_triggers_handoff_with_policy_message():

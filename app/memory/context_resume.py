@@ -148,6 +148,10 @@ def _strip_browse_memory(payload: dict[str, Any]) -> dict[str, Any]:
     stripped["product_resolution_state"] = None
     stripped["closed_by_farewell"] = False
     stripped["last_browse_at"] = None
+    stripped['active_goal'] = None
+    stripped['pending_question'] = None
+    stripped['questions_asked'] = []
+    stripped['delivery_requirement'] = None
     prefs = stripped.get("active_preferences")
     if isinstance(prefs, dict):
         cleaned = dict(prefs)
@@ -159,9 +163,12 @@ def _strip_browse_memory(payload: dict[str, Any]) -> dict[str, Any]:
             "occasion",
             "style",
             "excluded_product_ids",
+            "delivery_deadline_text", "delivery_mode",
         ):
             cleaned.pop(key, None)
         stripped["active_preferences"] = cleaned
+        stripped['preference_provenance'] = {key: value for key, value in
+            (stripped.get('preference_provenance') or {}).items() if key in cleaned}
     if stripped.get("dialogue_phase") == "shortlist":
         stripped["dialogue_phase"] = "discovery"
     return stripped

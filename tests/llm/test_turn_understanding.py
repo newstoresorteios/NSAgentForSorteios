@@ -44,6 +44,53 @@ def test_turn_understanding_strict_schema_has_no_default_keywords():
     assert _find_defaults(schema) == []
 
 
+@pytest.mark.parametrize("feedback", ["misunderstood", "repeated_question", "frustrated"])
+def test_feedback_survives_both_schema_adapters(feedback):
+    turn = TurnUnderstanding(
+        primary_intent="commerce_discover", confidence=0.9,
+        conversation_feedback=feedback, answer_strategy="acknowledge",
+    )
+    sales = turn_understanding_to_sales(TurnUnderstanding.model_validate_json(turn.model_dump_json()))
+    assert sales.conversation_feedback == feedback
+    assert sales_to_turn_understanding(sales).conversation_feedback == feedback
+
+
+@pytest.mark.asyncio
+async def test_semantic_feedback_from_interpreter_enters_repair_without_keyword(monkeypatch):
+    from unittest.mock import AsyncMock
+    import app.sales_agent as sales_agent
+    from app.commerce.commerce_context import CommerceConversationState
+    from app.models import AgentResult
+    from app.sales.conversation_repair import is_conversation_repair, repair_conversation
+
+    incoming = IncomingMessage(text="A gente está andando em círculos aqui")
+    assert not is_conversation_repair(incoming.text)
+    turn = TurnUnderstanding(
+        primary_intent="commerce_discover", confidence=0.95,
+        conversation_feedback="frustrated", answer_strategy="acknowledge",
+        references_previous_context=True,
+    )
+    monkeypatch.setattr(sales_agent, "get_settings", lambda: SimpleNamespace(
+        openai_api_key="offline-test", openai_model="offline-test",
+        agent_turn_understanding_enabled=True,
+    ))
+    parser = AsyncMock(return_value=SimpleNamespace(parsed=turn))
+    monkeypatch.setattr("app.llm.openai_gateway.parse_structured_output", parser)
+    state = CommerceConversationState(active_preferences={
+        "subject_brand": "Orient", "subject_model": "Open Heart", "color": "preto",
+    })
+    interpretation = await sales_agent.interpret_message(incoming, commerce_state=state)
+    assert parser.call_args.kwargs["text_format"] is TurnUnderstanding
+    assert interpretation.conversation_feedback == "frustrated"
+    retrieval = AsyncMock(return_value=AgentResult(reply_text="Resultado conferido", intent="commerce"))
+    monkeypatch.setattr("app.sales.product_lookup.execute_compiled_product_retrieval", retrieval)
+    result = await repair_conversation(incoming=incoming, interpretation=interpretation, state=state)
+    assert result is not None and "Resultado conferido" in result.reply_text
+    assert retrieval.await_count == 1
+    assert retrieval.call_args.args[0].subject.model == "Open Heart"
+    assert retrieval.call_args.args[0].preferences.color == "preto"
+
+
 def test_sanitize_strips_claimed_internal_ids():
     understanding = TurnUnderstanding.model_construct(
         primary_intent="commerce_find",

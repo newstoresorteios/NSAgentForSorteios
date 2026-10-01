@@ -59,6 +59,9 @@ class CommerceSimulator:
                 rows = [p for p in rows if lo <= float(p.get('current_price',p.get('price',0))) <= hi]
             if args.get('available') is True:
                 rows = [p for p in rows if str(p.get('available','1')).lower() not in ('0','false')]
+            for flag in ('available_in_store', 'available_for_purchase'):
+                if args.get(flag) is True:
+                    rows = [p for p in rows if str(p.get(flag, '')).lower() in ('1', 'true')]
             total=len(rows); limit=max(1,int(args.get('limit') or 20)); page=max(1,int(args.get('page') or 1))
             return {'products':rows[(page-1)*limit:page*limit], 'paging':{'total':total,'page':page,'limit':limit}}
         if tool == 'list_categories':

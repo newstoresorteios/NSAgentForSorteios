@@ -1,0 +1,1714 @@
+{
+  "schema_version": 1,
+  "source_date": "2026-10-01",
+  "source_hashes": {
+    "today_review.json": "0f98f54715d51f8a4a193b79dffe34a6c6e591313f8e58424afa72ae92b83502",
+    "today_threads.json": "74581b49cef55f2f0721d9f69758b61b4f45199f9b1aa209cc7ed7799a6785bc",
+    "inbound.json": "f0df0145700d234b6f0e1132a1e1423e518172a6f5106770a7c0c8d3e3899b82",
+    "responses.json": "c396f953e6ec3b39b9984eb8871842d4f29318b9f960a80be9f8653fe66c9cd4"
+  },
+  "method": "Audited historical inputs; grouped split; identifiers replaced; no candidate execution implied.",
+  "review_provenance": "Codex session semantic audit; not an independent human review",
+  "turn_count": 61,
+  "conversations": [
+    {
+      "key": "fbbe04af4c25e27f",
+      "split": "development",
+      "channel": "instagram",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1127",
+          "recorded_at": "2026-10-01 05:22:29.112865+00:00",
+          "input": "Qual é esse no seu braço?",
+          "requirements": [
+            "Manter a referência do Story; pedir somente o detalhe visual necessário se a identificação continuar ambígua."
+          ],
+          "historical_status": "inconclusivo",
+          "historical_observation": "Não confirmou o relógio mostrado no braço. A evidência visual original não foi inspecionada nesta auditoria.",
+          "historical_responses": [
+            {
+              "response_id": 1064,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nNão consegui confirmar qual relógio é esse no braço. \n\nMe manda uma foto mais nítida do mostrador ou a referência/modelo que eu tento identificar pra você.",
+              "sent": true,
+              "safety_reason": "ambiguous"
+            }
+          ],
+          "requires_media_annotation": true,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "ffd7e6823681bc1b",
+      "split": "development",
+      "channel": "instagram",
+      "history": [
+        {
+          "role": "user",
+          "content": "Valor"
+        },
+        {
+          "role": "assistant",
+          "content": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nNão consegui confirmar com segurança as referências exatas nesse Story. Você pode indicar um relógio pela cor ou posição, ou enviar um print mais nítido.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+          "metadata": {
+            "safety_reason": "ambiguous"
+          }
+        },
+        {
+          "role": "user",
+          "content": "PRX 35mm"
+        },
+        {
+          "role": "assistant",
+          "content": "Crono · Assistente virtual (IA) da New Store Relógios\n\nEncontrei algumas possibilidades:\n\nRelógio Tissot PRX Powermatic 80 Lady Ouro Rosa 18k Madrepérola Branca T931.207.41.111.00 35 mm\nRef.: T931.207.41.111.00\nA prazo: R$ 18.299,99\nÀ vista no Pix: R$ 15.554,99\nLink: [source_url]\n\nÉ algum desses?",
+          "metadata": {
+            "safety_reason": null
+          }
+        }
+      ],
+      "steps": [
+        {
+          "case_id": "1128",
+          "recorded_at": "2026-10-01 10:41:56.709899+00:00",
+          "input": "SAIR",
+          "requirements": [
+            "Encerrar diretamente, registrar saída e permitir retomada quando o cliente escrever novamente."
+          ],
+          "historical_status": "melhoria",
+          "historical_observation": "Cliente escreveu SAIR e recebeu outra pergunta para confirmar encerramento.",
+          "historical_responses": [
+            {
+              "response_id": 1065,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nTudo bem — quer encerrar o atendimento por aqui?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "7143dd8c48a08794",
+      "split": "validation",
+      "channel": "instagram",
+      "history": [
+        {
+          "role": "user",
+          "content": "Qual valor do azul?"
+        },
+        {
+          "role": "assistant",
+          "content": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nClaro! Qual você quer: relógio no centro, relógio na parte de cima ou relógio com mostrador preto na parte de baixo?\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+          "metadata": {
+            "safety_reason": "not_found"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "case_id": "1129",
+          "recorded_at": "2026-10-01 11:14:24.993040+00:00",
+          "input": "sair",
+          "requirements": [
+            "Manter o encerramento e registrar intenção farewell, sem classificar a resposta como qualificação incompleta."
+          ],
+          "historical_status": "classificação",
+          "historical_observation": "Texto de encerramento adequado; registro commerce_clarification pode contaminar o aprendizado.",
+          "historical_responses": [
+            {
+              "response_id": 1066,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nTudo bem, vou encerrar por aqui. Qualquer dúvida é só me chamar aqui. Obrigado por falar com a New Store Relógios!",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "8528417cb134633f",
+      "split": "validation",
+      "channel": "instagram",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1130",
+          "recorded_at": "2026-10-01 15:04:09.701560+00:00",
+          "input": "Acabou já ?",
+          "requirements": [
+            "Recuperar Story/anexo associado; se insuficiente, confirmar qual produto sem inventar disponibilidade."
+          ],
+          "historical_status": "inconclusivo",
+          "historical_observation": "Acabou já? não identifica uma peça nos registros textuais desta conversa.",
+          "historical_responses": [
+            {
+              "response_id": 1067,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nAinda não consigo confirmar por aqui sem saber qual peça é. \nMe manda o modelo ou o link e eu verifico pra você.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "6914d5cc4d11a608",
+      "split": "validation",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1131",
+          "recorded_at": "2026-10-01 15:12:53.332380+00:00",
+          "input": "ola",
+          "requirements": [
+            "Preservar a abertura única por sessão."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Saudação breve e abertura de atendimento.",
+          "historical_responses": [
+            {
+              "response_id": 1068,
+              "reply": "Olá! Eu sou o Crono, assistente virtual (IA) da New Store Relógios. Como posso te ajudar hoje?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "cf07185b8b344681",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1132",
+          "recorded_at": "2026-10-01 15:14:37.815866+00:00",
+          "input": "Olá!",
+          "requirements": [
+            "Preservar a abertura única por sessão."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Saudação breve e abertura de atendimento.",
+          "historical_responses": [
+            {
+              "response_id": 1069,
+              "reply": "Olá! Eu sou o Crono, assistente virtual (IA) da New Store Relógios. Como posso te ajudar hoje?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1133",
+          "recorded_at": "2026-10-01 15:14:55.670276+00:00",
+          "input": "Gostaria de informações sobre o status do pedido 26052.",
+          "requirements": [
+            "Manter consulta autorizada e vínculo do pedido para as próximas perguntas."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Respondeu ao pedido informado com status A ENVIAR.",
+          "historical_responses": [
+            {
+              "response_id": 1071,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nSeu pedido está com status \"A ENVIAR\".",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1138",
+          "recorded_at": "2026-10-01 15:17:12.604521+00:00",
+          "input": "Já existe previsão de envio?",
+          "requirements": [
+            "Informar que a previsão cadastrada venceu, distinguir postagem de chegada e buscar atualização; não inventar nova data."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Em 01/10 apresentou 16/09 como previsão de entrega e não respondeu diretamente à previsão de envio.",
+          "historical_responses": [
+            {
+              "response_id": 1076,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nSeu pedido está com status “A ENVIAR” e a previsão estimada de entrega é 16/09/2026. \n\nSe quiser, eu também posso ver o pagamento do pedido pra você.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1141",
+          "recorded_at": "2026-10-01 15:17:53.065689+00:00",
+          "input": "Mas 16/09/2026 já passou.",
+          "requirements": [
+            "Permanecer no pedido, reconhecer a data passada e consultar ou encaminhar a atualização logística."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Correção de uma data vencida foi respondida com pergunta sobre marca e orçamento.",
+          "historical_responses": [
+            {
+              "response_id": 1079,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nPode seguir — me diz a marca, a faixa de investimento ou o modelo que você tem em mente.",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1147",
+          "recorded_at": "2026-10-01 15:19:26.586385+00:00",
+          "input": "O que mais você pode me informar sobre o meu pedido 26052?",
+          "requirements": [
+            "Explicar o atraso cadastral, separar estado logístico de financeiro e mostrar link de pagamento apenas quando pertinente."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Repetiu previsão passada e ofereceu link de pagamento em conversa sobre pedido depois confirmado como pago.",
+          "historical_responses": [
+            {
+              "response_id": 1084,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nSeu pedido 26052 está com status “A ENVIAR”. \nA previsão cadastrada no sistema é 16/09/2026 e ainda não foi gerado código/link de rastreio.\n\nSe quiser, o link de pagamento do pedido é este: \n[source_url]",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1151",
+          "recorded_at": "2026-10-01 15:20:12.429255+00:00",
+          "input": "Mas ele não está pago?",
+          "requirements": [
+            "Usar esse estado nas respostas seguintes, evitando nova cobrança sem fundamento."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Confirmou pagamento após pergunta direta.",
+          "historical_responses": [
+            {
+              "response_id": 1088,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nSim — no sistema o pedido 26052 consta como pago, com status de pagamento confirmado.\nSe você quiser, eu também posso te passar o status de envio que consta por aqui.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1155",
+          "recorded_at": "2026-10-01 15:21:59.560326+00:00",
+          "input": "Não precisa. Gostaria de informações sobre o prazo para entrega do relógio Certina DS Action Day Date (C032.430.11.091.00) com fundo verde.",
+          "requirements": [
+            "Responder primeiro à distinção disponibilidade/postagem/chegada e usar o CEP somente para cotação de transporte."
+          ],
+          "historical_status": "parcial",
+          "historical_observation": "Encontrou o Certina e informou disponibilidade de 30 dias úteis com ressalva sobre entrega, mas respondeu com cartão extenso.",
+          "historical_responses": [
+            {
+              "response_id": 1094,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nSim, encontrei:\n\nRelógio Certina DS Action Day-Date Powermatic 80 Verde C032.430.11.091.00\nRef.: C032.430.11.091.00\nA prazo: R$ 7.699,99\nÀ vista no Pix: R$ 6.544,99\nLink: [source_url]\nCor do mostrador: Verde.\nDisponibilidade informada no catálogo: Disponível em 30 dias úteis.\nO prazo de entrega no seu endereço depende da cotação para o CEP; disponibilidade do produto não é confirmação da data de chegada.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1159",
+          "recorded_at": "2026-10-01 15:23:27.784930+00:00",
+          "input": "\"Disponível em 30 dias úteis\" quer dizer que eu vou receber o relógio em até 30 dias úteis, ou que ele será enviado nesse prazo?",
+          "requirements": [
+            "Não extrair orçamento de duração; explicar o significado do prazo disponível e o que exige confirmação adicional."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Pergunta se 30 dias úteis significavam envio ou recebimento gerou Não cabe no orçamento informado.",
+          "historical_responses": [
+            {
+              "response_id": 1096,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nNão cabe no orçamento informado.\nSim, encontrei:\n\nRelógio Certina DS Action Day-Date Powermatic 80 Verde C032.430.11.091.00\nRef.: C032.430.11.091.00\nA prazo: R$ 7.699,99\nÀ vista no Pix: R$ 6.544,99\nLink: [source_url]\nDisponibilidade informada no catálogo: Disponível em 30 dias úteis.\nO prazo de entrega no seu endereço depende da cotação para o CEP; disponibilidade do produto não é confirmação da data de chegada.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1160",
+          "recorded_at": "2026-10-01 15:24:29.163239+00:00",
+          "input": "Não entendi. Quero saber se o prazo indicado no site é de entrega ou de envio do produto.",
+          "requirements": [
+            "Reparar a interpretação anterior, remover o orçamento derivado de duração e responder à pergunta de prazo."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Mesmo após Não entendi repetiu o orçamento inexistente e o cartão do produto.",
+          "historical_responses": [
+            {
+              "response_id": 1097,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nNão cabe no orçamento informado.\nSim, encontrei:\n\nRelógio Certina DS Action Day-Date Powermatic 80 Verde C032.430.11.091.00\nRef.: C032.430.11.091.00\nA prazo: R$ 7.699,99\nÀ vista no Pix: R$ 6.544,99\nLink: [source_url]\nDisponibilidade informada no catálogo: Disponível em 30 dias úteis.\nO prazo de entrega no seu endereço depende da cotação para o CEP; disponibilidade do produto não é confirmação da data de chegada.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "c89e4d8ccec26856",
+      "split": "validation",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1134",
+          "recorded_at": "2026-10-01 15:15:00.283792+00:00",
+          "input": "Oi",
+          "requirements": [
+            "Preservar a abertura única por sessão."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Saudação breve e abertura de atendimento.",
+          "historical_responses": [
+            {
+              "response_id": 1070,
+              "reply": "Olá! Eu sou o Crono, assistente virtual (IA) da New Store Relógios. Como posso te ajudar hoje?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1135",
+          "recorded_at": "2026-10-01 15:16:02.970319+00:00",
+          "input": "Estou em dúvida sobre o meu pedido",
+          "requirements": [
+            "Solicitar número do pedido ou identificador alternativo suportado, com distinção explícita de tipos."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Primeira solicitação do identificador do pedido era pertinente, mas oferecia poucas alternativas.",
+          "historical_responses": [
+            {
+              "response_id": 1072,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nVocê pode me informar o número do pedido ou qual atendimento anterior está retomando?",
+              "sent": true,
+              "safety_reason": "service_intent_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1136",
+          "recorded_at": "2026-10-01 15:16:42.398768+00:00",
+          "input": "Não tenho o número do pedido",
+          "requirements": [
+            "Explicar a alternativa por CPF/e-mail e usar a resposta na consulta do titular."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Após Não tenho o número do pedido, repetiu exatamente a solicitação do número.",
+          "historical_responses": [
+            {
+              "response_id": 1073,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nVocê pode me informar o número do pedido ou qual atendimento anterior está retomando?",
+              "sent": true,
+              "safety_reason": "service_intent_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1137",
+          "recorded_at": "2026-10-01 15:17:00.118497+00:00",
+          "input": "Pode ser meu cpf?",
+          "requirements": [
+            "Confirmar que CPF pode ser usado na consulta do pedido, conforme a política aprovada; não confundir com coleta para pagamento."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Pode ser meu cpf? recebeu novamente a pergunta pelo número do pedido.",
+          "historical_responses": [
+            {
+              "response_id": 1074,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nVocê pode me informar o número do pedido ou qual atendimento anterior está retomando?",
+              "sent": true,
+              "safety_reason": "service_intent_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1145",
+          "recorded_at": "2026-10-01 15:19:16.141434+00:00",
+          "input": "25696",
+          "requirements": [
+            "Manter o vínculo do pedido e a evidência da consulta."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Consultou o número informado e retornou status ENVIADO e rastreio.",
+          "historical_responses": [
+            {
+              "response_id": 1082,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nSeu pedido está com status \"ENVIADO\". Rastreio: [source_url]",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "5747995267fd2af9",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1139",
+          "recorded_at": "2026-10-01 15:17:29.991499+00:00",
+          "input": "Olá",
+          "requirements": [
+            "Continuar a conversa sem reintrodução em cada turno."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Saudação adequada.",
+          "historical_responses": [
+            {
+              "response_id": 1075,
+              "reply": "Olá! Eu sou o Crono, assistente virtual (IA) da New Store Relógios. Como posso te ajudar hoje?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1140",
+          "recorded_at": "2026-10-01 15:17:52.573863+00:00",
+          "input": "Gostaria de uma informação",
+          "requirements": [
+            "Responder à próxima necessidade explícita."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Pediu que o cliente especificasse a informação desejada.",
+          "historical_responses": [
+            {
+              "response_id": 1077,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nClaro, Felipe. \nMe diz qual informação você precisa: preço, prazo, disponibilidade ou detalhes de um modelo?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "7b9c5192b0360a22",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1142",
+          "recorded_at": "2026-10-01 15:17:59.444048+00:00",
+          "input": "Ola",
+          "requirements": [
+            "Continuar a conversa sem reintrodução em cada turno."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Saudação adequada.",
+          "historical_responses": [
+            {
+              "response_id": 1078,
+              "reply": "Olá! Eu sou o Crono, assistente virtual (IA) da New Store Relógios. Como posso te ajudar hoje?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "e6f4675f31d9e9c9",
+      "split": "development",
+      "channel": "instagram",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1143",
+          "recorded_at": "2026-10-01 15:18:17.775109+00:00",
+          "input": "Qual valor?",
+          "requirements": [
+            "Usar a resposta seguinte para reduzir os candidatos do mesmo Story."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Perguntou qual relógio do Story interessava diante de ambiguidade.",
+          "historical_responses": [
+            {
+              "response_id": 1080,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nClaro! Qual dos relógios do Story chamou sua atenção? Pode me indicar pela posição ou mandar um print marcando ele?",
+              "sent": true,
+              "safety_reason": "ambiguous"
+            }
+          ],
+          "requires_media_annotation": true,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1144",
+          "recorded_at": "2026-10-01 15:18:49.286263+00:00",
+          "input": "Traska",
+          "requirements": [
+            "Preservar Traska e os candidatos encontrados; explicar o detalhe que falta para distinguir versões."
+          ],
+          "historical_status": "inconclusivo",
+          "historical_observation": "Reconheceu a linha Traska, mas não fechou a referência. A falta de correspondência exata não prova erro de identificação.",
+          "historical_responses": [
+            {
+              "response_id": 1081,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nConsultei também a lista de pronta entrega e encontrei opções dessa linha, mas ainda preciso confirmar qual é a do Story.\n\nAinda não confirmei a referência exata do relógio desse Story. Pode enviar um print marcando o relógio ou a referência? Também posso pedir ajuda a um atendente para confirmar a versão certa.",
+              "sent": true,
+              "safety_reason": "ambiguous"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1146",
+          "recorded_at": "2026-10-01 15:19:21.055055+00:00",
+          "input": "Aço",
+          "requirements": [
+            "Incorporar o atributo, reduzir candidatos quando possível e pedir somente um detalhe discriminante."
+          ],
+          "historical_status": "melhoria",
+          "historical_observation": "Depois de Aço repetiu integralmente a mensagem anterior. Não explicitou como o novo atributo ajudou.",
+          "historical_responses": [
+            {
+              "response_id": 1083,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nConsultei também a lista de pronta entrega e encontrei opções dessa linha, mas ainda preciso confirmar qual é a do Story.\n\nAinda não confirmei a referência exata do relógio desse Story. Pode enviar um print marcando o relógio ou a referência? Também posso pedir ajuda a um atendente para confirmar a versão certa.",
+              "sent": true,
+              "safety_reason": "ambiguous"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "11f3e44fdf5906ad",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1148",
+          "recorded_at": "2026-10-01 15:19:37.312278+00:00",
+          "input": "Quero um relógio que esteja no estoque",
+          "requirements": [
+            "Registrar pronta entrega e fazer uma pergunta útil de interesse caso realmente falte contexto, sem sugestões aleatórias."
+          ],
+          "historical_status": "melhoria",
+          "historical_observation": "Perguntou se havia modelo em mente. A sondagem inicial pode ser válida, mas não reconheceu a restrição de estoque.",
+          "historical_responses": [
+            {
+              "response_id": 1085,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nClaro! Você já tem algum modelo em mente ou prefere uma sugestão?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1149",
+          "recorded_at": "2026-10-01 15:19:51.577025+00:00",
+          "input": "Você consegue me passar quais modelos tem a pronta entrega?",
+          "requirements": [
+            "Tratar a frase como consulta ampla da categoria; listar somente candidatos reais ou explicar falha técnica/ausência comprovada."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Pedido de lista de pronta entrega virou oferta genérica de atendimento humano após consulta vazia.",
+          "historical_responses": [
+            {
+              "response_id": 1086,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+              "sent": true,
+              "safety_reason": "human_review_needed"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1150",
+          "recorded_at": "2026-10-01 15:20:04.552579+00:00",
+          "input": "Tenho um casamento para o próximo final de semana",
+          "requirements": [
+            "Guardar ocasião e data pretendida, consultar opções compatíveis e pedir apenas a informação que bloqueie a seleção ou entrega."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "O modelo reconheceu casamento e urgência, mas o fluxo voltou à pergunta de modelo.",
+          "historical_responses": [
+            {
+              "response_id": 1087,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nVocê já tem algum modelo em mente ou prefere uma sugestão?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1152",
+          "recorded_at": "2026-10-01 15:20:45.058870+00:00",
+          "input": "Já falei que quero saber quais você tem em estoque",
+          "requirements": [
+            "Reconhecer a repetição e consultar a lista pedida; orçamento pode refinar a seleção sem impedir o acesso solicitado."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "O pedido repetido de estoque recebeu Perfeito e uma pergunta de orçamento.",
+          "historical_responses": [
+            {
+              "response_id": 1089,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nPerfeito — qual faixa de investimento você tem em mente?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1153",
+          "recorded_at": "2026-10-01 15:21:01.336756+00:00",
+          "input": "Está difícil entender?",
+          "requirements": [
+            "Interromper a entrevista, reconhecer o desencontro, resumir a necessidade e executar o próximo passo útil."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Está difícil entender? recebeu pergunta sobre presente ou uso próprio.",
+          "historical_responses": [
+            {
+              "response_id": 1090,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nÉ para você ou para presentear alguém?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1154",
+          "recorded_at": "2026-10-01 15:21:42.570516+00:00",
+          "input": "Já falei que tenho um casamento",
+          "requirements": [
+            "Usar casamento como informação conhecida; não avançar mecanicamente por campos sem avaliar a necessidade do turno."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Repetição da ocasião recebeu mais uma pergunta do roteiro, agora sobre gênero.",
+          "historical_responses": [
+            {
+              "response_id": 1091,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nVocê prefere modelos masculinos, femininos ou unissex?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1156",
+          "recorded_at": "2026-10-01 15:22:05.923135+00:00",
+          "input": "Logo é para mim",
+          "requirements": [
+            "Registrar uso próprio e romper a sequência improdutiva; mostrar candidatos pertinentes ou justificar um único bloqueio."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Após esclarecer que era para si, recebeu mais uma pergunta, agora sobre tamanho, sem ver opções.",
+          "historical_responses": [
+            {
+              "response_id": 1092,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nVocê prefere um relógio menor e discreto ou uma caixa maior?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1157",
+          "recorded_at": "2026-10-01 15:22:20.964439+00:00",
+          "input": "Quero saber quais pronta entrega você tem",
+          "requirements": [
+            "Preservar a necessidade e retornar resultado ou limitação específica da consulta; não reiniciar a conversa."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Nova solicitação de pronta entrega recebeu outra apresentação completa e oferta genérica de humano.",
+          "historical_responses": [
+            {
+              "response_id": 1093,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+              "sent": true,
+              "safety_reason": "human_review_needed"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1158",
+          "recorded_at": "2026-10-01 15:22:31.528894+00:00",
+          "input": "PQP",
+          "requirements": [
+            "Acionar reparação da conversa e política de atendimento coerente; não continuar o roteiro."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "A irritação explícita PQP foi respondida com pergunta sobre estilo clássico ou moderno.",
+          "historical_responses": [
+            {
+              "response_id": 1095,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nEntendi. Você prefere um estilo clássico ou mais moderno?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "001442efd79adbd5",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Olá! Me conta o que você procura.",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "vamos de novo..\n\nBoa tarde"
+        },
+        {
+          "role": "assistant",
+          "content": "Boa tarde, Ricardo! Como posso ajudar você por aqui? 😊",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "estou testando seu atendimento"
+        },
+        {
+          "role": "user",
+          "content": "gostaria de comprar com vocês"
+        },
+        {
+          "role": "assistant",
+          "content": "Que ótimo! Você pode acessar nosso catálogo completo e fazer seu pedido direto por aqui: [source_url]\n\nSe preferir, posso ajudar a encontrar produtos específicos para sua loja ou e-commerce. Quer alguma categoria ou produto em especial?",
+          "metadata": {
+            "safety_reason": "commerce_clarification"
+          }
+        },
+        {
+          "role": "user",
+          "content": "e como funciona?"
+        },
+        {
+          "role": "assistant",
+          "content": "Oi, Ricardo! A Xnamai é uma distribuidora atacadista de eletrônicos e acessórios para celular, além de outros produtos para lojas e e-commerce. Você pode comprar no atacado com preços especiais, tanto por CPF quanto por CNPJ, e escolher a forma de entrega que preferir. Quer que eu explique algo específico, como cadastro, pedidos ou o Club Xnamai?",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "Boa tarde"
+        },
+        {
+          "role": "assistant",
+          "content": "Oi! Aqui é a Mai, da XNamai. O que você procura hoje? 😊",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "como faço para comprar com vocês?"
+        },
+        {
+          "role": "assistant",
+          "content": "📋 Para comprar na XNamai, primeiro faça seu cadastro. Com CNPJ, o cadastro é feito diretamente no catálogo: [source_url] Com CPF, o cadastro é feito pelo atendimento.\n\nDepois da liberação, escolha os produtos e as quantidades, adicione ao carrinho, finalize o pedido e selecione a forma de entrega.\n\nConfirme o pedido mínimo atual com a equipe. Você quer se cadastrar com CPF ou CNPJ?",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "finalizei o pedido"
+        },
+        {
+          "role": "assistant",
+          "content": "📋 Me informe o número do pedido para eu consultar o status.",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "#95805"
+        },
+        {
+          "role": "assistant",
+          "content": "📋 Seu pedido está com status \"Pedido gerado — não faturado\".",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "Okay e o que faço agora?"
+        },
+        {
+          "role": "assistant",
+          "content": "😊 Não encontrei esse produto no catálogo agora.",
+          "metadata": {
+            "safety_reason": "product_not_found"
+          }
+        },
+        {
+          "role": "user",
+          "content": "oi"
+        },
+        {
+          "role": "assistant",
+          "content": "Olá! Eu sou a Mai, assistente virtual da XNamai. Como posso te ajudar? 😊",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "gostaria de comprar com vocês"
+        },
+        {
+          "role": "assistant",
+          "content": "📋 Funciona assim por aqui:\n\n1. Você faz o cadastro para acessar o catálogo: [source_url] \n2. Escolhe os produtos e quantidades \n3. Adiciona ao carrinho e finaliza o pedido \n4. Depois seleciona a entrega\n\nCadastro com CNPJ pode ser feito diretamente no catálogo. \nCadastro com CPF é feito pelo atendimento.\n\nO pedido mínimo é de R$ 800,00.\n\nPagamento: Pix, cartão e dinheiro na retirada, com sinal para reservar e separar. Não há boleto. \nEntrega: transportadora, Correios, ônibus para o Brás e retirada.\n\nVocê quer comprar com CPF ou CNPJ?",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "cpf"
+        },
+        {
+          "role": "assistant",
+          "content": "😊 Não encontrei esse produto no catálogo agora.",
+          "metadata": {
+            "safety_reason": "product_not_found"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "case_id": "1161",
+          "recorded_at": "2026-10-01 15:32:23.122350+00:00",
+          "input": "Boa tarde , tudo bem?\npor gentileza, poderia me passar seu catalogo completo de produtos? obrigado",
+          "requirements": [
+            "Continuar a partir da opção escolhida pelo cliente."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "XNamai forneceu o catálogo oficial e diferenciou orientação para CPF/CNPJ.",
+          "historical_responses": [
+            {
+              "response_id": 1098,
+              "reply": "Boa tarde! 😊\n\nSegue o catálogo oficial da XNamai:\n[source_url]\n\nSe for seu primeiro acesso:\n- com **CNPJ**, o cadastro pode ser feito direto no catálogo\n- com **CPF**, eu te ajudo por aqui\n\nSe quiser, já te explico como fazer o cadastro.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1162",
+          "recorded_at": "2026-10-01 15:33:10.328871+00:00",
+          "input": "cpf",
+          "requirements": [
+            "Reconhecer a escolha por CPF e explicar o próximo passo de cadastro correspondente."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Cliente respondeu CPF e a Mai voltou a perguntar se era CPF ou CNPJ.",
+          "historical_responses": [
+            {
+              "response_id": 1099,
+              "reply": "😊 Você quer orientação para comprar com CPF ou CNPJ, ou está preenchendo um cadastro?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "a63a2327ca7ab4e7",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1163",
+          "recorded_at": "2026-10-01 15:48:40.754526+00:00",
+          "input": "Um relógio Dress",
+          "requirements": [
+            "Guardar estilo dress e aproveitar a restrição complementar informada no próximo turno."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Uma pergunta inicial sobre modelo ou recomendação após pedido de relógio dress pode ser pertinente.",
+          "historical_responses": [
+            {
+              "response_id": 1100,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nVocê já tem algum modelo em mente ou prefere que eu te sugira um?",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1164",
+          "recorded_at": "2026-10-01 15:49:14.229079+00:00",
+          "input": "Categoria pronta entrega",
+          "requirements": [
+            "Pesquisar a categoria como categoria. Reprodução local confirma falso vazio causado pelo token categoria."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Categoria pronta entrega gerou ausência de combinação de modelo e cor, embora o cliente não tivesse especificado tal combinação.",
+          "historical_responses": [
+            {
+              "response_id": 1101,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nNão encontrei essa combinação de modelo e cor disponível na nossa lista atual de pronta entrega.",
+              "sent": true,
+              "safety_reason": "human_review_needed"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "723b4b1084788c1a",
+      "split": "validation",
+      "channel": "instagram",
+      "history": [
+        {
+          "role": "user",
+          "content": "Esse azul tá belíssimo."
+        },
+        {
+          "role": "assistant",
+          "content": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nNão consegui concluir a análise dessa imagem agora. Se tiver outra foto ou o link da publicação, pode enviar por aqui.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+          "metadata": {
+            "safety_reason": "image_identify_failed"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "case_id": "1165",
+          "recorded_at": "2026-10-01 15:56:06.396395+00:00",
+          "input": "Sair",
+          "requirements": [
+            "Rotular como encerramento para não ensinar ao sistema que a resposta foi uma qualificação falha."
+          ],
+          "historical_status": "classificação",
+          "historical_observation": "Encerramento adequado, mas registrado como commerce_clarification.",
+          "historical_responses": [
+            {
+              "response_id": 1102,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nCerto, vou encerrar por aqui. Qualquer dúvida é só me chamar aqui. Obrigado por falar com a New Store Relógios!",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "fe02a62f99525139",
+      "split": "development",
+      "channel": "instagram",
+      "history": [
+        {
+          "role": "user",
+          "content": "Manda o link"
+        },
+        {
+          "role": "assistant",
+          "content": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nNão consegui confirmar uma correspondência segura entre esse Story e o catálogo. Se tiver outra foto ou o link da publicação, pode enviar por aqui.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+          "metadata": {
+            "safety_reason": "not_found"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "case_id": "1166",
+          "recorded_at": "2026-10-01 16:00:35.471722+00:00",
+          "input": "[Imagem recebida via Instagram]",
+          "requirements": [
+            "Separar identificação provável de confirmação, reduzir tempo da consulta, preservar evidência visual e corrigir credencial do canal; não contabilizar tentativa como entrega."
+          ],
+          "historical_status": "técnica",
+          "historical_observation": "Identificação visual produziu hipótese, busca no catálogo ficou incompleta; processamento de 128,5 s. Duas tentativas de resposta foram rejeitadas pela Meta com HTTP 401/código 190.",
+          "historical_responses": [
+            {
+              "response_id": 1103,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nNão consegui concluir a comparação dessa foto com o catálogo agora. Se tiver outra foto ou o link da publicação, pode enviar por aqui.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+              "sent": false,
+              "safety_reason": "image_catalog_search_incomplete"
+            },
+            {
+              "response_id": 1104,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nNão consegui concluir a comparação dessa foto com o catálogo agora. Se tiver outra foto ou o link da publicação, pode enviar por aqui.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+              "sent": false,
+              "safety_reason": "image_catalog_search_incomplete"
+            }
+          ],
+          "requires_media_annotation": true,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1167",
+          "recorded_at": "2026-10-01 16:04:11.713242+00:00",
+          "input": "Qual é esse",
+          "requirements": [
+            "Preservar a imagem e a hipótese anterior quando disponíveis; resolver o envio e pedir outro material apenas se necessário."
+          ],
+          "historical_status": "técnica",
+          "historical_observation": "Pediu reenvio da imagem ou marca/modelo. A resposta também falhou na entrega com erro de autenticação Meta.",
+          "historical_responses": [
+            {
+              "response_id": 1105,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nPode reenviar a imagem ou me dizer a marca/modelo, para eu identificar corretamente?",
+              "sent": false,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "24a7847e6835b6e6",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1168",
+          "recorded_at": "2026-10-01 16:05:57.710063+00:00",
+          "input": "Boa tarde",
+          "requirements": [
+            "Manter continuidade após a primeira apresentação."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Saudação adequada.",
+          "historical_responses": [
+            {
+              "response_id": 1106,
+              "reply": "Olá! Eu sou o Crono, assistente virtual (IA) da New Store Relógios. Como posso te ajudar hoje?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "66aab2f6729a9cfa",
+      "split": "development",
+      "channel": "instagram",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1169",
+          "recorded_at": "2026-10-01 16:24:44.760675+00:00",
+          "input": "Valor?",
+          "requirements": [
+            "Vincular a imagem enviada em seguida à mesma solicitação de preço."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Pediu qual relógio do Story interessava.",
+          "historical_responses": [
+            {
+              "response_id": 1107,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nClaro! Qual dos relógios do Story chamou sua atenção? Pode me indicar pela posição ou mandar um print marcando ele?",
+              "sent": true,
+              "safety_reason": "ambiguous"
+            }
+          ],
+          "requires_media_annotation": true,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1179",
+          "recorded_at": "2026-10-01 16:56:58.217828+00:00",
+          "input": "[Imagem recebida via Instagram]",
+          "requirements": [
+            "Manter o preço como objetivo pendente, reutilizar Story e imagem e informar exatamente a evidência que falta."
+          ],
+          "historical_status": "inconclusivo",
+          "historical_observation": "Não houve confirmação segura da foto no catálogo. Sem inspecionar a mídia original, não é possível afirmar que o produto deveria ter sido identificado.",
+          "historical_responses": [
+            {
+              "response_id": 1117,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nNão consegui confirmar uma correspondência segura entre essa foto e o catálogo. Se tiver outra foto ou o link da publicação, pode enviar por aqui.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+              "sent": true,
+              "safety_reason": "image_catalog_unconfirmed"
+            }
+          ],
+          "requires_media_annotation": true,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "83ffe7bedf641a48",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1170",
+          "recorded_at": "2026-10-01 16:35:06.637392+00:00",
+          "input": "Boa tarde, tudo bem? Queria verificar a disponibilidade do Relógio Seiko Presage Cocktail Midnight Mockingbird Automático Verde SSA459J1",
+          "requirements": [
+            "Responder sobre disponibilidade com evidência; modelar capacidades compatíveis do movimento. O fabricante confirma automático com corda manual para SSA459J1."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Consultou inventário, mas a resposta não esclareceu a disponibilidade solicitada. Também chamou automático e corda manual de informações conflitantes.",
+          "historical_responses": [
+            {
+              "response_id": 1108,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nSim, encontrei:\n\nRelógio Seiko Presage Cocktail Midnight Mockingbird Automático Verde SSA459J1\nRef.: SSA459J1\nA prazo: R$ 5.799,99\nÀ vista no Pix: R$ 4.929,99\nLink: [source_url]\nMovimento: automático, corda manual (há informações diferentes no cadastro; não confirmo uma única especificação).\nCor do mostrador: Verde texturizado, inspirado no cocktail Midnight Mockingbird.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "57539b292f954a6a",
+      "split": "development",
+      "channel": "instagram",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1171",
+          "recorded_at": "2026-10-01 16:35:45.764299+00:00",
+          "input": "\"Olá,tudo bem? Eu espero que sim \n  Meu nome é Mariana, sou da *Encodá*.\n  Hoje, muitas empresas excelentes perdem oportunidades simplesmente porque seu posicionamento visual e digital não reflete a verdadeira qualidade do que entregam. \n  Na Encodá, nós transformamos essa realidade: nosso diferencial é unir estratégia de negócio e design inteligente para construirmos marcas marcantes, modernas e preparadas para o futuro.\n  Nós impulsionamos empresas principalmente através de três pilares fundamentais: Criação de Identidade Visual, Sites Institucionais e Design para Mídias Sociais.\n  Você teria 10 minutos nesta semana para trocarmos uma ideia rápida sobre como podemos elevar o posicionamento digital da sua empresa?\"",
+          "requirements": [
+            "Classificar fornecedor/parceria/fora do escopo comercial do bot sem registrar trade-in."
+          ],
+          "historical_status": "classificação",
+          "historical_observation": "Proposta de serviços de design foi marcada como troca/avaliação de relógio. Oferta de humano é aceitável, mas a classificação está errada.",
+          "historical_responses": [
+            {
+              "response_id": 1109,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+              "sent": true,
+              "safety_reason": "trade_in_or_appraisal"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "d9b52290a99ba990",
+      "split": "validation",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1172",
+          "recorded_at": "2026-10-01 16:44:10.039023+00:00",
+          "input": "Meu pedido",
+          "requirements": [
+            "Interpretar corretamente cada alternativa no turno seguinte."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Ofereceu número do pedido, CPF ou e-mail como formas de localização.",
+          "historical_responses": [
+            {
+              "response_id": 1110,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nVocê pode me informar o número do pedido? Se não tiver, pode ser o CPF do titular ou o e-mail usado na compra.",
+              "sent": true,
+              "safety_reason": "service_intent_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1173",
+          "recorded_at": "2026-10-01 16:45:38.620374+00:00",
+          "input": "52998224725",
+          "requirements": [
+            "Dar prioridade ao documento validado, consultar cliente e pedidos autorizados e nunca persistir CPF em order_lookup_id."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Recebeu CPF válido, tratou como código de pedido e pediu CPF novamente. Avaliador aprovou com nota 95.",
+          "historical_responses": [
+            {
+              "response_id": 1111,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nNão consegui confirmar esse código de pedido diretamente. Para procurar o mesmo pedido no cadastro correto, informe o CPF ou CNPJ do comprador.",
+              "sent": true,
+              "safety_reason": "order_not_found"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "731abe8e2b00207d",
+      "split": "development",
+      "channel": "whatsapp",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1174",
+          "recorded_at": "2026-10-01 16:51:16.544163+00:00",
+          "input": "52998224725",
+          "requirements": [
+            "Reconhecer o tipo de documento e confirmar finalidade quando faltar contexto, sem interpretá-lo como orçamento."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "CPF válido isolado foi tratado como número de pedido ou possível orçamento.",
+          "historical_responses": [
+            {
+              "response_id": 1112,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nEsse número é o número do pedido ou o valor que você pretende gastar?",
+              "sent": true,
+              "safety_reason": "context_confirmation_required"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1175",
+          "recorded_at": "2026-10-01 16:51:34.169750+00:00",
+          "input": "CPF",
+          "requirements": [
+            "Distinguir consulta de pedido de coleta de dados para pagamento; usar a finalidade declarada ou confirmá-la com uma pergunta específica."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Depois da confirmação CPF, respondeu que não precisava de CPF e orientou checkout.",
+          "historical_responses": [
+            {
+              "response_id": 1113,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nNão precisa me passar CPF por aqui. \nSe você estiver finalizando uma compra, esse dado é preenchido com segurança no checkout do site.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1176",
+          "recorded_at": "2026-10-01 16:52:56.744805+00:00",
+          "input": "Meu pedido",
+          "requirements": [
+            "Preservar esse contexto para avaliar a reclamação de atraso."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Recuperou pedido e retornou A ENVIAR.",
+          "historical_responses": [
+            {
+              "response_id": 1114,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nSeu pedido está com status \"A ENVIAR\".",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1177",
+          "recorded_at": "2026-10-01 16:53:33.712403+00:00",
+          "input": "Está atrasado",
+          "requirements": [
+            "Reconhecer a reclamação, citar apenas dados confirmados e seguir a política de encaminhamento; reservar orçamento para uma reparação útil."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Está atrasado terminou em encaminhamento genérico. O crítico detectou a inadequação, mas a reparação não ocorreu por repair_budget_unavailable.",
+          "historical_responses": [
+            {
+              "response_id": 1115,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+              "sent": true,
+              "safety_reason": "critique_unavailable"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1178",
+          "recorded_at": "2026-10-01 16:54:25.493442+00:00",
+          "input": "Não",
+          "requirements": [
+            "Respeitar a escolha e dizer o que ainda pode consultar especificamente sobre o pedido em atraso."
+          ],
+          "historical_status": "parcial",
+          "historical_observation": "Respeitou a recusa de transferência, porém explicou limitações de forma genérica.",
+          "historical_responses": [
+            {
+              "response_id": 1116,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nTudo bem, seguimos por aqui. Posso esclarecer as informações e políticas disponíveis. Solicitações que dependem da equipe, como avaliação, devolução ou reembolso, precisam de um atendente para execução; não consigo concluir essas ações pelo chat automático.",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "1fff1825c7d6d102",
+      "split": "development",
+      "channel": "instagram",
+      "history": [
+        {
+          "role": "user",
+          "content": "Minha pulseira do Frederique realmente irá chegar ?"
+        },
+        {
+          "role": "assistant",
+          "content": "Identifiquei Christopher Ward neste Story, mas não fechei o modelo exato no catálogo. Me manda a referência ou o link do CONFIRA que eu confirmo o valor.",
+          "metadata": {
+            "safety_reason": "ambiguous"
+          }
+        },
+        {
+          "role": "user",
+          "content": "Boa noite !"
+        },
+        {
+          "role": "assistant",
+          "content": "Identifiquei Christopher Ward neste Story, mas não fechei o modelo exato no catálogo. Me manda a referência ou o link do CONFIRA que eu confirmo o valor.",
+          "metadata": {
+            "safety_reason": "ambiguous"
+          }
+        },
+        {
+          "role": "user",
+          "content": "Olá João boa noite tudo bem? Gostaria de saber qual opção seria plausível para vocês em relação a pulseira."
+        },
+        {
+          "role": "assistant",
+          "content": "Esta referência não atende ao critério de mostrador metal.\nSim, encontrei:\n\nPulseira de Couro Tissot Prx Serie 40 mm\nA prazo: R$ 999,99\nÀ vista no Pix: R$ 849,99\nLink: [source_url]\nMaterial da pulseira: não confirmado em campo específico da ficha.",
+          "metadata": {
+            "safety_reason": null
+          }
+        },
+        {
+          "role": "user",
+          "content": "Seria a do Moneta"
+        },
+        {
+          "role": "assistant",
+          "content": "Qual opção da lista você quer comprar (1, 2 ou 3)?",
+          "metadata": {
+            "safety_reason": "purchase_close_hold"
+          }
+        },
+        {
+          "role": "user",
+          "content": "Creio que possa ter confundido"
+        },
+        {
+          "role": "assistant",
+          "content": "Qual opção da lista você quer comprar (1, 2 ou 3)?",
+          "metadata": {
+            "safety_reason": "purchase_close_hold"
+          }
+        },
+        {
+          "role": "user",
+          "content": "Não entendi ?"
+        },
+        {
+          "role": "assistant",
+          "content": "Você quer confirmar qual pulseira exatamente? Se puder me mandar a referência, foto ou link da peça, eu verifico para você.",
+          "metadata": {
+            "safety_reason": "commerce_clarification"
+          }
+        },
+        {
+          "role": "user",
+          "content": "Na verdade é sobre o Frederique constant que veio com pulseira de metal ao Invés da de couro."
+        },
+        {
+          "role": "assistant",
+          "content": "Qual opção da lista você quer comprar (1, 2 ou 3)?",
+          "metadata": {
+            "safety_reason": "purchase_close_hold"
+          }
+        },
+        {
+          "role": "user",
+          "content": "Deve ser ia neh"
+        },
+        {
+          "role": "assistant",
+          "content": "Qual opção da lista você quer comprar (1, 2 ou 3)?",
+          "metadata": {
+            "safety_reason": "purchase_close_hold"
+          }
+        },
+        {
+          "role": "user",
+          "content": "Terei que falar com atendente físico."
+        },
+        {
+          "role": "assistant",
+          "content": "Para continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+          "metadata": {
+            "safety_reason": "persona_policy_handoff"
+          }
+        },
+        {
+          "role": "user",
+          "content": "Grato boa noite"
+        }
+      ],
+      "steps": [
+        {
+          "case_id": "1180",
+          "recorded_at": "2026-10-01 17:52:49.115527+00:00",
+          "input": "Boa tarde tudo bem. Pode ser próxima a cor que seria a original.",
+          "requirements": [
+            "Confirmar de modo contextual: a cor próxima seria para a pulseira do Frederique Constant? Não presumir que a situação antiga continua igual."
+          ],
+          "historical_status": "melhoria",
+          "historical_observation": "Pediu qual produto era. O histórico contém problema de troca da pulseira do Frederique Constant, mas a resposta não ancorou a retomada nesse assunto.",
+          "historical_responses": [
+            {
+              "response_id": 1118,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nVocê está falando de qual modelo ou produto? Assim eu confirmo a cor mais próxima da original.",
+              "sent": true,
+              "safety_reason": "commerce_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    },
+    {
+      "key": "91e47d4a3dde7da4",
+      "split": "development",
+      "channel": "instagram",
+      "history": [],
+      "steps": [
+        {
+          "case_id": "1181",
+          "recorded_at": "2026-10-01 18:30:59.059422+00:00",
+          "input": "Boa tarde",
+          "requirements": [
+            "Continuar sem reintrodução repetida."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Saudação adequada.",
+          "historical_responses": [
+            {
+              "response_id": 1119,
+              "reply": "Olá! Eu sou o Crono, assistente virtual (IA) da New Store Relógios. Como posso te ajudar hoje?",
+              "sent": true,
+              "safety_reason": null
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1182",
+          "recorded_at": "2026-10-01 18:31:07.909505+00:00",
+          "input": "Gostaria de saber de uma compra que realizei",
+          "requirements": [
+            "Diferenciar os identificadores recebidos."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Perguntou por número do pedido, CPF ou e-mail.",
+          "historical_responses": [
+            {
+              "response_id": 1120,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nVocê pode me informar o número do pedido? Se não tiver, pode ser o CPF do titular ou o e-mail usado na compra.",
+              "sent": true,
+              "safety_reason": "service_intent_clarification"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1183",
+          "recorded_at": "2026-10-01 18:31:33.186201+00:00",
+          "input": "52998224725",
+          "requirements": [
+            "Aplicar o reconhecimento de documento antes da recuperação de número de pedido pelo texto da pergunta anterior."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Outro CPF válido foi tratado como código de pedido. Avaliador aprovou com nota 95.",
+          "historical_responses": [
+            {
+              "response_id": 1121,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nNão consegui confirmar esse código de pedido diretamente. Para procurar o mesmo pedido no cadastro correto, informe o CPF ou CNPJ do comprador.",
+              "sent": true,
+              "safety_reason": "order_not_found"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1184",
+          "recorded_at": "2026-10-01 18:32:13.736336+00:00",
+          "input": "[document]",
+          "requirements": [
+            "Corrigir o identificador mal tipado, preservar a validação de titularidade e selecionar o pedido real sem dispensar a autorização."
+          ],
+          "historical_status": "falha",
+          "historical_observation": "Recebeu o CPF formatado e buscou cliente/pedidos, mas comparou com o CPF anterior salvo como código de pedido e respondeu incompatibilidade.",
+          "historical_responses": [
+            {
+              "response_id": 1122,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nO código informado não foi confirmado entre os pedidos desse cadastro. Confira o código ou fale com a equipe de atendimento.",
+              "sent": true,
+              "safety_reason": "order_customer_mismatch"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1185",
+          "recorded_at": "2026-10-01 18:33:48.346196+00:00",
+          "input": "Como faço para falar com um atendente ?",
+          "requirements": [
+            "Reconhecer o pedido por humano e executar o encaminhamento disponível sem confirmação redundante."
+          ],
+          "historical_status": "melhoria",
+          "historical_observation": "Pergunta explícita por atendente recebeu nova pergunta de autorização para encaminhar.",
+          "historical_responses": [
+            {
+              "response_id": 1123,
+              "reply": "Crono · Assistente virtual (IA) da New Store Relógios\n\nPara continuar com esse assunto, preciso da ajuda de um atendente. Quer que eu encaminhe seu atendimento para a equipe?",
+              "sent": true,
+              "safety_reason": "persona_policy_handoff"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1186",
+          "recorded_at": "2026-10-01 18:34:10.818789+00:00",
+          "input": "Sim",
+          "requirements": [
+            "Manter confirmação objetiva e o resumo do problema para o atendente."
+          ],
+          "historical_status": "parcial",
+          "historical_observation": "Confirmou solicitação à equipe, mas repetiu apresentação completa.",
+          "historical_responses": [
+            {
+              "response_id": 1124,
+              "reply": "Olá! Sou Crono, assistente virtual (IA) da New Store Relógios.\n\nSolicitei seu atendimento à equipe. Aguarde a continuidade por um atendente.",
+              "sent": true,
+              "safety_reason": "customer_accepted_handoff_offer"
+            }
+          ],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        },
+        {
+          "case_id": "1187",
+          "recorded_at": "2026-10-01 18:37:49.384954+00:00",
+          "input": "Gostaria de saber sobre uma compra que realizei",
+          "requirements": [
+            "Preservar a pausa após tomada humana. Ausência de resposta do bot neste caso é comportamento correto."
+          ],
+          "historical_status": "adequado",
+          "historical_observation": "Não houve resposta automática; o CRM registra que Felipe assumiu e pausou o bot, com atendimento humano posterior.",
+          "historical_responses": [],
+          "requires_media_annotation": false,
+          "candidate_result": null
+        }
+      ]
+    }
+  ]
+}

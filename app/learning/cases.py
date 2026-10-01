@@ -34,12 +34,18 @@ def upsert_learning_case(
     bad_reply: str,
     correction: str,
     insight_id: int | None = None,
+    source_inbound_id: int | None = None,
+    source_response_id: int | None = None,
+    source_review_ids: list[int] | None = None,
     importance: float = 0.5,
 ) -> int | None:
     now = datetime.now(timezone.utc)
     # Preserve separate incidents in the same failure family; retries of one
     # incident stay idempotent. No customer identifiers appear in the key.
-    identity = json.dumps([conversation_key, insight_id, customer_excerpt, bad_reply], ensure_ascii=False)
+    identity = json.dumps(
+        [conversation_key, source_response_id, source_inbound_id]
+        if source_response_id is not None or source_inbound_id is not None
+        else [conversation_key, customer_excerpt, bad_reply], ensure_ascii=False)
     case_key = f"learning:{failure_code}:{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
     try:
         with get_conn() as conn:
@@ -60,20 +66,7 @@ def upsert_learning_case(
                         tenant_id,
                         COALESCE(workspace_id, '00000000-0000-0000-0000-000000000000'::uuid),
                         case_key
-                    ) DO UPDATE SET
-                        conversation_key = EXCLUDED.conversation_key,
-                        failure_codes = EXCLUDED.failure_codes,
-                        customer_excerpt = EXCLUDED.customer_excerpt,
-                        bad_reply = EXCLUDED.bad_reply,
-                        correction = EXCLUDED.correction,
-                        status = 'active',
-                        insight_id = COALESCE(EXCLUDED.insight_id, public.ai_learning_cases.insight_id),
-                        importance = GREATEST(
-                            public.ai_learning_cases.importance,
-                            EXCLUDED.importance
-                        ),
-                        updated_at = EXCLUDED.updated_at,
-                        metadata = EXCLUDED.metadata
+                    ) DO NOTHING
                     RETURNING id
                     """,
                     (
@@ -89,8 +82,21 @@ def upsert_learning_case(
                         importance,
                         now,
                         now,
-                        to_jsonb({"failure_code": failure_code}),
+                        to_jsonb({"failure_code": failure_code, "pattern_key": failure_code,
+                                  "source_inbound_id": source_inbound_id,
+                                  "source_response_id": source_response_id,
+                                  "source_review_ids": list(source_review_ids or []),
+                                  "immutable_incident": True}),
                     ),
+                )
+                inserted = get_returning_id(cur.fetchone())
+                if inserted is not None:
+                    return inserted
+                cur.execute(
+                    """SELECT id FROM public.ai_learning_cases
+                       WHERE tenant_id = %s AND workspace_id IS NOT DISTINCT FROM %s::uuid
+                         AND case_key = %s""",
+                    (tenant_id, workspace_id, case_key),
                 )
                 return get_returning_id(cur.fetchone())
     except psycopg.Error as exc:

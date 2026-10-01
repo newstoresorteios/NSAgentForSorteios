@@ -1,0 +1,692 @@
+{
+  "schema": "october-real-media-annotations-v1",
+  "reviewed_on": "2026-10-01",
+  "method": "Codex visual inspection of both original screenshots and all 21 decoded frames from three unique original videos. No remote model calls; no audio transcription or catalogue identity approval.",
+  "limits": "Annotations exercise offline media ingestion/vision contracts with a pre-annotated model boundary; they do not prove remote model accuracy, catalog identification, full message routing or delivery.",
+  "privacy": "Original files and frames containing people remain in ignored local proof storage; no private URLs/account IDs in this fixture.",
+  "cases": [
+    {
+      "case_id": "1127",
+      "source_sha256": "c6fdf75c74b83ad68f3c01c505c4a3cd90979d8ce3a7fa1f22c88621435e3a26",
+      "source_bytes": 10376415,
+      "source_mime": "video/mp4",
+      "private_fixture_filename": "1127.mp4",
+      "persisted_worker_schema_observed": "story-worker-v5",
+      "source_binding": "Matching workspace and reply_to.story.id joined to latest archived job; hash verified against bytes",
+      "input_envelope": {
+        "provider": "meta",
+        "replied_to_story": true,
+        "attachment_type": "video"
+      },
+      "decoded_frame_count": 7,
+      "decoded_frame_times_seconds": [
+        1.2,
+        9.733,
+        24.667,
+        33.167,
+        35.3,
+        48.1,
+        54.5
+      ],
+      "reviewed_frame_indexes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "reviewed_frame_sha256": [
+        "d24cdca11d88dd84904a1075f21d65b4d25e253ee41243b0ec7fb3906890508e",
+        "4470446754040e1292c3c13c149e5c872836d59b39713fc34dec42e4190c53ae",
+        "fb8563a51bf25f9eb326778e0dde669740bd0f7958cb9635b341ed030bf8ac8f",
+        "e9a17db547728e3620e253f56d9ab00c0a30b43a9e4c78e24fdad0de3b03e29d",
+        "ad29354c6f97ca2c772ec584f0657be8bdf4a744d61370c3a0cf5d7510db4c1b",
+        "437eab8d1da354745f81b9178184fddb48592fe34417e10a8f1346e450831c32",
+        "d14407c7eb874a9f43bd2a1e826091aac2f417906e0489b9c08bdf0eae7066a4"
+      ],
+      "analysis": {
+        "media_type": "video",
+        "watch_count": 2,
+        "multiple_products": true,
+        "image_quality": "usable",
+        "visible_brands": [],
+        "visible_text": [],
+        "visible_references": [],
+        "visible_skus": [],
+        "overlay_text": [
+          "Traska Venturer GMT",
+          "pronta entrega",
+          "praticamente sold out"
+        ],
+        "model_hypotheses": [
+          "Traska Venturer GMT (somente peça prateada anunciada)"
+        ],
+        "product_regions": [
+          {
+            "label": "dourado no pulso desde o início",
+            "position": "left",
+            "dial_color": "branco",
+            "strap_color": "dourado",
+            "brand_hypothesis": null,
+            "visible_text": [],
+            "frame_indexes": [
+              0,
+              1,
+              6
+            ]
+          },
+          {
+            "label": "prateado apresentado nas mãos e colocado no outro pulso",
+            "position": "center",
+            "dial_color": "azul",
+            "strap_color": "prateado",
+            "brand_hypothesis": null,
+            "visible_text": [],
+            "frame_indexes": [
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          }
+        ],
+        "audio_status": "not_attempted",
+        "audio_transcript": "",
+        "product_identity_confidence": 0.0,
+        "ambiguity_reasons": [
+          "Two different foreground watches appear on wrists during the clip; no braço does not uniquely select either.",
+          "The overlay refers to the promoted silver watch and does not identify the gold wristwatch.",
+          "No exact reference is legible; background packaging is not product identity."
+        ]
+      },
+      "approved_exact_identities": [],
+      "audio_reviewed": false,
+      "expected": {
+        "no_catalog_product_id_inferred": true,
+        "no_price_or_stock_inferred": true,
+        "all_visible_targets_remain_distinct": true
+      }
+    },
+    {
+      "case_id": "1130",
+      "source_sha256": "76a49976e5194ab45defe5dc551f8c81279aed2ffa5d455df937f96733c7b32b",
+      "source_bytes": 12447941,
+      "source_mime": "video/mp4",
+      "private_fixture_filename": "1130.mp4",
+      "persisted_worker_schema_observed": null,
+      "source_binding": "Exact inbound channel_metadata.media_storage_path; full hash verified against archived bytes and object name prefix",
+      "input_envelope": {
+        "provider": "meta",
+        "replied_to_story": true,
+        "attachment_type": "video"
+      },
+      "decoded_frame_count": 7,
+      "decoded_frame_times_seconds": [
+        5.467,
+        9.733,
+        24.667,
+        26.8,
+        37.467,
+        50.267,
+        54.533
+      ],
+      "reviewed_frame_indexes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "reviewed_frame_sha256": [
+        "64e4d02e2f485c7e2810b4c1cdf94e0babae2e01c91fec8fd90650da6a8c69de",
+        "e6764fafb7f9740c59f4fb08372ecaf4c7150fc79eda307c9def6ee07845b05d",
+        "42bee4104f7e8b98fd7ece1ebc9f50fc7be108a7f30325d6d209f94ff3dadd28",
+        "ed94336819ea2c2fa6e954b60523160e50ef3dbdcb2a44bed1c1689d7e543be0",
+        "6b91ff376d2a2386a7f9b349a1d9670c1e78673860f02b3996bed9e7bdd98338",
+        "f363702d04ccc64d1c41a7f14ef22c912a6ddf997aeed5fb47f7e696fa1f97ef",
+        "cb3fff12a7bd2a5f3a12876115724a888827ec8b0436901573287c1c6cab9283"
+      ],
+      "analysis": {
+        "media_type": "video",
+        "watch_count": 3,
+        "multiple_products": true,
+        "image_quality": "good",
+        "visible_brands": [
+          "Traska"
+        ],
+        "visible_text": [
+          "TRASKA",
+          "GMT",
+          "AUTOMATIC"
+        ],
+        "visible_references": [],
+        "visible_skus": [],
+        "overlay_text": [
+          "TRASKA - DISPONÍVEIS"
+        ],
+        "model_hypotheses": [
+          "Traska GMT"
+        ],
+        "product_regions": [
+          {
+            "label": "azul apresentado na mão",
+            "position": "center",
+            "dial_color": "azul",
+            "strap_color": "prateado",
+            "brand_hypothesis": "Traska",
+            "visible_text": [
+              "TRASKA",
+              "GMT",
+              "AUTOMATIC"
+            ],
+            "frame_indexes": [
+              0,
+              1,
+              5,
+              6
+            ]
+          },
+          {
+            "label": "branco no estojo",
+            "position": "center",
+            "dial_color": "branco",
+            "strap_color": "prateado",
+            "brand_hypothesis": "Traska",
+            "visible_text": [
+              "TRASKA",
+              "GMT",
+              "AUTOMATIC"
+            ],
+            "frame_indexes": [
+              2,
+              3,
+              4
+            ]
+          },
+          {
+            "label": "preto na mesa",
+            "position": "center",
+            "dial_color": "preto",
+            "strap_color": "prateado",
+            "brand_hypothesis": null,
+            "visible_text": [],
+            "frame_indexes": [
+              1,
+              6
+            ]
+          }
+        ],
+        "audio_status": "not_attempted",
+        "audio_transcript": "",
+        "product_identity_confidence": 0.0,
+        "ambiguity_reasons": [
+          "Three color variants are visible; the availability question does not select one.",
+          "DISPONÍVEIS is a historical advertisement, not current stock.",
+          "No exact reference is legible."
+        ]
+      },
+      "approved_exact_identities": [],
+      "audio_reviewed": false,
+      "expected": {
+        "no_catalog_product_id_inferred": true,
+        "no_price_or_stock_inferred": true,
+        "all_visible_targets_remain_distinct": true
+      }
+    },
+    {
+      "case_id": "1143",
+      "source_sha256": "ff3e79a24d6d7d5f550ea2dd67ced8ac0b6cf0f453c4dce07ebca9e0791e535c",
+      "source_bytes": 13196560,
+      "source_mime": "video/mp4",
+      "private_fixture_filename": "1143.mp4",
+      "persisted_worker_schema_observed": "story-worker-v5",
+      "source_binding": "Matching workspace and reply_to.story.id joined to latest archived job; hash verified against bytes",
+      "input_envelope": {
+        "provider": "meta",
+        "replied_to_story": true,
+        "attachment_type": "video"
+      },
+      "decoded_frame_count": 7,
+      "decoded_frame_times_seconds": [
+        5.467,
+        9.733,
+        24.667,
+        26.8,
+        35.333,
+        50.267,
+        54.533
+      ],
+      "reviewed_frame_indexes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "reviewed_frame_sha256": [
+        "1f59cbf0530f4a39c0dda56c8667b4775d46a93037f3a8414b03573bbf9676f3",
+        "f70c24f7e435c7807c3d7d8572871f01e5f7f21a3c275b3ef47ea12cd3b59397",
+        "eeae560e0c767875f176ae0b0091fc83e4ead166d1a39b46aaf627e2b03279c3",
+        "fe380e7dd6e507abb0585db1ef9a11dffd2f4cf99d0f671b4698028d6f0ef873",
+        "1a5abe664ff4dd7c9762897d1ab2753ffecb437ae2797ba9ad289bff366c145a",
+        "d467d3257673454be3beeecfeea5f6b05c6920018b5fd2d9cddd72edd4606b46",
+        "11cc4a1af70abd7ceb52e43362858100694d202dae2563c6078e2c465f911014"
+      ],
+      "analysis": {
+        "media_type": "video",
+        "watch_count": 4,
+        "multiple_products": true,
+        "image_quality": "good",
+        "visible_brands": [
+          "Mido",
+          "Traska"
+        ],
+        "visible_text": [
+          "MIDO",
+          "AUTOMATIC",
+          "Baroncelli",
+          "HERITAGE",
+          "TRASKA",
+          "GMT"
+        ],
+        "visible_references": [],
+        "visible_skus": [],
+        "overlay_text": [],
+        "model_hypotheses": [
+          "Mido Baroncelli Heritage",
+          "Traska GMT"
+        ],
+        "product_regions": [
+          {
+            "label": "branco dourado no pulso",
+            "position": "center",
+            "dial_color": "branco",
+            "strap_color": "dourado",
+            "brand_hypothesis": "Mido",
+            "visible_text": [
+              "MIDO",
+              "AUTOMATIC",
+              "Baroncelli",
+              "HERITAGE"
+            ],
+            "frame_indexes": [
+              1
+            ]
+          },
+          {
+            "label": "Traska branco",
+            "position": "left",
+            "dial_color": "branco",
+            "strap_color": "prateado",
+            "brand_hypothesis": "Traska",
+            "visible_text": [
+              "TRASKA",
+              "GMT",
+              "AUTOMATIC"
+            ],
+            "frame_indexes": [
+              2,
+              3,
+              4,
+              5
+            ]
+          },
+          {
+            "label": "Traska preto",
+            "position": "center",
+            "dial_color": "preto",
+            "strap_color": "prateado",
+            "brand_hypothesis": "Traska",
+            "visible_text": [
+              "TRASKA",
+              "GMT",
+              "AUTOMATIC"
+            ],
+            "frame_indexes": [
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "label": "Traska azul",
+            "position": "right",
+            "dial_color": "azul",
+            "strap_color": "prateado",
+            "brand_hypothesis": "Traska",
+            "visible_text": [
+              "TRASKA",
+              "GMT",
+              "AUTOMATIC"
+            ],
+            "frame_indexes": [
+              4,
+              5,
+              6
+            ]
+          }
+        ],
+        "audio_status": "not_attempted",
+        "audio_transcript": "",
+        "product_identity_confidence": 0.0,
+        "ambiguity_reasons": [
+          "Four watches across the clip require target selection before an exact price lookup.",
+          "Model-family text is visible but no exact SKU/reference is readable."
+        ]
+      },
+      "approved_exact_identities": [],
+      "audio_reviewed": false,
+      "expected": {
+        "no_catalog_product_id_inferred": true,
+        "no_price_or_stock_inferred": true,
+        "all_visible_targets_remain_distinct": true
+      }
+    },
+    {
+      "case_id": "1166",
+      "source_sha256": "4715a34d30405d31814b0968f3b1c861b18fde1f8c5e5a49c82f5b2d4b006939",
+      "source_bytes": 186149,
+      "source_mime": "image/jpeg",
+      "private_fixture_filename": "1166.jpg",
+      "persisted_worker_schema_observed": null,
+      "source_binding": "Exact inbound channel_metadata.media_storage_path; full hash verified against archived bytes and object name prefix",
+      "input_envelope": {
+        "provider": "meta",
+        "replied_to_story": false,
+        "attachment_type": "image"
+      },
+      "decoded_frame_count": 0,
+      "decoded_frame_times_seconds": [],
+      "reviewed_frame_indexes": [],
+      "reviewed_frame_sha256": [],
+      "analysis": {
+        "media_type": "image",
+        "watch_count": 5,
+        "multiple_products": true,
+        "image_quality": "usable",
+        "visible_brands": [],
+        "visible_text": [],
+        "visible_references": [],
+        "visible_skus": [],
+        "overlay_text": [
+          "NEW STORE",
+          "SEMINOVOS",
+          "EXPLORE A COLEÇÃO",
+          "PRONTA"
+        ],
+        "model_hypotheses": [
+          "Tissot PRX (hipótese visual da peça principal, sem confirmação de SKU)"
+        ],
+        "product_regions": [
+          {
+            "label": "principal no banner SEMINOVOS",
+            "position": "top",
+            "dial_color": "branco",
+            "strap_color": "prateado",
+            "brand_hypothesis": null,
+            "visible_text": [],
+            "frame_indexes": []
+          },
+          {
+            "label": "grupo de quatro relógios no banner inferior",
+            "position": "bottom",
+            "dial_color": "escuro",
+            "strap_color": null,
+            "brand_hypothesis": null,
+            "visible_text": [],
+            "frame_indexes": []
+          }
+        ],
+        "audio_status": "not_attempted",
+        "audio_transcript": "",
+        "product_identity_confidence": 0.0,
+        "ambiguity_reasons": [
+          "Screenshot contains a prominent watch and a second banner with four more watches.",
+          "A banner/category is not an exact product page; no reference is legible."
+        ]
+      },
+      "approved_exact_identities": [],
+      "audio_reviewed": false,
+      "expected": {
+        "no_catalog_product_id_inferred": true,
+        "no_price_or_stock_inferred": true,
+        "all_visible_targets_remain_distinct": true
+      }
+    },
+    {
+      "case_id": "1169",
+      "source_sha256": "ff3e79a24d6d7d5f550ea2dd67ced8ac0b6cf0f453c4dce07ebca9e0791e535c",
+      "source_bytes": 13196560,
+      "source_mime": "video/mp4",
+      "private_fixture_filename": "1143.mp4",
+      "persisted_worker_schema_observed": "story-worker-v5",
+      "source_binding": "Matching workspace and reply_to.story.id joined to latest archived job; hash verified against bytes",
+      "input_envelope": {
+        "provider": "meta",
+        "replied_to_story": true,
+        "attachment_type": "video"
+      },
+      "decoded_frame_count": 7,
+      "decoded_frame_times_seconds": [
+        5.467,
+        9.733,
+        24.667,
+        26.8,
+        35.333,
+        50.267,
+        54.533
+      ],
+      "reviewed_frame_indexes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "reviewed_frame_sha256": [
+        "1f59cbf0530f4a39c0dda56c8667b4775d46a93037f3a8414b03573bbf9676f3",
+        "f70c24f7e435c7807c3d7d8572871f01e5f7f21a3c275b3ef47ea12cd3b59397",
+        "eeae560e0c767875f176ae0b0091fc83e4ead166d1a39b46aaf627e2b03279c3",
+        "fe380e7dd6e507abb0585db1ef9a11dffd2f4cf99d0f671b4698028d6f0ef873",
+        "1a5abe664ff4dd7c9762897d1ab2753ffecb437ae2797ba9ad289bff366c145a",
+        "d467d3257673454be3beeecfeea5f6b05c6920018b5fd2d9cddd72edd4606b46",
+        "11cc4a1af70abd7ceb52e43362858100694d202dae2563c6078e2c465f911014"
+      ],
+      "analysis": {
+        "media_type": "video",
+        "watch_count": 4,
+        "multiple_products": true,
+        "image_quality": "good",
+        "visible_brands": [
+          "Mido",
+          "Traska"
+        ],
+        "visible_text": [
+          "MIDO",
+          "AUTOMATIC",
+          "Baroncelli",
+          "HERITAGE",
+          "TRASKA",
+          "GMT"
+        ],
+        "visible_references": [],
+        "visible_skus": [],
+        "overlay_text": [],
+        "model_hypotheses": [
+          "Mido Baroncelli Heritage",
+          "Traska GMT"
+        ],
+        "product_regions": [
+          {
+            "label": "branco dourado no pulso",
+            "position": "center",
+            "dial_color": "branco",
+            "strap_color": "dourado",
+            "brand_hypothesis": "Mido",
+            "visible_text": [
+              "MIDO",
+              "AUTOMATIC",
+              "Baroncelli",
+              "HERITAGE"
+            ],
+            "frame_indexes": [
+              1
+            ]
+          },
+          {
+            "label": "Traska branco",
+            "position": "left",
+            "dial_color": "branco",
+            "strap_color": "prateado",
+            "brand_hypothesis": "Traska",
+            "visible_text": [
+              "TRASKA",
+              "GMT",
+              "AUTOMATIC"
+            ],
+            "frame_indexes": [
+              2,
+              3,
+              4,
+              5
+            ]
+          },
+          {
+            "label": "Traska preto",
+            "position": "center",
+            "dial_color": "preto",
+            "strap_color": "prateado",
+            "brand_hypothesis": "Traska",
+            "visible_text": [
+              "TRASKA",
+              "GMT",
+              "AUTOMATIC"
+            ],
+            "frame_indexes": [
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "label": "Traska azul",
+            "position": "right",
+            "dial_color": "azul",
+            "strap_color": "prateado",
+            "brand_hypothesis": "Traska",
+            "visible_text": [
+              "TRASKA",
+              "GMT",
+              "AUTOMATIC"
+            ],
+            "frame_indexes": [
+              4,
+              5,
+              6
+            ]
+          }
+        ],
+        "audio_status": "not_attempted",
+        "audio_transcript": "",
+        "product_identity_confidence": 0.0,
+        "ambiguity_reasons": [
+          "Four watches across the clip require target selection before an exact price lookup.",
+          "Model-family text is visible but no exact SKU/reference is readable."
+        ]
+      },
+      "approved_exact_identities": [],
+      "audio_reviewed": false,
+      "expected": {
+        "no_catalog_product_id_inferred": true,
+        "no_price_or_stock_inferred": true,
+        "all_visible_targets_remain_distinct": true
+      }
+    },
+    {
+      "case_id": "1179",
+      "source_sha256": "9812b4be94a4ad14860726d0b01a3aa3e07dd60167a683fc8d1284c2d4395194",
+      "source_bytes": 199102,
+      "source_mime": "image/jpeg",
+      "private_fixture_filename": "1179.jpg",
+      "persisted_worker_schema_observed": null,
+      "source_binding": "Exact inbound channel_metadata.media_storage_path; full hash verified against archived bytes and object name prefix",
+      "input_envelope": {
+        "provider": "meta",
+        "replied_to_story": false,
+        "attachment_type": "image"
+      },
+      "decoded_frame_count": 0,
+      "decoded_frame_times_seconds": [],
+      "reviewed_frame_indexes": [],
+      "reviewed_frame_sha256": [],
+      "analysis": {
+        "media_type": "image",
+        "watch_count": 1,
+        "multiple_products": false,
+        "image_quality": "usable",
+        "visible_brands": [],
+        "visible_text": [],
+        "visible_references": [],
+        "visible_skus": [],
+        "overlay_text": [
+          "Traska Venturer GMT",
+          "pronta entrega",
+          "praticamente sold out"
+        ],
+        "model_hypotheses": [
+          "Traska Venturer GMT (overlay do anúncio)"
+        ],
+        "product_regions": [
+          {
+            "label": "prateado azul em almofada",
+            "position": "center",
+            "dial_color": "azul",
+            "strap_color": "prateado",
+            "brand_hypothesis": null,
+            "visible_text": [],
+            "frame_indexes": [
+              0
+            ]
+          }
+        ],
+        "audio_status": "not_attempted",
+        "audio_transcript": "",
+        "product_identity_confidence": 0.0,
+        "ambiguity_reasons": [
+          "Screenshot identifies a likely advertised family and blue variant, not an exact SKU.",
+          "The prior price request remains pending; the attachment itself is not a Meta reply_to_story event.",
+          "Historical practically sold out claim is not current availability."
+        ]
+      },
+      "approved_exact_identities": [],
+      "audio_reviewed": false,
+      "expected": {
+        "no_catalog_product_id_inferred": true,
+        "no_price_or_stock_inferred": true,
+        "all_visible_targets_remain_distinct": true
+      }
+    }
+  ],
+  "text_followups": [
+    {
+      "case_id": "1167",
+      "input_modality": "text",
+      "prior_image_case_id": "1166",
+      "has_new_media": false,
+      "expected": "Continue the previous image identification instead of inventing a new image or losing the prior target"
+    }
+  ]
+}

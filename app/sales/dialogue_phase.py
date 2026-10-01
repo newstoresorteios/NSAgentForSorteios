@@ -26,6 +26,7 @@ _CATALOG_PREF_KEYS = (
     "excluded_product_ids",
     "budget_min", "material", "mechanism", "crystal", "gender",
     "explicit_no_preferences",
+    "delivery_deadline_text", "delivery_mode",
 )
 
 DialoguePhase = Literal["discovery", "shortlist", "buy", "checkout"]
@@ -222,6 +223,7 @@ def _clear_terminal_checkout(
     updated.purchase_target = None
     updated.last_presented_products = []
     updated.active_preferences = _scrub_catalog_preferences(updated.active_preferences)
+    _clear_objective_metadata(updated)
     updated.checkout_draft = CheckoutDraft()
     updated.pending_action = None
     updated.pending_action_product_ids = []
@@ -378,6 +380,15 @@ def should_reset_browse_memory(
     return False
 
 
+def _clear_objective_metadata(state):
+    state.active_goal = None
+    state.pending_question = None
+    state.questions_asked = []
+    state.delivery_requirement = None
+    state.preference_provenance = {key: value for key, value in state.preference_provenance.items()
+                                   if key in state.active_preferences}
+
+
 def reset_browse_memory_keep_orders(
     state: CommerceConversationState,
 ) -> CommerceConversationState:
@@ -397,6 +408,7 @@ def reset_browse_memory_keep_orders(
     updated.closed_by_farewell = False
     updated.last_browse_at = None
     updated.active_preferences = _scrub_catalog_preferences(updated.active_preferences)
+    _clear_objective_metadata(updated)
     return updated
 
 

@@ -21,6 +21,8 @@ def test_every_critical_case_has_three_independent_runs():
 @pytest.mark.asyncio
 async def test_multiturn_preserves_state_and_history_without_real_commerce():
     case=next(c for c in suite().scenarios if len(c.steps)>1)
+    case.recorded_at = '2026-10-01T23:00:00+00:00'
+    case.steps[1].recorded_at = '2026-10-02T12:00:00+00:00'
     seen=[]
     async def replay(sample,persona):
         seen.append(deepcopy(sample))
@@ -32,6 +34,8 @@ async def test_multiturn_preserves_state_and_history_without_real_commerce():
     assert seen[1]['simulation_state']=={'cart':'isolated'}
     assert seen[1]['history'][-2]['content']==case.steps[0].input
     assert seen[0]['environment']=='simulated_commerce'
+    assert seen[1]['recorded_at'] == '2026-10-02T12:00:00+00:00'
+    assert seen[1]['rebase_state_timestamps'] is False
     assert case.initial_state!={'marker':'preserved'}
 
 

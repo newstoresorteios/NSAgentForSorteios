@@ -101,6 +101,10 @@ async def process_outbox_batch(*, limit: int | None = None) -> dict[str, Any]:
             owner=row.get("lease_owner"),
         )
         if is_dead:
+            from app.channels.delivery_errors import record_delivery_failure
+            record_delivery_failure(send_info, outbox_id=outbox_id,
+                                    provider=row.get('provider'), channel=row.get('channel'),
+                                    exhausted=attempts >= max_attempts)
             dead += 1
             details.append({"id": outbox_id, "status": "dead"})
         else:

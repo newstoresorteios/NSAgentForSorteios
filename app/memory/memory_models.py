@@ -211,6 +211,7 @@ class MemoryPolicyDecision(BaseModel):
 
 class ContactMemory(BaseModel):
     id: int | None = None
+    workspace_id: str | None = None
     tenant_id: str
     sender_key: str
     memory_key: str
@@ -225,6 +226,11 @@ class ContactMemory(BaseModel):
     sensitive: bool = False
     expires_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("workspace_id", mode="before")
+    @classmethod
+    def _workspace_as_string(cls, value):
+        return str(value) if value is not None else None
 
 
 class MemoryProcessingResult(BaseModel):

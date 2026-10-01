@@ -116,11 +116,7 @@ def delivered_handoff_turns(inbound_id: int, conversation_id: str, channel: str)
         return []
 
 
-def consent_reason(incoming, recent_turns: list[dict] | None = None) -> str | None:
-    if customer_requests_human(incoming.text):
-        return "customer_requested_human"
-    if not acceptance_text(incoming.text):
-        return None
+def resolve_handoff_history(incoming, recent_turns=None):
     if recent_turns is None:
         from app.evaluation.context import current_evaluation
         evaluation = current_evaluation()
@@ -129,10 +125,28 @@ def consent_reason(incoming, recent_turns: list[dict] | None = None) -> str | No
         else:
             inbound_id = (incoming.raw or {}).get("inbound_id")
             if inbound_id is None or not incoming.conversation_id:
-                return None
+                return []
             recent_turns = delivered_handoff_turns(inbound_id, incoming.conversation_id, incoming.channel)
+    return recent_turns
+
+
+def consent_reason(incoming, recent_turns: list[dict] | None = None) -> str | None:
+    if customer_requests_human(incoming.text):
+        return "customer_requested_human"
+    if not acceptance_text(incoming.text):
+        return None
+    recent_turns = resolve_handoff_history(incoming, recent_turns)
     if is_handoff_acceptance(incoming.text, recent_turns):
         return "customer_accepted_handoff_offer"
+    last = next((turn for turn in reversed(recent_turns or [])
+                 if turn.get('role') in {'assistant', 'user'}), {})
+    metadata = last.get('metadata') or {}
+    prior = metadata.get('handoff') or {}
+    if (last.get('role') == 'assistant' and prior.get('confirmed') is True
+            and prior.get('consent_reason') in CONFIRMED_REASONS):
+        # Acknowledging a delivered transfer confirmation does not revoke the
+        # consent already recorded in this exact conversation.
+        return prior['consent_reason']
     return None
 
 

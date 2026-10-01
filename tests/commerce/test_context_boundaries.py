@@ -38,6 +38,14 @@ def test_same_thread_followup_preserves_clear_order():
     assert new.order_id == "26116"
 
 
+def test_short_number_after_customer_document_prompt_stays_in_order_context():
+    turns = [{"role": "assistant", "content": "Pode ser o CPF do titular ou o e-mail usado na compra para localizar o pedido."}]
+    result = ambiguous_number_question("25696", turns, {})
+    assert "pedido 25696" in result
+    assert "CPF" in result
+    assert "gastar" not in result and "valor" not in result
+
+
 @pytest.mark.parametrize("prompt,confirm", [
     ("Qual seu orçamento?", False),
     ("Qual a faixa de investimento?", False),

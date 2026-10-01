@@ -31,7 +31,7 @@ _CITY_RE = re.compile(
     r"(?:\s*[-,/\u2013\u2014]\s*[A-Za-zÀ-ú]{2,20})?$"
 )
 _SHIPPING_CITY_ASK_RE = re.compile(
-    r"(para qual cidade|cidade e estado|cidade seria|sua cidade|seria a entrega)",
+    r"(para qual cidade|qual (?:a )?cidade|cidade e estado|cidade seria|sua cidade|seria a entrega)",
     re.IGNORECASE,
 )
 _BUDGET_ANSWER_RE = re.compile(
@@ -90,6 +90,8 @@ def classify_qualification_question(text: str | None) -> str | None:
     if not folded:
         return None
     for slot, needles in _QUESTION_SLOT_PATTERNS:
+        if slot == SHIPPING_CITY and not is_shipping_city_prompt(text):
+            continue
         if any(needle in folded for needle in needles):
             return slot
     return None
@@ -152,6 +154,8 @@ def continue_commerce_from_qualification_answer(
     commerce_state: Any | None = None,
 ) -> SalesInterpretation:
     """Keep discovery open when a name/city/urgency answer is misread as greeting."""
+    if interpretation.conversation_feedback:
+        return interpretation
     introduced = extract_introduced_name(message_text)
     if introduced:
         updated = apply_qualification_slot_answer(
@@ -303,6 +307,8 @@ def current_qualification_slot_holds_retrieval(
     include_other_threads: bool = False,
 ) -> bool:
     """City answers never search. Name answers search only with a brand/SKU lock."""
+    if interpretation.conversation_feedback:
+        return False
     if getattr(interpretation, "_slot_answer_hold", False):
         return True
     introduced = extract_introduced_name(message_text)
@@ -343,6 +349,8 @@ def _get_qual_value(attributes: list[str], slot: str) -> str | None:
         if raw.startswith(prefix):
             value = raw[len(prefix) :].strip()
             if slot == CUSTOMER_NAME and not _is_plausible_name(value):
+                continue
+            if slot == SHIPPING_CITY and not _is_plausible_city(value):
                 continue
             return value or None
     return None
@@ -456,6 +464,18 @@ def _is_plausible_city(text: str) -> bool:
     if not cleaned or len(cleaned) > 80:
         return False
     folded = _fold(cleaned)
+    # A pending question does not make every subsequent utterance its answer.
+    # Reject sentences/feedback before accepting a bare location candidate.
+    from app.identity.greeting_policy import is_any_greeting, is_farewell_message
+    if is_any_greeting(cleaned) or is_farewell_message(cleaned):
+        return False
+    words = set(re.findall(r"[a-z]+", folded))
+    if words & {
+        "tenho", "quero", "preciso", "precisava", "gostaria", "pode", "poderia",
+        "voces", "voce", "entender", "entendeu", "responder", "disse", "falei",
+        "casamento", "proximo", "proxima", "semana", "dificil", "pqp", "porra",
+    } or folded in {"sim", "nao", "ok", "certo", "isso", "obrigado", "obrigada"}:
+        return False
     if folded in _GENDER_LABELS:
         return False
     if _BUDGET_ANSWER_RE.search(cleaned) and "mil" in folded:
@@ -501,9 +521,13 @@ def apply_qualification_slot_answer(
     interpretation: SalesInterpretation,
     slot: str | None,
     answer_text: str | None,
+    *,
+    current_turn: bool = True,
 ) -> SalesInterpretation:
     """Persist a user answer to the matching qualification slot."""
     if not slot:
+        return interpretation
+    if current_turn and interpretation.conversation_feedback:
         return interpretation
     answer = " ".join(str(answer_text or "").strip().split())
     if not answer:
@@ -569,6 +593,7 @@ def rehydrate_qualification_slots_from_turns(
                 updated,
                 slot,
                 str(turn.get("content") or ""),
+                current_turn=False,
             )
         pending_question = None
 
@@ -620,7 +645,7 @@ def apply_stored_qualification_slots(
             if recipient and _is_plausible_name(str(recipient)):
                 value = str(recipient)
         if value:
-            updated = apply_qualification_slot_answer(updated, slot, str(value))
+            updated = apply_qualification_slot_answer(updated, slot, str(value), current_turn=False)
     return updated
 
 

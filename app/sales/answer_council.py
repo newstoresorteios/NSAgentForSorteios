@@ -987,6 +987,7 @@ def _honest_constraint_reply(
     )
     fixed.reply_text = (
         operator_message('sales.answer_council._honest_constraint_reply.5d9a82525b', subject=f'{subject}', ceiling=f'{ceiling}')
+        if contract.budget_max is not None else operator_message('catalog_offer_unconfirmed')
     )
     fixed.reply_modality = "text"
     fixed.reply_audio_bytes = None

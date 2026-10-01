@@ -75,6 +75,11 @@ _FAREWELL_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+_EXPLICIT_EXIT_RE = re.compile(
+    r"^\s*(?:sair|encerrar|(?:quero\s+)?(?:encerrar|finalizar)\s+"
+    r"(?:o\s+atendimento|a\s+conversa))[!.,\s]*$", re.IGNORECASE,
+)
+
 # Budget / commerce phrases that start with "até" must never short-circuit to farewell.
 _FAREWELL_COMMERCIAL_BLOCK_RE = re.compile(
     r"("
@@ -260,6 +265,11 @@ def choose_greeting_reply(recent_turns: list[dict[str, Any]] | None = None) -> s
     return operator_message('identity.greeting_policy.choose_greeting_reply.67fb9018de')
 
 
+def is_explicit_conversation_exit(text: str | None) -> bool:
+    """A standalone exit command takes precedence over an unfinished flow."""
+    return bool(_EXPLICIT_EXIT_RE.fullmatch(str(text or "")))
+
+
 def is_farewell_message(text: str | None) -> bool:
     """True only for clear, standalone farewells — never budget/commerce openers.
 
@@ -269,6 +279,8 @@ def is_farewell_message(text: str | None) -> bool:
     cleaned = str(text or "").strip()
     if not cleaned:
         return False
+    if is_explicit_conversation_exit(cleaned):
+        return True
     # Long turns with product context belong to the LLM, not the farewell shortcut.
     if len(cleaned) > 48:
         return False

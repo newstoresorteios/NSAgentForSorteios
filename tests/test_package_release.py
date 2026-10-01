@@ -39,6 +39,16 @@ def test_excludes_env_local_and_caches(tmp_path: Path):
     assert ".vercel/project.json" not in files
 
 
+def test_release_excludes_private_proof_media_and_local_provider_logs(tmp_path):
+    for directory in (".proof-temp", ".proof-results", ".codex-remote-attachments", ".tmp-analysis", "supabase/.temp"):
+        private = tmp_path / directory
+        private.mkdir(parents=True)
+        (private / "customer.json").write_text('{"private":true}')
+    (tmp_path / ".vercel-instagram-review.jsonl").write_text('{"private":true}')
+    (tmp_path / "app.py").write_text("x=1")
+    assert [p.name for p in iter_release_files(tmp_path)] == ["app.py"]
+
+
 def test_scan_reports_variable_name_not_value(tmp_path: Path):
     secret = tmp_path / "leak.txt"
     secret.write_text("OPENAI_API_KEY=sk-secret-value-here-long-enough\n", encoding="utf-8")

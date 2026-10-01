@@ -67,6 +67,8 @@ async def run_turn(workspace,suite_id,scenario_key,run_id,step_index):
         judge_model=bundle['values']['historyEvaluationModel'],
         case_hash=repository.fingerprint(scenario.model_dump(mode='json')),
         mode='multi_turn_regression',
+        persona_content=persona.flow_params_dict(),
+        catalog_snapshot=scenario.simulation if scenario.environment == 'simulated_commerce' else None,
         extra={'suite': suite_row['fingerprint'], 'environment': scenario.environment},
     )
     row,claimed=repository.claim_turn(workspace,suite_id,scenario_key,run_id,step_index,versions)
@@ -74,7 +76,9 @@ async def run_turn(workspace,suite_id,scenario_key,run_id,step_index):
     history=replay_history(scenario.history, row['turns'])
     state=deepcopy(row['state'] if step_index else scenario.initial_state)
     case={'workspace_id':workspace,'channel':scenario.channel,'input':scenario.steps[step_index].input,
-          'history':history,'initial_state':state,'recorded_at':scenario.recorded_at if step_index==0 else None,
+          'history':history,'initial_state':state,
+          'recorded_at':scenario.steps[step_index].recorded_at or scenario.recorded_at,
+          'rebase_state_timestamps':step_index==0,
           'evaluation_conversation_id':'evaluation:'+str(run_id).replace('-',''),
           'environment':scenario.environment,'simulation':scenario.simulation,
           'simulation_state':row.get('simulation_state')}

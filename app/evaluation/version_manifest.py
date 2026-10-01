@@ -41,6 +41,12 @@ def _source_revision(root: Path) -> str:
         if value:
             return value
     try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=root,
+            check=True, capture_output=True, text=True, timeout=2,
+        )
+        if Path(top.stdout.strip()).resolve() != root:
+            return "unavailable"
         result = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"], cwd=root,
             check=True, capture_output=True, text=True, timeout=2,
@@ -51,14 +57,15 @@ def _source_revision(root: Path) -> str:
 
 
 def build_version_manifest(*, persona_version, bundle, model, judge_model=None,
-                           case_hash=None, mode=None, extra=None, root=None) -> dict:
+                           case_hash=None, mode=None, extra=None, root=None,
+                           persona_content=None, adapter_revision=None, catalog_snapshot=None) -> dict:
     """Record code, tenant configuration, model and case identity together."""
     repository_root = Path(root or Path(__file__).resolve().parents[2]).resolve()
     values = bundle.get("values") if isinstance(bundle, dict) else {}
     values = values if isinstance(values, dict) else {}
     version = bundle.get("version") if isinstance(bundle, dict) else None
     manifest = {
-        "manifest_version": 1,
+        "manifest_version": 2,
         "persona": persona_version,
         "configuration": version,
         "configuration_hash": _digest(values),
@@ -69,7 +76,16 @@ def build_version_manifest(*, persona_version, bundle, model, judge_model=None,
         "source_hash": source_tree_hash(str(repository_root)),
         "deployment": os.getenv("VERCEL_URL") or "local",
         "mode": mode or "unspecified",
+        "persona_hash": _digest(persona_content) if persona_content is not None else "unavailable",
+        "adapter_revision": adapter_revision or os.getenv("TRAY_ADAPTER_REVISION") or "unavailable",
+        "catalog_hash": _digest(catalog_snapshot) if catalog_snapshot is not None else "unavailable",
     }
     if extra:
+        if set(extra) & set(manifest):
+            raise ValueError("version_manifest_reserved_field")
         manifest.update(extra)
+    manifest["missing_evidence"] = [key for key in (
+        "persona_hash", "adapter_revision", "catalog_hash", "code", "source_hash", "case"
+    ) if manifest[key] == "unavailable"]
+    manifest["reproducible"] = not manifest["missing_evidence"]
     return manifest

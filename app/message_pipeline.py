@@ -616,7 +616,9 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
                 result=result,
                 recent_turns=model_turns,
                 commerce_state=commerce_state,
-                mode=critique_mode,
+                # The regenerating reviewer owns an explicitly enforced review;
+                # do not run a second model judge over the same draft afterward.
+                mode="enforce" if judge_mode == "enforce" else critique_mode,
                 max_retries=int(getattr(settings, "agent_critique_max_retries", 1)),
                 risk_score=decision.risk.score,
                 factual_valid=factual_ok,
@@ -658,8 +660,9 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
                 validation = result.response_metadata.get("factual_validation") or {}
                 result.response_metadata["factual_validation_post_critique"] = True
                 factual_ok = bool(validation.get("valid", True))
-        # Quality judge: shadow by default; runs on risk even when critique is shadow.
-        # Skip when critique already enforced a regenerate to avoid double LLM spend.
+        # One review per draft, including shadow and unavailable reviews. The
+        # latter remain inconclusive; a second call cannot manufacture approval.
+        openai_calls = runtime.openai_call_count if runtime else openai_calls
         run_judge, judge_gate_reason, _judge_signals = should_run_quality_judge(
             incoming=incoming,
             result=result,
@@ -669,16 +672,15 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             openai_call_count=openai_calls,
             recent_turns=model_turns,
         )
-        critique_enforced = bool(
+        critique_reviewed = bool(
             critique_report
-            and critique_report.mode == "enforce"
             and (
                 critique_report.review_status in {"approved", "rejected", "unavailable"}
                 or getattr(critique_report, "regenerated", False)
                 or getattr(critique_report, "applied_handoff", False)
             )
         )
-        if run_judge and not critique_enforced:
+        if run_judge and not critique_reviewed:
             judge_report = await run_quality_judge(
                 incoming,
                 result,
@@ -694,8 +696,8 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             result.response_metadata["quality_judge_gate"] = {
                 "run": run_judge,
                 "reason": (
-                    "skipped_after_critique_enforce"
-                    if critique_enforced
+                    "covered_by_response_critique"
+                    if critique_reviewed
                     else judge_gate_reason
                 ),
                 "critique_mode": critique_mode,

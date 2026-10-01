@@ -1,0 +1,48 @@
+{
+  "schema": "story-media-annotations-v1",
+  "reviewed_on": "2026-10-01",
+  "review_method": "Codex visual inspection of original image and frames decoded locally; no paid model call",
+  "scope": "Observed visual facts and offline orchestration regression; not a benchmark of remote model accuracy",
+  "cases": [
+    {
+      "name": "hamilton_boulton_video",
+      "source_sha256": "182ca17e1e3925680b64be2b8dc4cb616ea4f97fe8a8323853744ae9bc61b885",
+      "source_bytes": 4350754,
+      "source_mime": "video/mp4",
+      "persisted_worker_schema_observed": "story-worker-v5",
+      "persisted_updated_at": "2026-10-01T22:10:56.953185Z",
+      "persisted_exact_identities": 0,
+      "local_decoded_frame_count": 7,
+      "local_frame_times_seconds": [4.833, 10.267, 11.633, 17.033, 25.2, 30.633, 37.4],
+      "reviewed_frame_indexes": [0, 3, 6],
+      "fixture_frame": "hamilton_boulton_frame.jpg",
+      "fixture_sha256": "2ee91febbd43529da98d1c0cdda1b3dbb228dc8a81c423a4a735a66973fcac96",
+      "analysis": {
+        "media_type": "video", "watch_count": 1, "multiple_products": false,
+        "image_quality": "good", "visible_brands": ["Hamilton"],
+        "visible_text": ["HAMILTON", "MECHANICAL"],
+        "visible_references": [], "visible_skus": [],
+        "overlay_text": ["Hamilton American Classic Boulton", "Mechanical H13519711", "Pronta Entrega"],
+        "model_hypotheses": ["Boulton"], "dial_colors": ["branco"], "strap_colors": ["preto"],
+        "product_regions": [{"label": "relógio", "position": "center", "dial_color": "branco", "strap_color": "preto", "brand_hypothesis": "Hamilton", "visible_text": ["HAMILTON", "MECHANICAL"], "frame_indexes": [0]}],
+        "audio_status": "not_attempted", "audio_transcript": "",
+        "ambiguity_reasons": ["Exact reference is readable in the overlay, not independently confirmed on the watch"],
+        "product_identity_confidence": 0.0
+      },
+      "expected": {"exact_identity_confirmed": false, "overlay_is_catalog_hint_only": true, "advertised_ready_delivery_is_live_stock": false}
+    },
+    {
+      "name": "longines_green_bezel_image",
+      "source_sha256": "501737f71357ecbac1b95d5038df921857be96a05fe933cf608b11e40e8d37af",
+      "source_bytes": 316127,
+      "source_mime": "image/jpeg",
+      "persisted_worker_schema_observed": "story-worker-v5",
+      "persisted_updated_at": "2026-10-01T21:16:58.489766Z",
+      "persisted_exact_identities": 0,
+      "observed": {"watch_count": 1, "legible_brand": "Longines", "dial_color": "escuro", "bezel_color": "verde", "strap": "bracelete metálico prateado", "exact_reference_read": null, "advertising_overlay": "Pronta Entrega"},
+      "expected": {"exact_identity_confirmed": false, "advertised_ready_delivery_is_live_stock": false},
+      "fixture_frame": null,
+      "note": "Original remains in private project storage; customer imagery is not included in the repository."
+    }
+  ]
+}

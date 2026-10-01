@@ -13,6 +13,7 @@ from app.evaluation.judge import compact_metadata, effective_outcome, judge_repl
 from app.evaluation import repository
 from app.ops.runtime_context import set_current_turn, reset_current_turn
 from app.ops.turn_runtime import TurnRuntimeContext, LLMCallBudget
+from app.llm.llm_call_policy import build_llm_call_budget
 
 
 def bounded(name, lower, upper):
@@ -23,7 +24,7 @@ def replay_state(case, *, now=None):
     """Preserve the age of session memory at the original customer turn."""
     state = deepcopy(case['initial_state'])
     recorded = case.get('recorded_at')
-    if not recorded:
+    if not recorded or case.get('rebase_state_timestamps') is False:
         return state
     recorded = datetime.fromisoformat(recorded.replace('Z', '+00:00'))
     recorded = recorded.replace(tzinfo=timezone.utc) if recorded.tzinfo is None else recorded
@@ -49,14 +50,20 @@ async def replay_case(case, persona, *, fixtures=None):
     if case.get('environment') == 'simulated_commerce':
         from app.evaluation.simulator import CommerceSimulator
         context.simulator = CommerceSimulator(case.get('simulation') or {}, case.get('simulation_state'))
-    runtime = TurnRuntimeContext(trace_id=conversation_id, llm_budget=LLMCallBudget(max_calls=10, enforce=True))
+    budget = build_llm_call_budget(execution_path="normal")
+    runtime = TurnRuntimeContext(
+        trace_id=conversation_id,
+        execution_path=budget["execution_path"],
+        llm_budget=LLMCallBudget(max_calls=budget["max_calls"], enforce=budget["enforce"]),
+    )
     token = bind_evaluation(context)
     runtime_token = set_current_turn(runtime)
     started = time.perf_counter()
     result = None
     error = None
     try:
-        incoming = IncomingMessage(text=case['input'], channel=case['channel'], conversation_id=conversation_id)
+        incoming = IncomingMessage(text=case['input'], channel=case['channel'], conversation_id=conversation_id,
+                                   raw={'message_sent_at': case['recorded_at']} if case.get('recorded_at') else {})
         result = await asyncio.wait_for(process_incoming_message(incoming, {'found': False}),
                                         timeout=bounded('historyEvaluationTurnTimeout', 10, 180))
     except Exception as exc:
@@ -105,6 +112,8 @@ async def evaluate_case(workspace_id, case_id, request_id, *, repair=True):
         judge_model=bundle['values'].get('historyEvaluationModel'),
         case_hash=case['fingerprint'],
         mode='historical_context_replay',
+        persona_content=persona.flow_params_dict(),
+        catalog_snapshot=case.get('catalog_snapshot'),
         extra={'catalog': 'current_read_only'},
     )
     if not repository.start_run(workspace_id, case_id, request_id, versions):

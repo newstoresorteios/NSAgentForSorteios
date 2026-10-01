@@ -21,6 +21,16 @@ class TurnRequest(BaseModel):
     step_index:int=Field(ge=0,le=11)
 
 
+class ExpireRequest(BaseModel):
+    workspace_id: UUID
+    min_age_seconds: int = Field(default=900, ge=900, le=604800)
+
+
+@router.post('/expire-stale-runs')
+def expire_stale(body: ExpireRequest):
+    return repository.expire_stale_runs(str(body.workspace_id), min_age_seconds=body.min_age_seconds)
+
+
 @router.post('/suites')
 def register(body:SuiteRequest):
     keys=[s.key for s in body.specification.scenarios]

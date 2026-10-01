@@ -237,8 +237,15 @@ async def probe_instagram_graph_subscriptions() -> dict[str, Any]:
         subs_error = subs_json.get("error") if isinstance(subs_json, dict) else None
         convo_error = convos_json.get("error") if isinstance(convos_json, dict) else None
         convo_data = convos_json.get("data") if isinstance(convos_json, dict) else None
+        configured_account = str(getattr(settings, 'meta_ig_business_account_id', '') or '').strip()
+        observed_accounts = {str(me_json.get(key) or '') for key in ('id', 'user_id')} if isinstance(me_json, dict) else set()
+        account_matches = configured_account in observed_accounts if configured_account else None
         result = {
-            "ok": me.status_code == 200 and subs.status_code == 200,
+            "ok": me.status_code == 200 and subs.status_code == 200 and account_matches is not False,
+            "account_matches": account_matches,
+            "credential_valid": me.status_code == 200,
+            "messaging_ready": me.status_code == 200 and subs.status_code == 200
+                and account_matches is True and 'messages' in fields,
             "me_status": me.status_code,
             "subs_status": subs.status_code,
             "conversations_status": convos.status_code,

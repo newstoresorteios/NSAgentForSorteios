@@ -15,7 +15,11 @@ from typing import Any, Literal
 
 from app.config import get_settings
 from app.models import AgentResult, IncomingMessage
-from app.verify.quality_judge import collect_judge_risk_signals, is_low_risk_judge_skip
+from app.verify.quality_judge import (
+    collect_judge_risk_signals,
+    is_low_risk_judge_skip,
+    requires_context_enforcement,
+)
 
 
 # Signals that justify an extra LLM critique/judge call.
@@ -111,6 +115,7 @@ def resolve_turn_critique_mode(
     risk_score: int = 0,
     factual_valid: bool = True,
     openai_call_count: int = 0,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """Map configured critique mode → effective mode for this turn.
 
@@ -124,7 +129,7 @@ def resolve_turn_critique_mode(
     if mode == "off":
         return "off", "configured_off"
 
-    skip, skip_reason = is_low_risk_judge_skip(incoming, result)
+    skip, skip_reason = is_low_risk_judge_skip(incoming, result, recent_turns)
     if skip:
         return mode, f"skip_keep:{skip_reason or 'low_risk'}"
 
@@ -132,19 +137,18 @@ def resolve_turn_critique_mode(
     if mode == "enforce":
         return "enforce", "configured_enforce"
 
-    enforce_commerce = bool(
-        getattr(settings, "agent_critique_enforce_on_commerce", True)
-    )
-    if not enforce_commerce:
-        return mode, "commerce_promote_disabled"
-
     signals = critique_risk_signals(
         incoming=incoming,
         result=result,
         risk_score=risk_score,
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
+        recent_turns=recent_turns,
     )
+    if requires_context_enforcement(result, signals):
+        return "enforce", "context_promote:conversation_loop"
+    if not bool(getattr(settings, "agent_critique_enforce_on_commerce", True)):
+        return mode, "commerce_promote_disabled"
     hits = commerce_enforce_signal_hits(signals)
     if hits:
         return "enforce", f"commerce_promote:{hits[0]}"
@@ -159,6 +163,7 @@ def should_run_llm_critique(
     risk_score: int = 0,
     factual_valid: bool = True,
     openai_call_count: int = 0,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, str, list[str]]:
     """Decide whether to spend an LLM call on response critique.
 
@@ -177,6 +182,7 @@ def should_run_llm_critique(
         risk_score=risk_score,
         factual_valid=factual_valid,
         openai_call_count=openai_call_count,
+        recent_turns=recent_turns,
     )
     trigger_hits = [s for s in signals if s in _CRITIQUE_TRIGGER_SIGNALS]
     commerce_hits = commerce_enforce_signal_hits(signals)

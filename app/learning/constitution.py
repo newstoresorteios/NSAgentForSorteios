@@ -43,6 +43,10 @@ def check_instruction_delta(
     instruction = (text or "").strip()
     if not instruction:
         return False, "empty_instruction"
+    from app.persona.instruction_policy import validate_instruction
+    validation = validate_instruction(instruction)
+    if validation["issues"]:
+        return False, validation["issues"][0]
     if len(instruction) > limit:
         return False, "instruction_too_long"
     if _MONEY_RE.search(instruction):

@@ -426,7 +426,9 @@ async def sales_response_with_openai(
         return None
     from app.sales.inspection_copy import complete_inspection_copy
     from app.sales.order_delivery_copy import complete_order_delivery_copy
-    order_copy = complete_order_delivery_copy(tray_result, message.text)
+    from app.sales.delivery_deadline import preference_update_context
+    order_copy = complete_order_delivery_copy(tray_result, message.text,
+        reference_at=preference_update_context(message).get('observed_at'))
     if order_copy is not tray_result:
         return order_copy
     completed = complete_inspection_copy(tray_result, interpretation, message.text)

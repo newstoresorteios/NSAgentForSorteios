@@ -18,6 +18,16 @@ def test_try_farewell_skips_open_checkout():
     assert try_farewell(IncomingMessage(text="tchau"), {}, state) is None
 
 
+def test_explicit_exit_closes_even_with_unfinished_checkout_without_cancelling_order():
+    state = CommerceConversationState(pending_action="awaiting_payment", order_id="25422", dialogue_phase="checkout")
+    result = try_farewell(IncomingMessage(text="SAIR"), {}, state)
+    assert result is not None
+    assert result.response_metadata["response_source"] == "farewell"
+    assert result.intent == "farewell"
+    assert not result.handoff_required
+    assert state.order_id == "25422"
+
+
 def test_try_farewell_skips_live_shortlist():
     state = CommerceConversationState(
         dialogue_phase="shortlist",

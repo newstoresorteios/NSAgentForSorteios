@@ -136,6 +136,8 @@ class ProductSoftPreferences(BaseModel):
     style: str | None = Field(default_factory=lambda: None)
     material: str | None = Field(default_factory=lambda: None)
     occasion: str | None = Field(default_factory=lambda: None)
+    availability: str | None = Field(default_factory=lambda: None, description="Preferência de disponibilidade do cliente: ready_to_ship ou can_wait; nunca disponibilidade constatada do produto.")
+    urgency: str | None = Field(default_factory=lambda: None, description="Prazo desejado nas palavras do cliente, por exemplo próximo final de semana; não converter para data nem prometer chegada.")
     recipient: str | None = Field(default_factory=lambda: None)
     mechanism: str | None = Field(default_factory=lambda: None)
     crystal: str | None = Field(default_factory=lambda: None)
@@ -158,6 +160,8 @@ class ProductSoftPreferences(BaseModel):
             "gender",
             "mechanism",
             "purchase_purpose",
+            "delivery_mode",
+            "delivery_deadline_text",
         ]
     ] = Field(default_factory=list)
 
@@ -254,6 +258,10 @@ class TurnUnderstanding(BaseModel):
     )
     confidence: float = Field(ge=0.0, le=1.0)
     references_previous_context: bool = Field(default_factory=bool)
+    conversation_feedback: Literal["misunderstood", "repeated_question", "frustrated"] | None = Field(
+        default_factory=lambda: None,
+        description="Correção ou frustração com este atendimento, inclusive paráfrases. Não é reclamação sobre entrega/pedido.",
+    )
     domain_change_explicit: bool = Field(default_factory=bool)
     active_topic: str | None = Field(default_factory=lambda: None)
     purchase_stage: Literal[
@@ -325,6 +333,9 @@ Regras:
 10. required_tools lista ferramentas necessárias (search_products, get_stock, …) ou [none].
 11. confidence entre 0 e 1. language use pt-BR salvo evidência clara.
 12. requested_action descreve a ação comercial pedida; kind=none se só busca/conversa.
+13. conversation_feedback registra incompreensão, repetição ou frustração com o atendimento,
+    mesmo sem palavras fixas. Preserve o objetivo e as informações já dadas; não transforme
+    esse feedback em nova entrevista. Reclamação sobre atraso do pedido continua pós-venda.
 """
 
 
@@ -525,6 +536,11 @@ def turn_understanding_to_sales(
     hard = understanding.hard_constraints
     soft = understanding.soft_preferences
     action = understanding.requested_action or RequestedAction()
+    from app.catalog.retrieval.text import fold_text
+    availability = fold_text(soft.availability or "").strip()
+    delivery_mode = ("ready_to_ship" if availability in {"ready_to_ship", "pronta entrega", "imediata"}
+                     else "can_wait" if availability in {"can_wait", "posso esperar", "pode esperar", "sem pressa"}
+                     else None)
 
     subject = ProductSubject(
         product_type=hard.category or entities.category,
@@ -552,6 +568,8 @@ def turn_understanding_to_sales(
         mechanism=hard.mechanism or entities.mechanism or soft.mechanism,
         crystal=hard.crystal or entities.crystal or soft.crystal,
         occasion=soft.occasion,
+        delivery_mode=delivery_mode,
+        delivery_deadline_text=soft.urgency,
         recipient=hard.gender or entities.gender or soft.recipient,
         attributes=list(soft.attributes or []),
         explicit_no_preferences=list(soft.explicit_no_preferences or []),
@@ -628,6 +646,7 @@ def turn_understanding_to_sales(
         preferences=preferences,
         information_needed=info_needed,
         references_previous_context=understanding.references_previous_context,
+        conversation_feedback=understanding.conversation_feedback,
         enough_information_to_search=enough,
         ready_for_retrieval=ready,
         stop_clarification=False,
@@ -718,6 +737,8 @@ def sales_to_turn_understanding(
         style=prefs.style,
         material=prefs.material if not exclusive else None,
         occasion=prefs.occasion,
+        availability=prefs.delivery_mode,
+        urgency=prefs.delivery_deadline_text,
         recipient=prefs.recipient,
         budget_min=None,
         budget_max=None,
@@ -847,6 +868,7 @@ def sales_to_turn_understanding(
         answer_strategy=strategy,
         confidence=interpretation.confidence,
         references_previous_context=interpretation.references_previous_context,
+        conversation_feedback=interpretation.conversation_feedback,
         domain_change_explicit=interpretation.domain_change_explicit,
         active_topic=interpretation.active_topic,
         purchase_stage=interpretation.purchase_stage,

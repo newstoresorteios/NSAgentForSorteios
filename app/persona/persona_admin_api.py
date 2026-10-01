@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.configuration.runtime import message as operator_message
 
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -324,10 +325,10 @@ def admin_reject_instruction_extension(
 
 
 @router.get("/{tenant_id}/contacts/{sender_key}/memories")
-def admin_list_contact_memories(tenant_id: str, sender_key: str) -> dict[str, Any]:
+def admin_list_contact_memories(tenant_id: str, sender_key: str, workspace_id: UUID = Query(...)) -> dict[str, Any]:
     from app.memory.contact_memory_repository import get_active_contact_memories
 
-    items = get_active_contact_memories(tenant_id=tenant_id, sender_key=sender_key)
+    items = get_active_contact_memories(tenant_id=tenant_id, workspace_id=str(workspace_id), sender_key=sender_key)
     return {
         "ok": True,
         "tenant_id": tenant_id,
@@ -349,11 +350,13 @@ def admin_create_contact_memory(
     tenant_id: str,
     sender_key: str,
     body: ContactMemoryCreateBody,
+    workspace_id: UUID = Query(...),
 ) -> dict[str, Any]:
     from app.memory.contact_memory_repository import upsert_contact_memory
 
     created = upsert_contact_memory(
         tenant_id=tenant_id,
+        workspace_id=str(workspace_id),
         sender_key=sender_key,
         memory_key=body.memory_key,
         memory_kind=body.memory_kind,
@@ -372,11 +375,13 @@ def admin_forget_contact_memory(
     tenant_id: str,
     sender_key: str,
     memory_key: str,
+    workspace_id: UUID = Query(...),
 ) -> dict[str, Any]:
     from app.memory.contact_memory_repository import forget_contact_memory
 
     count = forget_contact_memory(
         tenant_id=tenant_id,
+        workspace_id=str(workspace_id),
         sender_key=sender_key,
         memory_key=memory_key,
     )

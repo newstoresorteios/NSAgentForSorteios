@@ -82,6 +82,14 @@ def group_by_conversation(rows: list[dict[str, Any]]) -> dict[str, list[dict[str
     return grouped
 
 
+def _is_resolved_closing(customer: str, reply: str, metadata: dict[str, Any]) -> bool:
+    """A closing needs both customer closure and an answer without a new demand."""
+    if metadata.get("conversation_closed") is True or metadata.get("dialogue_phase") == "closing":
+        return "?" not in reply
+    closing = r"^(?:ok(?:ay)?|obrigad[oa]|valeu|entendi|perfeito|tudo certo|era isso|s[oó] isso|at[eé] (?:mais|logo)|boa noite)[\s!.,]*(?:obrigad[oa]|valeu)?[\s!.,]*$"
+    return bool(re.match(closing, customer.strip(), re.I)) and "?" not in reply and bool(reply.strip())
+
+
 def classify_attendance(row: dict[str, Any]) -> dict[str, Any]:
     customer = str(row.get("customer_text") or "")
     reply = str(row.get("agent_reply") or "")
@@ -124,7 +132,7 @@ def classify_attendance(row: dict[str, Any]) -> dict[str, Any]:
                     if code in _COUNCIL_ISSUE_CODES and outcome in {"success", "handoff"}:
                         outcome = "failure"
     safety_reason = str(row.get("safety_reason") or "").strip()
-    if safety_reason == "commerce_clarification":
+    if safety_reason == "commerce_clarification" and not _is_resolved_closing(customer, reply, metadata):
         failure_codes.append("commerce_clarification")
         if outcome == "success":
             outcome = "unclear"
@@ -185,6 +193,8 @@ def classify_pipeline_block(
     result_metadata: dict[str, Any] | None = None,
     intent: str | None = None,
     channel: str | None = None,
+    customer_text: str = "",
+    agent_reply: str = "",
 ) -> dict[str, Any]:
     reason = str(safety_reason or "").strip()
     metadata = dict(result_metadata or {})
@@ -208,7 +218,11 @@ def classify_pipeline_block(
                     if code and code not in failure_codes:
                         failure_codes.append(code)
     elif reason == "commerce_clarification":
-        outcome = "unclear"
+        if _is_resolved_closing(customer_text, agent_reply, metadata):
+            outcome = "success"
+            failure_codes = []
+        else:
+            outcome = "unclear"
     return {
         "outcome": outcome,
         "failure_codes": failure_codes,

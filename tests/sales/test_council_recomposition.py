@@ -64,6 +64,14 @@ def test_recomposition_never_promotes_invalid_product_data(bad):
     assert "Não encontrei" not in result.reply_text
 
 
+def test_blocked_catalog_without_budget_does_not_invent_a_spending_ceiling():
+    result = _honest_constraint_reply(draft([product(available=False)]), TurnContract(), None)
+    assert result.safety_reason == "answer_council_blocked"
+    assert not result.commercial_data["products"]
+    assert "teto" not in result.reply_text.casefold()
+    assert "orçamento" not in result.reply_text.casefold()
+
+
 def test_mixed_brand_list_cannot_pass_recomposition_using_one_correct_sibling():
     result = _honest_constraint_reply(
         draft([product(), product(id="2", brand="Seiko", name="Seiko 5")]),

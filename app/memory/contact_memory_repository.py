@@ -9,19 +9,30 @@ from typing import Any
 
 from app.db import get_conn, get_returning_id, to_jsonb
 from app.memory.memory_models import ContactMemory
+from app.memory.workspace_scope import memory_workspace
 
 
 def _row_to_memory(row: dict[str, Any]) -> ContactMemory:
     return ContactMemory.model_validate(row)
 
 
-@cached_turn_read
 def get_active_contact_memories(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     sender_key: str,
     limit: int = 20,
 ) -> list[ContactMemory]:
+    workspace_id = memory_workspace(workspace_id)
+    if not workspace_id:
+        return []
+    return _scoped_active_contact_memories(tenant_id=tenant_id, workspace_id=workspace_id,
+                                          sender_key=sender_key, limit=limit)
+
+
+@cached_turn_read
+def _scoped_active_contact_memories(*, tenant_id: str, workspace_id: str, sender_key: str,
+                                   limit: int) -> list[ContactMemory]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -29,6 +40,7 @@ def get_active_contact_memories(
                 SELECT *
                 FROM public.ai_contact_memories
                 WHERE tenant_id = %s
+                  AND workspace_id = %s::uuid
                   AND sender_key = %s
                   AND status = 'active'
                   AND sensitive = false
@@ -36,7 +48,7 @@ def get_active_contact_memories(
                 ORDER BY importance DESC, last_confirmed_at DESC NULLS LAST, id DESC
                 LIMIT %s
                 """,
-                (tenant_id, sender_key, limit),
+                (tenant_id, workspace_id, sender_key, limit),
             )
             rows = cur.fetchall() or []
     return [_row_to_memory(row) for row in rows]
@@ -45,6 +57,7 @@ def get_active_contact_memories(
 def select_relevant_memories(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     sender_key: str,
     domain: str | None = None,
     limit: int = 20,
@@ -53,6 +66,7 @@ def select_relevant_memories(
     """Deterministic relevance filter (no embeddings)."""
     active = get_active_contact_memories(
         tenant_id=tenant_id,
+        **({"workspace_id": workspace_id} if workspace_id else {}),
         sender_key=sender_key,
         limit=max(limit * 2, 20),
     )
@@ -130,6 +144,7 @@ def select_relevant_memories(
 def upsert_contact_memory(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     sender_key: str,
     memory_key: str,
     memory_kind: str,
@@ -146,6 +161,7 @@ def upsert_contact_memory(
     metadata: dict[str, Any] | None = None,
     status: str = "active",
 ) -> ContactMemory:
+    workspace_id = memory_workspace(workspace_id, required=True)
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -154,13 +170,14 @@ def upsert_contact_memory(
                 SELECT id
                 FROM public.ai_contact_memories
                 WHERE tenant_id = %s
+                  AND workspace_id = %s::uuid
                   AND sender_key = %s
                   AND memory_key = %s
                   AND status = 'active'
                 LIMIT 1
                 FOR UPDATE
                 """,
-                (tenant_id, sender_key, memory_key),
+                (tenant_id, workspace_id, sender_key, memory_key),
             )
             existing = cur.fetchone()
             if existing:
@@ -171,25 +188,28 @@ def upsert_contact_memory(
                     SET status = 'superseded',
                         updated_at = %s
                     WHERE id = %s
+                      AND tenant_id = %s AND workspace_id = %s::uuid
+                      AND sender_key = %s
                     """,
-                    (now, old_id),
+                    (now, old_id, tenant_id, workspace_id, sender_key),
                 )
             cur.execute(
                 """
                 INSERT INTO public.ai_contact_memories (
-                    tenant_id, sender_key, memory_key, memory_kind,
+                    tenant_id, workspace_id, sender_key, memory_key, memory_kind,
                     value, safe_summary, source, status, importance, confidence,
                     use_in_instructions, sensitive, source_inbound_id,
                     source_response_id, last_confirmed_at, expires_at, metadata
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 RETURNING id
                 """,
                 (
                     tenant_id,
+                    workspace_id,
                     sender_key,
                     memory_key,
                     memory_kind,
@@ -215,11 +235,13 @@ def upsert_contact_memory(
                     UPDATE public.ai_contact_memories
                     SET superseded_by_id = %s
                     WHERE id = %s
+                      AND tenant_id = %s AND workspace_id = %s::uuid
+                      AND sender_key = %s
                     """,
-                    (new_id, int(existing["id"])),
+                    (new_id, int(existing["id"]), tenant_id, workspace_id, sender_key),
                 )
     memories = get_active_contact_memories(
-        tenant_id=tenant_id, sender_key=sender_key, limit=100
+        tenant_id=tenant_id, workspace_id=workspace_id, sender_key=sender_key, limit=100
     )
     for item in memories:
         if item.id == new_id:
@@ -231,9 +253,11 @@ def upsert_contact_memory(
 def forget_contact_memory(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     sender_key: str,
     memory_key: str,
 ) -> int:
+    workspace_id = memory_workspace(workspace_id, required=True)
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -244,11 +268,12 @@ def forget_contact_memory(
                     use_in_instructions = false,
                     updated_at = %s
                 WHERE tenant_id = %s
+                  AND workspace_id = %s::uuid
                   AND sender_key = %s
                   AND memory_key = %s
                   AND status = 'active'
                 """,
-                (now, tenant_id, sender_key, memory_key),
+                (now, tenant_id, workspace_id, sender_key, memory_key),
             )
             return int(cur.rowcount or 0)
 

@@ -6,11 +6,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.db import get_conn, get_returning_id, to_jsonb
+from app.memory.workspace_scope import memory_workspace
 
 
 def insert_memory_proposal(
     *,
     tenant_id: str,
+    workspace_id: str | None = None,
     proposal_type: str,
     target_scope: str,
     idempotency_key: str,
@@ -29,12 +31,14 @@ def insert_memory_proposal(
     rejection_codes: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> int | None:
+    workspace_id = memory_workspace(workspace_id, required=True)
+    idempotency_key = f"{workspace_id}:{idempotency_key}"
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO public.ai_memory_proposals (
-                    tenant_id, conversation_key, sender_key,
+                    tenant_id, workspace_id, conversation_key, sender_key,
                     inbound_id, response_id, proposal_type, target_scope,
                     proposal_key, proposed_value, proposed_text,
                     importance, confidence, reason_code, sensitive_detected,
@@ -42,13 +46,14 @@ def insert_memory_proposal(
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (idempotency_key) DO NOTHING
                 RETURNING id
                 """,
                 (
                     tenant_id,
+                    workspace_id,
                     conversation_key,
                     sender_key,
                     inbound_id,
@@ -74,10 +79,10 @@ def insert_memory_proposal(
             cur.execute(
                 """
                 SELECT id FROM public.ai_memory_proposals
-                WHERE idempotency_key = %s
+                WHERE idempotency_key = %s AND workspace_id = %s::uuid
                 LIMIT 1
                 """,
-                (idempotency_key,),
+                (idempotency_key, workspace_id),
             )
             return get_returning_id(cur.fetchone())
 
@@ -87,7 +92,9 @@ def mark_proposal_rejected(
     *,
     rejection_codes: list[str] | None = None,
     status: str = "rejected",
+    workspace_id: str | None = None,
 ) -> None:
+    workspace_id = memory_workspace(workspace_id, required=True)
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -97,14 +104,14 @@ def mark_proposal_rejected(
                 SET status = %s,
                     rejection_codes = %s,
                     reviewed_at = %s
-                WHERE id = %s
+                WHERE id = %s AND workspace_id = %s::uuid
                 """,
-                (status, to_jsonb(rejection_codes or []), now, proposal_id),
+                (status, to_jsonb(rejection_codes or []), now, proposal_id, workspace_id),
             )
 
 
-def mark_proposal_duplicate(proposal_id: int) -> None:
-    mark_proposal_rejected(proposal_id, rejection_codes=["duplicate"], status="duplicate")
+def mark_proposal_duplicate(proposal_id: int, *, workspace_id: str | None = None) -> None:
+    mark_proposal_rejected(proposal_id, rejection_codes=["duplicate"], status="duplicate", workspace_id=workspace_id)
 
 
 def mark_proposal_applied(
@@ -112,7 +119,9 @@ def mark_proposal_applied(
     *,
     applied_memory_id: int | None = None,
     applied_extension_id: int | None = None,
+    workspace_id: str | None = None,
 ) -> None:
+    workspace_id = memory_workspace(workspace_id, required=True)
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -124,7 +133,7 @@ def mark_proposal_applied(
                     applied_extension_id = %s,
                     applied_at = %s,
                     reviewed_at = %s
-                WHERE id = %s
+                WHERE id = %s AND workspace_id = %s::uuid
                 """,
                 (
                     applied_memory_id,
@@ -132,18 +141,20 @@ def mark_proposal_applied(
                     now,
                     now,
                     proposal_id,
+                    workspace_id,
                 ),
             )
 
 
-def mark_proposal_pending_review(proposal_id: int) -> None:
+def mark_proposal_pending_review(proposal_id: int, *, workspace_id: str | None = None) -> None:
+    workspace_id = memory_workspace(workspace_id, required=True)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE public.ai_memory_proposals
                 SET status = 'pending'
-                WHERE id = %s
+                WHERE id = %s AND workspace_id = %s::uuid
                 """,
-                (proposal_id,),
+                (proposal_id, workspace_id),
             )

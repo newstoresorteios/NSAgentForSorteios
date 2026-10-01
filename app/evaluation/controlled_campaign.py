@@ -28,7 +28,8 @@ async def execute_scenario(case, persona, *, replay_fn=None, grade_fn=None):
     for index,step in enumerate(case.steps):
         sample={'workspace_id':str(persona.workspace_id),'channel':case.channel,
                 'history':deepcopy(history),'input':step.input,'initial_state':deepcopy(state),
-                'recorded_at':case.recorded_at if index==0 else None,
+                'recorded_at':step.recorded_at or case.recorded_at,
+                'rebase_state_timestamps':index==0,
                 'environment':'simulated_commerce','simulation':deepcopy(case.simulation),
                 'simulation_state':deepcopy(simulation_state)}
         replay,_=await replay_fn(sample,persona)
@@ -71,14 +72,15 @@ async def run_campaign(suite, persona, *, output_dir, code_hash, overrides=None,
     if any(c.environment!='simulated_commerce' for c in suite.scenarios):
         raise ValueError('controlled_campaign_requires_simulated_commerce')
     settings=settings_from_bundle(get_settings(),bundle)
-    from app.evaluation.version_manifest import source_tree_hash
-    versions={'manifest_version':1,'suite':fingerprint(suite.model_dump()),
-              'persona':fingerprint(persona.flow_params_dict()),
-              'configuration':bundle.get('version'),
-              'configuration_hash':fingerprint(bundle['values']),'model':settings.openai_model,
-              'judge_model':bundle['values']['historyEvaluationModel'],
-              'code':code_hash,'source_hash':source_tree_hash(str(Path(__file__).resolve().parents[2])),
-              'deployment':code_hash}
+    from app.evaluation.version_manifest import build_version_manifest
+    versions=build_version_manifest(
+        persona_version=candidate.persona_version_id,
+        persona_content=candidate.flow_params_dict(), bundle=bundle,
+        model=settings.openai_model, judge_model=bundle['values']['historyEvaluationModel'],
+        case_hash=fingerprint(suite.model_dump()), mode='controlled_campaign',
+        catalog_snapshot={c.key:c.simulation for c in suite.scenarios},
+        extra={'suite':fingerprint(suite.model_dump()), 'candidate_revision':code_hash},
+    )
     root=Path(output_dir);root.mkdir(parents=True,exist_ok=True)
     reports={};repeats={};binding=bind_bundle(bundle,settings)
     try:
@@ -87,12 +89,12 @@ async def run_campaign(suite, persona, *, output_dir, code_hash, overrides=None,
             path=root/(fingerprint(identity)+'.json')
             if path.exists():
                 row=json.loads(path.read_text(encoding='utf-8'))
-                if row.get('identity')!=identity or row.get('status')!='completed':
+                if row.get('identity')!=identity:
                     break
             else:
                 # Exclusive marker prevents two runners spending for one sample.
                 with path.open('x',encoding='utf-8') as out:
-                    json.dump({'identity':identity,'status':'running'},out)
+                    json.dump({'identity':identity,'status':'running','started_at':time.time()},out)
                 try:
                     row=await (execute_fn or execute_scenario)(case,candidate)
                 except Exception as exc:
@@ -107,6 +109,8 @@ async def run_campaign(suite, persona, *, output_dir, code_hash, overrides=None,
     finally:
         reset_bundle(binding)
     score=summarize(suite,reports,repetitions=repeats)
+    score['gates']['reproducible_versions']=versions['reproducible']
+    score['campaign_passed']=all(score['gates'].values())
     score.update(versions=versions,automatic_promotion=False,
                  comparison_limits=policy.get('comparison_limits',{}))
     from app.evaluation.sample_metrics import campaign_samples

@@ -21,6 +21,22 @@ def draft():
                            "product_resolution_state":"options_presented", "dialogue_phase":"shortlist", "factual_validation":{"valid":True}})
 
 
+def test_variant_refinement_cannot_turn_answered_delivery_question_into_checkout():
+    item = SalesInterpretation(domain='commerce', goal='find', confidence=.99, needs_clarification=False,
+        references_previous_context=False, subject={'reference':'ABC-123'})
+    result = AgentResult(reply_text='Prazo', intent='commerce', response_metadata={
+        'interpretation':item.model_dump(mode='json'), 'variant_refinement':True},
+        commercial_data={'products':[{'id':'fixture','name':'Certina DS Action','reference':'ABC-123',
+            'price':2000,'available':True,'stock':1,'_revalidated':True,
+            'availability':'Disponível em 30 dias úteis','order_days_availability':30}]})
+    final, state = finalize_response(result, incoming=IncomingMessage(text='Qual o prazo de entrega?'),
+        interpretation=item, previous_state=CommerceConversationState())
+    assert 'nem uma data exata de postagem' in final.reply_text
+    assert 'finalizar' not in final.reply_text and 'abrir pedido' not in final.reply_text
+    assert final.response_metadata['identity_inspection']
+    assert final.commercial_data['products'][0]['id'] == 'fixture'
+
+
 @pytest.mark.asyncio
 async def test_missing_api_key_is_unavailable_never_approved(monkeypatch):
     from types import SimpleNamespace
@@ -40,7 +56,9 @@ async def test_deterministic_draft_releases_reserved_slot_for_review(monkeypatch
         return CritiqueVerdict(pass_check=True)
     monkeypatch.setattr("app.verify.response_critique.run_critique_judge", judge)
     try:
-        result, report = await apply_response_critique_loop(incoming=IncomingMessage(text=ASK), result=draft(), mode="enforce")
+        result, report = await apply_response_critique_loop(
+            incoming=IncomingMessage(text=ASK), result=draft(), mode="enforce", max_retries=0,
+        )
         assert report.approved is True
         assert runtime.llm_budget.used_calls == 3
         assert not result.handoff_required
@@ -51,7 +69,7 @@ async def test_deterministic_draft_releases_reserved_slot_for_review(monkeypatch
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exhausted", [True, False])
 async def test_reviewer_unavailable_is_not_rejection_or_regeneration(monkeypatch, exhausted):
-    runtime = TurnRuntimeContext(trace_id="test", llm_budget=LLMCallBudget(max_calls=3,used_calls=3 if exhausted else 1,enforce=True))
+    runtime = TurnRuntimeContext(trace_id="test", llm_budget=LLMCallBudget(max_calls=4,used_calls=4 if exhausted else 1,enforce=True))
     token = set_current_turn(runtime)
     verdict = CritiqueVerdict(pass_check=False)
     verdict._execution_error = "OpenAIGatewayError"

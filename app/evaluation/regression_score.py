@@ -4,7 +4,7 @@ from collections import Counter
 
 def summarize(suite, reports, *, split='all', repetitions=None):
     cases=[s for s in suite.scenarios if split=='all' or s.split==split]
-    rows=[]; critical=[]; versions=set(); latencies=[]; calls=0
+    rows=[]; critical=[]; versions=set(); latencies=[]; calls=0; fixture_versions={}
     for case in cases:
         report=reports.get(case.key)
         turns=(report or {}).get('turns') or []
@@ -20,7 +20,8 @@ def summarize(suite, reports, *, split='all', repetitions=None):
             calls+=replay.get('real_model_calls',0)
         if report:
             v=report.get('versions') or {}
-            versions.add(tuple(str(v.get(k)) for k in ('configuration_hash','persona','model','judge_model','deployment')))
+            versions.add(tuple(str(v.get(k)) for k in ('configuration_hash','persona','model','judge_model','deployment','source_hash','adapter_revision')))
+            fixture_versions.setdefault(case.key,set()).add(str(v.get('catalog_hash')))
     categories={}
     for category in suite.categories:
         group=[r for r in rows if r['category']==category]
@@ -43,7 +44,8 @@ def summarize(suite, reports, *, split='all', repetitions=None):
                 and len(turns) == len(case.steps)
                 and all(t.get('grade', {}).get('outcome') == 'passed' for t in turns))
             v = sample.get('versions') or {}
-            versions.add(tuple(str(v.get(k)) for k in ('configuration_hash','persona','model','judge_model','deployment')))
+            versions.add(tuple(str(v.get(k)) for k in ('configuration_hash','persona','model','judge_model','deployment','source_hash','adapter_revision')))
+            fixture_versions.setdefault(case.key,set()).add(str(v.get('catalog_hash')))
             if sample in repeated:
                 critical.extend({'case':case.key,'step':turn['step'],'error':error}
                     for turn in turns for error in turn.get('grade',{}).get('critical_errors',[]))
@@ -53,6 +55,7 @@ def summarize(suite, reports, *, split='all', repetitions=None):
         'coverage':all(c['total']>=suite.minimum_cases_per_category for c in categories.values()),
         'no_critical_errors':not critical,
         'single_candidate':len(versions)==1,
+        'stable_scenario_fixtures':all(len(hashes)==1 for hashes in fixture_versions.values()),
         'validation':len(validation)>=20 and validation_percent>suite.target_percent,
         'critical_repetitions':bool(repeated_total) and repeated_complete and repeat_percent>=95,
         'all_executed':all(r['complete'] for r in rows)}

@@ -97,8 +97,9 @@ def try_farewell(
     if not door.is_farewell_message(message.text):
         return None
     from app.sales.dialogue_phase import blocks_farewell_fast_path
+    from app.identity.greeting_policy import is_explicit_conversation_exit
 
-    if blocks_farewell_fast_path(commerce_state):
+    if blocks_farewell_fast_path(commerce_state) and not is_explicit_conversation_exit(message.text):
         return None
     checkout_name = None
     try:
@@ -121,7 +122,7 @@ def try_farewell(
     return door._annotate_agent_result(
         AgentResult(
             reply_text=door.choose_farewell_reply(display_name),
-            intent="general",
+            intent="farewell",
             handoff_required=False,
         ),
         domain="greeting",

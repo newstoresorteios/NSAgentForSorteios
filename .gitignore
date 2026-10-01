@@ -30,3 +30,5 @@ docs/audits/**/pytest-history*.txt
 .venv-sdk-pilot/
 evals/results/
 .codex-tool-cache/
+.proof-temp/
+.proof-results/
