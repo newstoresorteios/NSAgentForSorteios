@@ -165,6 +165,23 @@ async def test_last_failed_attempt_is_dead_lettered(monkeypatch):
     )
 
 
+@pytest.mark.asyncio
+async def test_invalid_meta_token_is_dead_lettered_without_waiting_for_retry_limit(monkeypatch):
+    monkeypatch.setattr(outbox_worker, "get_settings",
+        lambda: SimpleNamespace(agent_inbox_batch_size=5))
+    monkeypatch.setattr(outbox_worker, "claim_pending_outbox",
+        lambda **_kwargs: [_row(attempts=1, max_attempts=5)])
+    monkeypatch.setattr(outbox_worker, "_resend_outbox_row", AsyncMock(return_value={
+        "ok": False, "error": "meta_authentication_failed", "retryable": False}))
+    marked_failed = Mock()
+    monkeypatch.setattr(outbox_worker, "mark_outbox_failed", marked_failed)
+    result = await outbox_worker.process_outbox_batch()
+    assert result["dead"] == 1
+    assert result["failed"] == 0
+    marked_failed.assert_called_once_with(41, error="meta_authentication_failed",
+        dead=True, owner="worker-1")
+
+
 def test_claim_dead_letters_stale_reply_before_retrying_any_row(monkeypatch):
     """A later inbound wins over a delayed reply from the same conversation."""
     cursor = MagicMock()

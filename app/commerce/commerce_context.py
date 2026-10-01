@@ -644,7 +644,10 @@ def evolve_commerce_state(
     state = previous.model_copy(deep=True)
     metadata = result.response_metadata or {}
     repair = metadata.get("conversation_repair") or {}
-    state.conversation_repair_attempts = int(repair.get("attempt") or 0)
+    if 'attempt' in repair:
+        state.conversation_repair_attempts = int(repair['attempt'] or 0)
+    elif metadata.get('presented_products') or metadata.get('dialogue_phase_reset'):
+        state.conversation_repair_attempts = 0
     domain = metadata.get("domain")
     if domain in {"commerce", "raffle"}:
         state.active_domain = domain
@@ -919,6 +922,11 @@ def evolve_commerce_state(
                 setattr(state, field, pix_state[field])
     active_preferences = _compact_preferences(
         metadata.get("active_preferences", state.active_preferences)
+    )
+    from app.sales.preference_state import merge_preferences
+    active_preferences = merge_preferences(
+        {} if metadata.get('dialogue_phase_reset') else state.active_preferences,
+        active_preferences,
     )
     try:
         from app.sales.qualification_slots import merge_persisted_qualification_slots

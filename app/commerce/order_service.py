@@ -1285,14 +1285,6 @@ async def find_order_by_customer_document(
     document: str,
 ) -> AgentResult:
     target = str(state.order_lookup_id or state.order_id or "").strip()
-    if not target:
-        return AgentResult(
-            reply_text=operator_message('commerce.order_service.find_order_by_customer_document.bab271469f'),
-            intent="commerce",
-            safety_reason="order_id_required",
-            commercial_data={"success": False, "stage": "order_customer_lookup"},
-            response_metadata={"domain": "commerce", "used_tray": False},
-        )
     try:
         customer_result = await execute(
             "search_customer",
@@ -1355,11 +1347,28 @@ async def find_order_by_customer_document(
             and str(returned_customer_id) == confirmed_customer_id
         )
 
+    owned_orders = [order for order in order_result.get('orders') or []
+                    if isinstance(order, dict) and belongs_to_confirmed_customer(order)
+                    and (order.get('order_id') or order.get('id'))]
+    if not target:
+        # A document is a valid lookup handle. Do not ask for a number again
+        # unless choosing among distinct, ownership-verified orders is necessary.
+        owned_by_id = {str(order.get('order_id') or order.get('id')): order for order in owned_orders}
+        if len(owned_by_id) == 1:
+            target = next(iter(owned_by_id))
+        else:
+            return AgentResult(
+                reply_text=('Localizei mais de um pedido para esse documento. Qual número você quer consultar?'
+                            if owned_by_id else 'Não consegui confirmar um pedido para esse documento. Pode informar o número do pedido?'),
+                intent='commerce', safety_reason='order_selection_required' if owned_by_id else 'order_customer_not_confirmed',
+                commercial_data={'success': False, 'stage': 'order_customer_lookup'},
+                response_metadata={'domain': 'commerce', 'used_tray': True},
+            )
     target_key = target.casefold()
     matching_order = next(
         (
             order
-            for order in order_result.get("orders") or []
+            for order in owned_orders
             if isinstance(order, dict)
             and belongs_to_confirmed_customer(order)
             and target_key in {

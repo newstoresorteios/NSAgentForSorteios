@@ -114,8 +114,10 @@ async def test_budget_answer_keeps_ongoing_qualification_before_recommendation(a
     final=interpretation(goal='recommend',subject={'product_type':'relógio'},
                          preferences={'budget_max':2500,'occasion':'dia a dia'},ready_for_retrieval=True)
     result,calls=await run(final,[],[turn(first),turn(second),turn(third)],text='para mim')
-    assert calls==[] and not final._adaptive_ready
-    assert result.response_metadata['discovery_question']['slot']=='gender'
+    # Three answered questions exhaust the shared policy budget. A fourth
+    # question used to reopen the interview despite sufficient preferences.
+    assert calls==[] and final._adaptive_ready
+    assert result is None
 
 @pytest.mark.asyncio
 async def test_short_answer_reuses_pool_and_filters(adaptive):

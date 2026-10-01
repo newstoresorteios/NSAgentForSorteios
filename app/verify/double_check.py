@@ -98,7 +98,7 @@ class DoubleCheckReport(BaseModel):
     mode: Literal["off", "shadow", "enforce"] = "off"
     skipped: bool = False
     skip_reason: str | None = None
-    approved: bool = True
+    approved: bool | None = None
     issues: list[DoubleCheckIssue] = Field(default_factory=list)
     applied: bool = False
     applied_code: str | None = None

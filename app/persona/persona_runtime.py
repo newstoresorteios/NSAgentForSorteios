@@ -100,6 +100,7 @@ class PersonaRuntimeConfig(BaseModel):
         return self
 
     def flow_params_dict(self) -> dict[str, Any]:
+        from app.configuration.runtime import configuration_fingerprint
         return {
             "persona_version_id": self.persona_version_id,
             "agent_display_name": self.agent_display_name,
@@ -131,6 +132,7 @@ class PersonaRuntimeConfig(BaseModel):
             "workspace_id": self.workspace_id,
             "runtime_configuration_count": len(self.runtime_configuration),
             "configuration_version": self.configuration_bundle.get("version"),
+            "configuration_fingerprint": configuration_fingerprint(self.configuration_bundle),
         }
 
     def sales_skills_block(

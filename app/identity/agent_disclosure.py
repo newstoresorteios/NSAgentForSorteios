@@ -47,10 +47,11 @@ def _needs_introduction(turns: list[dict[str, Any]] | None, incoming: IncomingMe
             return True
         if turn.get("role") == "assistant":
             # A legacy response without disclosure must not count as an introduction.
-            return not (
+            if (
                 disclosure.get("applied")
                 or re.search(r"assistente virtual|intelig[eê]ncia artificial", str(turn.get("content") or ""), re.I)
-            )
+            ):
+                return False
     return True
 
 
@@ -67,6 +68,9 @@ def apply_agent_disclosure(
         return result
     prior = metadata.get("agent_disclosure")
     prior = prior if isinstance(prior, dict) else {}
+    if prior.get('applied') and recent_turns is None and introduce is None:
+        # Retries use the exact already composed payload, even without a header.
+        return result
     header, introduction, workspace = _identity()
     if prior.get("applied") and prior.get("header"):
         header = str(prior["header"])
@@ -74,7 +78,7 @@ def apply_agent_disclosure(
         workspace = prior.get("workspace_id")
     text = (result.reply_text or "").strip()
     # Comparing the exact complete header avoids matching words inside a product.
-    if text == header or text.startswith(header + "\n") or text == introduction or text.startswith(introduction + "\n"):
+    if prior.get('applied') and (text == header or text.startswith(header + "\n") or text == introduction or text.startswith(introduction + "\n")):
         return result
     text = _HEADER.sub("", text, count=1).lstrip()
     first = bool(introduce) if introduce is not None else bool(
@@ -88,8 +92,10 @@ def apply_agent_disclosure(
         # Preserve the published greeting, add disclosure inline rather than
         # introducing the same assistant twice in the same reply.
         result.reply_text = re.sub(r"assistente virtual(?!\s*\(IA\))", "assistente virtual (IA)", text, count=1, flags=re.I)
-    else:
+    elif first or recent_turns is None:
         result.reply_text = f"{prefix}\n\n{text}"
+    else:
+        result.reply_text = text
     metadata["agent_disclosure"] = {
         "version": 1, "applied": True, "actor_type": "ai", "header": header,
         "introduction": introduction, "introduced": first or already_introduced,

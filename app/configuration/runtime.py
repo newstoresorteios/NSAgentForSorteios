@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from typing import Any
 from string import Formatter
+import hashlib
+import json
 
 _effective_settings: ContextVar[Any] = ContextVar("effective_settings", default=None)
 _catalog: ContextVar[dict[str, Any] | None] = ContextVar("operator_catalog", default=None)
@@ -27,6 +29,13 @@ def reset_bundle(tokens):
 
 def current_bundle() -> dict[str, Any]:
     return _catalog.get() or {}
+
+
+def configuration_fingerprint(bundle: dict[str, Any] | None = None) -> str:
+    """Identify effective values, including defaults changed without a version bump."""
+    values = (bundle if bundle is not None else current_bundle()).get('values') or {}
+    canonical = json.dumps(values, sort_keys=True, ensure_ascii=False, separators=(',', ':'), default=str)
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
 
 def policy(name: str, *, bundle: dict[str, Any] | None = None) -> Any:

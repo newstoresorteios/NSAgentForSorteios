@@ -506,6 +506,7 @@ async def dispatch_accepted_outbound(outbox_id: int, send) -> dict[str, Any]:
     if info.get("ok"):
         mark_outbox_sent(outbox_id, provider_response=info, owner=row["lease_owner"])
     else:
+        from app.channels.delivery_errors import permanent_delivery_failure
         mark_outbox_failed(outbox_id, error=str(info.get("error") or "send_failed"), owner=row["lease_owner"],
-            dead=int(row.get("attempts") or 1) >= int(row.get("max_attempts") or 5))
+            dead=permanent_delivery_failure(info) or int(row.get("attempts") or 1) >= int(row.get("max_attempts") or 5))
     return info

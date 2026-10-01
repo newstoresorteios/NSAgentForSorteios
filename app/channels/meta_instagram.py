@@ -927,18 +927,11 @@ async def _send_meta_instagram_message(
                     "error_type": error_type,
                 },
             )
-            print(
-                "[meta.instagram.send]",
-                {
-                    "ok": False,
-                    "status_code": last_status,
-                    "error_code": error_code,
-                    "error_type": error_type,
-                    "error_message": str(
-                        (last_body.get("error") or {}).get("message") or ""
-                    )[:180],
-                },
-            )
+            if str(error_code) == '190':
+                log_event('channel.authentication_failed', {'channel': 'instagram', 'error_code': 190,
+                                                           'requires_reconnection': True})
+                return {'ok': False, 'status_code': last_status, 'provider_response': last_body,
+                        'error': 'meta_authentication_failed', 'retryable': False}
     return {
         "ok": False,
         "status_code": last_status,

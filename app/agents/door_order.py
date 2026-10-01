@@ -53,13 +53,32 @@ def _recite_stored_payment_url(
 async def try_tax_document_route(
     message: IncomingMessage,
     commerce_state: Any,
+    *,
+    recent_turns: list[dict[str, Any]] | None = None,
 ) -> AgentResult | None:
     door = _door()
-    if getattr(commerce_state, "pending_action", None) != "awaiting_order_customer_document":
+    previous = next((t for t in reversed(recent_turns or [])
+                     if t.get('role') in {'user', 'assistant'} and t.get('content')), {})
+    prompt = str(previous.get('content') or '')
+    requested_document = previous.get('role') == 'assistant' and bool(
+        re.search(r'\b(?:cpf|cnpj)\b', prompt, re.I)
+        and re.search(r'\b(?:pedido|compra)\b', prompt, re.I))
+    if (getattr(commerce_state, "pending_action", None) != "awaiting_order_customer_document"
+            and not requested_document):
+        return None
+    if door.extract_order_reference(message.text):
         return None
     customer_document = door.extract_valid_tax_document(message.text)
     if customer_document:
         document_kind, document = customer_document
+        # Repair an unverified legacy candidate created from a bare document.
+        # Real orders with status/session evidence keep their ownership check.
+        if (str(commerce_state.order_lookup_id or '') == document
+                and str(commerce_state.order_id or '') in {'', document}
+                and not commerce_state.order_status and not commerce_state.order_session_id
+                and not commerce_state.order_created_at):
+            commerce_state = commerce_state.model_copy(deep=True)
+            commerce_state.order_id = commerce_state.order_lookup_id = None
         result = await door.find_order_by_customer_document(
             state=commerce_state,
             execute=door.execute_tool,

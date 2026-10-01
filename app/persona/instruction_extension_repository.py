@@ -332,10 +332,13 @@ def format_approved_extensions_block(extensions: list[dict[str, Any]]) -> str:
     if not extensions:
         return "<approved_instruction_extensions>\n</approved_instruction_extensions>"
     lines = ["<approved_instruction_extensions>"]
+    seen = set()
     for item in extensions:
         key = item.get("extension_key") or "extension"
         text = (item.get("instruction_text") or "").strip()
-        if text:
+        normalized = ' '.join(text.casefold().split())
+        if text and normalized not in seen:
+            seen.add(normalized)
             lines.append(f"- [{key}] {text}")
     lines.append("</approved_instruction_extensions>")
     return "\n".join(lines)

@@ -725,7 +725,7 @@ async def _generate_agent_reply_async_inner(
     import_support = try_import_support(message, recovery_turns, commerce_state)
     if import_support is not None:
         return import_support
-    tax = await try_tax_document_route(message, commerce_state)
+    tax = await try_tax_document_route(message, commerce_state, recent_turns=recovery_turns or recent_turns)
     if tax is not None:
         return tax
     farewell = try_farewell(message, customer_context, commerce_state)

@@ -68,7 +68,10 @@ def complete_inspection_copy(result, interpretation, text):
         observed = [labels.get(v, v) for v in fact['observed']]
         label = 'Vidro' if field == 'crystal' else 'Movimento'
         value = ', '.join(observed) if observed else 'não confirmado na ficha consultada'
-        if len(observed) > 1:
+        observed_values = set(fact['observed'])
+        compatible = any(observed_values <= ({r['value']} | set(r.get('compatibleValues') or []))
+                         for r in rules if r['field'] == field and r['value'] in observed_values)
+        if len(observed) > 1 and not compatible:
             value += ' (há informações diferentes no cadastro; não confirmo uma única especificação)'
         lines.append(f'{label}: {value}.')
     if all_details or re.search(r'tamanho|diametro|caixa|\d\s*mm\b|\bmm\b', query):

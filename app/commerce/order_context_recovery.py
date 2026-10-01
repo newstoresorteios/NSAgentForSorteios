@@ -53,7 +53,7 @@ def extract_contextual_order_reference(
     order number, and it must not also be a budget question.
     """
     match = _BARE_ORDER_ID_RE.fullmatch(str(text or ""))
-    if not match:
+    if not match or extract_valid_tax_document(text):
         return None
     previous: dict[str, Any] | None = None
     for turn in reversed(recent_turns or []):

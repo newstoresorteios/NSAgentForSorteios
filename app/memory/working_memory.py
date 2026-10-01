@@ -41,6 +41,14 @@ def build_working_memory(
     return {
         "usage_policy": WORKING_MEMORY_USAGE_POLICY,
         "active_domain": payload.active_domain,
+        "active_topic": payload.active_topic,
+        "commercial_context_id": payload.commercial_context_id,
+        "active_preferences": {key: value for key, value in payload.active_preferences.items()
+                               if key in {'subject_brand', 'subject_product_type', 'budget_min', 'budget_max',
+                                          'color', 'style', 'material', 'occasion', 'mechanism', 'crystal',
+                                          'delivery_deadline_text', 'delivery_mode', 'explicit_no_preferences'}},
+        "product_constraints": [value for value in payload.active_preferences.get('attributes', [])
+                                if not str(value).startswith('qual:') or str(value).startswith('qual:urgency:')],
         "purchase_stage": payload.purchase_stage,
         "pending_action": payload.pending_action,
         "has_cart": bool(payload.cart_session_id),
@@ -88,6 +96,8 @@ def format_working_memory_block(
             memory.get("last_presented_products"),
             memory.get("known_checkout_fields"),
             memory.get("pending_action"),
+            memory.get("active_preferences"),
+            memory.get("product_constraints"),
         ]
     ):
         return ""

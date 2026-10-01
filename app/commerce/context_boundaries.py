@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from app.catalog.retrieval.text import fold_text
 from app.commerce.commerce_context import CommerceConversationState
-from app.commerce.order_service import extract_order_reference
+from app.commerce.order_service import extract_order_reference, extract_valid_tax_document
 
 
 def reset_for_new_request(state, text, conversation_id=None, inbound_id=None):
@@ -33,6 +33,8 @@ def reset_for_new_request(state, text, conversation_id=None, inbound_id=None):
 
 def ambiguous_number_question(text, turns, handles):
     """A bare number needs an immediately preceding, unambiguous question."""
+    if extract_valid_tax_document(text):
+        return None
     if not re.fullmatch(r"\s*#?\d{3,12}\s*", str(text or "")):
         return None
     if handles.get("contextual_order_ids"):

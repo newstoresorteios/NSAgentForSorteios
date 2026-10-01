@@ -23,6 +23,8 @@ def has_explicit_lookup_identity(text: str | None, interpretation: SalesInterpre
 def is_conversation_repair(text: str | None, interpretation: SalesInterpretation | None = None) -> bool:
     if has_explicit_lookup_identity(text, interpretation) and interpretation.resolved_answer_strategy() == "search_catalog":
         return False
+    if interpretation is not None and interpretation.conversation_feedback in {'misunderstood', 'repeated_question', 'frustrated'}:
+        return True
     folded = fold_text(text)
     phrases = str(policy("conversationRepairPhrases")).splitlines()
     return any(fold_text(phrase.strip()) in folded for phrase in phrases if phrase.strip())
@@ -30,6 +32,8 @@ def is_conversation_repair(text: str | None, interpretation: SalesInterpretation
 
 async def repair_conversation(*, incoming: IncomingMessage, interpretation: SalesInterpretation,
                               state, recent_turns=None) -> AgentResult | None:
+    if interpretation.goal == 'after_sales':
+        return None
     if not is_conversation_repair(incoming.text, interpretation):
         return None
     if interpretation.goal == 'inspect':

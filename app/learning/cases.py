@@ -5,6 +5,8 @@ from __future__ import annotations
 from app.core.turn_cache import cached_turn_read
 
 from datetime import datetime, timezone
+import hashlib
+import json
 from typing import Any
 
 import psycopg
@@ -35,7 +37,10 @@ def upsert_learning_case(
     importance: float = 0.5,
 ) -> int | None:
     now = datetime.now(timezone.utc)
-    case_key = f"learning:{failure_code}"
+    # Preserve separate incidents in the same failure family; retries of one
+    # incident stay idempotent. No customer identifiers appear in the key.
+    identity = json.dumps([conversation_key, insight_id, customer_excerpt, bad_reply], ensure_ascii=False)
+    case_key = f"learning:{failure_code}:{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:

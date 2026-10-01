@@ -264,6 +264,17 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
         interpretation.subject.brand = snapshot_query["brand"]
         interpretation.references_previous_context = True
     topic = topic_key(interpretation.subject.brand or interpretation.subject.product_type)
+    from .qualification_policy import qualification_policy, question_history, requests_catalog
+    required, max_questions = qualification_policy(contextual)
+    _, question_count = question_history(recent_turns, topic)
+    if not required:
+        return None
+    if (question_count >= max_questions or interpretation.stop_clarification
+            or requests_catalog(message.text, contextual['directRequestPattern'], rules['showResultsPattern'])):
+        interpretation._adaptive_ready = True
+        interpretation._adaptive_trace = {'decision': 'search', 'reason': 'qualification_policy',
+                                          'asked_count': question_count, 'max_questions': max_questions}
+        return None
     if (previous_question and not previous_question.get("adaptive")
             and topic_key(previous_question.get("topic")) == topic
             and not interpretation.domain_change_explicit):
@@ -327,7 +338,7 @@ async def prepare_discovery(*, interpretation, state, message, recent_turns, exe
     questions = {q["slot"]: q for q in contextual["questions"]}
     budget_needs_model = (previous_slot == 'budget'
         and 'model_intent' not in asked and 'model_intent' in questions
-        and len(asked) < contextual['maxQuestions']
+        and len(asked) < max_questions
         and not interpretation.subject.model
         and not any((prefs.color, prefs.style, prefs.occasion, prefs.material,
                      prefs.mechanism, prefs.crystal))

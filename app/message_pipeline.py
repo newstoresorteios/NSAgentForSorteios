@@ -601,6 +601,9 @@ async def _process_incoming_message(incoming: IncomingMessage, customer_context:
             turns_for_conversation(operational_turns, incoming.conversation_id),
             limit=resolve_model_history_limit(settings),
         )
+        # Early deterministic routes also need the delivered conversation when
+        # composing identity/continuity, not only the model's review context.
+        customer_context.setdefault('_conversation_turns', operational_turns)
     factual_ok = bool(validation.get("valid", True))
     openai_calls = runtime.openai_call_count if runtime else 0
     # Dual-agent critique runs before outbound compose/send; LLM gated by risk.

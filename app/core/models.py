@@ -19,6 +19,8 @@ class ProductPreferences(BaseModel):
     mechanism: str | None = Field(default_factory=lambda: None)
     crystal: str | None = Field(default_factory=lambda: None)
     occasion: str | None = None
+    delivery_deadline_text: str | None = Field(default=None, description='Prazo desejado nas palavras do cliente, como próximo fim de semana; nunca uma promessa de entrega.')
+    delivery_mode: Literal['ready_to_ship', 'can_wait'] | None = None
     recipient: str | None = None
     attributes: list[str] = Field(default_factory=list)
     explicit_no_preferences: list[
@@ -81,6 +83,8 @@ class SalesInterpretation(BaseModel):
     enough_information_to_search: bool = Field(default_factory=bool)
     ready_for_retrieval: bool = Field(default_factory=bool)
     stop_clarification: bool = Field(default_factory=bool)
+    conversation_feedback: Literal['misunderstood', 'repeated_question', 'frustrated'] | None = Field(
+        default=None, description='Feedback sobre este atendimento, inclusive paráfrases de já informei ou você não entendeu. Não confundir com reclamação de atraso de pedido.')
     needs_clarification: bool
     clarification_question: str | None = None
     reference_type: Literal[

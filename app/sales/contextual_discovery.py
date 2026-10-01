@@ -90,28 +90,9 @@ def apply_contextual_discovery(interpretation, state, recent_turns, message_text
         return
 
     topic = topic_key(interpretation.subject.brand or interpretation.subject.product_type)
-    asked = set()
-    has_markers = False
-    # Stop at a completed catalog answer; a later purchase starts fresh.
-    for turn in reversed(recent_turns or []):
-        if turn.get("role") != "assistant":
-            continue
-        metadata = turn.get("metadata") or {}
-        if not isinstance(metadata, dict):
-            continue
-        metadata = metadata.get("response_metadata", metadata)
-        if not isinstance(metadata, dict):
-            continue
-        marker = metadata.get("discovery_question") or {}
-        if not isinstance(marker, dict):
-            marker = {}
-        if marker:
-            has_markers = True
-            if topic_key(marker.get("topic")) != topic:
-                break
-            asked.add(marker.get("slot"))
-        elif metadata.get("safety_reason") != "commerce_clarification":
-            break
+    from .qualification_policy import qualification_policy, question_history, requests_catalog
+    required, max_questions = qualification_policy(config)
+    asked, question_count = question_history(recent_turns, topic)
 
     known = dict(state.get("known_preferences") or {})
     from .qualification_enrichment import qualification_known
@@ -130,11 +111,16 @@ def apply_contextual_discovery(interpretation, state, recent_turns, message_text
         interpretation.preferences.explicit_no_preferences, asked, recent_turns, message_text)
     ready_groups = config.get("readyGroups") or []
     ready = any(set(group) <= covered for group in ready_groups if isinstance(group, list) and group)
-    direct = bool(re.search(config["directRequestPattern"], message_text or "", re.I))
-    count = len(asked) if has_markers else int(state.get("clarification_count") or 0)
-    if ready or direct or interpretation.stop_clarification or count >= config["maxQuestions"]:
+    direct = requests_catalog(message_text, config["directRequestPattern"])
+    count = question_count if question_count else int(state.get("clarification_count") or 0)
+    state['qualification_policy'] = {'required': required, 'max_questions': max_questions, 'asked_count': count}
+    if ready or direct or interpretation.stop_clarification or count >= max_questions:
         state.update(persona_qualification_required=False, force_retrieval=True,
                      contextual_discovery_reason="ready" if ready else "limit_or_request")
+        return
+    if not required:
+        # Disable the mandatory interview, not essential intent clarification.
+        state.update(persona_qualification_required=False, contextual_discovery_reason='policy_disabled')
         return
     for question in config["questions"]:
         slot = question["slot"]

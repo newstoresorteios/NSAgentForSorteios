@@ -92,7 +92,8 @@ async def process_outbox_batch(*, limit: int | None = None) -> dict[str, Any]:
             continue
 
         max_attempts = int(row.get("max_attempts") or 5)
-        is_dead = attempts >= max_attempts
+        from app.channels.delivery_errors import permanent_delivery_failure
+        is_dead = permanent_delivery_failure(send_info) or attempts >= max_attempts
         mark_outbox_failed(
             outbox_id,
             error=str(send_info.get("error") or "send_failed"),

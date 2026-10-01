@@ -26,6 +26,9 @@ def customer_requests_human(text: str | None) -> bool:
     rules = consent_rules()
     if re.search(rules['negative'], text):
         return False
+    if re.search(r'\bcomo (?:faco para|posso|consigo) (?:falar|conversar) com '
+                 r'(?:um |uma |o |a )?(?:atendente|humano|pessoa|vendedor|equipe)\b', text):
+        return True
     # Natural statements of necessity are already an explicit request.  They
     # must not be downgraded to a second confirmation question.
     if re.search(
