@@ -444,6 +444,7 @@ async def run_critique_judge(
         "intent": result.intent,
         "safety_reason": result.safety_reason,
         "commercial_data": result.commercial_data or {},
+        "story_visual_hypothesis": result.response_metadata.get('story_probable_identity') or {},
         "grounded_commerce_evidence": result.response_metadata.get('grounded_commerce_evidence') or {},
         "retrieval_result": {key: result.response_metadata.get(key) for key in (
             'technical_requirements', 'technical_evidence', 'product_resolution_state')},
@@ -932,6 +933,7 @@ async def _regenerate_reply(
                             commerce_state.interpreter_payload() if commerce_state else {}
                         ),
                         "commercial_data": working.commercial_data or {},
+                        "story_visual_hypothesis": working.response_metadata.get('story_probable_identity') or {},
                         "search_products_empty": empty_search,
                         "api_facts": ({"validated_products": products} if working.response_metadata.get("offer_contract") else api_facts),
                         "published_persona": persona_evidence((working.commercial_data or {}).get('products')),

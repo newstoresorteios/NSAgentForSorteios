@@ -288,6 +288,7 @@ class StoryResolutionResult(BaseModel):
     question_type: StoryQuestionType = StoryQuestionType.GENERIC
     reply_hint: str | None = None
     product_payload: dict[str, Any] | None = None
+    probable_identity: dict[str, Any] | None = None
     shadow_only: bool = False
     metrics: dict[str, Any] = Field(default_factory=dict)
     resolved_at: datetime | None = None

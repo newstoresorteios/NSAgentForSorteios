@@ -729,6 +729,11 @@ async def _finalize_story_catalog_match(
         metrics["story_ambiguous_matches"] = 1
         log_event("story_clarification", {"reason": "close_scores"})
         clar_options, clar_reply = _clarification_from_regions(analysis)
+        from app.stories.story_probable_identity import probable_identity
+        probable = await probable_identity(analysis=scene, worker_evidence=worker_evidence, execute_tool=tool)
+        if probable:
+            clar_reply = probable['reply']
+            metrics['story_probable_identity'] = 1
         return StoryResolutionResult(
             resolved=False,
             tenant_id=tenant,
@@ -736,12 +741,13 @@ async def _finalize_story_catalog_match(
             match_status="ambiguous",
             needs_clarification=True,
             clarification_options=clar_options or options,
+            probable_identity=probable,
             followup_terms=_followup_terms(analysis),
             catalog_query_base=_catalog_query_base(analysis),
             candidates=candidates[:5],
             confidence=candidates[0].score if candidates else 0.0,
             question_type=question_type,
-            reply_hint=_compose_reply(
+            reply_hint=clar_reply if probable else _compose_reply(
                 question_type=question_type,
                 product=None,
                 status="ambiguous",
@@ -1705,11 +1711,13 @@ def story_result_to_agent_result(
         from app.stories.story_catalog_context import refine_story_reference
         metadata["last_story_product"] = refine_story_reference(metadata["last_story_product"], incoming.text)
         selected = metadata["last_story_product"].get("selected_option")
-        if selected:
+        if selected and not resolution.probable_identity:
             reply = (f"Entendi, você quer o {selected}. "
                      "Ainda preciso confirmar a referência exata no catálogo para informar o valor correto. "
                      "Pode enviar um close do mostrador ou a referência?")
         metadata["story_selection_pending"] = True
+        if resolution.probable_identity:
+            metadata['story_probable_identity'] = resolution.probable_identity
         metadata.update(clear_active_product=True, clear_presented_products=True,
                         clear_pending_action=True, product_resolution_state="unresolved")
         if resolution.clarification_options:

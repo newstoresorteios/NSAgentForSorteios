@@ -39,6 +39,31 @@ def grounded_catalog_fallback(result):
 
 def finalize_response(result, *, incoming, interpretation, previous_state):
     from app.verify.catalog_delivery import enforce_photo_identity, apply_output_style
+    metadata = result.response_metadata
+    hypothesis = metadata.get('story_probable_identity') or {}
+    if (metadata.get('instagram_story') is True and metadata.get('story_match_status') == 'ambiguous'
+            and metadata.get('story_selection_pending') is True and not result.handoff_required
+            and hypothesis.get('method') == 'independent_catalog_photo_comparison'
+            and hypothesis.get('certainty') == 'probable'
+            and hypothesis.get('exact_identity_confirmed') is False
+            and hypothesis.get('commercial_authority') is False and hypothesis.get('reply')):
+        # Restore only the bounded server-built hypothesis, never commercial
+        # prose a later generation may have attached to this unconfirmed watch.
+        result.reply_text = hypothesis['reply']
+        result.commercial_data = None
+        metadata.pop('active_product', None)
+        metadata.pop('activate_first_product', None)
+        metadata.update(clear_active_product=True, clear_presented_products=True, clear_pending_action=True,
+                        presented_products=False, product_resolution_state='unresolved',
+                        allowed_id_sets={'allowed_product_ids': [], 'allowed_variant_ids': [], 'allowed_catalog_item_keys': []})
+        state = evolve_commerce_state(previous_state, result)
+        state.active_product = None
+        state.last_presented_products = []
+        state.pending_action = None
+        state.pending_action_product_ids = []
+        metadata['final_response_validation'] = {
+            'passed': True, 'authority': 'probable_visual_identity_only', 'delivered_product_ids': []}
+        return apply_output_style(result), state
     if result.response_metadata.get("read_only_payment_policy") and not result.handoff_required:
         from app.sales.policies.action_authority import try_informational_payment
         confirmed = try_informational_payment(incoming, result_interpretation(result) or interpretation, previous_state)

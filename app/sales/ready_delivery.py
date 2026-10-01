@@ -92,7 +92,11 @@ async def enrich_story_ready_delivery(message, result):
     else:
         prefix = ('Consultei a lista de pronta entrega, mas não confirmei uma correspondência para o relógio do Story. '
                   'Isso não confirma que a peça esteja esgotada.')
-    reply = prefix if selected and evidence['complete'] and evidence['products'] else prefix + '\n\n' + result.reply_text
+    if result.response_metadata.get('story_probable_identity'):
+        # A storefront alternative must not replace the grounded visual hypothesis.
+        reply = result.reply_text + '\n\n' + prefix
+    else:
+        reply = prefix if selected and evidence['complete'] and evidence['products'] else prefix + '\n\n' + result.reply_text
     result.reply_text = reply
     result.response_metadata.update(story_clarification_reply=reply, ready_delivery_check=evidence,
                                     catalog_source=SOURCE)
