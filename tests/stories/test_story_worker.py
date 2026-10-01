@@ -141,7 +141,7 @@ def test_cache_keys_isolate_scope_versions_and_manual_corrections():
         assert jobs.cache_key(changed) != original
 
 
-@pytest.mark.parametrize('problem', [None, 'similar_name', 'negated', 'two_watches', 'no_photo', 'one_visual_frame', 'generic_features'])
+@pytest.mark.parametrize('problem', [None, 'similar_name', 'partial_reference', 'negated', 'two_watches', 'no_photo', 'one_visual_frame', 'generic_features'])
 def test_spoken_reference_requires_catalog_photo_and_distinct_visual_evidence(problem):
     analysis, review, products = evidence()
     analysis.visible_references = []
@@ -156,6 +156,7 @@ def test_spoken_reference_requires_catalog_photo_and_distinct_visual_evidence(pr
     check.distinguishing_features = ['ponteiros vazados', 'bezel dodecagonal', 'numerais aplicados']
     products['42']['primary_image_url'] = 'https://images.tcdn.com.br/watch.jpg'
     if problem == 'similar_name': analysis.audio_transcript = 'É da coleção AB.'
+    if problem == 'partial_reference': analysis.audio_transcript = 'Este é o AB123456.'
     if problem == 'negated': analysis.audio_transcript = 'Não é o AB 12345.'
     if problem == 'two_watches': analysis.watch_count = 2
     if problem == 'no_photo': products['42']['primary_image_url'] = ''

@@ -34,6 +34,12 @@ def normalized_identifier(value):
     return re.sub(r'[^a-z0-9]', '', str(value or '').casefold())
 
 
+def spoken_exact_identifier(identifier, transcript):
+    # Do not accept AB12345 when the speaker actually named AB123456/AB12345X.
+    pattern = r'(?<![a-z0-9])' + r'[\s./_-]*'.join(re.escape(c) for c in identifier) + r'(?![a-z0-9])'
+    return bool(re.search(pattern, transcript.casefold()))
+
+
 def approved_checks(review, *, products, analysis, frame_count):
     """Exact identifiers require independent visual or audiovisual corroboration.
 
@@ -74,7 +80,6 @@ def approved_checks(review, *, products, analysis, frame_count):
             # the catalog photo in several frames, not just resemble a model name.
             visual_frames = {i for i in check.visual_support_frame_indexes if 0 <= i < frame_count}
             photo = product.get('primary_image_url') or ''
-            spoken = normalized_identifier(analysis.audio_transcript)
             has_negation = bool(re.search(r'\b(?:não|nao|nem|outro|outra|versus|comparando)\b', analysis.audio_transcript.casefold()))
             if (analysis.media_type != 'video' or analysis.audio_status != 'transcribed'
                     or analysis.multiple_products or analysis.watch_count != 1 or len(regions) > 1
@@ -82,7 +87,8 @@ def approved_checks(review, *, products, analysis, frame_count):
                     or not photo.startswith('https://') or len(visual_frames) < 2 or has_negation
                     or len({f.strip().casefold() for f in check.distinguishing_features if f.strip()}) < 3):
                 continue
-            exact = {x for x in identifiers if len(x) >= 7 and sum(c.isdigit() for c in x) >= 2 and x in spoken}
+            exact = {x for x in identifiers if len(x) >= 7 and sum(c.isdigit() for c in x) >= 2
+                     and spoken_exact_identifier(x, analysis.audio_transcript)}
             if not exact:
                 continue
             frames, method = visual_frames, 'spoken_reference_visual_corroboration'
