@@ -7,7 +7,8 @@ from urllib.parse import urlsplit
 from app.config import get_settings
 from app.db import get_conn
 from app.ops.observability import log_event
-from app.stories.instagram_story_media import download_story_media, SupabasePrivateStoryMediaStorage, StoryMediaError
+from app.stories.instagram_story_media import SupabasePrivateStoryMediaStorage, StoryMediaError
+from app.stories.instagram_story_media import download_story_media_file
 
 
 def _classify_incoming(incoming, mime):
@@ -66,6 +67,29 @@ async def archive_instagram_inbound_media(inbound_id: int, *, incoming=None) -> 
     _classify_incoming(incoming, metadata.get('media_content_type'))
     if metadata.get('media_storage_path'):
         return 'already_stored'
+    if incoming is not None and incoming.instagram_story and incoming.instagram_story.story_media_id:
+        story = incoming.instagram_story
+        def shared_asset():
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT media_storage_path, media_mime, media_bytes
+                        FROM public.instagram_story_analysis_jobs
+                        WHERE workspace_id=%s::uuid AND provider=%s AND instagram_account_id=%s
+                          AND story_media_id=%s AND media_storage_path IS NOT NULL AND expires_at > now()
+                        ORDER BY updated_at DESC LIMIT 1""",
+                        (str(row['workspace_id']), story.provider, story.instagram_account_id, story.story_media_id))
+                    return cur.fetchone()
+        shared = await asyncio.to_thread(shared_asset)
+        if shared:
+            _classify_incoming(incoming, shared['media_mime'])
+            await asyncio.to_thread(_save, row, path=shared['media_storage_path'],
+                mime=shared['media_mime'], byte_count=shared['media_bytes'])
+            return 'already_stored'
+        from app.stories.instagram_story_intent import should_route_story_question
+        from app.ops.human_takeover import human_takeover_active
+        if (getattr(get_settings(), 'instagram_story_worker_enabled', False)
+                and should_route_story_question(incoming) and not human_takeover_active(incoming)):
+            return 'worker_pending'
     url = metadata.get('image_url') or ''
     try:
         parsed = urlsplit(url)
@@ -82,16 +106,16 @@ async def archive_instagram_inbound_media(inbound_id: int, *, incoming=None) -> 
     media = None
     try:
         # This existing bucket is private and separate from public audio storage.
-        media = await asyncio.wait_for(download_story_media(
-            url, tenant_id=str(row['workspace_id']), persist=False, max_bytes=16_777_216,
-        ), timeout=15)
+        media = await asyncio.wait_for(download_story_media_file(
+            url, max_bytes=get_settings().instagram_story_media_max_bytes,
+        ), timeout=90)
         # Classify even if Storage fails: an opaque MP4 is never a photo.
         _classify_incoming(incoming, media.content_type)
         storage = SupabasePrivateStoryMediaStorage(bucket='conversation-media')
         path = await asyncio.wait_for(storage.put_private(
-            content=media.content, content_type=media.content_type,
+            content=media.path, content_type=media.content_type,
             sha256=media.sha256, tenant_id=str(row['workspace_id']),
-        ), timeout=15)
+        ), timeout=60)
         if not path:
             raise StoryMediaError(storage.last_error or 'private_storage_unavailable')
         await asyncio.to_thread(_save, row, path=path,
@@ -104,6 +128,9 @@ async def archive_instagram_inbound_media(inbound_id: int, *, incoming=None) -> 
         await asyncio.to_thread(_save, row, error=code, **fields)
         log_event('instagram.media_archive.unavailable', {'error_type': code})
         return 'unavailable'
+    finally:
+        if media:
+            media.close()
 
 
 def _pending(limit, workspace_id):

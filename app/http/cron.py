@@ -16,6 +16,12 @@ from app.security import verify_remarketing_cron
 router = APIRouter(tags=["cron"])
 
 
+@router.post('/api/cron/process-stories', dependencies=[Depends(verify_queue_dispatch)])
+async def cron_process_stories():
+    from app.stories.story_analysis_worker import process_story_analysis_batch
+    return await process_story_analysis_batch(limit=1)
+
+
 @router.post("/api/cron/process-queues", dependencies=[Depends(verify_queue_dispatch)])
 async def cron_dispatch_queues():
     from starlette.background import BackgroundTask

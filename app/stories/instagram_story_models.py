@@ -166,6 +166,7 @@ class StoryVisualUnderstanding(BaseModel):
     audio_transcript: str = ""
     audio_status: str = "not_attempted"
     frames_analyzed: int = 0
+    frame_timestamps_seconds: list[float] = Field(default_factory=list)
     evidence_version: str = ""
 
     @field_validator("dial_colors", "strap_colors")

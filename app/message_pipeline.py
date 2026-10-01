@@ -225,7 +225,7 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     import asyncio
     from app.core.turn_cache import begin_turn_cache, end_turn_cache
     cache_token = begin_turn_cache()
-    configuration_tokens = owned_token = persona_token = None
+    configuration_tokens = owned_token = persona_token = story_token = None
     try:
         from app.configuration.workspace import resolve_conversation_workspace
         from app.evaluation.context import current_evaluation
@@ -245,6 +245,8 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             limit = resolve_turn_llm_budget(complex_turn=get_current_turn().execution_path in {"complex", "critical"})
             get_current_turn().llm_budget.max_calls = limit["max_calls"]
             get_current_turn().llm_budget.enforce = limit["enforce"]
+        from app.stories.story_analysis_worker import prepare_story_turn
+        story_token = await prepare_story_turn(incoming, resolved_workspace)
         result = await _process_incoming_message(incoming, customer_context)
         persona = get_persona_runtime()
         if persona is not None:
@@ -269,6 +271,9 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
             )
         return result
     finally:
+        if story_token is not None:
+            from app.stories.story_analysis_worker import reset_story_evidence
+            reset_story_evidence(story_token)
         if persona_token is not None:
             reset_persona_runtime(persona_token)
         end_turn_cache(cache_token)

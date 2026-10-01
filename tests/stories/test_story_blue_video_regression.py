@@ -329,7 +329,7 @@ def test_decoder_selects_sharp_closeup_between_old_fixed_sample_points(monkeypat
     assert any(np.asarray(Image.open(io.BytesIO(frame))).std() > 50 for frame in frames)
 
 
-def test_decodes_real_mp4_frames_and_audio_without_ai(monkeypatch):
+def test_decodes_real_mp4_frames_and_audio_without_ai(monkeypatch, tmp_path):
     """Optional native-decoder smoke; generated clip stays in memory."""
     import io
     import wave
@@ -368,3 +368,11 @@ def test_decodes_real_mp4_frames_and_audio_without_ai(monkeypatch):
         assert decoded.getframerate() == 16000 and decoded.getnchannels() == 1
         assert decoded.getnframes() >= 16000
     assert extract_audio(content, 1)[1] == 'duration_limit'
+    path = tmp_path / 'video.mp4'
+    path.write_bytes(content)
+    timestamps = []
+    disk_frames = media.extract_video_frames_best_effort(path, max_frames=8, frame_times=timestamps)
+    assert disk_frames == frames
+    assert len(timestamps) == len(frames) and timestamps == sorted(timestamps)
+    disk_wav, status = extract_audio(path, 120)
+    assert status == 'ready' and disk_wav == wav

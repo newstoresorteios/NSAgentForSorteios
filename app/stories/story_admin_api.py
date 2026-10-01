@@ -31,6 +31,7 @@ def resolve_story_tenant(
 
 @router.get("/stories/health", dependencies=[Depends(verify_admin_token)])
 async def admin_instagram_story_health():
+    import os
     settings = get_settings()
     real_ok = bool(getattr(settings, "instagram_story_real_payload_validated", False))
     mode = str(getattr(settings, "instagram_story_rollout_mode", "off") or "off")
@@ -42,6 +43,9 @@ async def admin_instagram_story_health():
         ),
         "rollout_mode": mode,
         "real_payload_validated": real_ok,
+        "worker_enabled": bool(getattr(settings, 'instagram_story_worker_enabled', False)),
+        "media_max_bytes": getattr(settings, 'instagram_story_media_max_bytes', 104_857_600),
+        "redis_configured": bool(os.getenv('STORY_REDIS_URL') or os.getenv('REDIS_URL') or os.getenv('REDIS_TLS_URL')),
         "video_frame_analysis_enabled": bool(
             getattr(settings, "instagram_story_video_frame_analysis_enabled", False)
         ),

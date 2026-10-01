@@ -2064,10 +2064,10 @@
     "description": "Parâmetro INSTAGRAM_STORY_MEDIA_MAX_BYTES. Aplicado na próxima conversa após publicação.",
     "group": "Atendimento",
     "type": "integer",
-    "default": 16777216,
+    "default": 104857600,
     "readOnly": false,
     "min": 1024,
-    "max": 52428800
+    "max": 536870912
   },
   {
     "key": "instagram_story_media_timeout_seconds",
@@ -7841,5 +7841,16 @@
     "default": 12,
     "min": 1,
     "max": 30
+  },
+  {
+    "key": "instagram_story_worker_enabled",
+    "attribute": "instagram_story_worker_enabled",
+    "target": "setting",
+    "label": "Worker de análise de Stories",
+    "description": "Processa mídia e valida a identidade em uma fila compartilhada por Story.",
+    "group": "Atendimento",
+    "type": "boolean",
+    "readOnly": false,
+    "default": true
   }
 ]

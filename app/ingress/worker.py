@@ -347,9 +347,14 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
     )
     turn.execution_path = str(budget_cfg.get("execution_path") or "normal")
     token = set_current_turn(turn)
+    from app.stories.story_analysis_worker import StoryAnalysisPending
     try:
         result = (result_from_outbox_row(accepted) if accepted is not None
                   else await process_incoming_message(incoming, customer_context))
+    except StoryAnalysisPending as pending:
+        from app.stories.story_analysis_jobs import defer_inbox
+        await asyncio.to_thread(defer_inbox, grouped_inbox_ids, pending.job_id)
+        return {'ok': True, 'inbox_id': inbox_id, 'deferred': 'story_analysis', 'job_id': pending.job_id}
     finally:
         reset_current_turn(token)
     outbox_id = enqueue_accepted_outbound(

@@ -148,6 +148,11 @@ def claim_pending_inbox(
                   SELECT candidate.id
                   FROM public.ai_inbound_inbox AS candidate
                   WHERE candidate.attempts < candidate.max_attempts
+                    AND (candidate.story_analysis_job_id IS NULL OR EXISTS (
+                      SELECT 1 FROM public.instagram_story_analysis_jobs story_job
+                      WHERE story_job.id=candidate.story_analysis_job_id
+                        AND story_job.status IN ('ready', 'failed')
+                    ))
                     AND (candidate.status <> 'failed' OR candidate.updated_at +
                         make_interval(secs => LEAST(%(retry_max)s,
                             %(retry_base)s * power(2, GREATEST(candidate.attempts - 1, 0)))::int) <= now())

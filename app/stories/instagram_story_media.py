@@ -2,8 +2,8 @@
 
 Operational URLs keep signed query strings. Logs only use SafeMediaReference.
 
-``SupabasePrivateStoryMediaStorage.get_private`` remains reserved because the
-current processing path never needs to expose stored media again.
+The worker uses private temporary files and workspace-scoped Storage reads.
+The bytes interface remains available to image and legacy callers.
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ import io
 import ipaddress
 import socket
 import re
+import tempfile
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlparse
@@ -48,6 +50,17 @@ class DownloadedStoryMedia:
     byte_count: int = 0
 
 
+@dataclass
+class StoryMediaFile:
+    path: Path
+    content_type: str
+    sha256: str
+    byte_count: int
+
+    def close(self):
+        self.path.unlink(missing_ok=True)
+
+
 class StoryMediaError(RuntimeError):
     def __init__(self, code: str, message: str = "") -> None:
         super().__init__(message or code)
@@ -58,7 +71,7 @@ class StoryMediaStorage(Protocol):
     async def put_private(
         self,
         *,
-        content: bytes,
+        content: bytes | Path,
         content_type: str,
         sha256: str,
         tenant_id: str,
@@ -86,7 +99,7 @@ class SupabasePrivateStoryMediaStorage:
     async def put_private(
         self,
         *,
-        content: bytes,
+        content: bytes | Path,
         content_type: str,
         sha256: str,
         tenant_id: str,
@@ -126,13 +139,18 @@ class SupabasePrivateStoryMediaStorage:
                     return self._failed(f"storage_bucket_http_{bucket_info.status_code}")
                 if bucket_info.json().get('public') is not False:
                     return self._failed("private_bucket_required")
+                object_size = content.stat().st_size if isinstance(content, Path) else len(content)
+                bucket_limit = bucket_info.json().get('file_size_limit')
+                if bucket_limit and object_size > int(bucket_limit):
+                    return self._failed('storage_object_too_large')
                 response = await client.post(
                     upload_url,
-                    content=content,
+                    content=_file_chunks(content) if isinstance(content, Path) else content,
                     headers={
                         **auth_headers,
                         "Content-Type": content_type,
                         "x-upsert": "true",
+                        "Content-Length": str(content.stat().st_size if isinstance(content, Path) else len(content)),
                     },
                 )
                 if response.status_code >= 400:
@@ -308,7 +326,7 @@ async def download_story_media(
     max_bytes: int | None = None,
 ) -> DownloadedStoryMedia:
     settings = get_settings()
-    max_bytes = max_bytes or int(getattr(settings, "instagram_story_media_max_bytes", 16_777_216) or 16_777_216)
+    max_bytes = max_bytes or int(getattr(settings, "instagram_story_media_max_bytes", 104_857_600) or 104_857_600)
     timeout = float(getattr(settings, "instagram_story_media_timeout_seconds", 10) or 10)
     max_redirects = 3
 
@@ -409,16 +427,12 @@ async def download_story_media(
 
 
 def extract_video_frames_best_effort(
-    content: bytes,
+    content: bytes | Path,
     *,
     max_frames: int = 8,
+    frame_times: list[float] | None = None,
 ) -> list[bytes]:
-    """Decode representative video frames to JPEG without writing to disk.
-
-    Decord ships a compact FFmpeg-backed decoder and supports in-memory files,
-    so no media is written to disk. Failures remain best-effort and never expose
-    media.
-    """
+    """Decode sharp representative JPEG frames from bytes or a private file."""
     settings = get_settings()
     if not bool(getattr(settings, "instagram_story_video_frame_analysis_enabled", False)):
         return []
@@ -430,7 +444,7 @@ def extract_video_frames_best_effort(
         from decord import VideoReader, cpu
         from PIL import Image
 
-        reader = VideoReader(io.BytesIO(content), ctx=cpu(0), num_threads=1)
+        reader = VideoReader(str(content) if isinstance(content, Path) else io.BytesIO(content), ctx=cpu(0), num_threads=1)
         frame_count = len(reader)
         if frame_count <= 0:
             return []
@@ -481,6 +495,8 @@ def extract_video_frames_best_effort(
             if digest not in seen:
                 seen.add(digest)
                 encoded.append(payload)
+                if frame_times is not None:
+                    frame_times.append(round(frame_index / float(reader.get_avg_fps()), 3))
         log_event(
             "instagram_story.video_frames_extracted",
             {"frames": len(encoded), "requested": frame_limit, "sampled": len(frame_indexes),
@@ -493,6 +509,79 @@ def extract_video_frames_best_effort(
             {"code": type(exc).__name__},
         )
         return []
+
+
+async def _file_chunks(path: Path):
+    with path.open("rb") as stream:
+        while chunk := stream.read(256 * 1024):
+            yield chunk
+
+
+async def download_story_media_file(url: str, *, max_bytes: int | None = None,
+                                    private_path: str | None = None,
+                                    workspace_id: str | None = None) -> StoryMediaFile:
+    """Stream large media to a private temporary file, deleting partial downloads.
+
+    Only server-owned Storage paths scoped to the workspace may use credentials.
+    Remote redirects never receive Storage credentials.
+    """
+    settings = get_settings()
+    limit = max_bytes or settings.instagram_story_media_max_bytes
+    headers = {"User-Agent": "NSAgentStoryWorker/1.0"}
+    if private_path:
+        prefix = f"supabase://conversation-media/private/instagram-stories/{workspace_id}/"
+        if not workspace_id or not private_path.startswith(prefix) or not re.fullmatch(r"[a-f0-9]{48}", private_path[len(prefix):]):
+            raise StoryMediaError("storage_scope_invalid")
+        if not settings.supabase_url or not settings.supabase_service_key:
+            raise StoryMediaError("storage_credentials_missing")
+        url = settings.supabase_url.rstrip('/') + '/storage/v1/object/authenticated/' + private_path[len('supabase://'):]
+        headers['Authorization'] = f"Bearer {settings.supabase_service_key}"
+    else:
+        url, _ = validate_story_media_url(url)
+    handle = tempfile.NamedTemporaryFile(prefix="story-", suffix=".media", delete=False)
+    path = Path(handle.name)
+    handle.close()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=False) as client:
+            for redirect in range(4):
+                async with client.stream("GET", url, headers=headers) as response:
+                    if response.is_redirect:
+                        if private_path or redirect == 3 or not response.headers.get('location'):
+                            raise StoryMediaError("redirect_limit_exceeded")
+                        url, _ = validate_story_media_url(urljoin(url, response.headers['location']))
+                        continue
+                    if response.status_code >= 400:
+                        raise StoryMediaError(f"http_{response.status_code}")
+                    try:
+                        if int(response.headers.get('content-length', 0)) > limit:
+                            raise StoryMediaError('file_too_large')
+                    except ValueError:
+                        pass
+                    count, digest, head = 0, hashlib.sha256(), b''
+                    with path.open('wb') as output:
+                        async for chunk in response.aiter_bytes(chunk_size=256 * 1024):
+                            count += len(chunk)
+                            if count > limit:
+                                raise StoryMediaError('file_too_large')
+                            if len(head) < 4096:
+                                head = (head + chunk)[:4096]
+                            digest.update(chunk)
+                            output.write(chunk)
+                    if not count:
+                        raise StoryMediaError('empty_body')
+                    mime = _sniff_mime(head)
+                    header = response.headers.get('content-type', '').split(';')[0].lower().strip()
+                    if mime == 'text/html':
+                        raise StoryMediaError('html_disguised')
+                    if not mime or not mime.startswith(('image/', 'video/')):
+                        raise StoryMediaError('mime_invalid')
+                    if header.startswith(('image/', 'video/')) and header.split('/')[0] != mime.split('/')[0]:
+                        raise StoryMediaError('mime_mismatch')
+                    return StoryMediaFile(path, mime, digest.hexdigest(), count)
+        raise StoryMediaError('redirect_limit_exceeded')
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def safe_media_url_for_log(url: str | None) -> dict[str, Any]:

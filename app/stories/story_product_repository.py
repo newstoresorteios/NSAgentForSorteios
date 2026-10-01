@@ -575,6 +575,8 @@ class StoryProductRepository:
                             match_source = 'pending',
                             match_status = 'pending',
                             match_confidence = 0,
+                            visual_analysis = '{}'::jsonb,
+                            candidate_products = '[]'::jsonb,
                             confirmed_by = %s,
                             confirmed_at = now(),
                             updated_at = now()
@@ -584,6 +586,15 @@ class StoryProductRepository:
                         (confirmed_by, str(tenant_id), int(row_id)),
                     )
                     row = cur.fetchone()
+                    if row:
+                        # Generation fencing also invalidates every Redis copy; old
+                        # workers can no longer publish against the new generation.
+                        cur.execute("""UPDATE public.instagram_story_analysis_jobs
+                            SET generation=gen_random_uuid(), status='pending', result='{}'::jsonb,
+                                attempts=0, lease_owner=NULL, lease_until=NULL, available_at=now(),
+                                last_error=NULL, expires_at=now()+interval '7 days', updated_at=now()
+                            WHERE tenant_id=%s AND provider=%s AND instagram_account_id=%s AND story_media_id=%s
+                        """, (str(tenant_id), row['provider'], row['instagram_account_id'], row['story_media_id']))
                 conn.commit()
             return _row_to_association(row)
         except Exception as exc:  # noqa: BLE001

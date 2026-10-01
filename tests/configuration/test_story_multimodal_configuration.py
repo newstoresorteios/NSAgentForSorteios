@@ -33,11 +33,15 @@ def test_story_catalog_tracks_runtime_defaults_and_bounds():
 
 
 def test_migration_publishes_same_controls_as_the_catalog():
-    migration = (ROOT / 'supabase/migrations/20261001000241_sync_story_multimodal_configuration.sql').read_text(encoding='utf-8')
-    definitions = json.loads(migration.split('$story_catalog$')[1])
-    published = json.loads(migration.split('$story_values$')[1])
+    definitions, published = {}, {}
+    for path in sorted((ROOT / 'supabase/migrations').glob('*story*.sql')):
+        migration = path.read_text(encoding='utf-8')
+        if '$story_catalog$' not in migration:
+            continue
+        definitions.update({f['key']: f for f in json.loads(migration.split('$story_catalog$')[1])})
+        published.update(json.loads(migration.split('$story_values$')[1]))
     catalog = {field['key']: field for field in CATALOG}
-    for definition in definitions:
+    for definition in definitions.values():
         assert definition == catalog[definition['key']]
         assert published[definition['key']] == definition['default']
 

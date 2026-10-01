@@ -34,6 +34,7 @@ def verify_queue_dispatch(authorization: str | None = Header(default=None)):
 async def dispatch_pending_queues() -> None:
     from app.ingress.worker import process_inbox_batch
     from app.ingress.outbox_worker import process_outbox_batch
+    from app.stories.story_analysis_worker import process_story_analysis_batch
     from app.ops.observability import log_exception
     from app.config import get_settings
     settings = get_settings()
@@ -53,3 +54,11 @@ async def dispatch_pending_queues() -> None:
     for name, result in zip(("inbox", "outbox"), results):
         if isinstance(result, Exception):
             log_exception("queue.immediate_dispatch_failed", result, {"queue": name})
+    # New Story jobs have just been enqueued by inbox preflight. The same durable
+    # dispatcher is also called by pg_cron after interrupted serverless requests.
+    try:
+        stories = await process_story_analysis_batch(limit=1)
+        if stories['claimed']:
+            await process_inbox_batch(limit=settings.agent_inbox_batch_size)
+    except Exception as exc:
+        log_exception('queue.immediate_dispatch_failed', exc, {'queue': 'stories'})

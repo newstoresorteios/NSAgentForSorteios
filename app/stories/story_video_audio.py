@@ -5,6 +5,7 @@ import asyncio
 import io
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.config import get_settings
 from app.ops.observability import log_event
@@ -16,16 +17,23 @@ class StoryAudioEvidence:
     transcript: str = ""
 
 
-def extract_audio(content: bytes, max_seconds: int) -> tuple[bytes, str]:
+def extract_audio(content: bytes | Path, max_seconds: int) -> tuple[bytes, str]:
     """Use the installed decoder; keep PCM/WAV in memory, with no public uploads."""
     from decord import AudioReader, VideoReader, cpu
     import numpy as np
 
-    video = VideoReader(io.BytesIO(content), ctx=cpu(0), num_threads=1)
+    video = VideoReader(str(content) if isinstance(content, Path) else io.BytesIO(content), ctx=cpu(0), num_threads=1)
     fps = float(video.get_avg_fps())
     if fps <= 0 or len(video) / fps > max_seconds:
         return b"", "duration_limit"
-    reader = AudioReader(io.BytesIO(content), ctx=cpu(0), sample_rate=16000, mono=True)
+    try:
+        reader = AudioReader(str(content) if isinstance(content, Path) else io.BytesIO(content), ctx=cpu(0), sample_rate=16000, mono=True)
+    except Exception as exc:
+        # The decoder explicitly reports absence of a stream; other failures are
+        # not evidence of silence and must remain retryable.
+        if 'cannot find audio stream' in str(exc).lower() or "can't find audio stream" in str(exc).lower():
+            return b'', 'no_audio'
+        raise
     if reader.shape[1] > max_seconds * 16000:
         return b"", "duration_limit"
     samples = reader[:].asnumpy().reshape(-1)
@@ -41,14 +49,15 @@ def extract_audio(content: bytes, max_seconds: int) -> tuple[bytes, str]:
     return buffer.getvalue(), "ready"
 
 
-async def transcribe_story_video(content: bytes) -> StoryAudioEvidence:
+async def transcribe_story_video(content: bytes | Path) -> StoryAudioEvidence:
     settings = get_settings()
     if not getattr(settings, "instagram_story_video_audio_enabled", False):
         return StoryAudioEvidence("disabled")
     if not settings.openai_api_key:
         return StoryAudioEvidence("unavailable")
     try:
-        if not content or len(content) > settings.instagram_story_media_max_bytes:
+        size = content.stat().st_size if isinstance(content, Path) else len(content)
+        if not size or size > settings.instagram_story_media_max_bytes:
             return StoryAudioEvidence("size_limit")
         audio, status = await asyncio.wait_for(asyncio.to_thread(
             extract_audio, content, getattr(settings, "instagram_story_video_max_seconds", 120)), timeout=8)

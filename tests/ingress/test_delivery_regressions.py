@@ -143,6 +143,7 @@ def test_inbox_claim_only_selects_first_unfinished_turn_per_conversation(monkeyp
     # only PostgreSQL locking/parameter syntax is removed, never the predicates.
     selection = sql[sql.index("SELECT candidate.id"):sql.index("FOR UPDATE SKIP LOCKED")]
     selection = selection.replace("public.ai_inbound_inbox","queue")
+    selection = selection.replace('public.instagram_story_analysis_jobs', 'story_jobs')
     selection = selection.replace("make_interval(secs =>", "CAST(").replace("::int)", " AS INTEGER)")
     selection = selection.replace("%(retry_max)s", ":retry_max").replace("%(retry_base)s", ":retry_base")
     retry_params = {"retry_base":30,"retry_max":300}
@@ -159,7 +160,15 @@ def test_inbox_claim_only_selects_first_unfinished_turn_per_conversation(monkeyp
         (4,'B','sender-B','brevo','whatsapp','pending',0,8,None,4),
     ])
     db.execute("ALTER TABLE queue ADD COLUMN updated_at DEFAULT 0")
+    db.execute('ALTER TABLE queue ADD COLUMN story_analysis_job_id')
+    db.execute('CREATE TABLE story_jobs(id, status)')
     assert db.execute(selection, retry_params).fetchall() == [(3,)]
+    db.execute("INSERT INTO story_jobs VALUES(10, 'processing')")
+    db.execute('UPDATE queue SET story_analysis_job_id=10 WHERE id=3')
+    assert db.execute(selection, retry_params).fetchall() == []
+    db.execute("UPDATE story_jobs SET status='ready'")
+    assert db.execute(selection, retry_params).fetchall() == [(3,)]
+    db.execute('UPDATE queue SET story_analysis_job_id=NULL WHERE id=3')
     db.execute("UPDATE queue SET status='processed' WHERE id=1")
     assert db.execute(selection, retry_params).fetchall() == [(2,),(3,)]
     db.execute("UPDATE queue SET status='failed',attempts=2,updated_at=80 WHERE id=3")

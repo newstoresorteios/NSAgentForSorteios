@@ -879,10 +879,10 @@ class Settings(BaseSettings):
         alias="INSTAGRAM_STORY_MEDIA_STORAGE_ENABLED",
     )
     instagram_story_media_max_bytes: int = Field(
-        default=16_777_216,
+        default=104_857_600,
         alias="INSTAGRAM_STORY_MEDIA_MAX_BYTES",
         ge=1024,
-        le=52_428_800,
+        le=536_870_912,
     )
     instagram_story_media_timeout_seconds: float = Field(
         default=10.0,
@@ -911,6 +911,7 @@ class Settings(BaseSettings):
         le=10,
     )
     instagram_story_video_audio_enabled: bool = Field(default=True, alias="INSTAGRAM_STORY_VIDEO_AUDIO_ENABLED")
+    instagram_story_worker_enabled: bool = Field(default=True, alias="INSTAGRAM_STORY_WORKER_ENABLED")
     instagram_story_video_max_seconds: int = Field(default=120, ge=1, le=180, alias="INSTAGRAM_STORY_VIDEO_MAX_SECONDS")
     instagram_story_audio_timeout_seconds: float = Field(default=12, ge=1, le=30, alias="INSTAGRAM_STORY_AUDIO_TIMEOUT_SECONDS")
     instagram_story_vision_model: str = Field(

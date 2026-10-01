@@ -519,6 +519,7 @@ async def _finalize_story_catalog_match(
     execute_tool: Any | None,
     store_url: str | None = None,
     customer_text: str = "",
+    worker_evidence: dict | None = None,
 ) -> StoryResolutionResult:
     from app.tray.tray_tools import execute_tool as default_execute
 
@@ -532,13 +533,14 @@ async def _finalize_story_catalog_match(
                             story_media_id=media_id, explanation={"reason": "customer_scoped_selection"})
     analysis = product_scoped_analysis(analysis)
     tool = execute_tool or default_execute
-    candidates = await match_story_to_catalog(
+    candidates = ([StoryProductCandidate.model_validate(c) for c in worker_evidence.get('candidates', [])]
+                  if worker_evidence is not None else await match_story_to_catalog(
         tenant_id=tenant,
         analysis=analysis,
         execute_tool=tool,
         media_bytes=None,
         store_url=store_url,
-    )
+    ))
     if selected and selected.dial_color:
         from app.stories.story_selection import color_family
         wanted = color_family(selected.dial_color)
@@ -564,6 +566,17 @@ async def _finalize_story_catalog_match(
         multiple_products=bool(analysis.multiple_products),
         analysis=analysis,
     )
+    if worker_evidence is not None:
+        identities = worker_evidence.get('approved_identities') or []
+        if scene.multiple_products or scene.watch_count > 1:
+            region_index = scene.product_regions.index(selected) if selected in scene.product_regions else None
+            identities = [i for i in identities if region_index is not None and i['region_index'] == region_index]
+        allowed_ids = {str(i['product_id']) for i in identities}
+        approved = [c for c in candidates if c.product_id in allowed_ids and not c.variant_id]
+        if len(approved) == 1:
+            status, top = 'matched', approved[0]
+        else:
+            status, top = ('ambiguous', candidates[0]) if candidates else ('not_found', None)
     if candidates:
         log_event(
             "story_match_confidence",
@@ -591,14 +604,16 @@ async def _finalize_story_catalog_match(
                 variant_id=top.variant_id,
                 match_source=(
                     "visual_exact_reference"
-                    if any(
+                    if worker_evidence is not None or any(
                         r.startswith(("ean:", "sku:", "reference:"))
                         for r in top.match_reasons
                     )
                     else "visual_similarity"
                 ),
                 match_confidence=top.score,
-                explanation={"reasons": top.match_reasons},
+                explanation={"reasons": top.match_reasons,
+                             **({'verification': worker_evidence.get('approved_identities', [])}
+                                if worker_evidence is not None else {})},
             )
         product, tray_failed, _code, evidence = await _revalidate_matched_story_product(
             product_id=top.product_id,
@@ -638,7 +653,8 @@ async def _finalize_story_catalog_match(
     if status == "ambiguous":
         from app.stories.story_match_decider import try_resolve_tied_candidates
 
-        resolved = try_resolve_tied_candidates(candidates[:5], analysis)
+        resolved = (try_resolve_tied_candidates(candidates[:5], analysis)
+                    if worker_evidence is None else None)
         if resolved is not None:
             product, tray_failed, _code, evidence = await _revalidate_matched_story_product(
                 product_id=resolved.product_id,
@@ -906,6 +922,31 @@ async def resolve_story_product_question(
             source_timestamp=story.source_timestamp,
             story_expires_at=story.expires_at,
         )
+    from app.stories.story_analysis_worker import current_story_evidence
+    shared = current_story_evidence()
+    if (shared and (not assoc or assoc.match_status != 'manually_confirmed')
+            and str(shared['job']['tenant_id']) == tenant and str(shared['job']['story_media_id']) == media_id
+            and shared['job']['provider'] == provider and shared['job']['instagram_account_id'] == account):
+        if shared.get('error'):
+            return StoryResolutionResult(resolved=False, tenant_id=tenant, story_media_id=media_id,
+                match_status='failed', failure_reason=shared['error'], needs_clarification=True,
+                question_type=question_type,
+                reply_hint='Recebi o Story, mas não consegui concluir a leitura do vídeo com segurança. '
+                           'Pode informar a referência ou enviar uma foto nítida do relógio?', metrics=metrics)
+        shared_result = shared['result']
+        analysis = StoryVisualUnderstanding.model_validate(shared_result['analysis'])
+        descriptor = shared_result.get('media') or {}
+        repo.save_visual_analysis(tenant_id=tenant, provider=provider, instagram_account_id=account,
+            story_media_id=media_id, visual_analysis=analysis.model_dump(mode='json'),
+            media_sha256=descriptor.get('sha256'), media_storage_path=descriptor.get('storage_path'),
+            media_mime=descriptor.get('mime'), media_bytes=descriptor.get('byte_count'))
+        metrics['story_media_cache_hit'] = 1
+        metrics['story_analysis_job_id'] = shared['job']['id']
+        metrics['story_verified_identities'] = len(shared_result.get('approved_identities') or [])
+        return await _finalize_story_catalog_match(repo=repo, tenant=tenant, provider=provider,
+            account=account, media_id=media_id, analysis=analysis, question_type=question_type,
+            shadow_only=shadow_only, metrics=metrics, execute_tool=execute_tool,
+            customer_text=incoming.text or '', worker_evidence=shared_result)
     if assoc and assoc.match_status == "matched" and _unsafe_shared_scene_match(assoc):
         # A cached whole-Story association must not override a new viewer's choice.
         assoc = assoc.model_copy(update={"match_status": "ambiguous"})
