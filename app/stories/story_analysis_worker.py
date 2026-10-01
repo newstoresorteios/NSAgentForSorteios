@@ -85,6 +85,7 @@ async def analyze_job(job):
     runtime = set_current_turn(TurnRuntimeContext(trace_id=f"story-job-{job['id']}",
         llm_budget=LLMCallBudget(max_calls=14, enforce=True)))
     media = None
+    thumbnail_media = None
     descriptor = {}
     try:
         source = await asyncio.to_thread(jobs.source_media, job)
@@ -97,20 +98,36 @@ async def analyze_job(job):
         url = source_story.get('url') or metadata.get('image_url') or ''
         attachment_is_story = not source_story.get('url') or source_story['url'] == metadata.get('image_url')
         private = job.get('media_storage_path') or (metadata.get('media_storage_path') if attachment_is_story else None)
+        fallback_reason = None
         try:
             media = await download_story_media_file(url, private_path=private,
                 workspace_id=str(job['workspace_id']))
         except StoryMediaError as exc:
-            if exc.code not in {'http_403', 'http_404', 'http_410', 'url_missing', 'invalid_url'}:
+            if exc.code == 'file_too_large':
+                from app.stories.instagram_story_service import _hydrate_story_media
+                story = await _hydrate_story_media(InstagramStoryContext(provider=job['provider'],
+                    instagram_account_id=job['instagram_account_id'], story_media_id=job['story_media_id']))
+                thumbnail_url = story.operational_thumbnail_url()
+                if not thumbnail_url:
+                    raise
+                try:
+                    thumbnail_media = await download_story_media_file(thumbnail_url)
+                except StoryMediaError:
+                    raise exc
+                media = thumbnail_media
+                private = None
+                fallback_reason = 'file_too_large'
+            elif exc.code not in {'http_403', 'http_404', 'http_410', 'url_missing', 'invalid_url'}:
                 raise
-            from app.stories.instagram_story_service import _hydrate_story_media
-            story = await _hydrate_story_media(InstagramStoryContext(provider=job['provider'],
-                instagram_account_id=job['instagram_account_id'], story_media_id=job['story_media_id']))
-            refreshed = story.operational_media_url() or url
-            if not refreshed:
-                raise
-            media = await download_story_media_file(refreshed)
-            private = None
+            else:
+                from app.stories.instagram_story_service import _hydrate_story_media
+                story = await _hydrate_story_media(InstagramStoryContext(provider=job['provider'],
+                    instagram_account_id=job['instagram_account_id'], story_media_id=job['story_media_id']))
+                refreshed = story.operational_media_url() or url
+                if not refreshed:
+                    raise
+                media = await download_story_media_file(refreshed)
+                private = None
         path = private
         if not path:
             storage = SupabasePrivateStoryMediaStorage(bucket='conversation-media')
@@ -119,24 +136,39 @@ async def analyze_job(job):
             # Storage outages must not prevent analysis of the already downloaded video.
         descriptor = {'storage_path': path, 'mime': media.content_type,
                       'sha256': media.sha256, 'byte_count': media.byte_count}
-        from app.ops.instagram_media_archive import _save
-        await asyncio.to_thread(_save, source, path=path, mime=media.content_type, byte_count=media.byte_count,
-                                analysis_job_id=job['id'])
+        if not fallback_reason:
+            from app.ops.instagram_media_archive import _save
+            await asyncio.to_thread(_save, source, path=path, mime=media.content_type, byte_count=media.byte_count,
+                                    analysis_job_id=job['id'])
         from app.stories.story_visual_analyzer import analyze_story_image
         from app.stories.story_video_audio import transcribe_story_video, StoryAudioEvidence
-        audio = StoryAudioEvidence('not_applicable')
+        audio = StoryAudioEvidence('unavailable') if fallback_reason else StoryAudioEvidence('not_applicable')
         frame_times = []
-        if media.content_type.startswith('video/'):
+        if fallback_reason:
+            from pathlib import Path
+            frames = [await asyncio.to_thread(Path(media.path).read_bytes)]
+            media_type = 'video'
+        elif media.content_type.startswith('video/'):
             # Sequential decoding bounds native decoder memory use.
             frames = await asyncio.to_thread(extract_video_frames_best_effort, media.path,
                 max_frames=get_settings().instagram_story_video_max_frames, frame_times=frame_times)
             if not frames:
-                raise StoryMediaError('video_frames_unavailable')
+                from app.stories.instagram_story_service import _hydrate_story_media
+                story = await _hydrate_story_media(InstagramStoryContext(provider=job['provider'],
+                    instagram_account_id=job['instagram_account_id'], story_media_id=job['story_media_id']))
+                thumbnail_url = story.operational_thumbnail_url()
+                if not thumbnail_url:
+                    raise StoryMediaError('video_frames_unavailable')
+                try:
+                    thumbnail_media = await download_story_media_file(thumbnail_url)
+                    from pathlib import Path
+                    frames = [await asyncio.to_thread(Path(thumbnail_media.path).read_bytes)]
+                    fallback_reason = 'decoder_unavailable'
+                except StoryMediaError as exc:
+                    raise StoryMediaError('video_frames_unavailable') from exc
             audio = await transcribe_story_video(media.path)
-            if audio.status in {'unavailable', 'empty'}:
-                raise StoryMediaError('audio_analysis_unavailable')
-            if audio.status == 'duration_limit':
-                raise StoryMediaError('duration_limit')
+            # Audio is supplementary evidence; keep its explicit status while
+            # using valid visual frames when audio cannot be transcribed.
             media_type = 'video'
         else:
             from PIL import Image
@@ -162,6 +194,8 @@ async def analyze_job(job):
                 if frame_path:
                     frame_paths.append(frame_path)
             descriptor['frame_storage_paths'] = frame_paths
+        if fallback_reason:
+            descriptor['video_frame_fallback_reason'] = fallback_reason
         analysis = await analyze_story_image(image_bytes=frames[0], media_sha256=media.sha256,
             media_type=media_type, extra_frame_bytes=frames[1:],
             audio_transcript=audio.transcript, audio_status=audio.status, frame_timestamps_seconds=frame_times)
@@ -195,6 +229,8 @@ async def analyze_job(job):
     finally:
         if media:
             media.close()
+        if thumbnail_media and thumbnail_media is not media:
+            thumbnail_media.close()
         reset_current_turn(runtime)
         reset_persona_runtime(persona_token)
         reset_bundle(binding)

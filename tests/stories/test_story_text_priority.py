@@ -42,6 +42,30 @@ def test_product_requests_keep_story_resolution(text):
     assert should_route_story_question(incoming(text))
 
 
+def test_linked_story_media_routes_short_price_question_without_reply_flag():
+    message = IncomingMessage(text="Qual o preço", instagram_story=InstagramStoryContext(
+        story_media_id="linked-story", media_type="video"))
+    assert should_route_story_question(message)
+
+
+@pytest.mark.asyncio
+async def test_linked_story_without_reply_flag_uses_deterministic_story_resolution(monkeypatch):
+    from app.agents.door_media import try_media_routes
+    from app.models import AgentResult
+    resolver = AsyncMock(return_value=type("Resolution", (), {
+        "product_payload": None, "failure_reason": "not_found",
+    })())
+    monkeypatch.setattr("app.stories.instagram_story_service.resolve_story_product_question", resolver)
+    monkeypatch.setattr("app.stories.instagram_story_service.story_result_to_agent_result",
+                        lambda *a, **kw: AgentResult(reply_text="Não consegui identificar com segurança o relógio desse Story."))
+    message = IncomingMessage(text="Qual o preço", instagram_story=InstagramStoryContext(
+        story_media_id="linked-story", media_type="video"))
+    result = await try_media_routes(message, None)
+    resolver.assert_awaited_once()
+    assert "relógio desse Story" in result.reply_text
+    assert "relógio 'Story'" not in result.reply_text
+
+
 @pytest.mark.parametrize("text", [
     "Não encontrei essa cor no site", "qual valor?", "Quero comprar",
     "Meu pedido não chegou", "Obrigado! Quanto custa esse?",

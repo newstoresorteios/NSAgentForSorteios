@@ -142,7 +142,10 @@ def should_route_story_question(incoming: IncomingMessage) -> bool:
     if not isinstance(story, InstagramStoryContext):
         return False
     if not (story.replied_to_story or story.mentioned_in_story):
-        # Still route if explicit story mention in text + media id.
-        if not (_STORY_HINT_RE.search(incoming.text or "") and story.story_media_id):
+        # Some Instagram/Brevo payloads retain the linked media id but omit
+        # the reply/mention flags. The media id is still stronger evidence
+        # than the user's short product question and must keep it out of the
+        # generic catalog responder (which can mistake "Story" for a model).
+        if not story.story_media_id:
             return False
     return story_has_explicit_product_intent(incoming.text)

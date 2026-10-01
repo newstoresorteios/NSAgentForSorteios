@@ -352,3 +352,60 @@ async def test_worker_combines_frames_audio_catalog_and_publishes_only_once(monk
     cache.reset_mock()
     assert not await worker.analyze_job(job)
     cache.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('video_error', ['decoder_unavailable', 'file_too_large'])
+async def test_video_worker_uses_thumbnail_when_audio_is_unavailable(monkeypatch, tmp_path, video_error):
+    from pydantic import SecretStr
+    from app.stories.instagram_story_models import InstagramStoryContext
+    from app.stories.story_video_audio import StoryAudioEvidence
+
+    monkeypatch.setattr(worker, 'get_settings', lambda: Settings(_env_file=None))
+    monkeypatch.setattr('app.persona.persona_runtime.load_persona_runtime',
+                        lambda **kw: SimpleNamespace(configuration_bundle={}))
+    job = {'id': 8, 'workspace_id': 'w', 'tenant_id': 't', 'provider': 'meta',
+           'instagram_account_id': 'a', 'story_media_id': 's', 'media_storage_path': None,
+           'generation': 'g', 'lease_owner': 'o', 'attempts': 1}
+    monkeypatch.setattr(jobs, 'source_media', lambda job: {'id': 2, 'workspace_id': 'w', 'channel_metadata': {}})
+    original = SimpleNamespace(path=tmp_path/'original.mp4', content_type='video/mp4',
+        sha256='a'*64, byte_count=20, close=Mock())
+    thumbnail = SimpleNamespace(path=tmp_path/'thumb.jpg', content_type='image/jpeg',
+        sha256='b'*64, byte_count=10, close=Mock())
+    original.path.write_bytes(b'video')
+    thumbnail.path.write_bytes(b'jpeg-thumbnail')
+    download = [original, thumbnail]
+    if video_error == 'file_too_large':
+        download = [media.StoryMediaError('file_too_large'), thumbnail]
+    monkeypatch.setattr(worker, 'download_story_media_file', AsyncMock(side_effect=download))
+    async def hydrate(story):
+        return story.model_copy(update={'story_thumbnail_url_private': SecretStr('https://cdninstagram.com/thumb.jpg')})
+    monkeypatch.setattr('app.stories.instagram_story_service._hydrate_story_media', hydrate)
+    storage = SimpleNamespace(put_private=AsyncMock(return_value=None))
+    monkeypatch.setattr(worker, 'SupabasePrivateStoryMediaStorage', lambda **kw: storage)
+    monkeypatch.setattr(worker, 'extract_video_frames_best_effort', lambda *a, **kw: [])
+    monkeypatch.setattr('app.stories.story_video_audio.transcribe_story_video',
+                        AsyncMock(return_value=StoryAudioEvidence('unavailable')))
+    monkeypatch.setattr('app.ops.instagram_media_archive._save', Mock())
+    analysis, _, _ = evidence()
+    visual = AsyncMock(return_value=analysis)
+    monkeypatch.setattr('app.stories.story_visual_analyzer.analyze_story_image', visual)
+    candidate = StoryProductCandidate(catalog_item_key='tray:42', product_id='42', score=1)
+    monkeypatch.setattr('app.stories.story_catalog_evidence.match_scene_catalog',
+                        AsyncMock(return_value=([candidate], [])))
+    monkeypatch.setattr('app.stories.story_identity_verifier.verify_identities',
+                        AsyncMock(return_value=([{'product_id': '42'}], [])))
+    finish = Mock(return_value=True)
+    monkeypatch.setattr(jobs, 'finish_job', finish)
+    monkeypatch.setattr(jobs, 'redis_command', AsyncMock())
+
+    assert await worker.analyze_job(job)
+    kwargs = visual.call_args.kwargs
+    assert kwargs['image_bytes'] == b'jpeg-thumbnail'
+    assert kwargs['media_type'] == 'video'
+    assert kwargs['audio_status'] == 'unavailable'
+    assert finish.call_args.kwargs['result']['media']['video_frame_fallback_reason'] == video_error
+    if video_error == 'decoder_unavailable':
+        assert original.close.called and thumbnail.close.called
+    else:
+        assert not original.close.called and thumbnail.close.called
