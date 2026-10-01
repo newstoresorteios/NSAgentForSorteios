@@ -813,6 +813,7 @@ class Settings(BaseSettings):
     remarketing_batch_size: int = Field(default=25, alias="REMARKETING_BATCH_SIZE")
 
     brevo_api_key: str = Field(default="", alias="BREVO_API_KEY")
+    brevo_workspace_id: str = Field(default="", alias="BREVO_WORKSPACE_ID")
     brevo_send_url: str = Field(default="", alias="BREVO_SEND_URL")
     brevo_sender_number: str = Field(default="", alias="BREVO_SENDER_NUMBER")
     brevo_reply_mode: str = Field(default="auto", alias="BREVO_REPLY_MODE")

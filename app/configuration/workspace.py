@@ -125,13 +125,27 @@ def stamp_inbound_workspace(inbound_id: int | None, workspace_id: str | None) ->
         )
 
 
+def resolve_message_workspace(incoming) -> str | None:
+    """Bind the authenticated Brevo connection, never a workspace in user data."""
+    from app.config import get_settings
+    from uuid import UUID
+    workspace = resolve_conversation_workspace(incoming.conversation_id, incoming.channel)
+    configured = str(getattr(get_settings(), 'brevo_workspace_id', '') or '').strip()
+    if incoming.provider == 'brevo' and configured:
+        configured = str(UUID(configured))
+        if workspace and workspace != configured:
+            raise ValueError('brevo_conversation_workspace_conflict')
+        return configured
+    return workspace
+
+
 def ingress_settings(incoming, base):
     """Read published grouping controls before choosing direct vs queued ingress."""
     if not getattr(base, 'database_url', None) or not getattr(base, 'agent_db_persona_enabled', False):
         return base
     from app.persona.persona_runtime import load_persona_runtime
     from app.configuration.runtime import settings_from_bundle
-    workspace = resolve_conversation_workspace(incoming.conversation_id, incoming.channel)
+    workspace = resolve_message_workspace(incoming)
     persona = load_persona_runtime(workspace_id=workspace) if workspace else load_persona_runtime()
     if not persona.configuration_bundle:
         raise RuntimeError('ingress_configuration_unavailable')
@@ -145,7 +159,9 @@ def stamp_silent_inbound_workspace(incoming, inbound_id: int | None) -> None:
         return
     if inbound_id is None:
         raise ValueError("silent_inbound_id_missing")
-    workspace = resolve_ingress_workspace(
+    workspace = (resolve_message_workspace(incoming)
+                 if incoming.provider == 'brevo' and getattr(get_settings(), 'brevo_workspace_id', '') else None)
+    workspace = workspace or resolve_ingress_workspace(
         incoming.conversation_id,
         incoming.channel,
         _incoming_account_ref(incoming),

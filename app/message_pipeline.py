@@ -227,10 +227,10 @@ async def process_incoming_message(incoming: IncomingMessage, customer_context: 
     cache_token = begin_turn_cache()
     configuration_tokens = owned_token = persona_token = story_token = None
     try:
-        from app.configuration.workspace import resolve_conversation_workspace
+        from app.configuration.workspace import resolve_message_workspace
         from app.evaluation.context import current_evaluation
         evaluation = current_evaluation()
-        workspace_id = evaluation.workspace_id if evaluation else await asyncio.to_thread(resolve_conversation_workspace, incoming.conversation_id, incoming.channel)
+        workspace_id = evaluation.workspace_id if evaluation else await asyncio.to_thread(resolve_message_workspace, incoming)
         loaded_persona = evaluation.persona if evaluation else (await asyncio.to_thread(load_persona_runtime, workspace_id=workspace_id) if workspace_id else await asyncio.to_thread(load_persona_runtime))
         bundle = loaded_persona.configuration_bundle
         configuration_tokens = bind_bundle(bundle, settings_from_bundle(get_settings(), bundle)) if bundle else None
