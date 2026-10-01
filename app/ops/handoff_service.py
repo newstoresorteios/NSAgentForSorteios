@@ -87,6 +87,11 @@ def enrich_handoff_metadata(
     if confirmed:
         from app.configuration.runtime import message
         result.reply_text = message("handoff_requested")
+    elif (metadata.get('response_source') == 'ready_delivery_storefront' and metadata.get('ready_delivery_check')
+          or metadata.get('response_source') == 'order_delivery_status' and (result.commercial_data or {}).get('order_id')):
+        # This bounded lookup already explains its evidence and offers help.
+        # A handoff offer must not erase the requested list or outage explanation.
+        pass
     else:
         # Replace any premature transfer promise produced by tools, policies or validators.
         if failure:

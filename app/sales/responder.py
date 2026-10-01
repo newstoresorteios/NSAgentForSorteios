@@ -419,6 +419,10 @@ async def sales_response_with_openai(
     if interpretation is not None and getattr(interpretation, "_slot_answer_hold", False):
         return None
     from app.sales.inspection_copy import complete_inspection_copy
+    from app.sales.order_delivery_copy import complete_order_delivery_copy
+    order_copy = complete_order_delivery_copy(tray_result, message.text)
+    if order_copy is not tray_result:
+        return order_copy
     completed = complete_inspection_copy(tray_result, interpretation, message.text)
     from app.sales.product_policy import complete_product_policy_answer
     completed = complete_product_policy_answer(completed, interpretation, message.text)

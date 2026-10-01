@@ -5,12 +5,13 @@ import re
 from app.catalog.retrieval.text import fold_text
 from app.persona.persona_runtime import get_persona_runtime
 
-EXPLICIT = r"\bpronta[\s-]+entrega\b"
+EXPLICIT = r"(?:\bpronta[\s-]+entrega\b|\b(?:em|no) estoque\b)"
 BLOCKED = r"\b(?:pedido|rastre\w*|despach\w*|imposto\w*|atendente|humano|cancel\w*|reembolso|troca|devolu\w*)\b|ja comprei"
 COLORS = r"\b(?:azul|preto|prata|prateado|branco|verde|marrom|dourado|rosa|salmao)\b"
 SIZE = r"\b\d{2}(?:[.,]\d)?\s*mm\b"
 PRICE_FOLLOWUP = r"(?:e )?(?:qual (?:o )?(?:valor|preco)|quanto(?: custa)?|(?:manda|envia)(?: o)? link|(?:o )?(?:valor|preco|link))[.!?]*"
 STOP = set("ola oi bom boa dia tarde noite tudo bem voces voce teria teriam tem esse essa esses essas este esta aquele aquela algum alguma relogio relogios modelo modelos na no de da do a o os as um uma cor pronta entrega disponivel disponibilidade por favor para gostaria saber se e em qual quanto custa valor preco ai hoje quero queria comprar preciso procuro procurando buscando busco encontrar consultar verificar pode podem poderia poderiam me informar sobre ha existe ainda obrigado obrigada estou com mostrador sim".split())
+STOP.update({'consegue', 'passar', 'quais', 'que', 'estoque', 'ja', 'falei', 'esteja'})
 
 
 def terms(text):
@@ -48,11 +49,15 @@ def resolve_query(message, state=None):
     explicit = bool(re.search(EXPLICIT, text))
     ctx = valid_context(message, state)
     if explicit:
+        if not terms(re.sub(EXPLICIT, '', text)):
+            return ctx['query'] if ctx else 'pronta entrega'
         if terms(re.sub(EXPLICIT, "", text)) or not ctx:
             return message.text
         return ctx["query"]
     if not ctx or len(text) > 160 or re.search(r"https?://|\b(?:outro|outra|agora|obrigad\w*|tchau)\b", text):
         return None
+    if re.search(r'casamento|final de semana|fim de semana|ja falei|dificil entender|\bpqp\b|para mim', text):
+        return ctx['query']
     if re.fullmatch(PRICE_FOLLOWUP, text.strip()) and terms(ctx['query']):
         return ctx['query']
     if not terms(text):

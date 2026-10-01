@@ -309,6 +309,8 @@ def extract_bare_budget_amount(text: str | None) -> float | None:
 
 
 def _extract_budget_max(text: str) -> float | None:
+    # Durations and physical dimensions are not money, even after "até".
+    text = re.sub(r'\b\d+(?:[.,]\d+)?\s*(?:dias?|semanas?|meses|horas?|mm|metros?|anos?)\b', '', text or '', flags=re.I)
     bare = extract_bare_budget_amount(text)
     if bare is not None:
         return bare
@@ -652,6 +654,14 @@ def normalize_sales_interpretation(
         if style_gender == gender:
             preferences.style = _strip_gender_tokens(preferences.style)
 
+    # Reject a duration interpreted as money, including a carried-over duration.
+    duration_context = ' '.join(filter(None, [message_text, context_text]))
+    if (preferences.budget_max is not None
+            and re.search(r'prazo|dias? uteis|envio|entrega', _fold(message_text))
+            and _extract_budget_max(duration_context) is None
+            and not re.search(r'orcamento|investimento|reais|r\$', _fold(duration_context))):
+        preferences.budget_max = None
+        preferences.budget_min = None
     # Pull budget from free text when interpreter missed it.
     if preferences.budget_max is None and message_text:
         budget = _extract_budget_max(message_text)

@@ -39,6 +39,9 @@ def grounded_catalog_fallback(result):
 
 def finalize_response(result, *, incoming, interpretation, previous_state):
     from app.verify.catalog_delivery import enforce_photo_identity, apply_output_style
+    from app.sales.order_delivery_copy import complete_order_delivery_copy
+    if not result.handoff_required:
+        result = complete_order_delivery_copy(result, incoming.text)
     metadata = result.response_metadata
     hypothesis = metadata.get('story_probable_identity') or {}
     if (metadata.get('instagram_story') is True and metadata.get('story_match_status') == 'ambiguous'

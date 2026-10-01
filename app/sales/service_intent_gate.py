@@ -28,6 +28,11 @@ def service_intent_clarification(text, interpretation, state, *, catalog_fallbac
     )
     if shopping or not (update_request or after_sales):
         return None
+    from app.commerce.order_service import extract_valid_tax_document
+    if (getattr(interpretation, 'order_id', None) or extract_valid_tax_document(text)
+            or re.search(r'\b[^\s@]+@[^\s@]+\.[^\s@]+\b', text or '')):
+        # Let the existing read-only lookup validate ownership and fetch orders.
+        return None
     known_order = bool(state and (state.order_id or state.order_lookup_id))
     # Existing order handlers must get their opportunity before this fallback.
     if known_order and not catalog_fallback:
@@ -41,7 +46,9 @@ def service_intent_clarification(text, interpretation, state, *, catalog_fallbac
             "ou está procurando um produto para comprar?"
         )
     else:
-        reply = "Você pode me informar o número do pedido ou qual atendimento anterior está retomando?"
+        reply = ("Sim, pode ser o CPF do titular ou o e-mail usado na compra para localizar o pedido."
+                 if re.search(r'\bcpf\b|\be.?mail\b|nao (?:tenho|sei|lembro).{0,25}(?:numero|pedido)', value)
+                 else "Você pode me informar o número do pedido? Se não tiver, pode ser o CPF do titular ou o e-mail usado na compra.")
     return AgentResult(
         reply_text=reply, intent="support", handoff_required=False,
         safety_reason="service_intent_clarification",

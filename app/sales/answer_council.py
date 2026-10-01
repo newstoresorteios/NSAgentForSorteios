@@ -374,6 +374,8 @@ def check_pedido(result: AgentResult, contract: TurnContract) -> CheckerReport:
         issues.append("claimed_stale_checkout")
     if (
         not contract.must_not_claim_stale_checkout
+        and result.response_metadata.get('goal') != 'after_sales'
+        and result.safety_reason != 'after_sales_unresolved'
         and (contract.live_checkout or _result_has_live_cart_url(result))
         and _HUMAN_HANDOFF_ON_CART_RE.search(reply)
     ):

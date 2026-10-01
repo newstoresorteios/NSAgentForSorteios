@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from pydantic import BaseModel, Field
+from app.catalog.retrieval.text import fold_text
 
 from ..models import SalesInterpretation
 from app.catalog.specs.preference_normalize import (
@@ -797,6 +798,11 @@ def merge_inbound_views(
         or sku_lock
     )
 
+    if (interpretation is not None and interpretation.goal == 'inspect'
+            and re.search(r'prazo|dias uteis|entrega|envio', fold_text(message_text or ''))
+            and not re.search(r'preco|valor|orcamento|reais|r\$', fold_text(message_text or ''))):
+        budget = None
+        budget_from_message = False
     return TurnContract(
         asked_text=str(message_text or "").strip(),
         brand=brand,

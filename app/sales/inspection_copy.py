@@ -41,6 +41,18 @@ def complete_inspection_copy(result, interpretation, text):
     if not identity:
         return result
     query = fold_text(text)
+    if (re.search(r'prazo|dias uteis|entrega|envio', query)
+            and not re.search(r'preco|valor|orcamento|\br\$|reais|caracteristica|ficha tecnica|vidro|cristal|movimento|mecanismo|calibre|pulseira|caixa|mostrador|resistencia', query)):
+        literal = str(product.get('availability') or '').strip()
+        updated = result.model_copy(deep=True)
+        updated.reply_text = (
+            f'A ficha informa: {literal}. Esse é o prazo de disponibilidade do produto; '
+            'não confirma a data de entrega no seu endereço nem uma data exata de postagem. '
+            'Para consultar o transporte até você, qual é o seu CEP?'
+            if literal else 'A ficha consultada não confirma o prazo de disponibilidade. '
+            'Preciso confirmar esse prazo e consultar o transporte para informar a previsão de chegada.')
+        updated.response_metadata.update(inspection_requested_facts_covered=True, identity_inspection=True)
+        return updated
     all_details = bool(re.search(r'caracteristica|ficha tecnica|todos os detalhes', query))
     requested = {
         'crystal': all_details or bool(re.search(r'vidro|cristal|safira|mineral|hardlex', query)),
