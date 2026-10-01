@@ -31,6 +31,7 @@ from app.verify.guardrails import (
     detect_available_numbers_inquiry,
     detect_blocked_request,
     detect_explicit_raffle_intent,
+    detect_raffle_group_inquiry,
     default_safe_handoff,
 )
 from app.ops.handoff_service import build_human_handoff_result, should_request_human_handoff
@@ -65,7 +66,14 @@ from app.commerce.order_service import (
 )
 from app.commerce.payment_service import inspect_order_payment
 from app.identity.repository import detect_third_party_account_inquiry, find_coupon_balance_by_phone
-from app.persona.site_knowledge import HUMAN_SUPPORT_MESSAGE, build_site_knowledge_text, NS_SALES_WHATSAPP
+from app.persona.site_knowledge import (
+    HUMAN_SUPPORT_MESSAGE,
+    NS_SALES_WHATSAPP,
+    RAFFLE_GROUP_URL,
+    SITE_URL,
+    build_raffle_group_reply,
+    build_site_knowledge_text,
+)
 from app.identity.user_preferences import detect_preferred_name_update
 from app.tray.tray_tools import execute_tool
 from app.sales_agent import (
@@ -685,6 +693,19 @@ async def _generate_agent_reply_async_inner(
     accepted = try_accepted_handoff(message, recovery_turns)
     if accepted is not None:
         return accepted
+    if detect_raffle_group_inquiry(message.text):
+        return AgentResult(
+            reply_text=build_raffle_group_reply(),
+            intent="raffle_group",
+            handoff_required=False,
+            response_metadata={
+                "response_source": "local_raffle_group",
+                "verified_facts": {
+                    "raffle_group_url": RAFFLE_GROUP_URL(),
+                    "raffle_site_url": SITE_URL(),
+                },
+            },
+        )
     log_event(
         "history.loaded",
         {

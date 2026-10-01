@@ -13,6 +13,8 @@ def STORE_PRONTA_ENTREGA_URL():
     return policy('business.store_pronta_entrega_url')
 def NS_SALES_WHATSAPP():
     return policy('business.ns_sales_whatsapp')
+def RAFFLE_GROUP_URL():
+    return policy('business.raffle_group_url')
 
 def HUMAN_SUPPORT_MESSAGE():
     return operator_message('business.human_support_message.d86b19641e', NS_SALES_WHATSAPP=f'{NS_SALES_WHATSAPP()}')
@@ -28,6 +30,13 @@ def REGISTER_PHONE_MESSAGE():
 
 def THIRD_PARTY_REFUSAL():
     return operator_message('business.third_party_refusal.7ed15f4249')
+
+def build_raffle_group_reply() -> str:
+    return operator_message(
+        'raffle_group_reply',
+        RAFFLE_GROUP_URL=f'{RAFFLE_GROUP_URL()}',
+        SITE_URL=f'{SITE_URL()}',
+    )
 
 # Tabela de referência do site (cartão presente x valor mínimo de compra), em centavos.
 def CARD_USAGE_TABLE():

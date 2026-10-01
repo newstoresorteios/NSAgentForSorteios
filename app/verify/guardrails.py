@@ -227,6 +227,23 @@ def detect_rules_inquiry(text: str) -> bool:
     return any(keyword in normalized for keyword in RULES_KEYWORDS)
 
 
+def detect_raffle_group_inquiry(text: str | None) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "").strip().casefold())
+    if "grupo" not in normalized:
+        return False
+    raffle_group_phrases = (
+        "grupo do sorteio", "grupo de sorteio", "grupo dos sorteios",
+        "grupo das acoes", "grupo das ações", "grupo oficial",
+    )
+    access_phrases = (
+        "link", "entrar", "entro", "participar", "participo", "acesso",
+        "manda", "envia", "me coloca", "adicionar", "entrar no grupo",
+    )
+    return any(phrase in normalized for phrase in raffle_group_phrases) or any(
+        phrase in normalized for phrase in access_phrases
+    )
+
+
 def detect_human_support_request(text: str) -> bool:
     normalized = (text or "").lower()
     return any(keyword in normalized for keyword in HUMAN_SUPPORT_KEYWORDS)

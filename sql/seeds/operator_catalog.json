@@ -7852,5 +7852,27 @@
     "type": "boolean",
     "readOnly": false,
     "default": true
+  },
+  {
+    "key": "business.raffle_group_url",
+    "target": "policy",
+    "attribute": "business.raffle_group_url",
+    "default": "https://chat.whatsapp.com/GdosYmyW2Jj1mDXNDTFt6F",
+    "label": "Grupo oficial dos sorteios",
+    "description": "Link oficial público do grupo de sorteios no WhatsApp.",
+    "group": "Políticas comerciais",
+    "type": "text",
+    "maxLength": 30000
+  },
+  {
+    "key": "message.raffle_group_reply",
+    "target": "message",
+    "attribute": "raffle_group_reply",
+    "default": "Você pode entrar no grupo oficial dos Sorteios por aqui: {RAFFLE_GROUP_URL}\n\nAs ações e informações também ficam em {SITE_URL}",
+    "label": "Resposta com o grupo oficial dos sorteios",
+    "description": "Enviada quando o cliente pergunta como entrar ou pede o link do grupo. Preserve as variáveis entre chaves.",
+    "group": "Mensagens de atendimento",
+    "type": "textarea",
+    "maxLength": 6000
   }
 ]
