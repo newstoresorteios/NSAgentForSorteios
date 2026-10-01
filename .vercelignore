@@ -4,6 +4,7 @@
 .venv
 venv
 .tools
+.codex-tool-cache
 .pytest_cache
 __pycache__
 **/__pycache__

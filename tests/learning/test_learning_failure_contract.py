@@ -77,19 +77,20 @@ async def test_existing_review_is_successful_prefix_without_relearning(isolated_
 
 
 @pytest.mark.parametrize("last_id", [None, 10])
-def test_fetch_returns_only_latest_unreviewed_delivery_per_inbound(monkeypatch, last_id):
+@pytest.mark.parametrize("workspace_id", [None, "workspace-a"])
+def test_fetch_returns_only_latest_unreviewed_delivery_per_inbound(monkeypatch, last_id, workspace_id):
     # SQLite executes the actual selection contract. Only DBAPI placeholders
     # and PostgreSQL's JSONB cast are adapted.
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     db.execute("ATTACH DATABASE ':memory:' AS public")
-    db.execute("CREATE TABLE public.ai_inbound_messages (id integer, text text, channel text, conversation_id text, sender_phone text)")
+    db.execute("CREATE TABLE public.ai_inbound_messages (id integer, text text, channel text, conversation_id text, sender_phone text, workspace_id text)")
     db.execute("CREATE TABLE public.ai_agent_responses (id integer, inbound_id integer, reply_text text, intent text, handoff_required boolean, safety_reason text, provider_send_ok boolean, provider_response text, created_at text, sender_key text)")
     db.execute("CREATE TABLE public.ai_attendance_reviews (tenant_id text, response_id integer)")
     for inbound_id in range(1, 9):
         db.execute(
-            "INSERT INTO public.ai_inbound_messages VALUES (?, ?, 'whatsapp', 'audit', 'audit')",
-            (inbound_id, f"Mensagem {inbound_id}"),
+            "INSERT INTO public.ai_inbound_messages VALUES (?, ?, 'whatsapp', 'audit', 'audit', ?)",
+            (inbound_id, f"Mensagem {inbound_id}", "workspace-b" if inbound_id == 2 else "workspace-a"),
         )
 
     now = datetime.now(timezone.utc).isoformat()
@@ -125,7 +126,7 @@ def test_fetch_returns_only_latest_unreviewed_delivery_per_inbound(monkeypatch, 
         def __exit__(self, *args): return False
         def execute(self, sql, params):
             assert "response.response_metadata" not in sql
-            self.result = db.execute(sql.replace("%s", "?").replace("::jsonb", ""),
+            self.result = db.execute(sql.replace("%s", "?").replace("::jsonb", "").replace("::uuid", ""),
                                      tuple(value.isoformat() if isinstance(value, datetime) else value for value in params))
         def fetchall(self):
             result = []
@@ -142,8 +143,11 @@ def test_fetch_returns_only_latest_unreviewed_delivery_per_inbound(monkeypatch, 
 
     monkeypatch.setattr(cursor, "get_conn", Conn)
     try:
-        rows = cursor.fetch_attendances_since(tenant_id="audit", last_response_id=last_id, limit=10, bootstrap_hours=24)
-        assert [row["response_id"] for row in rows] == [13, 15, 20]
+        rows = cursor.fetch_attendances_since(tenant_id="audit", last_response_id=last_id, limit=10, bootstrap_hours=24, workspace_id=workspace_id)
+        assert [row["response_id"] for row in rows] == ([13, 20] if workspace_id else [13, 15, 20])
+        if workspace_id:
+            assert all(row["workspace_id"] == workspace_id for row in rows)
+            return
         assert [row["response_metadata"] for row in rows] == [
             {"source": "delivered"},
             {"source": "latest"},

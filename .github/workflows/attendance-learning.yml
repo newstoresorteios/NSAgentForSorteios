@@ -56,8 +56,8 @@ jobs:
           except json.JSONDecodeError:
               data = {"error": "non_json_response", "body_chars": len(raw)}
           safe_keys = (
-              "ok", "error", "detail", "rows_scanned", "reviews_created",
-              "insights_created", "cases_created", "cursor_advanced",
+              "ok", "error", "errors", "detail", "rows_scanned", "reviews_written",
+              "insights_upserted", "cursor_from", "cursor_to", "extensions_promoted",
           )
           summary = {key: data.get(key) for key in safe_keys if key in data}
           print("attendance-learning summary:", json.dumps(summary, ensure_ascii=False))

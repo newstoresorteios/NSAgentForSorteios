@@ -68,6 +68,7 @@ def fetch_attendances_since(
     last_response_id: int | None,
     limit: int,
     bootstrap_hours: int,
+    workspace_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch one canonical delivered response per inbound after the cursor.
 
@@ -78,6 +79,8 @@ def fetch_attendances_since(
     from relearning an inbound that was already processed successfully.
     """
     safe_limit = max(1, min(int(limit), 2000))
+    workspace_filter = "AND inbound.workspace_id = %s::uuid" if workspace_id else ""
+    workspace_params = (workspace_id,) if workspace_id else ()
     projection = """
         response.id AS response_id,
         response.inbound_id,
@@ -113,6 +116,7 @@ def fetch_attendances_since(
                         INNER JOIN public.ai_inbound_messages AS inbound
                           ON inbound.id = response.inbound_id
                         WHERE response.id > %s
+                          {workspace_filter}
                           AND response.provider_send_ok = true
                           AND NULLIF(TRIM(response.reply_text), '') IS NOT NULL
                           AND LOWER(COALESCE(
@@ -152,7 +156,7 @@ def fetch_attendances_since(
                     ORDER BY response_id ASC
                     LIMIT %s
                     """,
-                    (int(last_response_id), tenant_id, safe_limit),
+                    (int(last_response_id), *workspace_params, tenant_id, safe_limit),
                 )
             else:
                 since = datetime.now(timezone.utc) - timedelta(
@@ -171,6 +175,7 @@ def fetch_attendances_since(
                         INNER JOIN public.ai_inbound_messages AS inbound
                           ON inbound.id = response.inbound_id
                         WHERE response.created_at >= %s
+                          {workspace_filter}
                           AND response.provider_send_ok = true
                           AND NULLIF(TRIM(response.reply_text), '') IS NOT NULL
                           AND LOWER(COALESCE(
@@ -210,7 +215,7 @@ def fetch_attendances_since(
                     ORDER BY response_id ASC
                     LIMIT %s
                     """,
-                    (since, tenant_id, safe_limit),
+                    (since, *workspace_params, tenant_id, safe_limit),
                 )
             rows = list(cur.fetchall() or [])
-    return [dict(row) for row in rows]
+    return [{**dict(row), **({"workspace_id": workspace_id} if workspace_id else {})} for row in rows]

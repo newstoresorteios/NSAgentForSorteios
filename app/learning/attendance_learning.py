@@ -244,6 +244,7 @@ def fetch_recent_reviews_for_cluster(
     tenant_id: str,
     lookback_hours: int = 24,
     limit: int = 200,
+    workspace_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load recent reviews (including pipeline blocks without a new cursor row)."""
     if not getattr(get_settings(), "database_url", None):
@@ -258,14 +259,20 @@ def fetch_recent_reviews_for_cluster(
                 FROM public.ai_attendance_reviews
                 WHERE tenant_id = %s
                   AND created_at >= %s
+                  AND (%s::uuid IS NULL OR workspace_id = %s::uuid)
                 ORDER BY id DESC
                 LIMIT %s
                 """,
-                (tenant_id, since, max(int(limit), 1)),
+                (tenant_id, since, workspace_id, workspace_id, max(int(limit), 1)),
             )
             rows = cur.fetchall() or []
     reviews: list[dict[str, Any]] = []
     for row in rows:
+        if isinstance(row, dict):
+            row = tuple(row.get(key) for key in (
+                "id", "conversation_key", "customer_text", "agent_reply",
+                "outcome", "failure_codes", "workspace_id",
+            ))
         codes = row[5] if len(row) > 5 else []
         if isinstance(codes, str):
             import json
@@ -368,9 +375,9 @@ async def run_attendance_learning_batch(
     runtime_values: dict[str, Any] = {}
     runtime_workspace_id: str | None = None
     try:
-        from app.persona.persona_runtime import load_persona_runtime
+        from app.persona.persona_runtime import get_persona_runtime, load_persona_runtime
 
-        learning_runtime = load_persona_runtime()
+        learning_runtime = get_persona_runtime() or load_persona_runtime()
         runtime_values = learning_runtime.runtime_configuration
         runtime_workspace_id = learning_runtime.workspace_id
     except Exception as exc:
@@ -440,6 +447,7 @@ async def run_attendance_learning_batch(
             last_response_id=cursor_from,
             limit=row_limit,
             bootstrap_hours=bootstrap_hours,
+            workspace_id=runtime_workspace_id,
         )
     except Exception as exc:
         print("[attendance.learning.fetch_error]", {
@@ -496,6 +504,7 @@ async def run_attendance_learning_batch(
             tenant_id=tenant_id,
             lookback_hours=bootstrap_hours,
             limit=row_limit,
+            workspace_id=runtime_workspace_id,
         )
         seen = {item["id"] for item in reviews}
         for extra in extras:

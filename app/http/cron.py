@@ -191,7 +191,9 @@ async def tray_sync_cron():
 
 
 async def remarketing_cron():
-    result = await run_remarketing_batch()
+    from app.learning.cron_context import scheduled_workspace
+    async with scheduled_workspace():
+        result = await run_remarketing_batch()
     log_event(
         "remarketing.cron.completed",
         result if isinstance(result, dict) else {"result": result},
@@ -212,8 +214,10 @@ async def product_image_index_cron():
 
 async def attendance_learning_cron():
     from app.learning.attendance_learning import run_attendance_learning_batch
+    from app.learning.cron_context import scheduled_workspace
 
-    result = await run_attendance_learning_batch()
+    async with scheduled_workspace():
+        result = await run_attendance_learning_batch()
     log_event(
         "attendance.learning.cron.completed",
         result if isinstance(result, dict) else {"result": result},

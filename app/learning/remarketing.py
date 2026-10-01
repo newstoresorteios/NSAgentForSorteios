@@ -8,7 +8,7 @@ from typing import Any
 from app.channels.brevo_client import send_brevo_reply
 from app.config import get_remarketing_touch_hours, get_settings
 from app.db import get_conn, to_jsonb
-from app.models import IncomingMessage
+from app.models import AgentResult, IncomingMessage
 from app.identity.repository import normalize_phone
 from app.tray.tray_adapter_client import TrayAdapterClient
 
@@ -452,8 +452,10 @@ def _build_remarketing_message(item: dict[str, Any]) -> str:
 
 
 def claim_due_remarketing_attempts(limit: int) -> list[dict[str, Any]]:
+    from app.configuration.runtime import current_bundle
     settings = get_settings()
-    if not settings.database_url:
+    workspace_id = current_bundle().get("workspace_id")
+    if not settings.database_url or not workspace_id:
         return []
     safe_limit = max(1, min(int(limit), 100))
     now = datetime.now(timezone.utc)
@@ -466,22 +468,29 @@ def claim_due_remarketing_attempts(limit: int) -> list[dict[str, Any]]:
                 SET status = 'pending', claimed_at = NULL, updated_at = %(now)s
                 WHERE status = 'processing'
                   AND claimed_at < %(now)s - interval '15 minutes'
+                  AND conversation_status_id IN (
+                    SELECT c.id FROM public.ai_conversation_statuses c
+                    JOIN public.ai_inbound_messages i ON i.id=c.last_inbound_id
+                    WHERE i.workspace_id=%(workspace_id)s::uuid)
                 """,
-                {"now": now},
+                {"now": now, "workspace_id": str(workspace_id)},
             )
             cur.execute(
                 """
                 UPDATE public.ai_remarketing_attempts AS attempt
                 SET status = 'expired', updated_at = %(now)s
                 FROM public.ai_conversation_statuses AS conversation,
-                     public.ai_remarketing_contacts AS contact
+                     public.ai_remarketing_contacts AS contact,
+                     public.ai_inbound_messages AS inbound
                 WHERE attempt.conversation_status_id = conversation.id
                   AND conversation.contact_id = contact.id
+                  AND inbound.id = conversation.last_inbound_id
+                  AND inbound.workspace_id = %(workspace_id)s::uuid
                   AND conversation.status = 'active'
                   AND attempt.status IN ('pending', 'processing', 'failed')
                   AND contact.messaging_window_expires_at <= %(now)s
                 """,
-                {"now": now},
+                {"now": now, "workspace_id": str(workspace_id)},
             )
             cur.execute(
                 """
@@ -491,12 +500,15 @@ def claim_due_remarketing_attempts(limit: int) -> list[dict[str, Any]]:
                     completion_reason = 'messaging_window_expired',
                     next_scheduled_at = NULL,
                     updated_at = %(now)s
-                FROM public.ai_remarketing_contacts AS contact
+                FROM public.ai_remarketing_contacts AS contact,
+                     public.ai_inbound_messages AS inbound
                 WHERE conversation.contact_id = contact.id
+                  AND inbound.id = conversation.last_inbound_id
+                  AND inbound.workspace_id = %(workspace_id)s::uuid
                   AND conversation.status = 'active'
                   AND contact.messaging_window_expires_at <= %(now)s
                 """,
-                {"now": now},
+                {"now": now, "workspace_id": str(workspace_id)},
             )
             cur.execute(
                 """
@@ -519,13 +531,20 @@ def claim_due_remarketing_attempts(limit: int) -> list[dict[str, Any]]:
                         contact.source_conversation_ref,
                         contact.sender_phone,
                         contact.sender_name,
+                        inbound.provider,
+                        inbound.workspace_id,
+                        inbound.source_channel_ref,
+                        inbound.channel_metadata,
                         %(now)s AS claimed_at
                     FROM public.ai_remarketing_attempts AS attempt
                     JOIN public.ai_conversation_statuses AS conversation
                       ON conversation.id = attempt.conversation_status_id
                     JOIN public.ai_remarketing_contacts AS contact
                       ON contact.id = conversation.contact_id
+                    JOIN public.ai_inbound_messages AS inbound
+                      ON inbound.id = conversation.last_inbound_id
                     WHERE attempt.status = 'pending'
+                      AND inbound.workspace_id = %(workspace_id)s::uuid
                       AND attempt.scheduled_at <= %(now)s
                       AND conversation.status = 'active'
                       AND contact.marketing_status = 'eligible'
@@ -557,7 +576,7 @@ def claim_due_remarketing_attempts(limit: int) -> list[dict[str, Any]]:
                 JOIN claimed ON claimed.id = candidates.id
                 ORDER BY candidates.id
                 """,
-                {"now": now, "limit": safe_limit},
+                {"now": now, "limit": safe_limit, "workspace_id": str(workspace_id)},
             )
             return list(cur.fetchall() or [])
 
@@ -819,7 +838,7 @@ async def run_remarketing_batch(limit: int | None = None) -> dict[str, int]:
 
         message_text = _build_remarketing_message(item)
         incoming = IncomingMessage(
-            provider="brevo",
+            provider=item.get("provider") or "brevo",
             channel=item["channel"],
             sender_key=item.get("sender_key"),
             sender_external_id=item.get("sender_external_id"),
@@ -828,13 +847,28 @@ async def run_remarketing_batch(limit: int | None = None) -> dict[str, int]:
             source_conversation_ref=item.get("source_conversation_ref"),
             sender_phone=item.get("sender_phone"),
             sender_name=item.get("sender_name"),
+            source_channel_ref=item.get("source_channel_ref"),
+            channel_metadata=item.get("channel_metadata") or {},
+            raw={"workspace_id": str(item["workspace_id"])} if item.get("workspace_id") else {},
             text="",
         )
         try:
-            result = await send_brevo_reply(incoming, message_text)
-            send_ok = bool(result.ok)
-            provider_response = result.model_dump(mode="json")
-            error = result.error
+            if incoming.provider == "meta":
+                from app.channels.meta_instagram import send_meta_instagram_reply
+                result = await send_meta_instagram_reply(incoming, AgentResult(
+                    reply_text=message_text, intent="commerce"))
+                send_ok = bool(result.get("ok")) and not result.get("dry_run", False)
+                provider_response = result
+                error = result.get("error")
+            elif incoming.provider == "brevo":
+                result = await send_brevo_reply(incoming, message_text)
+                send_ok = bool(result.ok) and not result.dry_run
+                provider_response = result.model_dump(mode="json")
+                error = result.error
+            else:
+                send_ok = False
+                provider_response = {}
+                error = "unsupported_remarketing_provider"
         except Exception as exc:
             send_ok = False
             provider_response = {"error_type": type(exc).__name__}
