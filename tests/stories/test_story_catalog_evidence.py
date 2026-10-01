@@ -10,6 +10,18 @@ from app.stories.story_catalog_evidence import match_scene_catalog
 from app.stories.instagram_story_models import StoryProductCandidate, StoryVisualUnderstanding, VisualProductRegion
 
 
+@pytest.mark.parametrize('text,index', [('o Mido', 0), ('Traska branco', 1), ('o branco', None),
+                                     ('Traska', None), ('o preto', 2), ('Mido ou Traska', None)])
+def test_customer_can_select_brand_without_inheriting_another_watch(text, index):
+    from app.stories.story_selection import selected_region
+    scene = StoryVisualUnderstanding(product_regions=[
+        VisualProductRegion(brand_hypothesis='Mido', dial_color='branco'),
+        VisualProductRegion(brand_hypothesis='Traska', dial_color='branco'),
+        VisualProductRegion(brand_hypothesis='Traska', dial_color='preto')])
+    selected = selected_region(scene, text)
+    assert selected == (scene.product_regions[index] if index is not None else None)
+
+
 @pytest.mark.asyncio
 async def test_searches_each_watch_without_crossing_brands_audio_or_identifiers(monkeypatch):
     scene = StoryVisualUnderstanding(watch_count=3, multiple_products=True,

@@ -28,14 +28,19 @@ def selected_region(analysis, text):
         return None
     colors = re.findall(r"\b(?:azul(?:[ -]claro)?|preto|branco|prata|prateado|verde|rosa|cinza|dourado|marrom)\b", value)
     positions = re.findall(r"\b(?:centro|cima|baixo|esquerda|direita)\b", value)
+    brands = {fold_text(r.brand_hypothesis) for r in analysis.product_regions if r.brand_hypothesis}
+    named_brands = {b for b in brands if re.search(r'(?<!\w)' + re.escape(b) + r'(?!\w)', value)}
+    if len(named_brands) > 1:
+        return None
     if len(set(map(normalize_color, colors))) > 1 or len(set(positions)) > 1:
         return None
-    if not colors and not positions:
+    if not colors and not positions and not named_brands:
         return None
     position_map = {"center": "centro", "top": "cima", "bottom": "baixo", "left": "esquerda", "right": "direita"}
     matches = [r for r in analysis.product_regions
                if (not colors or (normalize_color(r.dial_color) == normalize_color(colors[0])
                    if " " in normalize_color(colors[0]) else color_family(r.dial_color) == color_family(colors[0])))
+               and (not named_brands or fold_text(r.brand_hypothesis or '') in named_brands)
                and (not positions or position_map.get(r.position) == positions[0])]
     return matches[0] if len(matches) == 1 else None
 
