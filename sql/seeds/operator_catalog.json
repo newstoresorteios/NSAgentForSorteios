@@ -2064,7 +2064,7 @@
     "description": "Parâmetro INSTAGRAM_STORY_MEDIA_MAX_BYTES. Aplicado na próxima conversa após publicação.",
     "group": "Atendimento",
     "type": "integer",
-    "default": 12582912,
+    "default": 16777216,
     "readOnly": false,
     "min": 1024,
     "max": 52428800
@@ -2114,7 +2114,7 @@
     "description": "Parâmetro INSTAGRAM_STORY_VIDEO_FRAME_ANALYSIS_ENABLED. Aplicado na próxima conversa após publicação.",
     "group": "Atendimento",
     "type": "boolean",
-    "default": false,
+    "default": true,
     "readOnly": false
   },
   {
@@ -2125,10 +2125,10 @@
     "description": "Parâmetro INSTAGRAM_STORY_VIDEO_MAX_FRAMES. Aplicado na próxima conversa após publicação.",
     "group": "Atendimento",
     "type": "integer",
-    "default": 3,
+    "default": 8,
     "readOnly": false,
     "min": 1,
-    "max": 5
+    "max": 10
   },
   {
     "key": "instagram_story_vision_model",
@@ -7804,5 +7804,42 @@
     "type": "textarea",
     "maxLength": 1000,
     "readOnly": false
+  },
+  {
+    "key": "instagram_story_video_audio_enabled",
+    "attribute": "instagram_story_video_audio_enabled",
+    "target": "setting",
+    "label": "Instagram story video audio enabled",
+    "description": "Parâmetro INSTAGRAM_STORY_VIDEO_AUDIO_ENABLED. Aplicado na próxima conversa após publicação.",
+    "group": "Atendimento",
+    "type": "boolean",
+    "readOnly": false,
+    "default": true
+  },
+  {
+    "key": "instagram_story_video_max_seconds",
+    "attribute": "instagram_story_video_max_seconds",
+    "target": "setting",
+    "label": "Instagram story video max seconds",
+    "description": "Parâmetro INSTAGRAM_STORY_VIDEO_MAX_SECONDS. Aplicado na próxima conversa após publicação.",
+    "group": "Atendimento",
+    "type": "integer",
+    "readOnly": false,
+    "default": 120,
+    "min": 1,
+    "max": 180
+  },
+  {
+    "key": "instagram_story_audio_timeout_seconds",
+    "attribute": "instagram_story_audio_timeout_seconds",
+    "target": "setting",
+    "label": "Instagram story audio timeout seconds",
+    "description": "Parâmetro INSTAGRAM_STORY_AUDIO_TIMEOUT_SECONDS. Aplicado na próxima conversa após publicação.",
+    "group": "Atendimento",
+    "type": "number",
+    "readOnly": false,
+    "default": 12,
+    "min": 1,
+    "max": 30
   }
 ]
