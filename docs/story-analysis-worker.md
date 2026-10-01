@@ -20,6 +20,10 @@ Não depende de uma thread solta sobreviver ao fim de uma função serverless.
    áudio; análise conjunta de frames, instantes, texto no relógio, arte e fala.
 4. Consulta ao catálogo pelo TRAYadaptor. Uma segunda leitura compara os frames
    originais com as fotos dos candidatos, sem receber suas referências escritas.
+   Cada relógio é consultado separadamente, com sua marca, textos e cor; o worker
+   cobre até seis regiões por análise e revisa até doze candidatos distintos.
+   O índice inclui produtos indisponíveis para identificação, sem revalidar preço
+   ou estoque a partir desses registros. Consultas iguais compartilham a resposta.
 5. Persistência das evidências e candidatos. Nenhum preço, estoque ou resposta
    personalizada entra no cache compartilhado. Esses dados são consultados ao vivo.
 

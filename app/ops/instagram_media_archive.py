@@ -32,7 +32,7 @@ def _candidate(inbound_id):
             return cur.fetchone()
 
 
-def _save(row, *, path=None, mime=None, byte_count=None, error=None):
+def _save(row, *, path=None, mime=None, byte_count=None, error=None, analysis_job_id=None):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -49,10 +49,13 @@ def _save(row, *, path=None, mime=None, byte_count=None, error=None):
                         'media_storage_path', %(path)s::text,
                         'media_content_type', %(mime)s::text,
                         'media_byte_count', %(byte_count)s::integer) ELSE '{}'::jsonb END
+                    || CASE WHEN %(analysis_job_id)s::bigint IS NOT NULL THEN jsonb_build_object(
+                        'story_analysis_job_id', %(analysis_job_id)s::bigint) ELSE '{}'::jsonb END
                 WHERE id = %(id)s AND workspace_id = %(workspace_id)s::uuid
                   AND NULLIF(channel_metadata->>'media_storage_path', '') IS NULL
             """, {"id": row['id'], "workspace_id": str(row['workspace_id']),
-                  "path": path, "mime": mime, "byte_count": byte_count, "error": error})
+                  "path": path, "mime": mime, "byte_count": byte_count, "error": error,
+                  "analysis_job_id": analysis_job_id})
         conn.commit()
 
 
@@ -72,10 +75,10 @@ async def archive_instagram_inbound_media(inbound_id: int, *, incoming=None) -> 
         def shared_asset():
             with get_conn() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("""SELECT media_storage_path, media_mime, media_bytes
+                    cur.execute("""SELECT id, media_storage_path, media_mime, media_bytes
                         FROM public.instagram_story_analysis_jobs
                         WHERE workspace_id=%s::uuid AND provider=%s AND instagram_account_id=%s
-                          AND story_media_id=%s AND media_storage_path IS NOT NULL AND expires_at > now()
+                          AND story_media_id=%s AND (media_storage_path IS NOT NULL OR status='ready') AND expires_at > now()
                         ORDER BY updated_at DESC LIMIT 1""",
                         (str(row['workspace_id']), story.provider, story.instagram_account_id, story.story_media_id))
                     return cur.fetchone()
@@ -83,8 +86,8 @@ async def archive_instagram_inbound_media(inbound_id: int, *, incoming=None) -> 
         if shared:
             _classify_incoming(incoming, shared['media_mime'])
             await asyncio.to_thread(_save, row, path=shared['media_storage_path'],
-                mime=shared['media_mime'], byte_count=shared['media_bytes'])
-            return 'already_stored'
+                mime=shared['media_mime'], byte_count=shared['media_bytes'], analysis_job_id=shared['id'])
+            return 'already_stored' if shared['media_storage_path'] else 'already_analyzed'
         from app.stories.instagram_story_intent import should_route_story_question
         from app.ops.human_takeover import human_takeover_active
         if (getattr(get_settings(), 'instagram_story_worker_enabled', False)
@@ -144,6 +147,7 @@ def _pending(limit, workspace_id):
                   AND created_at >= NOW() - INTERVAL '30 days'
                   AND NULLIF(channel_metadata->>'image_url', '') IS NOT NULL
                   AND NULLIF(channel_metadata->>'media_storage_path', '') IS NULL
+                  AND NULLIF(channel_metadata->>'story_analysis_job_id', '') IS NULL
                   AND COALESCE((channel_metadata->>'media_archive_attempts')::integer, 0) < 3
                   AND (NULLIF(channel_metadata->>'media_archive_checked_at', '') IS NULL
                        OR (channel_metadata->>'media_archive_checked_at')::timestamptz < NOW() - INTERVAL '5 minutes')

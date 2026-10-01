@@ -937,6 +937,7 @@ async def match_story_to_catalog(
     execute_tool: Any | None = None,
     media_bytes: bytes | None = None,
     store_url: str | None = None,
+    identity_search: bool = False,
 ) -> list[StoryProductCandidate]:
     """Build candidates from exact identifiers → visual index → lexical → Tray.
 
@@ -1226,7 +1227,8 @@ async def match_story_to_catalog(
         try:
             from app.catalog.index.catalog_index import index_products_best_effort
 
-            index_products_best_effort(products, factual_source=source)
+            if source != 'identity_index':
+                index_products_best_effort(products, factual_source=source)
         except Exception as exc:
             from app.stories import log_swallowed
 
@@ -1478,6 +1480,19 @@ async def match_story_to_catalog(
             products=list(row.get("products") or []),
             paging=row.get("paging"),
         )
+
+    if identity_search and search_brand:
+        # Stock/activation controls selling, not whether this watch can be recognized.
+        # Do not re-index cached rows or refresh their age as if they were live data.
+        try:
+            from app.catalog.index.repository import CatalogIndexRepository, row_to_product_dict
+            rows = await asyncio.to_thread(CatalogIndexRepository().search_identity_by_brand,
+                tenant_id=tenant_id, brand=search_brand)
+            _ingest_tray_page(brand=search_brand, tokens=planned_tokens, page=1,
+                products=[row_to_product_dict(row) for row in rows],
+                paging={'total': len(rows)}, source='identity_index')
+        except Exception as exc:
+            log_event('story.identity_index_unavailable', {'error_type': type(exc).__name__})
 
     missing_line = [
         token

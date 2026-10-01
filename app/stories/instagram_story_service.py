@@ -533,7 +533,11 @@ async def _finalize_story_catalog_match(
                             story_media_id=media_id, explanation={"reason": "customer_scoped_selection"})
     analysis = product_scoped_analysis(analysis)
     tool = execute_tool or default_execute
-    candidates = ([StoryProductCandidate.model_validate(c) for c in worker_evidence.get('candidates', [])]
+    cached_candidates = (worker_evidence or {}).get('candidates', [])
+    if worker_evidence is not None and selected is not None and 'region_candidates' in worker_evidence:
+        region_index = scene.product_regions.index(selected)
+        cached_candidates = worker_evidence['region_candidates'].get(str(region_index), [])
+    candidates = ([StoryProductCandidate.model_validate(c) for c in cached_candidates]
                   if worker_evidence is not None else await match_story_to_catalog(
         tenant_id=tenant,
         analysis=analysis,

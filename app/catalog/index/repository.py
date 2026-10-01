@@ -31,6 +31,16 @@ class CatalogIndexRepository:
     _pg_trgm_available: bool | None = None
     _pg_trgm_retry_at: float = 0
 
+    def search_identity_by_brand(self, *, tenant_id: str, brand: str, limit: int = 50):
+        """Identification includes unavailable items; selling requires live revalidation."""
+        if not str(tenant_id or '').strip() or not str(brand or '').strip():
+            return []
+        return self._fetch("""SELECT * FROM public.ai_catalog_index
+            WHERE tenant_id = %(tenant_id)s AND lower(brand) = lower(%(brand)s)
+            ORDER BY freshness_at DESC NULLS LAST, product_id, catalog_item_key
+            LIMIT %(limit)s""", {'tenant_id': tenant_id, 'brand': brand,
+                                'limit': max(1, min(int(limit), 100))})
+
     def search_exact(
         self,
         *,

@@ -106,7 +106,9 @@ def approved_checks(review, *, products, analysis, frame_count):
 
 async def verify_identities(*, analysis, frames, candidates, execute_tool):
     products = {}
-    for candidate in candidates[:5]:
+    for candidate in candidates[:12]:
+        if str(candidate.product_id) in products:
+            continue
         result = await execute_tool('get_product', {'product_id': str(candidate.product_id)})
         if isinstance(result, dict) and not result.get('error') and str(result.get('id')) == str(candidate.product_id):
             products[str(candidate.product_id)] = result

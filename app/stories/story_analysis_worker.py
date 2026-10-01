@@ -83,7 +83,7 @@ async def analyze_job(job):
     binding = bind_bundle(bundle, settings_from_bundle(get_settings(), bundle))
     persona_token = set_persona_runtime(persona)
     runtime = set_current_turn(TurnRuntimeContext(trace_id=f"story-job-{job['id']}",
-        llm_budget=LLMCallBudget(max_calls=5, enforce=True)))
+        llm_budget=LLMCallBudget(max_calls=10, enforce=True)))
     media = None
     descriptor = {}
     try:
@@ -120,7 +120,8 @@ async def analyze_job(job):
         descriptor = {'storage_path': path, 'mime': media.content_type,
                       'sha256': media.sha256, 'byte_count': media.byte_count}
         from app.ops.instagram_media_archive import _save
-        await asyncio.to_thread(_save, source, path=path, mime=media.content_type, byte_count=media.byte_count)
+        await asyncio.to_thread(_save, source, path=path, mime=media.content_type, byte_count=media.byte_count,
+                                analysis_job_id=job['id'])
         from app.stories.story_visual_analyzer import analyze_story_image
         from app.stories.story_video_audio import transcribe_story_video, StoryAudioEvidence
         audio = StoryAudioEvidence('not_applicable')
@@ -164,10 +165,10 @@ async def analyze_job(job):
         analysis = await analyze_story_image(image_bytes=frames[0], media_sha256=media.sha256,
             media_type=media_type, extra_frame_bytes=frames[1:],
             audio_transcript=audio.transcript, audio_status=audio.status, frame_timestamps_seconds=frame_times)
-        from app.stories.story_product_matcher import match_story_to_catalog
+        from app.stories.story_catalog_evidence import match_scene_catalog
         from app.tray.tray_tools import execute_tool
-        candidates = await match_story_to_catalog(tenant_id=job['tenant_id'], analysis=analysis,
-            execute_tool=execute_tool, media_bytes=None, store_url=None)
+        candidates, region_candidates = await match_scene_catalog(tenant_id=job['tenant_id'],
+            analysis=analysis, execute_tool=execute_tool)
         if not candidates:
             # Do not distribute a week-long negative result caused by a transient
             # adapter outage or an index that has not finished synchronizing.
@@ -178,6 +179,7 @@ async def analyze_job(job):
         result = {'schema': jobs.EVIDENCE_VERSION, 'analysis': analysis.model_dump(mode='json'),
                   'approved_identities': approved, 'identity_reviews': reviews,
                   'candidates': [c.model_dump(mode='json') for c in candidates],
+                  'region_candidates': region_candidates,
                   'media': descriptor}
         saved = await asyncio.to_thread(jobs.finish_job, job, result=result, media=descriptor)
         if saved:

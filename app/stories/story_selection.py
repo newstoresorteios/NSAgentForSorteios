@@ -44,6 +44,11 @@ def scope_visual_selection(analysis, text):
     region = selected_region(analysis, text)
     if region is None or len(analysis.product_regions) <= 1:
         return analysis, region
+    return analysis_for_region(analysis, region), region
+
+
+def analysis_for_region(analysis, region):
+    """Isolate visible evidence without assigning whole-scene audio to one watch."""
     # Never combine the blue watch with a reference/brand read on its neighbour.
     scoped = analysis.model_copy(deep=True, update={
         "watch_count": 1, "multiple_products": False, "product_regions": [region],
@@ -58,8 +63,9 @@ def scope_visual_selection(analysis, text):
         "materials": [], "strap_types": [], "case_shapes": [], "visible_advertised_price": None,
         "mechanisms_suggested": region.mechanisms_suggested,
         "visual_description": region.label,
+        "audio_transcript": "", "overlay_text": [],
     })
-    return scoped, region
+    return scoped
 
 
 def reference_in_workspace(ref, runtime):
