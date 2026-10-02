@@ -78,3 +78,6 @@ def test_each_writer_checks_the_release_before_the_only_post(name):
     assert workflow.count("-X POST") == 1
     assert 'BASE="https://ns-agent-for-sorteios.vercel.app"' in workflow
     assert "continue-on-error" not in workflow and "if: always()" not in workflow
+    if name == "remarketing.yml":
+        assert "schedule:" not in workflow
+        assert "if: false" in workflow

@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Query, Request
 from app.config import get_settings as _get_settings
 from app.http.bindings import resolve
 from app.ingress.dispatch import verify_queue_dispatch
-from app.learning.remarketing import run_remarketing_batch
 from app.ops.observability import log_event
 from app.security import verify_remarketing_cron
 
@@ -191,13 +190,8 @@ async def tray_sync_cron():
 
 
 async def remarketing_cron():
-    from app.learning.cron_context import scheduled_workspace
-    async with scheduled_workspace():
-        result = await run_remarketing_batch()
-    log_event(
-        "remarketing.cron.completed",
-        result if isinstance(result, dict) else {"result": result},
-    )
+    result = {"claimed": 0, "sent": 0, "failed": 0, "disabled": True}
+    log_event("remarketing.cron.skipped", result)
     return {"ok": True, **result}
 
 

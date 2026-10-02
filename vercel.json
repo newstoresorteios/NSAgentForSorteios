@@ -19,10 +19,6 @@
       "schedule": "20 3 * * *"
     },
     {
-      "path": "/api/cron/remarketing",
-      "schedule": "0 15 * * *"
-    },
-    {
       "path": "/api/cron/product-image-index",
       "schedule": "0 4 * * *"
     },
