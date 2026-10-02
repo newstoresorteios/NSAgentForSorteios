@@ -60,6 +60,8 @@ def create_app() -> FastAPI:
     application.include_router(cron_router)
     application.include_router(story_admin_router)
     application.include_router(debug_router)
+    from app.direct.admin import router as direct_router
+    application.include_router(direct_router)
     from app.evaluation.api import router as evaluation_router
     application.include_router(evaluation_router)
     from app.evaluation.regression_api import router as regression_router

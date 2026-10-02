@@ -78,6 +78,8 @@ def settings_from_bundle(base: Any, bundle: dict[str, Any]):
 
 def is_operator_setting(attribute: str) -> bool:
     return not (
+        attribute == "nsagent_engine" or attribute.startswith("direct_")
+        or
         any(term in attribute for term in ("secret", "database_url", "allowlist", "webhook"))
         or attribute.endswith(("_token", "_api_key", "_service_key", "_url"))
         or attribute.startswith(("supabase_", "meta_", "brevo_"))

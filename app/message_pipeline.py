@@ -214,6 +214,10 @@ def _ensure_live_turn_budget(incoming: IncomingMessage):
 
 
 async def process_incoming_message(incoming: IncomingMessage, customer_context: dict) -> AgentResult:
+    # Switch before *any* legacy interpretation, Story inference or response repair.
+    if getattr(get_settings(), "nsagent_engine", "legacy") == "direct":
+        from app.direct.pipeline import process_direct_message
+        return await process_direct_message(incoming, customer_context)
     from app.persona.persona_runtime import (
         get_persona_runtime,
         load_persona_runtime,

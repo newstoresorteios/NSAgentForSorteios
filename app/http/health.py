@@ -40,6 +40,7 @@ def public_health_payload(settings=None) -> dict:
         "ok": True,
         "service": getattr(cfg, "app_name", "NewStoreAgent"),
         "agent_version": AGENT_VERSION,
+        "agent_engine": getattr(cfg, "nsagent_engine", "legacy"),
         "dry_run": bool(getattr(cfg, "dry_run", False)),
         "environment": getattr(cfg, "environment", ""),
         "database_configured": bool(getattr(cfg, "database_url", "")),

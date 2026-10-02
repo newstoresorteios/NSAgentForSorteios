@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     admin_api_token: str = Field(default="", alias="ADMIN_API_TOKEN")
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    nsagent_engine: Literal["legacy", "direct"] = Field(default="legacy", alias="NSAGENT_ENGINE")
+    direct_openai_model: str = Field(default="", alias="DIRECT_OPENAI_MODEL")
+    direct_max_rounds: int = Field(default=4, ge=1, le=6, alias="DIRECT_MAX_ROUNDS")
+    direct_timeout_seconds: float = Field(default=65, ge=5, le=120, alias="DIRECT_TIMEOUT_SECONDS")
+    # Explicit server-owned workspace -> vector store map. Never supplied by a customer.
+    direct_vector_stores: str = Field(default="{}", alias="DIRECT_VECTOR_STORES")
     openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")
     # Role-specific models (fall back to OPENAI_MODEL when empty).
     openai_main_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MAIN_MODEL")
