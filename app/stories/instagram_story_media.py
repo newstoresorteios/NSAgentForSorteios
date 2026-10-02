@@ -32,6 +32,8 @@ _DEFAULT_ALLOWED_SUFFIXES = (
     "instagram.com",
     "facebook.com",
     "fbsbx.com",
+    "whatsapp.net",
+    "whatsapp.com",
     "brevo.com",
     "sendinblue.com",
     "sibpages.com",
@@ -447,6 +449,9 @@ def extract_video_frames_best_effort(
         reader = VideoReader(str(content) if isinstance(content, Path) else io.BytesIO(content), ctx=cpu(0), num_threads=1)
         frame_count = len(reader)
         if frame_count <= 0:
+            return []
+        fps = float(reader.get_avg_fps())
+        if fps <= 0 or frame_count / fps > getattr(settings, "instagram_story_video_max_seconds", 120):
             return []
         sample_limit = min(40, frame_limit * 4)
         frame_indexes = sorted(

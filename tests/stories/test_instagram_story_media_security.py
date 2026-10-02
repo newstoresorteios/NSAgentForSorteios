@@ -421,6 +421,9 @@ def test_video_frame_extraction_decodes_representative_jpegs(monkeypatch):
             return np.full((64, 64, 3), self.value, dtype=np.uint8)
 
     class FakeVideoReader:
+        def get_avg_fps(self):
+            return 30.0
+
         def __init__(self, *_args, **_kwargs):
             self.frames = [FakeFrame(index * 20) for index in range(9)]
 

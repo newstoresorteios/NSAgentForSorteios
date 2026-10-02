@@ -117,8 +117,9 @@ async def test_admin_preview_requires_auth_and_never_sends(monkeypatch):
 async def test_image_download_failure_is_explicit(monkeypatch):
     from app.direct.pipeline import input_content
     monkeypatch.setattr("app.core.remote_media.download_trusted_media", AsyncMock(side_effect=ValueError("blocked")))
+    monkeypatch.setattr("app.direct.media.download_story_media_file", AsyncMock(side_effect=ValueError("blocked")))
     content = await input_content(IncomingMessage(text="Quanto custa?", image_url="http://127.0.0.1"))
-    assert len(content) == 1 and "Imagem indisponível" in content[0]["text"]
+    assert "Mídia indisponível" in content[-1]["text"]
 
 
 def test_history_query_has_all_identity_boundaries(monkeypatch):

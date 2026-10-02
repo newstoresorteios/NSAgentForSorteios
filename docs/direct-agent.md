@@ -120,6 +120,37 @@ ou sessões. Não cria inbox/outbox nem envia mensagens a clientes.
 
 ## Ativação e rollback
 
+### Vídeo e comparação completa (direct-v5)
+
+O caminho direto reutiliza download seguro, amostragem temporal de quadros e
+transcrição de áudio do legado. `app/direct/media.py` entrega imagens com tempos
+e transcrição ao mesmo agente; não executa o analisador visual ou a composição
+do legado. Stories expirados tentam renovar a URL pela integração Meta existente.
+Miniatura é explicitamente evidência parcial; falha não autoriza identificação.
+Os limites existentes de bytes, duração e número de quadros continuam aplicáveis.
+`direct.video.prepared` registra somente quantidade de quadros e estado do áudio.
+
+Para recomendar, `compare_ready_delivery_catalog` percorre o snapshot inteiro via
+GET `/internal/ready-delivery` em páginas de 50 e entrega nomes/referências de
+todos os candidatos. Até 500 itens, com prazo de 35 segundos; snapshot divergente,
+total inconsistente ou página faltante falham explicitamente. Não é um ranking
+prévio nem uma seleção dos dez primeiros. A IA compara os candidatos e usa
+`get_ready_delivery_candidate` para obter links e imagens de até cinco escolhas.
+Atributos ausentes, preços e estoque físico não são inferidos pelos nomes.
+A paginação de dez permanece disponível para quem quer percorrer a lista.
+
+Fotos aceitam `candidate_id` validado contra produtos conhecidos, evitando a
+reescrita de URLs longas. Link exato continua aceito para conversas anteriores.
+
+O preview autenticado aceita `channel` (whatsapp/instagram) e `video_base64`
+opcional (MP4 de até 2 MB), processado em arquivo temporário e removido ao final.
+Não envia mídia aos canais. `scripts/eval_direct_video_catalog.py` verifica a
+comparação completa, foto em continuação e vídeo com fixture local.
+
+Entrada multimodal segue o formato da [documentação oficial de visão da OpenAI](https://developers.openai.com/api/docs/guides/images-vision).
+
+### Procedimento de ativação
+
 Validar testes offline e preview real primeiro. Publicar o código com legacy,
 testar `/api/test/direct`, configurar o conhecimento e só então publicar uma
 implantação com `NSAGENT_ENGINE=direct`. `/api/health` informa `agent_engine`.

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 
 from app.config import get_settings
 from app.models import AgentResult
@@ -14,7 +13,7 @@ from app.direct.persona import persona_context
 
 
 async def input_content(incoming):
-    from app.core.remote_media import download_trusted_media
+    from app.direct.media import visual_content
     from app.channels.audio_service import transcribe_audio_url
     text = incoming.text or ""
     if incoming.audio_url:
@@ -24,20 +23,7 @@ async def input_content(incoming):
         except Exception:
             text += "\n[Áudio indisponível: peça ao cliente para escrever ou reenviar.]"
     content = [{"type": "input_text", "text": text or "[Mídia recebida]"}]
-    image_url = incoming.image_url
-    story = incoming.instagram_story
-    if story:
-        if getattr(story, "media_type", "unknown") == "image":
-            image_url = story.operational_media_url() or image_url
-        elif getattr(story, "media_type", "unknown") == "video":
-            content[0]["text"] += "\n[Vídeo de Story: análise de vídeo não disponível neste caminho. Peça foto do produto.]"
-    if image_url:
-        try:
-            data, mime = await download_trusted_media(image_url, kind="image", max_bytes=8_000_000)
-            content.append({"type": "input_image", "image_url":
-                            f"data:{mime};base64,{base64.b64encode(data).decode()}", "detail": "auto"})
-        except Exception:
-            content[0]["text"] += "\n[Imagem indisponível: peça para reenviar; não identifique produto por suposição.]"
+    content.extend(await visual_content(incoming))
     return content
 
 
@@ -79,7 +65,8 @@ async def process_direct_message(incoming, customer_context):
             except Exception as exc:
                 log_event("direct.memory.unavailable", {"error_type": type(exc).__name__})
         tools = DirectTools(incoming=incoming, history=history, documents=documents,
-                            products=(previous.get('direct_agent') or {}).get('products', []))
+                            products=(previous.get('direct_agent') or {}).get('products', []),
+                            catalog_snapshot=(previous.get('direct_agent') or {}).get('catalog_snapshot'))
         result = await DirectOpenAIAgent(get_async_openai_client(), settings).run_turn(
             incoming=incoming, workspace_id=workspace, history=history, previous=previous,
             tools=tools, content=await input_content(incoming), memories=memories,

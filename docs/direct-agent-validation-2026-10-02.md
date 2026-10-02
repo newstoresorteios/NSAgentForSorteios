@@ -38,3 +38,25 @@ O script `scripts/eval_direct_conversation.py` permite repetir a sequência. Nã
 foram criadas mensagens de clientes, inbox ou outbox. A preparação do anexo foi
 validada no preview; não foi feito envio real de WhatsApp/Instagram nesta bateria.
 Uma avaliação comportamental não garante todas as formulações futuras do modelo.
+
+## Rodada direct-v5: catálogo inteiro e vídeo
+
+- 151 testes no NSAgent: entrada Meta/Brevo, contratos, catálogo completo,
+  snapshots inválidos, foto por ID, Story expirado/sem URL, miniatura,
+  transcrição, decoder real e limites de duração.
+- 33 testes do contrato de pronta entrega no TRAYadaptor, incluindo OpenAPI.
+  Nenhuma alteração no adaptador nesta rodada.
+- Preview isolado na Vercel com persona publicada e modelo de produção:
+  `overview_candidate_count=97`; alternativas distinguiram marca de cor;
+  foto por identificador anexada no turno seguinte.
+- A primeira execução revelou URL longa reescrita pelo modelo; a ferramenta
+  passou a aceitar identificadores estáveis. Nova execução completou a foto.
+- Bateria de sete turnos passou: primeira página, continuação no mesmo snapshot,
+  casamento (nova comparação completa e modelos além das páginas mostradas),
+  foto, reconstrução, garantia via search_knowledge, recusa sem handoff.
+- MP4 com imagem de teste Hamilton: identificação visual de caixa retangular.
+  Fixture com movimento e voz sintética: oito quadros recebidos no modelo,
+  código falado 742 recuperado e formato retangular identificado.
+- Nenhum envio real ao Instagram/WhatsApp e nenhum registro em inbox/outbox.
+  O preview valida preparação e resposta; entrega pelo provedor é coberta por
+  testes de integração locais, não por mensagem a cliente nesta rodada.

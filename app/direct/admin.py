@@ -8,9 +8,10 @@ import hmac
 import json
 import time
 from uuid import UUID, uuid4
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from app.config import get_settings
 from app.security import verify_admin_token
@@ -27,6 +28,8 @@ class PreviewRequest(BaseModel):
     workspace_id: UUID
     text: str = Field(min_length=1, max_length=8000)
     session: str | None = Field(default=None, max_length=150000)
+    channel: Literal['whatsapp', 'instagram'] = 'whatsapp'
+    video_base64: SecretStr | None = Field(default=None, max_length=2800000)
 
 
 def encode_session(payload, secret):
@@ -65,14 +68,31 @@ async def preview_turn(payload):
     bundle_token = bind_bundle(persona.configuration_bundle, settings)
     persona_token = set_persona_runtime(persona)
     try:
-        incoming = IncomingMessage(provider="test", channel="whatsapp", sender_key=state["id"],
+        incoming = IncomingMessage(provider="test", channel=payload.channel, sender_key=state["id"],
                                    conversation_id=state["id"], text=payload.text)
+        content = [{"type": "input_text", "text": payload.text}]
+        if payload.video_base64:
+            import tempfile
+            from pathlib import Path
+            from types import SimpleNamespace
+            from app.direct.media import prepared_file_content
+            try:
+                data = base64.b64decode(payload.video_base64.get_secret_value(), validate=True)
+            except ValueError:
+                raise HTTPException(400, detail='invalid_video_base64') from None
+            if not data or len(data) > 2_000_000 or data[4:8] != b'ftyp':
+                raise HTTPException(400, detail='preview_requires_mp4_under_2mb')
+            with tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / 'preview.mp4'
+                path.write_bytes(data)
+                content.extend(await prepared_file_content(SimpleNamespace(path=path, content_type='video/mp4')))
         docs = await asyncio.to_thread(knowledge_documents, persona)
         tools = DirectTools(incoming=incoming, history=state["history"], documents=docs,
-                            products=(state['previous'].get('direct_agent') or {}).get('products', []))
+                            products=(state['previous'].get('direct_agent') or {}).get('products', []),
+                            catalog_snapshot=(state['previous'].get('direct_agent') or {}).get('catalog_snapshot'))
         result = await DirectOpenAIAgent(get_async_openai_client(), settings).run_turn(
             incoming=incoming, workspace_id=workspace, history=state["history"], previous=state["previous"],
-            tools=tools, content=[{"type": "input_text", "text": payload.text}],
+            tools=tools, content=content,
             persona_name=persona.agent_display_name, tone=persona.tone or "natural",
             vector_store_id=vector_store_for(settings, workspace), persona=persona_context(persona))
         state["history"] = (state["history"] + [{"role": "user", "content": payload.text},
@@ -82,6 +102,7 @@ async def preview_turn(payload):
         return {"ok": True, "engine": "direct", "active_engine": cfg.nsagent_engine,
                 "sent_to_customer": False, "reply_text": result.reply_text,
                 "image_url": result.response_metadata.get('outbound_image_url'),
+                "media_frames": sum(part['type'] == 'input_image' for part in content),
                 "session": encode_session(state, cfg.admin_api_token),
                 "metrics": result.response_metadata["direct_agent"]}
     finally:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.direct.knowledge import search_knowledge
@@ -37,12 +38,23 @@ class ReadyDelivery(Knowledge):
 
 
 class ProductImage(Arguments):
-    product_url: str = Field(min_length=1, max_length=2000)
+    product_url: str | None = Field(default=None, min_length=1, max_length=2000)
+    candidate_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{16}$')
+
+
+class Overview(Arguments):
+    pass
+
+
+class ReadyCandidate(Arguments):
+    candidate_ids: list[Annotated[str, Field(pattern=r'^[a-f0-9]{16}$')]] = Field(min_length=1, max_length=5)
 
 
 DEFINITIONS = {
+    "compare_ready_delivery_catalog": (Overview, "Ler TODOS os candidatos da pronta entrega em formato compacto antes de recomendar por estilo, ocasião, marca ou cor. Não limita aos primeiros produtos e não aplica preferências antigas como filtro. Compare os nomes/referências retornados; atributos ausentes são desconhecidos. Depois obtenha detalhes do escolhido com get_ready_delivery_candidate."),
+    "get_ready_delivery_candidate": (ReadyCandidate, "Obter links e fotos de até cinco candidatos da visão completa da pronta entrega. Informe candidate_ids retornados por compare_ready_delivery_catalog; não são IDs do catálogo administrativo."),
     "search_ready_delivery": (ReadyDelivery, "Consultar pronta entrega em www.newstorerj.com pelo adaptador. Busca ampla: query='pronta entrega', offset=0. Para mais modelos, mantenha query e use next_offset. total é o total encontrado; returned é só esta página. Não acrescente preferências antigas. Listagem pública não confirma estoque físico ou preço."),
-    "prepare_product_image": (ProductImage, "Anexar à resposta a foto de um produto já retornado pelas consultas. Informe seu product_url exato; nunca invente URLs. Se a foto não estiver disponível, consulte o modelo na mesma fonte antes de tentar novamente."),
+    "prepare_product_image": (ProductImage, "Anexar foto de produto conhecido. Prefira candidate_id retornado no produto, com product_url=null, para evitar erros ao copiar URLs longas. Alternativamente use product_url exato e candidate_id=null. Nunca invente URLs ou IDs."),
     "search_products": (Search, "Buscar produtos reais por palavras do catálogo; faça buscas curtas. Valores em BRL. ready_stock só para pronta entrega."),
     "get_product": (Product, "Consultar detalhes atuais do produto e seu link oficial; use IDs retornados pela busca."),
     "check_inventory": (Product, "Confirmar disponibilidade atual; não confundir estoque, prazo de postagem e chegada."),
@@ -65,7 +77,7 @@ def tool_schemas():
 
 
 class DirectTools:
-    def __init__(self, *, incoming, history, documents, adapter=None, products=None):
+    def __init__(self, *, incoming, history, documents, adapter=None, products=None, catalog_snapshot=None):
         self.incoming, self.history, self.documents = incoming, history, documents
         self.adapter = adapter
         self.handoff = None
@@ -73,6 +85,9 @@ class DirectTools:
         self.products = {p['url']: p for p in (products or []) if isinstance(p, dict) and p.get('url')}
         self.outbound_image_url = None
         self.catalog_searches = []
+        self.catalog_snapshot = catalog_snapshot
+        self.candidates = {}
+        self.overview_count = None
 
     async def execute(self, name: str, raw: str) -> dict:
         if name not in DEFINITIONS:
@@ -83,12 +98,17 @@ class DirectTools:
             return {"ok": False, "error": "invalid_tool_arguments"}
         self.calls.append(name)
         if name == "prepare_product_image":
-            product = self.products.get(args.product_url) or {}
+            from app.direct.catalog import candidate_id
+            product = (next((p for p in self.products.values() if candidate_id(p) == args.candidate_id), {})
+                       if args.candidate_id else self.products.get(args.product_url) or {})
+            if args.candidate_id and args.product_url and product.get('url') != args.product_url:
+                return {"ok": False, "error": "conflicting_product_identifiers"}
             from urllib.parse import urlparse
             url = product.get('image_url') or product.get('primary_image_url') or ''
             parsed = urlparse(url)
             if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.tcdn.com.br'):
-                return {"ok": False, "error": "verified_product_image_unavailable"}
+                return {"ok": False, "error": "verified_product_image_unavailable",
+                        "instruction": "Confira candidate_id/link dos produtos conhecidos e tente novamente se copiou errado. Não conclua que o site não tem foto só porque o identificador não corresponde."}
             self.outbound_image_url = url
             return {"ok": True, "image_attached_to_reply": True, "product": product.get('name')}
         if name == "search_knowledge":
@@ -105,6 +125,27 @@ class DirectTools:
         from app.tray.tray_adapter_client import TrayAdapterClient, TrayAdapterError
         adapter = self.adapter or TrayAdapterClient()
         try:
+            if name in {'compare_ready_delivery_catalog', 'get_ready_delivery_candidate'}:
+                from app.direct.catalog import all_ready_products, compact_candidates
+                if name == 'compare_ready_delivery_catalog' or not self.candidates:
+                    self.candidates, self.catalog_snapshot, checked = await all_ready_products(
+                        adapter, snapshot_id=self.catalog_snapshot if name == 'get_ready_delivery_candidate' else None)
+                if name == 'compare_ready_delivery_catalog':
+                    self.overview_count = len(self.candidates)
+                    return {'ok': True, 'complete': True, 'total': self.overview_count,
+                            'source': 'https://www.newstorerj.com/pronta-entrega', 'checkedAt': checked,
+                            'candidates': compact_candidates(self.candidates),
+                            'instruction': 'Compare todos os candidatos com o pedido. Exija correspondência para critérios explícitos; explique alternativas parciais. Nomes não comprovam atributos ausentes, preço ou prazo.'}
+                selected = [self.candidates.get(key) for key in args.candidate_ids]
+                if not all(selected):
+                    return {'ok': False, 'error': 'candidate_not_found',
+                            'instruction': 'Atualize a visão completa; não invente link ou identidade.'}
+                data = [dict(public_product_data(product), candidate_id=key)
+                        for key, product in zip(args.candidate_ids, selected)]
+                for product in data:
+                    self.products[product['url']] = product
+                self.products = dict(list(self.products.items())[-60:])
+                return {'ok': True, 'source': 'ready_delivery', 'products': data, 'stockConfirmed': False}
             async with asyncio.timeout(20):
                 if name == "search_products":
                     if args.ready_stock:
@@ -133,10 +174,10 @@ class DirectTools:
                         self.products[product['url']] = product
                 self.products = dict(list(self.products.items())[-60:])
             return {"ok": True, "source": "tray_adapter", "data": data}
-        except (TrayAdapterError, TimeoutError) as exc:
-            if name == 'search_ready_delivery' and getattr(exc, 'status_code', None) == 409:
+        except (TrayAdapterError, TimeoutError, ValueError) as exc:
+            if name in {'search_ready_delivery', 'get_ready_delivery_candidate'} and getattr(exc, 'status_code', None) == 409:
                 return {"ok": False, "error": "catalog_snapshot_expired",
-                        "instruction": "A lista expirou. Consulte novamente com snapshot_id=null, offset=0; avise que atualizou a lista e evite repetir modelos já apresentados."}
+                        "instruction": "A lista expirou. Para recomendações use compare_ready_delivery_catalog; para listar use search_ready_delivery com snapshot_id=null, offset=0. Avise que atualizou a lista."}
             return {"ok": False, "source": "tray_adapter", "error": "commerce_unavailable",
                     "instruction": "Não confirme produto, preço, estoque ou prazo sem resultado válido."}
 

@@ -58,7 +58,7 @@ def main():
                           'searches':data['metrics'].get('catalog_searches'), 'image':bool(data.get('image_url'))},ensure_ascii=False),flush=True)
         return data
 
-    first = turn('Quais modelos vocês têm à pronta entrega? Quero conhecer as opções disponíveis.')
+    first = turn('Liste os primeiros 10 modelos à pronta entrega e informe quantos há no total. Quero percorrer a lista por páginas.')
     searches = first['metrics']['catalog_searches']
     assert searches and searches[-1]['total'] > searches[-1]['returned'], 'Expected paginated catalog'
     second = turn('Tem mais modelos? Me mostra outras opções.')

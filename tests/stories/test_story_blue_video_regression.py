@@ -313,6 +313,9 @@ def test_decoder_selects_sharp_closeup_between_old_fixed_sample_points(monkeypat
     import io
     from app.stories import instagram_story_media as media
     class Reader:
+        def get_avg_fps(self):
+            return 30.0
+
         def __init__(self, *a, **kw):
             pass
         def __len__(self):
@@ -368,6 +371,10 @@ def test_decodes_real_mp4_frames_and_audio_without_ai(monkeypatch, tmp_path):
         assert decoded.getframerate() == 16000 and decoded.getnchannels() == 1
         assert decoded.getnframes() >= 16000
     assert extract_audio(content, 1)[1] == 'duration_limit'
+    with monkeypatch.context() as bounded:
+        bounded.setattr(media, 'get_settings', lambda: SimpleNamespace(
+            instagram_story_video_frame_analysis_enabled=True, instagram_story_video_max_seconds=1))
+        assert media.extract_video_frames_best_effort(content) == []
     path = tmp_path / 'video.mp4'
     path.write_bytes(content)
     timestamps = []
