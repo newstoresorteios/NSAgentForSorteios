@@ -25,7 +25,7 @@ def isolation(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool,args,path,payload", [
-    ("search_products", {"query": "Seiko", "brand": "Seiko", "max_price": 3000, "ready_stock": True},
+    ("search_products", {"query": "Seiko", "brand": "Seiko", "max_price": 3000, "ready_stock": False},
      "/internal/products", {"products": [{"id": "42", "name": "Seiko", "current_price": 2500}]}),
     ("get_product", {"product_id": "42"}, "/internal/products/42", {"product": {"id": "42", "current_price": 2500}}),
     ("check_inventory", {"product_id": "42"}, "/internal/products/42/stock", {"product_id": "42", "stock": 1, "available": True})])
@@ -45,7 +45,7 @@ async def test_internal_http_contract(tool, args, path, payload):
     assert request.extensions["timeout"]["read"] == 12
     if tool == "search_products":
         assert dict(request.url.params) == {"name": "Seiko", "brand": "Seiko", "available": "true",
-                                           "available_in_store": "true", "limit": "5", "current_price_range": "0,3000"}
+                                           "limit": "5", "current_price_range": "0,3000"}
     else:
         assert not request.url.query
     assert result == {"ok": True, "source": "tray_adapter", "data": payload}

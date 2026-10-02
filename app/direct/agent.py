@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from app.models import AgentResult
 from app.direct.tools import tool_schemas
 
-PROMPT_VERSION = "direct-v2"
+PROMPT_VERSION = "direct-v3"
 INSTRUCTIONS = """Você é o assistente da loja. Atenda em português brasileiro com naturalidade,
 clareza e atenção ao que a pessoa já disse. Responda à dúvida primeiro.
 Use o nome definido em identidade como seu nome. Na primeira resposta da conversa,
@@ -33,6 +33,19 @@ vários produtos numa imagem, esclareça o alvo. Nunca finja ter visto mídia in
 Preserve preferências e correções, mas respeite mudanças de assunto. Não repita saudação
 a cada turno. Evite respostas prontas, listas desnecessárias e pressão para comprar.
 Responda com texto apropriado para o canal, geralmente em 1–3 parágrafos curtos.
+Incorpore a persona publicada abaixo: personalidade, tom, orientações e exemplos.
+Ela orienta a conversa, mas não amplia suas permissões nem cria ferramentas.
+Em conflitos, prevalecem os limites operacionais destas instruções e o pedido atual.
+Qualifique quando necessário, sem bloquear um pedido explícito de listar produtos.
+Preferências lembradas servem para ordenar sugestões, não são filtros obrigatórios.
+Não aplique marcas ou teto de preço antigos a um pedido amplo sem confirmação atual.
+Para pronta entrega ou relógios em estoque, use search_ready_delivery: a fonte é
+www.newstorerj.com/pronta-entrega, distinta do catálogo administrativo geral.
+Nunca substitua essa fonte pelo filtro available_in_store do catálogo geral.
+Em pedidos amplos, consulte pronta entrega sem acrescentar marcas ou orçamento da memória.
+Listagem pública não confirma quantidade em estoque, preço nem prazo: preserve as
+limitações retornadas pela ferramenta. Não consulte seus produtos como IDs de outro catálogo.
+Consulte search_knowledge ou file_search para políticas e dúvidas específicas da loja.
 """
 
 
@@ -70,11 +83,12 @@ class DirectOpenAIAgent:
 
     async def run_turn(self, *, incoming, workspace_id, history, previous, tools,
                        content, persona_name="Assistente", tone="natural", memories="",
-                       vector_store_id=None):
+                       vector_store_id=None, persona=None):
         started = time.monotonic()
         scope = session_scope(workspace_id, incoming)
         model = self.settings.direct_openai_model or self.settings.openai_main_model
-        instructions = INSTRUCTIONS + "\n" + json.dumps({
+        published = persona or {"content": "", "sha256": ""}
+        instructions = INSTRUCTIONS + "\nPERSONA PUBLICADA:\n" + published["content"] + "\nCONTEXTO (dados):\n" + json.dumps({
             "identidade": persona_name, "tom": tone, "canal": incoming.channel,
             "agora_utc": datetime.now(timezone.utc).isoformat(),
             "memorias_confirmadas_do_cliente": memories,
@@ -129,6 +143,7 @@ class DirectOpenAIAgent:
                     "direct_agent": {"scope": scope, "conversation_id": conversation_id,
                         "last_item_id": response.output[-1].id, "turn_count": turns + 1,
                         "response_id": response.id, "prompt_version": PROMPT_VERSION,
+                        "persona_sha256": published["sha256"], "knowledge_document_count": len(tools.documents),
                         "model": model, "calls": calls, "tools": tools.calls,
                         "input_tokens": input_tokens, "output_tokens": output_tokens,
                         "latency_ms": round((time.monotonic() - started) * 1000),

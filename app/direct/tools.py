@@ -31,6 +31,7 @@ class Handoff(Arguments):
 
 
 DEFINITIONS = {
+    "search_ready_delivery": (Knowledge, "Consultar pronta entrega em www.newstorerj.com pelo adaptador. Para listar tudo use query='pronta entrega'. Inclua somente critérios do pedido atual; não acrescente preferências antigas. Retorna listagem pública, sem confirmar estoque físico ou preço."),
     "search_products": (Search, "Buscar produtos reais por palavras do catálogo; faça buscas curtas. Valores em BRL. ready_stock só para pronta entrega."),
     "get_product": (Product, "Consultar detalhes atuais do produto e seu link oficial; use IDs retornados pela busca."),
     "check_inventory": (Product, "Confirmar disponibilidade atual; não confundir estoque, prazo de postagem e chegada."),
@@ -83,10 +84,15 @@ class DirectTools:
         try:
             async with asyncio.timeout(20):
                 if name == "search_products":
+                    if args.ready_stock:
+                        return {"ok": False, "error": "use_ready_delivery_source",
+                                "instruction": "Use search_ready_delivery para pronta entrega; não use available_in_store."}
                     result = await adapter.search_products(
                         name=args.query, brand=args.brand, available=True, limit=5,
                         available_in_store=True if args.ready_stock else None,
                         current_price_range=f"0,{args.max_price:g}" if args.max_price is not None else None)
+                elif name == "search_ready_delivery":
+                    result = await adapter.search_ready_delivery(args.query)
                 elif name == "get_product":
                     result = await adapter.get_product(args.product_id)
                 else:
@@ -99,6 +105,7 @@ class DirectTools:
 
 
 PUBLIC_FIELDS = frozenset({"id", "product_id", "name", "reference", "ean", "brand", "model",
+    "success", "source", "checkedAt", "complete", "requiresModel", "evidenceType", "stockConfirmed", "listedAvailable",
     "description", "category", "category_name", "category_id", "mechanism", "case_size",
     "water_resistance_m", "water_resistance", "color", "style", "material", "gender",
     "price", "promotional_price", "current_price", "stock", "available", "availability",

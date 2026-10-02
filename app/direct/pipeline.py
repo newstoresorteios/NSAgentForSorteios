@@ -10,6 +10,7 @@ from app.direct.agent import DirectOpenAIAgent
 from app.direct.history import load_history
 from app.direct.knowledge import knowledge_documents, vector_store_for
 from app.direct.tools import DirectTools
+from app.direct.persona import persona_context
 
 
 async def input_content(incoming):
@@ -82,11 +83,12 @@ async def process_direct_message(incoming, customer_context):
             incoming=incoming, workspace_id=workspace, history=history, previous=previous,
             tools=tools, content=await input_content(incoming), memories=memories,
             persona_name=persona.agent_display_name, tone=persona.tone or "natural",
-            vector_store_id=vector_store_for(settings, workspace))
+            vector_store_id=vector_store_for(settings, workspace), persona=persona_context(persona))
         result.response_metadata["persona_runtime"] = {"workspace_id": workspace,
             "persona_version_id": persona.persona_version_id}
         log_event("direct.turn.completed", {k: v for k, v in result.response_metadata["direct_agent"].items()
-                  if k in {"model", "calls", "tools", "input_tokens", "output_tokens", "latency_ms"}})
+                  if k in {"model", "calls", "tools", "input_tokens", "output_tokens", "latency_ms",
+                           "prompt_version", "persona_sha256", "knowledge_document_count"}})
         return result
     except Exception as exc:
         # Do not serialize exception messages: API errors can contain request data.

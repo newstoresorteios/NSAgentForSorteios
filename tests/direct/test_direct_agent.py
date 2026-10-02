@@ -180,7 +180,7 @@ def test_workspace_policies_cannot_override_engine():
 
 def test_tool_surface_is_read_only_and_strict():
     names = {item["name"] for item in tool_schemas()}
-    assert names == {"search_products", "get_product", "check_inventory", "search_knowledge", "request_human"}
+    assert names == {"search_products", "search_ready_delivery", "get_product", "check_inventory", "search_knowledge", "request_human"}
     for item in tool_schemas():
         assert item["strict"] and item["parameters"]["additionalProperties"] is False
         assert set(item["parameters"]["required"]) == set(item["parameters"]["properties"])
@@ -217,9 +217,9 @@ async def test_adapter_failure_is_not_empty_stock():
 async def test_search_constraints_and_public_fields():
     adapter = NS(search_products=AsyncMock(return_value={"products": [{"id": "1", "name": "Seiko", "access_token": "SECRET"}]}))
     tools = DirectTools(incoming=incoming(), history=[], documents=[], adapter=adapter)
-    result = await tools.execute("search_products", '{"query":"Seiko","max_price":3000,"ready_stock":true}')
+    result = await tools.execute("search_products", '{"query":"Seiko","max_price":3000,"ready_stock":false}')
     args = adapter.search_products.await_args.kwargs
-    assert args["available_in_store"] is True and args["current_price_range"] == "0,3000"
+    assert args["available_in_store"] is None and args["current_price_range"] == "0,3000"
     assert args["limit"] == 5
     assert "SECRET" not in json.dumps(result)
 

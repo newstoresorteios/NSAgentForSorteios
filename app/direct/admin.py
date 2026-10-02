@@ -17,6 +17,7 @@ from app.security import verify_admin_token
 from app.direct.agent import DirectOpenAIAgent
 from app.direct.knowledge import knowledge_documents, vector_store_for
 from app.direct.tools import DirectTools
+from app.direct.persona import persona_context
 from app.models import IncomingMessage
 
 router = APIRouter(tags=["direct-agent"], dependencies=[Depends(verify_admin_token)])
@@ -72,7 +73,7 @@ async def preview_turn(payload):
             incoming=incoming, workspace_id=workspace, history=state["history"], previous=state["previous"],
             tools=tools, content=[{"type": "input_text", "text": payload.text}],
             persona_name=persona.agent_display_name, tone=persona.tone or "natural",
-            vector_store_id=vector_store_for(settings, workspace))
+            vector_store_id=vector_store_for(settings, workspace), persona=persona_context(persona))
         state["history"] = (state["history"] + [{"role": "user", "content": payload.text},
                            {"role": "assistant", "content": result.reply_text}])[-20:]
         state["previous"] = result.response_metadata

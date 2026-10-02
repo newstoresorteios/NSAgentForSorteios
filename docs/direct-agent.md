@@ -21,6 +21,24 @@ As configurações direct são operacionais, não podem ser alteradas por polít
 do workspace. `OPENAI_API_MODE` não seleciona este caminho: direct usa Responses.
 O total de execução OpenAI é limitado por tempo e rodadas, sem fallback ao legado.
 
+## Persona e preferências
+
+O agente recebe as instruções completas da persona ativa e todas as seções de
+conteúdo do perfil ChatBo, sem truncamento silencioso. Isso inclui exemplos,
+recomendação, objeções, identidade e orientações comerciais. Não executa gates,
+classificadores ou reescritores do legado. Limites de ferramentas e segurança
+prevalecem sobre instruções incompatíveis; o pedido atual prevalece sobre
+preferências antigas. Memória orienta recomendações, sem impor marcas ou teto
+de preço a uma busca ampla. Metadados registram hash da persona e número de
+documentos disponíveis, sem registrar seu conteúdo nos logs.
+
+Pronta entrega usa `search_ready_delivery`, via GET `/internal/ready-delivery`
+do TRAYadaptor, cuja fonte é `www.newstorerj.com/pronta-entrega`. Uma tentativa
+de usar `search_products(ready_stock=true)` retorna orientação para usar a
+ferramenta correta, sem consultar o catálogo errado. Os resultados preservam
+`evidenceType=public_listing` e `stockConfirmed=false`: não confirmam estoque
+físico, preços ou prazo. Falhas de consulta não significam catálogo vazio.
+
 ## Contexto e dados
 
 Conversations API mantém o contexto na OpenAI. O identificador é registrado nos
