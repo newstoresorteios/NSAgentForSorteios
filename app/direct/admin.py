@@ -68,7 +68,8 @@ async def preview_turn(payload):
         incoming = IncomingMessage(provider="test", channel="whatsapp", sender_key=state["id"],
                                    conversation_id=state["id"], text=payload.text)
         docs = await asyncio.to_thread(knowledge_documents, persona)
-        tools = DirectTools(incoming=incoming, history=state["history"], documents=docs)
+        tools = DirectTools(incoming=incoming, history=state["history"], documents=docs,
+                            products=(state['previous'].get('direct_agent') or {}).get('products', []))
         result = await DirectOpenAIAgent(get_async_openai_client(), settings).run_turn(
             incoming=incoming, workspace_id=workspace, history=state["history"], previous=state["previous"],
             tools=tools, content=[{"type": "input_text", "text": payload.text}],
@@ -80,6 +81,7 @@ async def preview_turn(payload):
         state["expires"] = time.time() + 3600
         return {"ok": True, "engine": "direct", "active_engine": cfg.nsagent_engine,
                 "sent_to_customer": False, "reply_text": result.reply_text,
+                "image_url": result.response_metadata.get('outbound_image_url'),
                 "session": encode_session(state, cfg.admin_api_token),
                 "metrics": result.response_metadata["direct_agent"]}
     finally:

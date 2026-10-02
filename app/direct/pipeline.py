@@ -78,7 +78,8 @@ async def process_direct_message(incoming, customer_context):
                 memories = format_customer_memory_block(selected)
             except Exception as exc:
                 log_event("direct.memory.unavailable", {"error_type": type(exc).__name__})
-        tools = DirectTools(incoming=incoming, history=history, documents=documents)
+        tools = DirectTools(incoming=incoming, history=history, documents=documents,
+                            products=(previous.get('direct_agent') or {}).get('products', []))
         result = await DirectOpenAIAgent(get_async_openai_client(), settings).run_turn(
             incoming=incoming, workspace_id=workspace, history=history, previous=previous,
             tools=tools, content=await input_content(incoming), memories=memories,
@@ -88,7 +89,7 @@ async def process_direct_message(incoming, customer_context):
             "persona_version_id": persona.persona_version_id}
         log_event("direct.turn.completed", {k: v for k, v in result.response_metadata["direct_agent"].items()
                   if k in {"model", "calls", "tools", "input_tokens", "output_tokens", "latency_ms",
-                           "prompt_version", "persona_sha256", "knowledge_document_count"}})
+                           "prompt_version", "persona_sha256", "knowledge_document_count", "catalog_searches"}})
         return result
     except Exception as exc:
         # Do not serialize exception messages: API errors can contain request data.

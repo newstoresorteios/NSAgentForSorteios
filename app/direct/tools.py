@@ -30,8 +30,19 @@ class Handoff(Arguments):
     reason: str = Field(min_length=1, max_length=300)
 
 
+class ReadyDelivery(Knowledge):
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=10, ge=1, le=20)
+    snapshot_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
+
+
+class ProductImage(Arguments):
+    product_url: str = Field(min_length=1, max_length=2000)
+
+
 DEFINITIONS = {
-    "search_ready_delivery": (Knowledge, "Consultar pronta entrega em www.newstorerj.com pelo adaptador. Para listar tudo use query='pronta entrega'. Inclua somente critérios do pedido atual; não acrescente preferências antigas. Retorna listagem pública, sem confirmar estoque físico ou preço."),
+    "search_ready_delivery": (ReadyDelivery, "Consultar pronta entrega em www.newstorerj.com pelo adaptador. Busca ampla: query='pronta entrega', offset=0. Para mais modelos, mantenha query e use next_offset. total é o total encontrado; returned é só esta página. Não acrescente preferências antigas. Listagem pública não confirma estoque físico ou preço."),
+    "prepare_product_image": (ProductImage, "Anexar à resposta a foto de um produto já retornado pelas consultas. Informe seu product_url exato; nunca invente URLs. Se a foto não estiver disponível, consulte o modelo na mesma fonte antes de tentar novamente."),
     "search_products": (Search, "Buscar produtos reais por palavras do catálogo; faça buscas curtas. Valores em BRL. ready_stock só para pronta entrega."),
     "get_product": (Product, "Consultar detalhes atuais do produto e seu link oficial; use IDs retornados pela busca."),
     "check_inventory": (Product, "Confirmar disponibilidade atual; não confundir estoque, prazo de postagem e chegada."),
@@ -54,11 +65,14 @@ def tool_schemas():
 
 
 class DirectTools:
-    def __init__(self, *, incoming, history, documents, adapter=None):
+    def __init__(self, *, incoming, history, documents, adapter=None, products=None):
         self.incoming, self.history, self.documents = incoming, history, documents
         self.adapter = adapter
         self.handoff = None
         self.calls = []
+        self.products = {p['url']: p for p in (products or []) if isinstance(p, dict) and p.get('url')}
+        self.outbound_image_url = None
+        self.catalog_searches = []
 
     async def execute(self, name: str, raw: str) -> dict:
         if name not in DEFINITIONS:
@@ -68,6 +82,15 @@ class DirectTools:
         except (ValidationError, ValueError):
             return {"ok": False, "error": "invalid_tool_arguments"}
         self.calls.append(name)
+        if name == "prepare_product_image":
+            product = self.products.get(args.product_url) or {}
+            from urllib.parse import urlparse
+            url = product.get('image_url') or product.get('primary_image_url') or ''
+            parsed = urlparse(url)
+            if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.tcdn.com.br'):
+                return {"ok": False, "error": "verified_product_image_unavailable"}
+            self.outbound_image_url = url
+            return {"ok": True, "image_attached_to_reply": True, "product": product.get('name')}
         if name == "search_knowledge":
             return search_knowledge(self.documents, args.query)
         if name == "request_human":
@@ -92,19 +115,34 @@ class DirectTools:
                         available_in_store=True if args.ready_stock else None,
                         current_price_range=f"0,{args.max_price:g}" if args.max_price is not None else None)
                 elif name == "search_ready_delivery":
-                    result = await adapter.search_ready_delivery(args.query)
+                    result = await adapter.search_ready_delivery(args.query, offset=args.offset, limit=args.limit,
+                                                               snapshot_id=args.snapshot_id)
                 elif name == "get_product":
                     result = await adapter.get_product(args.product_id)
                 else:
                     result = await adapter.get_product_stock(args.product_id)
             # Only normalized public product fields leave the backend.
-            return {"ok": True, "source": "tray_adapter", "data": public_product_data(result)}
-        except (TrayAdapterError, TimeoutError):
+            data = public_product_data(result)
+            if name == 'search_ready_delivery' and isinstance(data, dict):
+                self.catalog_searches.append({k: data.get(k) for k in
+                    ('query', 'total', 'returned', 'offset', 'limit', 'has_more', 'next_offset', 'snapshot_id')})
+            if isinstance(data, dict):
+                products = data.get('products') or [data.get('product') or data]
+                for product in products:
+                    if isinstance(product, dict) and product.get('url'):
+                        self.products[product['url']] = product
+                self.products = dict(list(self.products.items())[-60:])
+            return {"ok": True, "source": "tray_adapter", "data": data}
+        except (TrayAdapterError, TimeoutError) as exc:
+            if name == 'search_ready_delivery' and getattr(exc, 'status_code', None) == 409:
+                return {"ok": False, "error": "catalog_snapshot_expired",
+                        "instruction": "A lista expirou. Consulte novamente com snapshot_id=null, offset=0; avise que atualizou a lista e evite repetir modelos já apresentados."}
             return {"ok": False, "source": "tray_adapter", "error": "commerce_unavailable",
                     "instruction": "Não confirme produto, preço, estoque ou prazo sem resultado válido."}
 
 
 PUBLIC_FIELDS = frozenset({"id", "product_id", "name", "reference", "ean", "brand", "model",
+    "image_url", "query", "returned", "offset", "has_more", "next_offset", "snapshot_id",
     "success", "source", "checkedAt", "complete", "requiresModel", "evidenceType", "stockConfirmed", "listedAvailable",
     "description", "category", "category_name", "category_id", "mechanism", "case_size",
     "water_resistance_m", "water_resistance", "color", "style", "material", "gender",
@@ -118,5 +156,5 @@ def public_product_data(value):
     if isinstance(value, dict):
         return {k: public_product_data(v) for k, v in value.items() if k in PUBLIC_FIELDS}
     if isinstance(value, list):
-        return [public_product_data(v) for v in value[:5]]
+        return [public_product_data(v) for v in value]
     return value[:5000] if isinstance(value, str) else value

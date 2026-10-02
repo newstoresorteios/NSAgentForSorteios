@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from app.models import AgentResult
 from app.direct.tools import tool_schemas
 
-PROMPT_VERSION = "direct-v3"
+PROMPT_VERSION = "direct-v4"
 INSTRUCTIONS = """Você é o assistente da loja. Atenda em português brasileiro com naturalidade,
 clareza e atenção ao que a pessoa já disse. Responda à dúvida primeiro.
 Use o nome definido em identidade como seu nome. Na primeira resposta da conversa,
@@ -46,6 +46,21 @@ Em pedidos amplos, consulte pronta entrega sem acrescentar marcas ou orçamento 
 Listagem pública não confirma quantidade em estoque, preço nem prazo: preserve as
 limitações retornadas pela ferramenta. Não consulte seus produtos como IDs de outro catálogo.
 Consulte search_knowledge ou file_search para políticas e dúvidas específicas da loja.
+Decida como organizar e quantas opções apresentar de acordo com o pedido, sem lista fixa.
+Use total para a quantidade encontrada; returned e produtos recebidos são apenas uma página.
+Quando has_more=true, há outras opções: para 'tem mais?', consulte next_offset da mesma query.
+Mantenha snapshot_id retornado para continuar essa lista; para uma busca nova use null.
+O snapshot dura até dez minutos. Se expirar, atualize a busca e explique a atualização.
+Nunca afirme que só existem os itens mostrados. Se faltar total, a quantidade total é desconhecida.
+Resolva 'aquele', 'o Longines' e pedidos de foto pelo histórico e pelos produtos consultados.
+Use o nome/referência já conhecidos na MESMA fonte, sem pedir ao cliente para repetir.
+Para enviar foto, use prepare_product_image com o link oficial retornado. Não prometa uma
+foto sem sucesso da ferramenta. Se indisponível, ofereça o link conhecido, sem inventar imagem.
+O histórico entregue continua válido mesmo que a plataforma tenha aberto outra conversa:
+não volte a se apresentar quando já houve apresentação nesse histórico.
+Prazo geral de postagem não é garantia de chegada. Nunca prometa chegada para um evento
+sem cotação de frete para o destino; se a persona citar dias úteis, explique seu caráter
+geral e a necessidade de confirmar destino, postagem e transporte.
 """
 
 
@@ -93,6 +108,9 @@ class DirectOpenAIAgent:
             "agora_utc": datetime.now(timezone.utc).isoformat(),
             "memorias_confirmadas_do_cliente": memories,
             "documentos_disponiveis": [d["title"] for d in tools.documents],
+            "ha_historico_entregue": bool(history),
+            "produtos_consultados_anteriormente": list(tools.products.values()),
+            "ultima_pagina_catalogo": (previous.get('direct_agent') or {}).get('last_catalog_search'),
         }, ensure_ascii=False)
         definitions = tool_schemas()
         if vector_store_id:
@@ -144,12 +162,18 @@ class DirectOpenAIAgent:
                         "last_item_id": response.output[-1].id, "turn_count": turns + 1,
                         "response_id": response.id, "prompt_version": PROMPT_VERSION,
                         "persona_sha256": published["sha256"], "knowledge_document_count": len(tools.documents),
+                        "products": list(tools.products.values()),
+                        "catalog_searches": tools.catalog_searches,
+                        "last_catalog_search": (tools.catalog_searches[-1] if tools.catalog_searches else
+                                                (previous.get('direct_agent') or {}).get('last_catalog_search')),
                         "model": model, "calls": calls, "tools": tools.calls,
                         "input_tokens": input_tokens, "output_tokens": output_tokens,
                         "latency_ms": round((time.monotonic() - started) * 1000),
                         "knowledge_mode": "file_search" if vector_store_id else "published_search"}}
                 if tools.handoff:
                     metadata["handoff"] = tools.handoff
+                if tools.outbound_image_url:
+                    metadata["outbound_image_url"] = tools.outbound_image_url
                 return AgentResult(reply_text=text, intent="handoff" if tools.handoff else "general_support",
                                    handoff_required=bool(tools.handoff), response_metadata=metadata)
         raise RuntimeError("direct_tool_limit")

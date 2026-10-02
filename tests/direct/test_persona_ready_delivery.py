@@ -55,7 +55,7 @@ async def test_ready_delivery_contract_preserves_evidence_and_ignores_old_prefer
         result = await executor.execute('search_ready_delivery', '{"query":"pronta entrega"}')
     request = seen[0]
     assert request.method == 'GET' and request.url.path == '/internal/ready-delivery'
-    assert dict(request.url.params) == {'query': 'pronta entrega'}
+    assert dict(request.url.params) == {'query': 'pronta entrega', 'offset': '0', 'limit': '10'}
     assert request.headers['authorization'] == 'Bearer private-token'
     assert request.content == b'' and request.extensions['timeout']['read'] == 12
     if status == 200:

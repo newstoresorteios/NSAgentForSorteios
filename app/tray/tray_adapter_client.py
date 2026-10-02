@@ -507,8 +507,16 @@ class TrayAdapterClient:
             })
             raise TrayAdapterError("tray_adapter_invalid_response") from exc
 
-    async def search_ready_delivery(self, query: str) -> Any:
-        return await self._request("GET", "/internal/ready-delivery", params={"query": query[:500]})
+    async def search_ready_delivery(self, query: str, *, offset: int | None = None, limit: int | None = None,
+                                    snapshot_id: str | None = None) -> Any:
+        params = {"query": query[:500]}
+        if offset is not None:
+            params["offset"] = offset
+        if limit is not None:
+            params["limit"] = limit
+        if snapshot_id:
+            params["snapshot_id"] = snapshot_id
+        return await self._request("GET", "/internal/ready-delivery", params=params)
 
     async def search_products(self, *, name: str | None = None, reference: str | None = None,
                               ean: str | None = None, brand: str | None = None,

@@ -180,7 +180,7 @@ def test_workspace_policies_cannot_override_engine():
 
 def test_tool_surface_is_read_only_and_strict():
     names = {item["name"] for item in tool_schemas()}
-    assert names == {"search_products", "search_ready_delivery", "get_product", "check_inventory", "search_knowledge", "request_human"}
+    assert names == {"search_products", "search_ready_delivery", "get_product", "check_inventory", "search_knowledge", "request_human", "prepare_product_image"}
     for item in tool_schemas():
         assert item["strict"] and item["parameters"]["additionalProperties"] is False
         assert set(item["parameters"]["required"]) == set(item["parameters"]["properties"])

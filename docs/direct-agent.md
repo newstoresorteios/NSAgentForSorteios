@@ -39,11 +39,28 @@ ferramenta correta, sem consultar o catálogo errado. Os resultados preservam
 `evidenceType=public_listing` e `stockConfirmed=false`: não confirmam estoque
 físico, preços ou prazo. Falhas de consulta não significam catálogo vazio.
 
+A ferramenta retorna `total`, `returned`, `has_more`, `next_offset` e `snapshot_id`.
+A IA escolhe a apresentação; a camada de transporte não corta mais as listas em
+cinco itens. A continuação usa a mesma query e snapshot, com offset informado pela
+ferramenta. O adaptador mantém até 32 snapshots públicos durante dez minutos;
+expiração/reinício retorna 409 e exige atualizar a busca, nunca declarar falta de
+produtos. O site pode mudar entre novas buscas; o snapshot estabiliza a paginação.
+
+Produtos consultados (até 60) e a última página ficam nos metadados entregues.
+`prepare_product_image` aceita somente URL de produto já consultado, com imagem
+HTTPS no CDN da Tray. Usa o envio de imagem existente do WhatsApp/Instagram;
+o preview retorna a URL sem enviar nada. Não recupera imagens por URL arbitrária.
+
 ## Contexto e dados
 
 Conversations API mantém o contexto na OpenAI. O identificador é registrado nos
 metadados de resposta já existentes. A busca local exige workspace, provedor,
-canal, conversa e identidade; somente respostas entregues são usadas. Antes de
+canal, conversa e identidade; somente respostas entregues são usadas. Na
+Brevo/WhatsApp, também se permite continuidade entre IDs
+de conversa das últimas 24 horas quando workspace, provedor, canal, sender_key e
+visitor_id são os mesmos. A sessão OpenAI é reconstruída ao mudar o ID da conversa,
+preservando mensagens entregues e referências dos produtos. Outros canais não
+recebem essa exceção. Antes de
 reutilizar uma conversa remota, seu último item precisa ser o item da última
 resposta entregue. Qualquer divergência reconstrói o contexto a partir do histórico
 entregue. Após 30 turnos, uma conversa nova recebe até 30 pares entregues. Isso
@@ -94,6 +111,12 @@ python scripts/chat_direct.py --url https://SEU_NSAGENT --workspace UUID_DO_WORK
 Sequência sugerida: solicitação de produto → preferência → "não quero o segundo"
 → pergunta de garantia → retorno ao primeiro produto → pedido de humano.
 Comparar naturalidade, uso das fontes, continuidade, latência e custo.
+
+`scripts/eval_direct_conversation.py` executa uma bateria real e isolada: primeira
+página, continuação no mesmo snapshot, ocasião, foto, reconstrução da conversa,
+base de conhecimento e recusa de compra/handoff. Requer token administrativo do
+preview e CLI Vercel autenticado; grava somente evidências de teste, sem tokens
+ou sessões. Não cria inbox/outbox nem envia mensagens a clientes.
 
 ## Ativação e rollback
 

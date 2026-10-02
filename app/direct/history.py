@@ -25,14 +25,20 @@ def load_history(incoming, workspace_id: str, *, limit: int = 30):
                     AND provider_send_ok=true ORDER BY id DESC LIMIT 1
                 ) r ON true
                 WHERE i.workspace_id=%(workspace)s::uuid
-                  AND i.conversation_id=%(conversation)s AND i.channel=%(channel)s
+                  AND (i.conversation_id=%(conversation)s OR (
+                    %(brevo_continuity)s AND i.visitor_id=%(visitor)s
+                    AND i.created_at >= now() - interval '24 hours'))
+                  AND i.channel=%(channel)s
                   AND i.provider=%(provider)s
                   AND COALESCE(i.sender_key, i.sender_phone, i.visitor_id)=%(identity)s
                   AND (%(before)s::bigint IS NULL OR i.id < %(before)s::bigint)
                 ORDER BY i.id DESC LIMIT %(limit)s
             """, {"workspace": workspace_id, "conversation": incoming.conversation_id,
                   "channel": incoming.channel, "provider": incoming.provider,
-                  "identity": identity, "before": incoming.raw.get("inbound_id"), "limit": limit})
+                  "identity": identity, "before": incoming.raw.get("inbound_id"), "limit": limit,
+                  "brevo_continuity": bool(incoming.provider == 'brevo' and incoming.channel == 'whatsapp'
+                                           and incoming.sender_key and incoming.visitor_id),
+                  "visitor": incoming.visitor_id})
             rows = list(reversed(cur.fetchall()))
     history = []
     for row in rows:
