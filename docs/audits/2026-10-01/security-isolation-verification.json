@@ -1,0 +1,24 @@
+{
+  "engine": "PGlite 0.5.8 / PostgreSQL 18.3",
+  "production_connections": 0,
+  "checks": [
+    "legacy_anon_authenticated_crud_view_sequence_rpc_denied",
+    "legacy_postgres_service_role_crud_preserved",
+    "legacy_future_objects_secure_defaults",
+    "legacy_rls_enabled",
+    "legacy_migration_idempotent",
+    "bootstrap_retains_legacy_support_without_recreating_global_key_after_enforce",
+    "memory_backfill_uses_only_unambiguous_evidence",
+    "memory_ambiguous_legacy_quarantined",
+    "memory_prepare_accepts_old_writer",
+    "memory_enforce_reconciles_late_writer",
+    "memory_workspace_required_immutable",
+    "memory_cross_workspace_unique_keys",
+    "prompt_ambiguous_response_not_guessed",
+    "learning_incidents_immutable_patterns_aggregate",
+    "extension_activation_requires_validation_and_deduplicates",
+    "memory_service_role_preserved_anon_denied",
+    "memory_migrations_idempotent"
+  ],
+  "passed": true
+}

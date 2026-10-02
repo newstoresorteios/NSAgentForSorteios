@@ -1,0 +1,308 @@
+{
+  "report_version": 1,
+  "audited_local_date": "2026-10-01",
+  "recorded_at_utc": "2026-10-02T00:20:00Z",
+  "scope": "Implementation and bounded proof of F01-F16; production conversational quality is not certified.",
+  "safeguards": {
+    "paid_model_calls_for_evaluation": 0,
+    "customer_test_messages": 0,
+    "original_private_snapshots_committed": false,
+    "production_legacy_permission_migration_applied": false
+  },
+  "revisions": {
+    "agent_runtime": "0d753006b8b010a60ca57d57113a6e5d5f1093f6",
+    "agent_scheduler_safety": "0a7bde4e0c8da523faf724fcbf7c0137ad4699b1",
+    "backend_runtime": "2ac7f9e7bc3a876c61e84a7d08b6adfe45099a78",
+    "frontend_runtime": "92e206057b95be778143812f61a78d8578c44fe2",
+    "tray_runtime": "3a0c296641862aacd8c73d9ce3765a8cef729776",
+    "note": "Later documentation commits do not change these tested runtime files."
+  },
+  "tests": {
+    "agent": {
+      "passed": 3227,
+      "skipped": 7,
+      "failed": 0,
+      "coverage_percent": 76.69,
+      "xml": ".proof-results/nsagent-verified.xml",
+      "xml_sha256": "4ba8ddac31044e3995ddca5725b8d27210f9ad4bfebc102af583b6ebcee0b688"
+    },
+    "scheduler_preflight": {
+      "passed": 17,
+      "failed": 0,
+      "xml": ".proof-results/cron-preflight-verified.xml",
+      "xml_sha256": "5c3ee7d16a8905786813292e1bdae0f4545387f81c68c2ed6da7dbffe08fed0c"
+    },
+    "backend": {
+      "passed": 304,
+      "failed": 0,
+      "xml": ".proof-results/backend-verified.xml",
+      "xml_sha256": "485e43a0bf3b93b5ffeedbd03761f5ab67b1cc1af2b3b6fd768c9e2840928283"
+    },
+    "frontend": {
+      "passed": 29,
+      "test_files": 9,
+      "failed": 0,
+      "typescript": "passed",
+      "build": "passed",
+      "seo_pages": 625,
+      "log_sha256": "47f1323bb5eacd31e66fda9b3cbdc1e0421b9b74a56fa9e55873ff06686a008f",
+      "build_log_sha256": "16fb411f8e37a2bdfbb984593e011e69b38a5390599eea78bba187964c42bb82"
+    },
+    "tray": {
+      "passed": 270,
+      "failed": 0,
+      "xml": ".proof-results/tray-full.xml",
+      "xml_sha256": "2f88ebc256895e53ae5d1ce8774bb6c3394546edd817429fdf3b9c56552d3525"
+    },
+    "sql_isolation": {
+      "checks_passed": 17,
+      "production_connections": 0,
+      "result": "security-isolation-verification.json"
+    },
+    "ci": {
+      "commit": "0a7bde4e0c8da523faf724fcbf7c0137ad4699b1",
+      "conclusion": "success",
+      "url": "https://github.com/newstoresorteios/NSAgentForSorteios/actions/runs/36944598747"
+    }
+  },
+  "conversations": {
+    "entries": 61,
+    "conversations": 23,
+    "pipeline_entries_executed": 51,
+    "pipeline_exceptions": 0,
+    "network_attempts": 0,
+    "satisfied_within_offline_scope": 48,
+    "inconclusive": 13,
+    "inconclusive_ids": [
+      1127,
+      1130,
+      1143,
+      1144,
+      1146,
+      1161,
+      1162,
+      1166,
+      1167,
+      1169,
+      1179,
+      1184,
+      1187
+    ],
+    "method": "Session-annotated interpretation; synthetic commerce; current pipeline and deterministic fallbacks; no remote generation.",
+    "offline_gate": {
+      "approved": false,
+      "unverified": 13
+    },
+    "production_gate": {
+      "approved": false,
+      "unverified": 61
+    },
+    "observations_sha256": "cb26dffef21cdfd697f1b222efe2b29c423a6d06cd8c27fdfea9535ed304d725",
+    "session_review_sha256": "1dedb87129e4ddc76a08adeaad3d258336019b148979f2b02df715eba39899fe",
+    "normalized_results_sha256": "3bb801e246d507974356e9e582c8901c99cb86377a804ff6fbca893a222006b9",
+    "release_gates_sha256": "8065bc5fd17328c24062b7a385eb1805764a2fbd80d1ea4ce8199ec854a99da8",
+    "source_tree_hash": "f9bedfd12614e8048f57b62435be68502533cb7572a0b67b85bba03285795484",
+    "corpus_canonical_json_hash": "18955040d44982d539486b2124c3aacf9eb0914af6a7615bacbce728f58d8fae",
+    "corpus_file_sha256": "c45af81c4cf3fe49f0c5b05545dff57f91ad4767844e8090be77a9bb0b00b655",
+    "review": "offline-october-review.md"
+  },
+  "media": {
+    "original_case_ids": [
+      1127,
+      1130,
+      1143,
+      1166,
+      1169,
+      1179
+    ],
+    "decoded_video_frames": 21,
+    "images": 2,
+    "specific_tests_passed": 7,
+    "vision": "session annotations",
+    "catalog": "unavailable in these fixtures",
+    "remote_vision_accuracy_measured": false,
+    "production_v6_analysis_observed": false
+  },
+  "deployment_snapshot": {
+    "agent": {
+      "provider": "Vercel",
+      "deployment_id": "dpl_eV4MWREYUzWBpQYfEdTmW5tbLr8m",
+      "state": "READY",
+      "health_http": 200,
+      "health_deployment_sha": "0a7bde4e0c8d"
+    },
+    "backend": {
+      "provider": "Render",
+      "deployment_id": "dep-davf9eivcj2c73876ogg",
+      "state": "live",
+      "commit": "2ac7f9e7bc3a876c61e84a7d08b6adfe45099a78",
+      "health_http": 200
+    },
+    "frontend": {
+      "provider": "Vercel",
+      "deployment_id": "dpl_FWxGqvBXm6kaDpXA6ooiNoLUcYKh",
+      "state": "READY",
+      "commit": "92e206057b95be778143812f61a78d8578c44fe2"
+    },
+    "tray": {
+      "provider": "Render",
+      "deployment_id": "dep-davf3o2vcj2c73871l70",
+      "state": "live",
+      "commit": "3a0c296641862aacd8c73d9ce3765a8cef729776",
+      "health_http": 200
+    },
+    "note": "Snapshot before report-only commits; HTTP success proves availability, not conversational quality."
+  },
+  "memory_migrations": {
+    "project": "fbogrbrkyorjvojeypie",
+    "authorization": "User explicitly authorized both, in validated order.",
+    "prepare": {
+      "applied": true,
+      "file_sha256": "732a35d2d100725b78dfa51f4dcd46ff5f4206fc64bebb8dad4798f809d0ef5d",
+      "initial_backfilled": 1068,
+      "quarantined": 509
+    },
+    "enforce": {
+      "applied": true,
+      "file_sha256": "30c17fdbf94a8b90a2188fd97ba9fe2f8d55937711807420796ee9e45720d205",
+      "late_rows_reconciled": 5
+    },
+    "deployment_gate": {
+      "new_agent_and_backend_confirmed": true,
+      "scheduler_exact_alias_and_revision_check_published": true,
+      "preflight_get_passed": true,
+      "active_queue_leases": 0,
+      "in_progress_github_workflows": 0,
+      "new_unscoped_memory_rows_since_agent_cutover": 0,
+      "old_deployment": "dpl_AEQD1LJGwbfUywunUFej8nGMcoYd",
+      "old_deployment_request_logs_in_20_minute_window": 0,
+      "old_plan": "hobby",
+      "documented_max_function_duration_seconds": 300,
+      "first_new_runtime_health_utc": "2026-10-02T00:00:33Z",
+      "final_pre_enforcement_check_utc": "2026-10-02T00:18:09Z",
+      "duration_sources": [
+        "https://vercel.com/docs/functions/limitations",
+        "https://vercel.com/docs/functions/configuring-functions/duration"
+      ]
+    },
+    "production_verification": {
+      "triggers": [
+        {
+          "table": "ai_prompt_compilations",
+          "enabled": "O",
+          "trigger": "require_memory_workspace"
+        },
+        {
+          "table": "ai_agent_instruction_extensions",
+          "enabled": "O",
+          "trigger": "guard_instruction_activation"
+        },
+        {
+          "table": "ai_contact_memories",
+          "enabled": "O",
+          "trigger": "require_memory_workspace"
+        },
+        {
+          "table": "ai_conversation_summaries",
+          "enabled": "O",
+          "trigger": "require_memory_workspace"
+        },
+        {
+          "table": "ai_memory_proposals",
+          "enabled": "O",
+          "trigger": "require_memory_workspace"
+        },
+        {
+          "table": "ai_learning_cases",
+          "enabled": "O",
+          "trigger": "preserve_learning_incident"
+        }
+      ],
+      "scope_audit": [
+        {
+          "action": "backfilled",
+          "records": 1073
+        },
+        {
+          "action": "quarantined",
+          "records": 509
+        }
+      ],
+      "memory_access": [
+        {
+          "rls": true,
+          "table": "ai_contact_memories",
+          "anon_select": false,
+          "server_write": true,
+          "authenticated_select": false
+        },
+        {
+          "rls": true,
+          "table": "ai_conversation_summaries",
+          "anon_select": false,
+          "server_write": true,
+          "authenticated_select": false
+        },
+        {
+          "rls": true,
+          "table": "ai_memory_proposals",
+          "anon_select": false,
+          "server_write": true,
+          "authenticated_select": false
+        },
+        {
+          "rls": true,
+          "table": "ai_prompt_compilations",
+          "anon_select": false,
+          "server_write": true,
+          "authenticated_select": false
+        }
+      ],
+      "migration_history": [
+        {
+          "name": "memory_scope_learning_prepare",
+          "version": "20261001230857"
+        },
+        {
+          "name": "memory_scope_learning_enforce",
+          "version": "20261002001856"
+        }
+      ],
+      "old_contact_unique_index": null,
+      "scoped_contact_unique_index": "uq_ai_contact_memory_workspace_active_key",
+      "scoped_summary_unique_index": "uq_ai_summary_workspace_conversation",
+      "old_summary_unique_constraints": 0
+    }
+  },
+  "stale_regressions": {
+    "closed_as_inconclusive": 15,
+    "automatically_retried": false
+  },
+  "pending": [
+    {
+      "id": "remote_quality",
+      "status": "not_certified",
+      "reason": "User requested this session's AI; no paid interpreter/generator/judge benchmark performed."
+    },
+    {
+      "id": "full_media_e2e",
+      "status": "inconclusive",
+      "reason": "Original decoding and annotated vision tested; real remote vision/catalog/response chain not exercised."
+    },
+    {
+      "id": "historical_evidence",
+      "status": "incomplete",
+      "reason": "Pre-day commercial state, some Story context and one redacted identifier are unavailable; two cases use MAI outside this runtime."
+    },
+    {
+      "id": "legacy_nsdb_permissions",
+      "status": "awaiting_specific_authorization",
+      "reason": "Automatic approval review rejected production permission changes. Separate SQL is prepared and isolated; memory migration approval does not cover NS-db."
+    },
+    {
+      "id": "protected_admin_diagnostics",
+      "status": "unavailable",
+      "reason": "Existing local admin token returned HTTP 401. Public health has one configuration warning; no production secrets were exported."
+    }
+  ]
+}

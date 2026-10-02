@@ -9,7 +9,7 @@ import path from 'node:path';
 import { PGlite } from '../.tools/pglite-security/node_modules/@electric-sql/pglite/dist/index.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const drafts = path.resolve(root, '../Chatbo-backendAgent/supabase/drafts');
+const supabaseRoot = path.resolve(root, '../Chatbo-backendAgent/supabase');
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 const results = { engine: 'PGlite 0.5.8 / PostgreSQL 18.3', production_connections: 0, checks: [] };
@@ -35,7 +35,7 @@ async function verifyLegacy() {
     ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon,authenticated;
     ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon,authenticated;
   `);
-  const migration = await readFile(path.join(drafts, 'legacy_nsdb_server_only.sql'), 'utf8');
+  const migration = await readFile(path.join(supabaseRoot, 'legacy-nsdb/supabase/migrations/20261001230529_restrict_legacy_server_only.sql'), 'utf8');
   await db.exec(migration);
   await db.exec(migration);
   for (const role of ['anon', 'authenticated']) {
@@ -89,8 +89,8 @@ async function verifyMemory() {
     INSERT INTO ai_prompt_compilations(inbound_id) VALUES (1),(2);
     INSERT INTO ai_conversation_summaries(tenant_id,conversation_key,last_inbound_id) VALUES ('store','thread',1);
   `);
-  const prepare = await readFile(path.join(drafts, 'memory_scope_learning_policy.sql'), 'utf8');
-  const enforce = await readFile(path.join(drafts, 'memory_scope_learning_policy_enforce.sql'), 'utf8');
+  const prepare = await readFile(path.join(supabaseRoot, 'migrations/20261001230157_memory_scope_learning_prepare.sql'), 'utf8');
+  const enforce = await readFile(path.join(supabaseRoot, 'migrations/20261001230158_memory_scope_learning_enforce.sql'), 'utf8');
   await db.exec('DROP INDEX uq_ai_contact_memory_active_key');
   await db.exec(bootstrapIndex);
   assert.notEqual((await db.query("SELECT to_regclass('public.uq_ai_contact_memory_active_key') old_index")).rows[0].old_index, null);
