@@ -33,6 +33,33 @@ def client(responses):
     return value
 
 
+def test_knowledge_includes_published_persona_metadata(monkeypatch):
+    from app.direct.knowledge import knowledge_documents, search_knowledge
+    import app.persona.store_knowledge as store
+    import app.persona.persona_knowledge_repository as repository
+    monkeypatch.setattr(store, "_INSTITUTIONAL_SNIPPETS", lambda: [])
+    monkeypatch.setattr(repository, "list_persona_attachments", lambda _: [])
+    persona = NS(chatbo_persona_id=None, active_persona=NS(metadata={
+        "institutionalKnowledge": [{"title": "Garantia", "content": "Garantia oficial de dois anos.",
+                                    "source_url": "https://example.com/garantia"}]}))
+    result = search_knowledge(knowledge_documents(persona), "garantia")
+    assert result["documents"][0]["text"] == "Garantia oficial de dois anos."
+    assert result["documents"][0]["source"] == "https://example.com/garantia"
+
+
+@pytest.mark.asyncio
+async def test_published_identity_reaches_direct_model():
+    api = client([response()])
+    message = incoming()
+    await DirectOpenAIAgent(api, settings()).run_turn(
+        incoming=message, workspace_id="workspace-one", history=[], previous={},
+        tools=DirectTools(incoming=message, history=[], documents=[]),
+        content=[{"type": "input_text", "text": "Oi"}], persona_name="Crono")
+    prompt = api.responses.create.await_args.kwargs["instructions"]
+    assert '"identidade": "Crono"' in prompt
+    assert "apresente-se brevemente com esse nome" in prompt
+
+
 async def run(api, message=None, previous=None, history=None, adapter=None, cfg=None):
     message = message or incoming()
     tools = DirectTools(incoming=message, history=history or [], documents=[], adapter=adapter)

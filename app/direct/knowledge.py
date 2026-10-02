@@ -11,6 +11,18 @@ def knowledge_documents(persona) -> list[dict[str, str]]:
                   "text": str(item.get("body") or ""),
                   "source": str(item.get("sourceUrl") or "")}
                  for item in _INSTITUTIONAL_SNIPPETS() if item.get("body")]
+    active = getattr(persona, "active_persona", None)
+    metadata = getattr(active, "metadata", None) or {}
+    entries = metadata.get("institutionalKnowledge") or metadata.get("institutional_knowledge") or []
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            body = str(entry.get("body") or entry.get("content") or entry.get("text") or "").strip()
+            if body:
+                documents.append({"title": str(entry.get("title") or entry.get("slug") or "Institucional"),
+                                  "text": body,
+                                  "source": str(entry.get("sourceUrl") or entry.get("source_url") or "persona")})
     if persona.chatbo_persona_id:
         documents.extend({"title": item.filename, "text": item.extracted_text, "source": item.id}
                          for item in list_persona_attachments(persona.chatbo_persona_id))
