@@ -18,6 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+      - name: Verify production release before writing
+        env:
+          AGENT_BASE_URL: ${{ secrets.AGENT_BASE_URL }}
+        run: python3 scripts/cron_release_preflight.py
       - name: Run attendance learning cron
         env:
           AGENT_BASE_URL: ${{ secrets.AGENT_BASE_URL }}
@@ -28,7 +33,7 @@ jobs:
             echo "Missing AGENT_BASE_URL or CRON_SECRET secrets"
             exit 1
           fi
-          BASE="${AGENT_BASE_URL%/}"
+          BASE="https://ns-agent-for-sorteios.vercel.app"
           BODY="$(mktemp)"
           trap 'rm -f "$BODY"' EXIT
           set +e
