@@ -161,9 +161,8 @@ async def test_whatsapp_image_is_sent_as_pushed_conversations_attachment(monkeyp
     assert calls[0][1] == "Esta é a imagem oficial do relógio:"
     assert calls[0][2] is None
     assert calls[0][3] == {
-        "name": "relogio.png",
-        "link": "https://cdn.example/relogio.png",
-        "mimeType": "image/png",
+        "fileName": "relogio.png",
+        "url": "https://cdn.example/relogio.png",
         "size": 2048,
         "isImage": True,
     }
@@ -281,7 +280,7 @@ async def test_whatsapp_sends_each_requested_product_image(monkeypatch):
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
 
     async def conversations(_incoming, text, audio_file=None, image_file=None):
-        captions.append((text, image_file["link"]))
+        captions.append((text, image_file["url"]))
         return BrevoSendResult(
             ok=True,
             dry_run=False,

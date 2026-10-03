@@ -120,9 +120,8 @@ def _build_brevo_image_file(url: str, position: int, size: int | None = None) ->
         filename = f"foto-produto-{position}.jpg"
         mime_type = "image/jpeg"
     payload = {
-        "name": filename[:180],
-        "link": url,
-        "mimeType": mime_type,
+        "fileName": filename[:180],
+        "url": url,
         "isImage": True,
     }
     if size and size > 1:
@@ -248,14 +247,13 @@ async def _send_whatsapp_images_via_conversations(
         last_status = media.status_code or last_status
         attempts.append({
             "position": position,
+            "url": image_url,
             "ok": media.ok,
             "pushed": pushed,
             "status_code": media.status_code,
             "response": media.provider_response,
             "error": media.error,
         })
-        if not pushed:
-            break
     complete = all_pushed and len(attempts) == len(image_urls)
     return BrevoSendResult(
         ok=complete,
@@ -430,7 +428,11 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
             channel = "brevo_conversations_media"
         else:
             if image_send_attempted and not (image_send_result and image_send_result.ok):
-                text = _unsent_image_text(text, image_urls)
+                failed_urls = [
+                    item["url"] for item in (image_send_result.provider_response or {}).get("attempts") or []
+                    if not item.get("pushed") and item.get("url")
+                ]
+                text = _unsent_image_text(text, failed_urls or image_urls)
                 if isinstance(result, AgentResult):
                     result.reply_text = text
                 log_event(
