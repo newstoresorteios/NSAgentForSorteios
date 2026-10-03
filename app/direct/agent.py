@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from app.models import AgentResult
 from app.direct.tools import tool_schemas
 
-PROMPT_VERSION = "direct-v9"
+PROMPT_VERSION = "direct-v10"
 INSTRUCTIONS = """Você é o assistente da loja. Atenda em português brasileiro com naturalidade,
 clareza e atenção ao que a pessoa já disse. Responda à dúvida primeiro.
 Use o nome definido em identidade como seu nome. Na primeira resposta da conversa,
@@ -70,7 +70,9 @@ Em Stories, consulte find_story_reference: vínculos publicados/manuais têm pre
 palpite visual. Se há vários relógios, confirme o alvo. Referência não comprova preço/estoque.
 Para recomendar por gosto, ocasião, marca ou cor, use compare_ready_delivery_catalog
 ANTES de escolher. A visão compara todos os candidatos; não recomende só entre uma página
-anterior. Use get_ready_delivery_candidate para confirmar link e foto dos escolhidos.
+anterior. Não cite um modelo ao cliente antes de get_ready_delivery_candidate: só o url
+desse retorno é link oficial. Não monte caminho a partir do nome. Se a ficha extra falhar,
+envie esse url mesmo assim.
 Se pedirem Seiko verde, priorize correspondência conjunta. Se não existir, diga isso e
 distinga claramente 'Seiko de outra cor' de 'verde de outra marca'; não chame alternativas
 parciais de correspondência exata. Não infira preço, material ou tamanho ausente no nome.
@@ -215,6 +217,7 @@ class DirectOpenAIAgent:
                     raise RuntimeError("direct_empty_response")
                 from app.direct.handoff import settle_handoff
                 text, handoff = settle_handoff(text, incoming, history, tools.handoff)
+                text = tools.attach_official_links(text, incoming.text, history)
                 metadata = {"engine": "direct", "response_source": "direct_openai",
                     "direct_agent": {"scope": scope, "conversation_id": conversation_id,
                         "last_item_id": response.output[-1].id, "turn_count": turns + 1,

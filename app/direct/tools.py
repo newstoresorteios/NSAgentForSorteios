@@ -155,6 +155,38 @@ class DirectTools:
         if self.outbound_image_urls:
             self.outbound_image_url = self.outbound_image_urls[0]
 
+    def attach_official_links(self, reply: str, incoming_text: str, history) -> str:
+        import unicodedata
+        def fold(value):
+            normalized = unicodedata.normalize('NFKD', (value or '').casefold())
+            return ''.join(char for char in normalized if not unicodedata.combining(char))
+        texts = [reply or '']
+        if 'link' in fold(incoming_text):
+            previous = next((turn.get('content') for turn in reversed(history or [])
+                             if turn.get('role') == 'assistant' and turn.get('content')), '')
+            if previous:
+                texts.append(previous)
+        chosen = []
+        seen = set()
+        for text in texts:
+            folded = fold(text)
+            for key, product in (self.candidates or {}).items():
+                name = fold(product.get('name') or '')
+                url = str(product.get('url') or '')
+                if len(name) < 18 or name not in folded or not url.startswith('https://') or url in seen:
+                    continue
+                seen.add(url)
+                chosen.append(product)
+                self.products[url] = {**product, 'candidate_id': key}
+                if len(chosen) >= 10:
+                    break
+        missing = [product for product in chosen if product['url'] not in (reply or '')]
+        if not missing:
+            return reply
+        lines = ['', 'Link oficial:']
+        lines.extend(f"{product.get('name')}\n{product['url']}" for product in missing)
+        return (reply or '').rstrip() + '\n' + '\n'.join(lines)
+
     async def execute(self, name: str, raw: str) -> dict:
         if name not in DEFINITIONS:
             return {"ok": False, "error": "tool_not_allowed"}
@@ -263,13 +295,23 @@ class DirectTools:
                     return {'ok': True, 'complete': True, 'total': self.overview_count,
                             'source': 'https://www.newstorerj.com/pronta-entrega', 'checkedAt': checked,
                             'candidates': compact_candidates(self.candidates),
-                            'instruction': 'Compare todos os candidatos com o pedido. Exija correspondência para critérios explícitos; explique alternativas parciais. Nomes não comprovam atributos ausentes, preço ou prazo.'}
+                            'instruction': 'Compare todos os candidatos. Não cite um modelo ao cliente antes de get_ready_delivery_candidate: só esse retorno traz o link oficial. Não monte URL a partir do nome.'}
                 if name == 'get_ready_delivery_details':
                     candidate = self.candidates.get(args.candidate_id)
-                    if not candidate:
-                        return {'ok': False, 'error': 'candidate_not_found'}
-                    async with asyncio.timeout(20):
-                        result = await adapter.get_ready_delivery_details(url=candidate['url'], snapshot_id=self.catalog_snapshot)
+                    if not candidate or not str(candidate.get('url') or '').startswith('https://'):
+                        return {'ok': False, 'error': 'candidate_not_found',
+                                'instruction': 'Não invente um link. Use get_ready_delivery_candidate com um candidate_id da comparação.'}
+                    try:
+                        async with asyncio.timeout(20):
+                            result = await adapter.get_ready_delivery_details(url=candidate['url'], snapshot_id=self.catalog_snapshot)
+                    except TrayAdapterError as exc:
+                        if getattr(exc, 'status_code', None) != 404:
+                            raise
+                        listed = {'name': candidate.get('name'), 'url': candidate['url'],
+                                  'reference': candidate.get('reference'), 'candidate_id': args.candidate_id}
+                        self.products[candidate['url']] = {**candidate, 'candidate_id': args.candidate_id}
+                        return {'ok': True, 'details_unavailable': True, 'product': listed,
+                                'instruction': 'A ficha extra não foi encontrada. O link oficial já confirmado na listagem é product.url. Envie esse link. Não monte outro caminho.'}
                     data = public_product_data(result)
                     if not isinstance(data, dict) or not data.get('product') or data['product'].get('url') != candidate['url']:
                         return {'ok': False, 'error': 'product_identity_mismatch'}

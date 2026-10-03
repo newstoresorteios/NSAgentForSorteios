@@ -110,3 +110,23 @@ async def test_unknown_or_conflicting_photo_ids_do_not_send():
     for args in ({'candidate_id':'0'*16}, {'candidate_id':candidate_id(product), 'product_url':'https://www.newstorerj.com/other'}):
         assert not (await tools.execute('prepare_product_image', json.dumps(args)))['ok']
     assert tools.outbound_image_url is None
+
+
+@pytest.mark.asyncio
+async def test_missing_detail_page_still_returns_the_listed_official_link():
+    from app.direct.catalog import candidate_id
+    from app.tray.tray_adapter_client import TrayAdapterError
+    product = {'name': 'Orient Bambino V2 Small Seconds Automático Champanhe',
+               'url': 'https://www.newstorerj.com/relogios/orient-bambino', 'reference': 'RN-AP0105Y'}
+    tools = DirectTools(incoming=IncomingMessage(), history=[], documents=[],
+                        adapter=NS(get_ready_delivery_details=AsyncMock(
+                            side_effect=TrayAdapterError('Not Found', status_code=404))))
+    tools.candidates = {candidate_id(product): product}
+    tools.catalog_snapshot = 'a' * 32
+    result = await tools.execute('get_ready_delivery_details', json.dumps({'candidate_id': candidate_id(product)}))
+    assert result['ok'] is True and result['details_unavailable'] is True
+    assert result['product']['url'] == product['url']
+    reply = tools.attach_official_links('Não consegui confirmar a ficha.', 'manda o link dele ai',
+                                        [{'role': 'assistant', 'content': product['name']}])
+    assert product['url'] in reply
+    assert 'newstorerj.com/relogios/relogios-orient' not in reply
