@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.direct.knowledge import search_knowledge
+from app.direct.checkout import CheckoutItem
 
 
 class Arguments(BaseModel):
@@ -84,6 +85,7 @@ class Shipping(Arguments):
 
 
 DEFINITIONS = {
+    "prepare_checkout": (CheckoutItem, "Preparar revisão de UM produto administrativo já consultado, com quantidade e variação escolhidas pelo cliente. Apenas consulta preço e estoque; não cria carrinho nem pedido. O backend mostrará a proposta e pedirá confirmação separada. Nunca usar IDs da pronta entrega pública."),
     "get_ready_delivery_details": (ReadyDetail, "Ler ficha e preço publicados na página oficial de um candidato da pronta entrega. Use para tamanho, mecanismo, material e demais atributos ausentes no nome. Não confirma estoque físico nem permite cotar via IDs de outra loja."),
     "find_story_reference": (Knowledge, "Consultar vínculos humanos/publicados do Story atual e referências cadastradas nos destaques. Use antes de tentar identificar visualmente um Story; uma referência é identidade, nunca preço/estoque atual."),
     "list_product_variants": (Product, "Consultar variações reais de produto do catálogo administrativo já encontrado. Não aceita IDs da pronta entrega pública."),
@@ -95,7 +97,7 @@ DEFINITIONS = {
     "get_ready_delivery_candidate": (ReadyCandidate, "Obter links e fotos de até dez candidatos da visão completa da pronta entrega. Informe candidate_ids retornados por compare_ready_delivery_catalog; não são IDs do catálogo administrativo."),
     "search_ready_delivery": (ReadyDelivery, "Consultar pronta entrega em www.newstorerj.com pelo adaptador. Busca ampla: query='pronta entrega', offset=0. Para mais modelos, mantenha query e use next_offset. total é o total encontrado; returned é só esta página. Não acrescente preferências antigas. Listagem pública não confirma estoque físico ou preço."),
     "prepare_product_image": (ProductImage, "Anexar fotos de produtos conhecidos, até dez por resposta. Para várias, mande candidate_ids e deixe product_url e candidate_id nulos. Para uma, use candidate_id ou product_url exato. Nunca invente URLs ou IDs. Só diga que enviou as fotos que esta ferramenta confirmar."),
-    "search_products": (Search, "Buscar produtos reais por palavras do catálogo; faça buscas curtas. Valores em BRL. ready_stock só para pronta entrega."),
+    "search_products": (Search, "Buscar no catálogo administrativo, inclusive sob encomenda. Use quando a pronta entrega não tiver o modelo, a marca ou o estilo pedidos. upon_request=true significa sob encomenda: diga isso e o url oficial. Não use ready_stock aqui; pronta entrega é search_ready_delivery."),
     "get_product": (Product, "Consultar detalhes atuais do produto e seu link oficial; use IDs retornados pela busca."),
     "check_inventory": (Product, "Confirmar disponibilidade atual; não confundir estoque, prazo de postagem e chegada."),
     "search_knowledge": (Knowledge, "Consultar documentos publicados da loja, políticas, garantia e perguntas frequentes."),
@@ -104,9 +106,11 @@ DEFINITIONS = {
 }
 
 
-def tool_schemas():
+def tool_schemas(*, checkout_enabled=False):
     tools = []
     for name, (model, description) in DEFINITIONS.items():
+        if name == "prepare_checkout" and not checkout_enabled:
+            continue
         schema = model.model_json_schema()
         # Responses strict requires all properties, nullable for optional fields.
         schema["required"] = list(schema["properties"])
@@ -119,8 +123,10 @@ def tool_schemas():
 
 class DirectTools:
     def __init__(self, *, incoming, history, documents, adapter=None, products=None, catalog_snapshot=None,
-                 workspace=None, tenant=None, preview=False, continuity=None, learned=None):
+                 workspace=None, tenant=None, preview=False, continuity=None, learned=None, checkout_enabled=False):
         self.incoming, self.history, self.documents = incoming, history, documents
+        self.checkout_enabled = checkout_enabled
+        self.checkout_proposal = None
         self.adapter = adapter
         self.handoff = None
         self.calls = []
@@ -195,6 +201,19 @@ class DirectTools:
         except (ValidationError, ValueError):
             return {"ok": False, "error": "invalid_tool_arguments"}
         self.calls.append(name)
+        if name == "prepare_checkout":
+            if not self.checkout_enabled:
+                return {"ok": False, "error": "checkout_disabled"}
+            from app.direct.checkout import prepare_checkout
+            from app.tray.tray_adapter_client import TrayAdapterClient
+            try:
+                result, proposal = await prepare_checkout(adapter=self.adapter or TrayAdapterClient(),
+                    item=args, incoming=self.incoming, workspace=self.workspace, known_ids=self.admin_product_ids)
+                self.checkout_proposal = proposal
+                return result
+            except Exception:
+                return {"ok": False, "error": "checkout_review_unavailable",
+                        "instruction": "Não confirme preço, disponibilidade ou criação de carrinho."}
         if name == 'find_story_reference':
             if not self.workspace or not self.tenant:
                 return {'ok': False, 'error': 'workspace_required'}
@@ -207,9 +226,18 @@ class DirectTools:
         if name == 'remember_preference':
             from app.direct.continuity import save_preference
             try:
-                return await asyncio.to_thread(save_preference, incoming=self.incoming, workspace=self.workspace,
+                result = await asyncio.to_thread(save_preference, incoming=self.incoming, workspace=self.workspace,
                     tenant=self.tenant, key=args.key, action=args.action, evidence=args.evidence,
                     preview=self.preview, state=self.continuity['preferences'])
+                if result.get('ok'):
+                    forgotten = set(self.continuity.get('forgotten_keys', []))
+                    if args.action == 'forget':
+                        forgotten.add(args.key)
+                        self.continuity.pop('summary', None)
+                    else:
+                        forgotten.discard(args.key)
+                    self.continuity['forgotten_keys'] = sorted(forgotten)
+                return result
             except Exception:
                 return {'ok': False, 'error': 'memory_unavailable'}
         if name == 'update_conversation_context':
@@ -367,7 +395,21 @@ class DirectTools:
                         self.products[product['url']] = (dict(product, _catalog='admin')
                             if name in {'search_products', 'get_product'} else product)
                 self.products = dict(list(self.products.items())[-60:])
-            return {"ok": True, "source": "tray_adapter", "data": data}
+            payload = {"ok": True, "source": "tray_adapter", "data": data}
+            if name == 'search_ready_delivery' and isinstance(data, dict) and data.get('total') == 0:
+                payload['instruction'] = (
+                    'Nenhum item nessa pronta entrega. Antes de dizer que não existe, chame search_products '
+                    'com a mesma marca e o termo. upon_request=true é sob encomenda, não pronta entrega.'
+                )
+            if name == 'search_products' and isinstance(data, dict):
+                rows = data.get('products') or [data.get('product') or data]
+                if any(isinstance(row, dict) and str(row.get('upon_request')).lower() in {'1', 'true', 'yes', 'sim'}
+                       for row in rows):
+                    payload['instruction'] = (
+                        'upon_request=true é sob encomenda. Diga isso e envie o url oficial. '
+                        'Não apresente como pronta entrega nem como estoque confirmado.'
+                    )
+            return payload
         except (TrayAdapterError, TimeoutError, ValueError) as exc:
             if name in {'search_ready_delivery', 'get_ready_delivery_candidate', 'get_ready_delivery_details'} and getattr(exc, 'status_code', None) == 409:
                 return {"ok": False, "error": "catalog_snapshot_expired",

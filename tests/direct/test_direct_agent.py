@@ -268,6 +268,30 @@ async def test_search_constraints_and_public_fields():
     assert "SECRET" not in json.dumps(result)
 
 
+@pytest.mark.asyncio
+async def test_empty_ready_delivery_asks_for_made_to_order_catalog():
+    adapter = NS(search_ready_delivery=AsyncMock(return_value={
+        "query": "Orient open heart", "total": 0, "returned": 0, "products": []}))
+    tools = DirectTools(incoming=incoming(), history=[], documents=[], adapter=adapter)
+    result = await tools.execute("search_ready_delivery",
+                                 '{"query":"Orient open heart","offset":0,"limit":10}')
+    assert "search_products" in result["instruction"]
+    assert "sob encomenda" in result["instruction"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_upon_request_is_labeled_made_to_order():
+    adapter = NS(search_products=AsyncMock(return_value={"products": [{
+        "id": "9", "name": "Orient Open Heart", "url": "https://www.newstorerj.com/orient",
+        "upon_request": True}]}))
+    tools = DirectTools(incoming=incoming(), history=[], documents=[], adapter=adapter)
+    result = await tools.execute("search_products",
+                                 '{"query":"Orient open heart","ready_stock":false}')
+    assert result["data"]["products"][0]["upon_request"] is True
+    assert "sob encomenda" in result["instruction"]
+    assert adapter.search_products.await_args.kwargs["available_in_store"] is None
+
+
 def test_preview_session_tampering_expiry_and_workspace():
     from app.direct.admin import encode_session, decode_session
     from fastapi import HTTPException
