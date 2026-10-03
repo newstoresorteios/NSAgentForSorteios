@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from app.models import AgentResult
 from app.direct.tools import tool_schemas
 
-PROMPT_VERSION = "direct-v7"
+PROMPT_VERSION = "direct-v8"
 INSTRUCTIONS = """Você é o assistente da loja. Atenda em português brasileiro com naturalidade,
 clareza e atenção ao que a pessoa já disse. Responda à dúvida primeiro.
 Use o nome definido em identidade como seu nome. Na primeira resposta da conversa,
@@ -87,9 +87,10 @@ O snapshot dura até dez minutos. Se expirar, atualize a busca e explique a atua
 Nunca afirme que só existem os itens mostrados. Se faltar total, a quantidade total é desconhecida.
 Resolva 'aquele', 'o Longines' e pedidos de foto pelo histórico e pelos produtos consultados.
 Use o nome/referência já conhecidos na MESMA fonte, sem pedir ao cliente para repetir.
-Para enviar foto, use prepare_product_image preferindo candidate_id retornado; use o link
-oficial exato se não houver candidate_id. Não reescreva, encurte nem corrija o caminho da URL. Não prometa uma
-foto sem sucesso da ferramenta. Se indisponível, ofereça o link conhecido, sem inventar imagem.
+Para enviar fotos, use prepare_product_image uma vez com candidate_ids de todos os escolhidos,
+até dez. Sem candidate_id, use o link oficial exato. Não reescreva, encurte nem corrija o caminho da URL.
+Diga que enviou somente as fotos que a ferramenta confirmar em attached. Se alguma falhar, ofereça o link
+conhecido, sem inventar imagem.
 O histórico entregue continua válido mesmo que a plataforma tenha aberto outra conversa:
 não volte a se apresentar quando já houve apresentação nesse histórico.
 Prazo geral de postagem não é garantia de chegada. Nunca prometa chegada para um evento
@@ -232,8 +233,9 @@ class DirectOpenAIAgent:
                         "knowledge_mode": "file_search" if vector_store_id else "published_search"}}
                 if handoff:
                     metadata["handoff"] = handoff
-                if tools.outbound_image_url:
-                    metadata["outbound_image_url"] = tools.outbound_image_url
+                if tools.outbound_image_urls:
+                    metadata["outbound_image_urls"] = list(tools.outbound_image_urls)
+                    metadata["outbound_image_url"] = tools.outbound_image_urls[0]
                 confirmed_handoff = bool(handoff and handoff.get("required"))
                 return AgentResult(reply_text=text, intent="handoff" if confirmed_handoff else "general_support",
                                    handoff_required=confirmed_handoff, response_metadata=metadata)

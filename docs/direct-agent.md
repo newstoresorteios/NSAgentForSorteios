@@ -142,7 +142,7 @@ GET `/internal/ready-delivery` em páginas de 50 e entrega nomes/referências de
 todos os candidatos. Até 500 itens, com prazo de 35 segundos; snapshot divergente,
 total inconsistente ou página faltante falham explicitamente. Não é um ranking
 prévio nem uma seleção dos dez primeiros. A IA compara os candidatos e usa
-`get_ready_delivery_candidate` para obter links e imagens de até cinco escolhas.
+`get_ready_delivery_candidate` para obter links e imagens de até dez escolhas.
 Atributos ausentes, preços e estoque físico não são inferidos pelos nomes.
 A paginação de dez permanece disponível para quem quer percorrer a lista.
 

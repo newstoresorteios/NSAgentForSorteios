@@ -40,6 +40,7 @@ class ReadyDelivery(Knowledge):
 class ProductImage(Arguments):
     product_url: str | None = Field(default=None, min_length=1, max_length=2000)
     candidate_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{16}$')
+    candidate_ids: list[Annotated[str, Field(pattern=r'^[a-f0-9]{16}$')]] | None = Field(default=None, max_length=10)
 
 
 class Overview(Arguments):
@@ -47,7 +48,7 @@ class Overview(Arguments):
 
 
 class ReadyCandidate(Arguments):
-    candidate_ids: list[Annotated[str, Field(pattern=r'^[a-f0-9]{16}$')]] = Field(min_length=1, max_length=5)
+    candidate_ids: list[Annotated[str, Field(pattern=r'^[a-f0-9]{16}$')]] = Field(min_length=1, max_length=10)
 
 
 class ReadyDetail(Arguments):
@@ -91,9 +92,9 @@ DEFINITIONS = {
     "update_conversation_context": (ContextNote, "Preservar resumo breve da conversa: objetivo, correções, opções rejeitadas e referências escolhidas. Não registrar dados sensíveis, preço/estoque como atuais nem promessas não entregues. O resumo só vira histórico após resposta entregue."),
     "read_knowledge_document": (Document, "Ler documento publicado por document_id retornado em search_knowledge; paginar por next_offset para consultar além dos trechos iniciais."),
     "compare_ready_delivery_catalog": (Overview, "Ler TODOS os candidatos da pronta entrega em formato compacto antes de recomendar por estilo, ocasião, marca ou cor. Não limita aos primeiros produtos e não aplica preferências antigas como filtro. Compare os nomes/referências retornados; atributos ausentes são desconhecidos. Depois obtenha detalhes do escolhido com get_ready_delivery_candidate."),
-    "get_ready_delivery_candidate": (ReadyCandidate, "Obter links e fotos de até cinco candidatos da visão completa da pronta entrega. Informe candidate_ids retornados por compare_ready_delivery_catalog; não são IDs do catálogo administrativo."),
+    "get_ready_delivery_candidate": (ReadyCandidate, "Obter links e fotos de até dez candidatos da visão completa da pronta entrega. Informe candidate_ids retornados por compare_ready_delivery_catalog; não são IDs do catálogo administrativo."),
     "search_ready_delivery": (ReadyDelivery, "Consultar pronta entrega em www.newstorerj.com pelo adaptador. Busca ampla: query='pronta entrega', offset=0. Para mais modelos, mantenha query e use next_offset. total é o total encontrado; returned é só esta página. Não acrescente preferências antigas. Listagem pública não confirma estoque físico ou preço."),
-    "prepare_product_image": (ProductImage, "Anexar foto de produto conhecido. Prefira candidate_id retornado no produto, com product_url=null, para evitar erros ao copiar URLs longas. Alternativamente use product_url exato e candidate_id=null. Nunca invente URLs ou IDs."),
+    "prepare_product_image": (ProductImage, "Anexar fotos de produtos conhecidos, até dez por resposta. Para várias, mande candidate_ids e deixe product_url e candidate_id nulos. Para uma, use candidate_id ou product_url exato. Nunca invente URLs ou IDs. Só diga que enviou as fotos que esta ferramenta confirmar."),
     "search_products": (Search, "Buscar produtos reais por palavras do catálogo; faça buscas curtas. Valores em BRL. ready_stock só para pronta entrega."),
     "get_product": (Product, "Consultar detalhes atuais do produto e seu link oficial; use IDs retornados pela busca."),
     "check_inventory": (Product, "Confirmar disponibilidade atual; não confundir estoque, prazo de postagem e chegada."),
@@ -124,6 +125,7 @@ class DirectTools:
         self.handoff = None
         self.calls = []
         self.products = {p['url']: p for p in (products or []) if isinstance(p, dict) and p.get('url')}
+        self.outbound_image_urls = []
         self.outbound_image_url = None
         self.catalog_searches = []
         self.catalog_snapshot = catalog_snapshot
@@ -175,19 +177,35 @@ class DirectTools:
                 self.knowledge_evidence.append({'document_id': args.document_id, 'offset': args.offset})
             return result
         if name == "prepare_product_image":
-            from app.direct.catalog import candidate_id
-            product = (next((p for p in self.products.values() if candidate_id(p) == args.candidate_id), {})
-                       if args.candidate_id else self.products.get(args.product_url) or {})
-            if args.candidate_id and args.product_url and product.get('url') != args.product_url:
-                return {"ok": False, "error": "conflicting_product_identifiers"}
             from urllib.parse import urlparse
-            url = product.get('image_url') or product.get('primary_image_url') or ''
-            parsed = urlparse(url)
-            if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.tcdn.com.br'):
+            from app.direct.catalog import candidate_id
+            keys = list(dict.fromkeys([*(args.candidate_ids or []), *([args.candidate_id] if args.candidate_id else [])]))
+            if len(keys) > 10:
+                return {"ok": False, "error": "too_many_images", "instruction": "Anexe no máximo dez fotos."}
+            products = []
+            if keys:
+                products = [next((p for p in self.products.values() if candidate_id(p) == key), {}) for key in keys]
+                if args.product_url and (len(products) != 1 or products[0].get('url') != args.product_url):
+                    return {"ok": False, "error": "conflicting_product_identifiers"}
+            elif args.product_url:
+                products = [self.products.get(args.product_url) or {}]
+            attached = []
+            for product in products:
+                url = product.get('image_url') or product.get('primary_image_url') or ''
+                parsed = urlparse(url)
+                if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.tcdn.com.br'):
+                    continue
+                if url not in self.outbound_image_urls:
+                    if len(self.outbound_image_urls) >= 10:
+                        continue
+                    self.outbound_image_urls.append(url)
+                attached.append(product.get('name'))
+            self.outbound_image_url = self.outbound_image_urls[-1] if self.outbound_image_urls else None
+            if not attached:
                 return {"ok": False, "error": "verified_product_image_unavailable",
                         "instruction": "Confira candidate_id/link dos produtos conhecidos e tente novamente se copiou errado. Não conclua que o site não tem foto só porque o identificador não corresponde."}
-            self.outbound_image_url = url
-            return {"ok": True, "image_attached_to_reply": True, "product": product.get('name')}
+            return {"ok": True, "image_attached_to_reply": True, "attached": len(attached),
+                    "products": attached, "remaining_slots": 10 - len(self.outbound_image_urls)}
         if name == "search_knowledge":
             result = search_knowledge(self.documents, args.query)
             self.knowledge_evidence.extend({'document_id': d['document_id'], 'chunk': d['chunk']} for d in result['documents'])

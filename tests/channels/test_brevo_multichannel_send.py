@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -125,6 +126,7 @@ async def test_whatsapp_image_is_sent_as_pushed_conversations_attachment(monkeyp
 
     calls = []
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
+    monkeypatch.setattr(brevo, "_image_byte_size", AsyncMock(return_value=2048))
 
     async def conversations(incoming, text, audio_file=None, image_file=None):
         calls.append((incoming.visitor_id, text, audio_file, image_file))
@@ -162,7 +164,7 @@ async def test_whatsapp_image_is_sent_as_pushed_conversations_attachment(monkeyp
         "name": "relogio.png",
         "link": "https://cdn.example/relogio.png",
         "mimeType": "image/png",
-        "size": 1,
+        "size": 2048,
         "isImage": True,
     }
     assert result.response_metadata["native_media_sent"] is True
@@ -215,7 +217,8 @@ async def test_conversations_image_attachment_is_included_in_provider_payload(mo
 
     assert result.ok is True
     assert captured["url"] == brevo.BREVO_CONVERSATIONS_SEND_URL
-    assert captured["json"]["file"] == image_file
+    assert captured["json"]["attachments"] == [image_file]
+    assert "file" not in captured["json"]
     assert captured["json"]["text"] == "Segue a foto oficial."
 
 
@@ -263,6 +266,7 @@ async def test_whatsapp_image_falls_back_to_link_when_attachment_is_not_pushed(m
 
     assert sent.ok is True
     assert sent.provider_response["route"] == "whatsapp_transactional"
+    assert "Não consegui anexar a foto. Segue o link:" in fallback["text"]
     assert fallback["text"].endswith("https://cdn.example/relogio.jpg")
     assert result.response_metadata["native_media_sent"] is False
     assert result.response_metadata["media_send_failed"] is True

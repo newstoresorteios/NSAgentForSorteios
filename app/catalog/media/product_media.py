@@ -555,7 +555,7 @@ async def resolve_presented_product_images(
     image_urls: list[str] = []
     link_fallbacks = 0
     technical_failure = False
-    for index, reference in enumerate(product_references[:3], start=1):
+    for index, reference in enumerate(product_references[:10], start=1):
         one = await resolve_product_image(product_reference=reference, execute=execute)
         payload = (one.commercial_data or {}).get("products") or []
         product = payload[0] if payload and isinstance(payload[0], dict) else {}

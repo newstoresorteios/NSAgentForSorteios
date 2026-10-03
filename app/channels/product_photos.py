@@ -35,7 +35,7 @@ def attach_presented_product_photos(incoming: IncomingMessage, result: AgentResu
         photo = safe_catalog_photo(official_product_image(product))
         if photo and photo not in photos:
             photos.append(photo)
-        if len(photos) == 3:
+        if len(photos) == 10:
             break
     if photos:
         result.response_metadata["outbound_image_urls"] = photos
@@ -48,4 +48,4 @@ def outbound_catalog_photos(result: AgentResult) -> list[str]:
     values = metadata.get("outbound_image_urls") or [metadata.get("outbound_image_url")]
     if not isinstance(values, list):
         return []
-    return list(dict.fromkeys(url for value in values if (url := safe_catalog_photo(value))))[:3]
+    return list(dict.fromkeys(url for value in values if (url := safe_catalog_photo(value))))[:10]

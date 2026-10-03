@@ -107,25 +107,47 @@ def _outbound_image_urls(result: AgentResult | str) -> list[str]:
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             continue
         urls.append(value)
-        if len(urls) == 3:
+        if len(urls) == 10:
             break
     return urls
 
 
-def _build_brevo_image_file(url: str, position: int) -> dict[str, Any]:
+def _build_brevo_image_file(url: str, position: int, size: int | None = None) -> dict[str, Any]:
     path_name = unquote(urlparse(url).path.rsplit("/", 1)[-1]).strip()
     filename = path_name if "." in path_name else f"foto-produto-{position}.jpg"
     mime_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
     if not mime_type.startswith("image/"):
         filename = f"foto-produto-{position}.jpg"
         mime_type = "image/jpeg"
-    return {
+    payload = {
         "name": filename[:180],
         "link": url,
         "mimeType": mime_type,
-        "size": 1,
         "isImage": True,
     }
+    if size and size > 1:
+        payload["size"] = size
+    return payload
+
+
+async def _image_byte_size(url: str) -> int | None:
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+            response = await client.head(url)
+        length = response.headers.get("content-length")
+        if response.status_code < 400 and length and length.isdigit() and int(length) > 1:
+            return int(length)
+    except Exception:
+        return None
+    return None
+
+
+def _unsent_image_text(text: str, urls: list[str]) -> str:
+    note = "Não consegui anexar a foto. Segue o link:"
+    if note in (text or ""):
+        return text
+    body = "\n".join(urls)
+    return f"{(text or '').rstrip()}\n\n{note}\n{body}".strip()
 
 
 def _image_caption(text: str, image_urls: list[str], position: int) -> str:
@@ -166,9 +188,10 @@ async def _send_conversations_reply(
         "visitorId": incoming.visitor_id,
         **agent_payload,
     }
-    media_file = image_file or audio_file
-    if media_file:
-        payload["file"] = media_file
+    if image_file:
+        payload["attachments"] = [image_file]
+    elif audio_file:
+        payload["file"] = audio_file
 
     headers = {
         "accept": "application/json",
@@ -218,7 +241,7 @@ async def _send_whatsapp_images_via_conversations(
         media = await _send_conversations_reply(
             incoming,
             _image_caption(text, image_urls, position),
-            image_file=_build_brevo_image_file(image_url, position),
+            image_file=_build_brevo_image_file(image_url, position, await _image_byte_size(image_url)),
         )
         pushed = _conversation_message_was_pushed(media)
         all_pushed = all_pushed and pushed
@@ -406,7 +429,10 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
             sent = image_send_result
             channel = "brevo_conversations_media"
         else:
-            if image_send_attempted:
+            if image_send_attempted and not (image_send_result and image_send_result.ok):
+                text = _unsent_image_text(text, image_urls)
+                if isinstance(result, AgentResult):
+                    result.reply_text = text
                 log_event(
                     "brevo.send.whatsapp_image_fallback_text",
                     {

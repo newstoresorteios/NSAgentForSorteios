@@ -52,6 +52,21 @@ async def test_unknown_image_and_external_hosts_are_not_sent():
     for url in ('https://www.newstorerj.com/unknown','https://www.newstorerj.com/p'):
         assert not (await tools.execute('prepare_product_image',json.dumps({'product_url':url})))['ok']
     assert tools.outbound_image_url is None
+    assert tools.outbound_image_urls == []
+
+
+@pytest.mark.asyncio
+async def test_several_verified_photos_are_kept():
+    products = [
+        {'name': f'Model {n}', 'url': f'https://www.newstorerj.com/{n}',
+         'image_url': f'https://images.tcdn.com.br/{n}.jpg'}
+        for n in range(2)
+    ]
+    tools = DirectTools(incoming=IncomingMessage(), history=[], documents=[], products=products)
+    first = await tools.execute('prepare_product_image', json.dumps({'product_url': products[0]['url']}))
+    second = await tools.execute('prepare_product_image', json.dumps({'product_url': products[1]['url']}))
+    assert first['ok'] and second['ok'] and second['attached'] == 1
+    assert tools.outbound_image_urls == [products[0]['image_url'], products[1]['image_url']]
 
 
 @pytest.mark.asyncio
