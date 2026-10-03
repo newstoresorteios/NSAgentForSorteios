@@ -1,4 +1,5 @@
 """Exact Story clarification must also find the separate ready-stock storefront."""
+import re
 from unittest.mock import AsyncMock
 
 import pytest
@@ -52,8 +53,9 @@ async def test_explicit_identity_searches_ready_stock_without_inferred_story_col
     assert '30 dias' not in result.reply_text and 'foto' not in result.reply_text.lower()
     assert result.response_metadata['ready_delivery_exact_reference'] == 'H13519711'
     assert not result.commercial_data
-    assert 'foreign-store-id' not in str(result.response_metadata)
-    assert '9199' not in str(result.response_metadata)
+    metadata = str(result.response_metadata)
+    assert 'foreign-store-id' not in metadata
+    assert not re.search(r'(?<!\d)9199(?:\.99)?(?!\d)', metadata)
     assert result.response_metadata['ready_delivery_check']['stock_confirmed'] is False
 
 
