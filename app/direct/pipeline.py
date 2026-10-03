@@ -55,6 +55,8 @@ async def process_direct_message(incoming, customer_context):
         await asyncio.to_thread(stamp_inbound_workspace, incoming.raw.get("inbound_id"), workspace)
         history, previous = await asyncio.to_thread(load_history, incoming, workspace)
         documents = await asyncio.to_thread(knowledge_documents, persona)
+        from app.direct.continuity import learned_context
+        learned = await asyncio.to_thread(learned_context, persona, incoming)
         memories = ""
         if incoming.sender_key:
             from app.memory.contact_memory_repository import select_relevant_memories, format_customer_memory_block
@@ -65,6 +67,8 @@ async def process_direct_message(incoming, customer_context):
             except Exception as exc:
                 log_event("direct.memory.unavailable", {"error_type": type(exc).__name__})
         tools = DirectTools(incoming=incoming, history=history, documents=documents,
+                            workspace=workspace, tenant=persona.tenant_id, learned=learned,
+                            continuity=(previous.get('direct_agent') or {}).get('continuity'),
                             products=(previous.get('direct_agent') or {}).get('products', []),
                             catalog_snapshot=(previous.get('direct_agent') or {}).get('catalog_snapshot'))
         result = await DirectOpenAIAgent(get_async_openai_client(), settings).run_turn(
@@ -80,7 +84,8 @@ async def process_direct_message(incoming, customer_context):
         return result
     except Exception as exc:
         # Do not serialize exception messages: API errors can contain request data.
-        log_event("direct.turn.failed", {"error_type": type(exc).__name__})
+        from app.direct.diagnostics import safe_error_details
+        log_event("direct.turn.failed", safe_error_details(exc))
         metadata = {"engine": "direct", "response_source": "direct_unavailable"}
         if persona_token is not None:
             metadata["persona_runtime"] = {"workspace_id": workspace}

@@ -140,4 +140,5 @@ def test_history_query_has_all_identity_boundaries(monkeypatch):
     assert cursor.args["before"] == 2 and cursor.args["identity"] == "ig:a"
     for bound in ["workspace_id", "conversation_id", "i.channel", "i.provider", "i.sender_key", "provider_send_ok=true"]:
         assert bound in cursor.sql
-    assert history[-1]["content"] == "Oi" and previous["engine"] == "direct"
+    assert history[-1]["content"] == "Oi" and history[-1]["metadata"]["engine"] == "direct"
+    assert previous["engine"] == "direct"

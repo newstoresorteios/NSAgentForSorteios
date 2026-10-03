@@ -43,5 +43,6 @@ def load_history(incoming, workspace_id: str, *, limit: int = 30):
     history = []
     for row in rows:
         history.extend([{"role": "user", "content": row["text"] or "[Mídia recebida]"},
-                        {"role": "assistant", "content": row["reply_text"]}])
+                        {"role": "assistant", "content": row["reply_text"],
+                         "metadata": row.get("metadata") or {}}])
     return history, (rows[-1].get("metadata") or {}) if rows else {}

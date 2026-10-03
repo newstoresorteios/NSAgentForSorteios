@@ -58,6 +58,7 @@ async def test_published_identity_reaches_direct_model():
     prompt = api.responses.create.await_args.kwargs["instructions"]
     assert '"identidade": "Crono"' in prompt
     assert "apresente-se brevemente com esse nome" in prompt
+    assert "use lookup_order" in prompt
 
 
 async def run(api, message=None, previous=None, history=None, adapter=None, cfg=None):
@@ -180,7 +181,7 @@ def test_workspace_policies_cannot_override_engine():
 
 def test_tool_surface_is_read_only_and_strict():
     names = {item["name"] for item in tool_schemas()}
-    assert names == {"search_products", "search_ready_delivery", "get_product", "check_inventory", "search_knowledge", "request_human", "prepare_product_image", "compare_ready_delivery_catalog", "get_ready_delivery_candidate"}
+    assert names == {"search_products", "search_ready_delivery", "get_product", "check_inventory", "search_knowledge", "request_human", "lookup_order", "prepare_product_image", "compare_ready_delivery_catalog", "get_ready_delivery_candidate", "get_ready_delivery_details", "remember_preference", "update_conversation_context", "read_knowledge_document", "find_story_reference", "list_product_variants", "quote_product_shipping"}
     for item in tool_schemas():
         assert item["strict"] and item["parameters"]["additionalProperties"] is False
         assert set(item["parameters"]["required"]) == set(item["parameters"]["properties"])
@@ -202,6 +203,49 @@ async def test_no_handoff_without_consent():
     tools = DirectTools(incoming=incoming("não quero atendimento humano"), history=[], documents=[])
     result = await tools.execute("request_human", '{"reason":"pedido do modelo"}')
     assert result["ok"] is False and tools.handoff is None
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_transfer_promise_becomes_an_offer():
+    from app.ops.handoff_consent import offer_text
+    result = await run(client([response(
+        "Posso te orientar, mas não consultei o pedido. Vou te passar para o João, da equipe.")]),
+        incoming("Prazo do meu pedido efetuado"))
+    assert result.handoff_required is False
+    assert result.response_metadata["handoff"]["offer"] is True
+    assert result.response_metadata["handoff"]["confirmed"] is False
+    assert "João" not in result.reply_text
+    assert offer_text() in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_explicit_human_request_is_queued_even_if_the_model_skips_the_tool():
+    from app.configuration.runtime import message
+    result = await run(client([response("Vou te passar para o João da equipe.")]),
+                       incoming("Quero falar com um atendente"))
+    assert result.handoff_required is True
+    assert result.reply_text == message("handoff_requested")
+    assert result.response_metadata["handoff"]["consent_reason"] == "customer_requested_human"
+    assert result.response_metadata["handoff"]["confirmed"] is True
+
+
+@pytest.mark.asyncio
+async def test_acceptance_of_the_previous_offer_confirms_handoff():
+    from app.ops.handoff_consent import offer_text
+    from app.configuration.runtime import message
+    history = [{"role": "assistant", "content": offer_text(),
+                "metadata": {"handoff": {"offer": True, "required": False}}}]
+    result = await run(client([response("Certo, sigo por aqui.")]), incoming("sim"), history=history)
+    assert result.handoff_required is True
+    assert result.reply_text == message("handoff_requested")
+    assert result.response_metadata["handoff"]["consent_reason"] == "customer_accepted_handoff_offer"
+
+
+@pytest.mark.asyncio
+async def test_bare_yes_does_not_confirm_handoff():
+    result = await run(client([response("Como posso ajudar?")]), incoming("sim"))
+    assert result.handoff_required is False
+    assert "handoff" not in result.response_metadata
 
 
 @pytest.mark.asyncio

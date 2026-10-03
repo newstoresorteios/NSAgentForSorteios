@@ -82,10 +82,16 @@ Publicar novo snapshot quando os documentos mudarem e substituir o ID; a fonte l
 é consultável mesmo com File Search. Um vector store nunca é escolhido pelo cliente.
 
 Ferramentas comerciais públicas: buscar produto, detalhes e estoque, todas pelo
-TRAYadaptor com autenticação existente. Nenhuma mutação ou consulta privada de pedido
-é exposta ao modelo. Compras usam links oficiais retornados; pedidos privados são
-encaminhados para atendimento humano com consentimento. Confirmação é verificada
-no backend e não inferida de um número de lista pelo agente.
+TRAYadaptor com autenticação existente. `lookup_order` reutiliza a consulta de
+pedido do legado (`find_order_by_customer_document` e `get_order_facts`) em modo
+somente leitura: GET `/internal/customers`, `/internal/orders` e
+`/internal/orders/{id}/complete`. O modelo só pode passar número ou CPF/CNPJ que
+o cliente escreveu, ou um número já confirmado nesta conversa. O telefone do
+atendimento, o documento ou o vínculo do pedido confirmam o titular antes de
+devolver status, previsão e rastreio. Não há criação, cancelamento ou alteração.
+Compras usam links oficiais. Encaminhamento humano só entra na fila com
+`request_human` bem-sucedido ou com pedido/aceite explícito do cliente; uma
+promessa de transferência sem esse consentimento vira oferta e espera confirmação.
 
 Imagens usam download restrito e entram no mesmo modelo. Áudio usa transcrição
 existente. Vídeo de Story pede uma foto nesta versão; não chama a cadeia antiga de

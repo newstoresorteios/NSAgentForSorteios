@@ -87,7 +87,11 @@ async def preview_turn(payload):
                 path.write_bytes(data)
                 content.extend(await prepared_file_content(SimpleNamespace(path=path, content_type='video/mp4')))
         docs = await asyncio.to_thread(knowledge_documents, persona)
+        from app.direct.continuity import learned_context
+        learned = await asyncio.to_thread(learned_context, persona, incoming)
         tools = DirectTools(incoming=incoming, history=state["history"], documents=docs,
+                            workspace=workspace, tenant=persona.tenant_id, preview=True, learned=learned,
+                            continuity=(state['previous'].get('direct_agent') or {}).get('continuity'),
                             products=(state['previous'].get('direct_agent') or {}).get('products', []),
                             catalog_snapshot=(state['previous'].get('direct_agent') or {}).get('catalog_snapshot'))
         result = await DirectOpenAIAgent(get_async_openai_client(), settings).run_turn(
