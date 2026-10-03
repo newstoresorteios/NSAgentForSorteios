@@ -70,6 +70,25 @@ async def test_several_verified_photos_are_kept():
 
 
 @pytest.mark.asyncio
+async def test_photo_request_attaches_known_images_when_the_model_skips_the_tool():
+    products = [
+        {'name': 'Tissot', 'url': 'https://www.newstorerj.com/tissot',
+         'image_url': 'https://images.tcdn.com.br/tissot.jpg'},
+        {'name': 'Mido', 'url': 'https://www.newstorerj.com/mido',
+         'image_url': 'https://images.tcdn.com.br/mido.jpg'},
+    ]
+    incoming = IncomingMessage(text='manda as fotos de novo', provider='brevo', channel='whatsapp',
+                               sender_key='same', conversation_id='thread')
+    tools = DirectTools(incoming=incoming, history=[], documents=[], products=products)
+    api = client([response('Pronto, reenviei as fotos.')])
+    result = await DirectOpenAIAgent(api, settings()).run_turn(
+        incoming=incoming, workspace_id='w', history=[], previous={}, tools=tools,
+        content=[{'type': 'input_text', 'text': incoming.text}])
+    assert result.response_metadata['outbound_image_urls'] == [
+        products[0]['image_url'], products[1]['image_url']]
+
+
+@pytest.mark.asyncio
 async def test_snapshot_expiry_requests_refresh_not_no_stock():
     from app.tray.tray_adapter_client import TrayAdapterError
     adapter=NS(search_ready_delivery=AsyncMock(side_effect=TrayAdapterError('expired',status_code=409)))
