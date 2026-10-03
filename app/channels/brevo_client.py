@@ -129,18 +129,6 @@ def _build_brevo_image_file(url: str, position: int, size: int | None = None) ->
     return payload
 
 
-async def _image_byte_size(url: str) -> int | None:
-    try:
-        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
-            response = await client.head(url)
-        length = response.headers.get("content-length")
-        if response.status_code < 400 and length and length.isdigit() and int(length) > 1:
-            return int(length)
-    except Exception:
-        return None
-    return None
-
-
 def _unsent_image_text(text: str, urls: list[str]) -> str:
     note = "Não consegui anexar a foto. Segue o link:"
     if note in (text or ""):
@@ -237,12 +225,12 @@ async def _send_whatsapp_images_via_conversations(
     all_pushed = True
     last_status: int | None = None
     for position, image_url in enumerate(image_urls, start=1):
-        media = await _send_conversations_reply(
+        media = await _send_whatsapp_transactional_reply(
             incoming,
             _image_caption(text, image_urls, position),
-            image_file=_build_brevo_image_file(image_url, position, await _image_byte_size(image_url)),
+            image_url=image_url,
         )
-        pushed = _conversation_message_was_pushed(media)
+        pushed = bool(media.ok)
         all_pushed = all_pushed and pushed
         last_status = media.status_code or last_status
         attempts.append({
@@ -260,7 +248,7 @@ async def _send_whatsapp_images_via_conversations(
         dry_run=False,
         status_code=last_status,
         provider_response={
-            "route": "brevo_conversations_media",
+            "route": "whatsapp_transactional_media",
             "images_requested": len(image_urls),
             "images_attempted": len(attempts),
             "images_pushed": sum(1 for attempt in attempts if attempt["pushed"]),
@@ -270,7 +258,11 @@ async def _send_whatsapp_images_via_conversations(
     )
 
 
-async def _send_whatsapp_transactional_reply(incoming: IncomingMessage, text: str) -> BrevoSendResult:
+async def _send_whatsapp_transactional_reply(
+    incoming: IncomingMessage,
+    text: str,
+    image_url: str | None = None,
+) -> BrevoSendResult:
     settings = get_settings()
 
     if not settings.brevo_api_key:
@@ -296,8 +288,10 @@ async def _send_whatsapp_transactional_reply(incoming: IncomingMessage, text: st
     payload: dict[str, Any] = {
         "contactNumbers": [recipient],
         "senderNumber": sender,
-        "text": text,
+        "text": (text or "")[:1024],
     }
+    if image_url:
+        payload["imageUrl"] = image_url
 
     headers = {
         "accept": "application/json",

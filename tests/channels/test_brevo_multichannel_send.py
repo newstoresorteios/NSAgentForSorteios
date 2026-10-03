@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -126,21 +125,16 @@ async def test_whatsapp_image_is_sent_as_pushed_conversations_attachment(monkeyp
 
     calls = []
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
-    monkeypatch.setattr(brevo, "_image_byte_size", AsyncMock(return_value=2048))
 
-    async def conversations(incoming, text, audio_file=None, image_file=None):
-        calls.append((incoming.visitor_id, text, audio_file, image_file))
+    async def whatsapp(_incoming, text, image_url=None):
+        calls.append((text, image_url))
         return BrevoSendResult(
             ok=True,
             dry_run=False,
-            status_code=200,
-            provider_response={"id": "media-1", "isPushed": True},
+            status_code=201,
+            provider_response={"messageId": "media-1"},
         )
 
-    async def whatsapp(*_args):
-        raise AssertionError("text fallback must not run when media was pushed")
-
-    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
     monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
     result = AgentResult(
         reply_text="Esta é a imagem oficial do relógio:\nhttps://cdn.example/relogio.png",
@@ -157,15 +151,8 @@ async def test_whatsapp_image_is_sent_as_pushed_conversations_attachment(monkeyp
     )
 
     assert sent.ok is True
-    assert sent.provider_response["route"] == "brevo_conversations_media"
-    assert calls[0][1] == "Esta é a imagem oficial do relógio:"
-    assert calls[0][2] is None
-    assert calls[0][3] == {
-        "fileName": "relogio.png",
-        "url": "https://cdn.example/relogio.png",
-        "size": 2048,
-        "isImage": True,
-    }
+    assert sent.provider_response["route"] == "whatsapp_transactional_media"
+    assert calls == [("Esta é a imagem oficial do relógio:", "https://cdn.example/relogio.png")]
     assert result.response_metadata["native_media_sent"] is True
     assert result.response_metadata["native_media_count"] == 1
     assert result.response_metadata["fallback_link_sent"] is False
@@ -228,17 +215,9 @@ async def test_whatsapp_image_falls_back_to_link_when_attachment_is_not_pushed(m
     fallback = {}
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
 
-    async def conversations(_incoming, _text, audio_file=None, image_file=None):
-        assert audio_file is None
-        assert image_file is not None
-        return BrevoSendResult(
-            ok=True,
-            dry_run=False,
-            status_code=200,
-            provider_response={"id": "inbox-only", "isPushed": False},
-        )
-
-    async def whatsapp(_incoming, text):
+    async def whatsapp(_incoming, text, image_url=None):
+        if image_url:
+            return BrevoSendResult(ok=False, dry_run=False, status_code=400, error="brevo_send_failed")
         fallback["text"] = text
         return BrevoSendResult(
             ok=True,
@@ -247,7 +226,6 @@ async def test_whatsapp_image_falls_back_to_link_when_attachment_is_not_pushed(m
             provider_response={"messageId": "text-1"},
         )
 
-    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
     monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
     result = AgentResult(
         reply_text="Foto oficial:\nhttps://cdn.example/relogio.jpg",
@@ -279,16 +257,16 @@ async def test_whatsapp_sends_each_requested_product_image(monkeypatch):
     captions = []
     monkeypatch.setattr(brevo, "get_settings", lambda: _settings())
 
-    async def conversations(_incoming, text, audio_file=None, image_file=None):
-        captions.append((text, image_file["url"]))
+    async def whatsapp(_incoming, text, image_url=None):
+        captions.append((text, image_url))
         return BrevoSendResult(
             ok=True,
             dry_run=False,
-            status_code=200,
-            provider_response={"id": f"media-{len(captions)}", "isPushed": True},
+            status_code=201,
+            provider_response={"messageId": f"media-{len(captions)}"},
         )
 
-    monkeypatch.setattr(brevo, "_send_conversations_reply", conversations)
+    monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
     result = AgentResult(
         reply_text="Fotos oficiais:\nhttps://cdn.example/1.jpg\nhttps://cdn.example/2.jpg",
         response_metadata={
