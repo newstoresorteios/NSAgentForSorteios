@@ -387,6 +387,13 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
         if not ensure_handoff_queued(incoming, result):
             return BrevoSendResult(ok=False, dry_run=False, error="human_handoff_queue_unavailable")
 
+    if incoming.channel == "whatsapp" and image_urls:
+        # sendMessage ignores imageUrl and still returns 201 with only the caption.
+        # Conversations rejects every file shape. Deliver the image address in the text.
+        text = _unsent_image_text(text, image_urls)
+        if isinstance(result, AgentResult):
+            result.reply_text = text
+        image_send_supported = False
     if settings.dry_run or mode == "dry_run":
         sent = BrevoSendResult(
             ok=True,

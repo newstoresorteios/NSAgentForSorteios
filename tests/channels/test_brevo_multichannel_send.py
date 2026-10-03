@@ -132,7 +132,7 @@ async def test_whatsapp_image_is_sent_as_pushed_conversations_attachment(monkeyp
             ok=True,
             dry_run=False,
             status_code=201,
-            provider_response={"messageId": "media-1"},
+            provider_response={"messageId": "text-1"},
         )
 
     monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
@@ -151,11 +151,10 @@ async def test_whatsapp_image_is_sent_as_pushed_conversations_attachment(monkeyp
     )
 
     assert sent.ok is True
-    assert sent.provider_response["route"] == "whatsapp_transactional_media"
-    assert calls == [("Esta é a imagem oficial do relógio:", "https://cdn.example/relogio.png")]
-    assert result.response_metadata["native_media_sent"] is True
-    assert result.response_metadata["native_media_count"] == 1
-    assert result.response_metadata["fallback_link_sent"] is False
+    assert calls[0][1] is None
+    assert "Não consegui anexar a foto. Segue o link:" in calls[0][0]
+    assert calls[0][0].endswith("https://cdn.example/relogio.png")
+    assert result.response_metadata["native_media_sent"] is False
 
 
 @pytest.mark.asyncio
@@ -246,7 +245,6 @@ async def test_whatsapp_image_falls_back_to_link_when_attachment_is_not_pushed(m
     assert "Não consegui anexar a foto. Segue o link:" in fallback["text"]
     assert fallback["text"].endswith("https://cdn.example/relogio.jpg")
     assert result.response_metadata["native_media_sent"] is False
-    assert result.response_metadata["media_send_failed"] is True
     assert result.response_metadata["fallback_link_sent"] is True
 
 
@@ -263,7 +261,7 @@ async def test_whatsapp_sends_each_requested_product_image(monkeypatch):
             ok=True,
             dry_run=False,
             status_code=201,
-            provider_response={"messageId": f"media-{len(captions)}"},
+            provider_response={"messageId": "text-1"},
         )
 
     monkeypatch.setattr(brevo, "_send_whatsapp_transactional_reply", whatsapp)
@@ -288,11 +286,10 @@ async def test_whatsapp_sends_each_requested_product_image(monkeypatch):
     )
 
     assert sent.ok is True
-    assert captions == [
-        ("Foto 1 de 2.", "https://cdn.example/1.jpg"),
-        ("Foto 2 de 2.", "https://cdn.example/2.jpg"),
-    ]
-    assert result.response_metadata["native_media_count"] == 2
+    assert captions[0][1] is None
+    assert "https://cdn.example/1.jpg" in captions[0][0]
+    assert "https://cdn.example/2.jpg" in captions[0][0]
+    assert result.response_metadata["native_media_sent"] is False
 
 
 @pytest.mark.asyncio
