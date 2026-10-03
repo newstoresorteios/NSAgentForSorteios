@@ -136,6 +136,22 @@ async def test_customer_document_uses_the_internal_read_contract():
 
 
 @pytest.mark.asyncio
+async def test_document_lookup_accepts_customer_scoped_order_without_customer_id():
+    def respond(request):
+        if request.url.path == "/internal/customers":
+            return httpx.Response(200, json={"customers": [{"id": "9"}]})
+        if request.url.path == "/internal/orders":
+            return httpx.Response(200, json={"orders": [{"id": "26116", "status": "ENVIADO"}]})
+        return httpx.Response(200, json={"order": {**ORDER, "customer_id": "9"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond), timeout=12) as http:
+        adapter = TrayAdapterClient("https://adapter.test", "private-token", http)
+        adapter.max_get_attempts = 1
+        result = await execute(tools(f"pedido 26116 CPF {CPF}", adapter), order_reference="26116", document=CPF)
+    assert result["ok"] is True and result["status"] == "Enviado"
+
+
+@pytest.mark.asyncio
 async def test_several_orders_do_not_leak_their_numbers():
     def respond(request):
         if request.url.path == "/internal/customers":

@@ -161,6 +161,15 @@ async def lookup_customer_order(*, incoming, history, continuity, adapter, order
             "error": "order_lookup_unavailable",
             "instruction": "A consulta não respondeu a tempo. Não confirme status, prazo ou rastreio.",
         }
+    if document_digits and agent_result.safety_reason == "order_customer_mismatch":
+        return {
+            "ok": False,
+            "error": "document_does_not_match_order",
+            "instruction": (
+                "O CPF informado não confirma esse pedido. Diga isso e peça para conferir o número ou o documento. "
+                "Não peça o mesmo CPF outra vez e não diga que encaminhou para alguém."
+            ),
+        }
     data = agent_result.commercial_data or {}
     remembered = None
     if data.get("success") and data.get("order_id"):

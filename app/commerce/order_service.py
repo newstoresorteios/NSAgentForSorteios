@@ -1342,10 +1342,11 @@ async def find_order_by_customer_document(
             else None
         )
         returned_customer_id = order.get("customer_id") or nested_customer_id
-        return (
-            returned_customer_id is not None
-            and str(returned_customer_id) == confirmed_customer_id
-        )
+        # The list was already requested for this customer. A row that omits
+        # the id still belongs to that query; a different id does not.
+        if returned_customer_id is None:
+            return True
+        return str(returned_customer_id) == confirmed_customer_id
 
     owned_orders = [order for order in order_result.get('orders') or []
                     if isinstance(order, dict) and belongs_to_confirmed_customer(order)
@@ -1400,6 +1401,16 @@ async def find_order_by_customer_document(
         log_swallowed("order.get_complete_canonical", exc)
         complete = {"error": "commerce_upstream_error"}
     if "error" not in complete and _order_payload_exists(complete):
+        complete_customer = complete.get("customer") if isinstance(complete.get("customer"), dict) else {}
+        complete_customer_id = complete.get("customer_id") or complete_customer.get("id")
+        if complete_customer_id is not None and str(complete_customer_id) != confirmed_customer_id:
+            return AgentResult(
+                reply_text=operator_message('commerce.order_service.find_order_by_customer_document.7e9d61c10d'),
+                intent="commerce",
+                safety_reason="order_customer_mismatch",
+                commercial_data={"success": False, "stage": "order_customer_lookup"},
+                response_metadata={"domain": "commerce", "used_tray": True},
+            )
         return _order_facts_result(complete, canonical_id, state)
     if _order_payload_exists(matching_order):
         return _order_facts_result(matching_order, canonical_id, state)
