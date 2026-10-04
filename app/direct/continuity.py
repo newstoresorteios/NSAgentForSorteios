@@ -49,8 +49,11 @@ def save_preference(*, incoming, workspace, tenant, key, action, evidence, previ
     if action == 'forget':
         if not re.search(r'\b(esque[çc]a|esquecer|apague|remova|n[aã]o guarde|n[aã]o lembre)\b', evidence, re.I):
             return {'ok': False, 'error': 'explicit_forget_request_required'}
-    elif not re.search(r'\b(eu|meu|minha|prefiro|gosto|quero|chame|chamo|pode me chamar|n[aã]o repita|or[çc]amento)\b', evidence, re.I):
+    elif not re.search(r'\b(eu|prefiro|gosto|quero|chame|chamo|pode me chamar|n[aã]o repita|meu or[çc]amento|minha prefer[eê]ncia)\b', evidence, re.I):
         return {'ok': False, 'error': 'explicit_preference_required'}
+    start = text.casefold().find(evidence.casefold())
+    if re.search(r'\b(n[aã]o|nunca|nem)\s*$', text[max(0,start-12):start], re.I):
+        return {'ok': False, 'error': 'negation_must_be_preserved'}
     proposal = MemoryProposal(action='forget' if action == 'forget' else 'upsert', key=key,
         kind=MemoryKind(KINDS[key]), value=evidence, safe_summary=evidence,
         confidence=1, importance=.8, ttl_days=60, use_in_instructions=True,
@@ -60,7 +63,10 @@ def save_preference(*, incoming, workspace, tenant, key, action, evidence, previ
                                        tenant_id=tenant, sender_key=incoming.sender_key)
     if not decision.accepted:
         return {'ok': decision.rejection_codes == ['duplicate'], 'error': 'memory_policy_rejected' if decision.rejection_codes != ['duplicate'] else None}
-    aliases = memory_keys_equivalent(key)
+    legacy = {'preferred_color': 'color_preference', 'preferred_material': 'material_preference',
+              'preferred_size': 'size_preference', 'preferred_style': 'style_preference',
+              'preferred_price_max': 'price_preference'}
+    aliases = tuple(dict.fromkeys((*memory_keys_equivalent(key), legacy.get(key, key))))
     if preview:
         for alias in aliases:
             state.pop(alias, None)
@@ -76,11 +82,12 @@ def save_preference(*, incoming, workspace, tenant, key, action, evidence, previ
         for alias in aliases:
             forget_contact_memory(tenant_id=tenant, workspace_id=workspace, sender_key=incoming.sender_key, memory_key=alias)
     else:
+        upsert_contact_memory(tenant_id=tenant, workspace_id=workspace, sender_key=incoming.sender_key,
+            memory_key=key, memory_kind=KINDS[key], value=evidence, safe_summary=evidence,
+            source='explicit_user', metadata={'engine': 'direct', 'evidence': 'current_message'},
+            importance=.8, confidence=1, use_in_instructions=True,
+            source_inbound_id=incoming.raw.get('inbound_id'), expires_at=datetime.now(timezone.utc)+timedelta(days=60))
         for alias in aliases:
             if alias != key:
                 forget_contact_memory(tenant_id=tenant, workspace_id=workspace, sender_key=incoming.sender_key, memory_key=alias)
-        upsert_contact_memory(tenant_id=tenant, workspace_id=workspace, sender_key=incoming.sender_key,
-            memory_key=key, memory_kind=KINDS[key], value=evidence, safe_summary=evidence,
-            source='direct_explicit_customer', importance=.8, confidence=1, use_in_instructions=True,
-            source_inbound_id=incoming.raw.get('inbound_id'), expires_at=datetime.now(timezone.utc)+timedelta(days=60))
     return {'ok': True, 'saved': action != 'forget', 'forgotten': action == 'forget'}
