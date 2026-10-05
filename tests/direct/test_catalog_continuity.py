@@ -70,22 +70,40 @@ async def test_several_verified_photos_are_kept():
 
 
 @pytest.mark.asyncio
-async def test_photo_request_attaches_known_images_when_the_model_skips_the_tool():
+@pytest.mark.parametrize('text', ['manda as fotos de novo', 'não mande fotos',
+                                  'mande somente a foto do Mido'])
+async def test_no_images_are_selected_without_the_model_tool(text):
     products = [
         {'name': 'Tissot', 'url': 'https://www.newstorerj.com/tissot',
          'image_url': 'https://images.tcdn.com.br/tissot.jpg'},
         {'name': 'Mido', 'url': 'https://www.newstorerj.com/mido',
          'image_url': 'https://images.tcdn.com.br/mido.jpg'},
     ]
-    incoming = IncomingMessage(text='manda as fotos de novo', provider='brevo', channel='whatsapp',
+    incoming = IncomingMessage(text=text, provider='brevo', channel='whatsapp',
                                sender_key='same', conversation_id='thread')
     tools = DirectTools(incoming=incoming, history=[], documents=[], products=products)
-    api = client([response('Pronto, reenviei as fotos.')])
+    api = client([response('Entendido.')])
     result = await DirectOpenAIAgent(api, settings()).run_turn(
         incoming=incoming, workspace_id='w', history=[], previous={}, tools=tools,
         content=[{'type': 'input_text', 'text': incoming.text}])
-    assert result.response_metadata['outbound_image_urls'] == [
-        products[0]['image_url'], products[1]['image_url']]
+    assert 'outbound_image_urls' not in result.response_metadata
+    assert tools.outbound_image_urls == []
+
+
+@pytest.mark.asyncio
+async def test_only_the_product_selected_by_the_model_is_attached():
+    products = [{'name': name, 'url': f'https://www.newstorerj.com/{name}',
+                 'image_url': f'https://images.tcdn.com.br/{name}.jpg'}
+                for name in ['Tissot', 'Mido']]
+    incoming = IncomingMessage(text='mande somente a foto do Mido')
+    tools = DirectTools(incoming=incoming, history=[], documents=[], products=products)
+    call = NS(type='function_call', id='fc', call_id='c', name='prepare_product_image',
+              arguments=json.dumps({'product_url': products[1]['url']}))
+    api = client([response(calls=[call]), response('Segue a foto do Mido.')])
+    result = await DirectOpenAIAgent(api, settings()).run_turn(
+        incoming=incoming, workspace_id='w', history=[], previous={}, tools=tools,
+        content=[{'type': 'input_text', 'text': incoming.text}])
+    assert result.response_metadata['outbound_image_urls'] == [products[1]['image_url']]
 
 
 @pytest.mark.asyncio

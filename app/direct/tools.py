@@ -144,23 +144,6 @@ class DirectTools:
         self.knowledge_evidence = []
         self.admin_product_ids = {str(p['id']) for p in self.products.values() if p.get('_catalog') == 'admin' and p.get('id')}
 
-    def queue_known_photos(self, text: str) -> None:
-        folded = (text or "").casefold()
-        if self.outbound_image_urls or ("foto" not in folded and "imagem" not in folded):
-            return
-        from urllib.parse import urlparse
-        for product in self.products.values():
-            url = product.get("image_url") or product.get("primary_image_url") or ""
-            parsed = urlparse(url)
-            if parsed.scheme != "https" or not (parsed.hostname or "").endswith(".tcdn.com.br"):
-                continue
-            if url not in self.outbound_image_urls:
-                self.outbound_image_urls.append(url)
-            if len(self.outbound_image_urls) >= 10:
-                break
-        if self.outbound_image_urls:
-            self.outbound_image_url = self.outbound_image_urls[0]
-
     def attach_official_links(self, reply: str, incoming_text: str, history) -> str:
         import unicodedata
         def fold(value):

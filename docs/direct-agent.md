@@ -49,8 +49,12 @@ produtos. O site pode mudar entre novas buscas; o snapshot estabiliza a paginaç
 
 Produtos consultados (até 60) e a última página ficam nos metadados entregues.
 `prepare_product_image` aceita somente URL de produto já consultado, com imagem
-HTTPS no CDN da Tray. Usa o envio de imagem existente do WhatsApp/Instagram;
-o preview retorna a URL sem enviar nada. Não recupera imagens por URL arbitrária.
+HTTPS no CDN da Tray. Somente a ferramenta seleciona as fotos: mencionar "foto"
+na mensagem não anexa automaticamente produtos anteriores. Instagram usa o envio
+nativo existente; WhatsApp usa upload binário e envio por media ID, descritos em
+[whatsapp-native-media.md](whatsapp-native-media.md). O preview retorna a referência
+sem enviar nada. Não recupera imagens por URL arbitrária e não substitui falha de
+anexo por um link ao cliente.
 
 ## Contexto e dados
 
@@ -63,7 +67,10 @@ visitor_id são os mesmos. A sessão OpenAI é reconstruída ao mudar o ID da co
 preservando mensagens entregues e referências dos produtos. Outros canais não
 recebem essa exceção. Antes de
 reutilizar uma conversa remota, seu último item precisa ser o item da última
-resposta entregue. Qualquer divergência reconstrói o contexto a partir do histórico
+resposta entregue, e o hash do texto original deve coincidir com o texto efetivamente
+entregue. Reescritas de handoff, links acrescentados e alterações do transporte
+invalidam a reutilização. Metadados antigos sem hash também causam reconstrução.
+Qualquer divergência reconstrói o contexto a partir do histórico
 entregue. Após 30 turnos, uma conversa nova recebe até 30 pares entregues. Isso
 limita o crescimento, mas não constitui memória infinita; mídias antigas não são
 recarregadas durante reconstrução. Preferências duradouras existentes são lidas

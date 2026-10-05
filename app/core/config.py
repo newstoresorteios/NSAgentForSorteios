@@ -828,6 +828,11 @@ class Settings(BaseSettings):
     brevo_agent_email: str = Field(default="", alias="BREVO_AGENT_EMAIL")
     brevo_agent_name: str = Field(default="NewStoreAgent", alias="BREVO_AGENT_NAME")
     brevo_received_from: str = Field(default="NewStoreAgent", alias="BREVO_RECEIVED_FROM")
+    # Native image upload, only for the same business number used by Brevo.
+    meta_whatsapp_media_enabled: bool = Field(default=False, alias="META_WHATSAPP_MEDIA_ENABLED")
+    meta_whatsapp_access_token: str = Field(default="", alias="META_WHATSAPP_ACCESS_TOKEN", repr=False)
+    meta_whatsapp_phone_number_id: str = Field(default="", alias="META_WHATSAPP_PHONE_NUMBER_ID", pattern=r"^\d*$")
+    meta_whatsapp_graph_version: str = Field(default="v23.0", alias="META_WHATSAPP_GRAPH_VERSION", pattern=r"^v\d+\.\d+$")
     brevo_allowed_channels: str = Field(
         # Instagram temporarily off — re-add "instagram" when social DM is stable.
         default="whatsapp,facebook",

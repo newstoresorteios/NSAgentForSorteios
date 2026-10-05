@@ -103,7 +103,8 @@ Para enviar fotos, use prepare_product_image uma vez com candidate_ids de todos 
 até dez. Sem candidate_id, use o link oficial exato. Não reescreva, encurte nem corrija o caminho da URL.
 Diga que enviou somente as fotos que a ferramenta confirmar em attached. Se o cliente pedir as fotos de
 novo, chame prepare_product_image com os candidate_ids já conhecidos. Sem essa confirmação, não diga que
-enviou ou reenviou foto. Se alguma falhar, ofereça o link conhecido, sem inventar imagem.
+enviou ou reenviou foto. Se alguma falhar, explique a falha sem inventar imagem nem
+substituir o arquivo solicitado por um link. Não envie fotos que o cliente recusou.
 O histórico entregue continua válido mesmo que a plataforma tenha aberto outra conversa:
 não volte a se apresentar quando já houve apresentação nesse histórico.
 Prazo geral de postagem não é garantia de chegada. Nunca prometa chegada para um evento
@@ -266,7 +267,6 @@ class DirectOpenAIAgent:
                         "knowledge_mode": "file_search" if vector_store_id else "published_search"}}
                 if handoff:
                     metadata["handoff"] = handoff
-                tools.queue_known_photos(incoming.text)
                 if tools.outbound_image_urls:
                     metadata["outbound_image_urls"] = list(tools.outbound_image_urls)
                     metadata["outbound_image_url"] = tools.outbound_image_urls[0]

@@ -129,34 +129,16 @@ def _build_brevo_image_file(url: str, position: int, size: int | None = None) ->
     return payload
 
 
-def _unsent_image_text(text: str, urls: list[str]) -> str:
-    note = "Não consegui anexar a foto. Segue o link:"
-    if note in (text or ""):
-        return text
-    body = "\n".join(urls)
-    return f"{(text or '').rstrip()}\n\n{note}\n{body}".strip()
-
-
-def _image_caption(text: str, image_urls: list[str], position: int) -> str:
-    caption = text
-    for url in image_urls:
-        caption = caption.replace(url, "")
-    caption = re.sub(r"\n{3,}", "\n\n", caption).strip()
-    if len(image_urls) > 1:
-        return f"Foto {position} de {len(image_urls)}."
-    return caption or "Segue a foto oficial do produto."
-
-
-def _conversation_message_was_pushed(result: BrevoSendResult) -> bool:
-    body = result.provider_response or {}
-    return bool(result.ok and body.get("isPushed") is True)
+def _without_image_links(text: str, urls: list[str]) -> str:
+    for url in urls:
+        text = text.replace(url, "")
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 async def _send_conversations_reply(
     incoming: IncomingMessage,
     text: str,
     audio_file: dict[str, Any] | None = None,
-    image_file: dict[str, Any] | None = None,
 ) -> BrevoSendResult:
     settings = get_settings()
 
@@ -175,9 +157,7 @@ async def _send_conversations_reply(
         "visitorId": incoming.visitor_id,
         **agent_payload,
     }
-    if image_file:
-        payload["attachments"] = [image_file]
-    elif audio_file:
+    if audio_file:
         payload["file"] = audio_file
 
     headers = {
@@ -216,52 +196,25 @@ async def _send_conversations_reply(
     )
 
 
-async def _send_whatsapp_images_via_conversations(
-    incoming: IncomingMessage,
-    text: str,
-    image_urls: list[str],
-) -> BrevoSendResult:
-    attempts: list[dict[str, Any]] = []
-    all_pushed = True
-    last_status: int | None = None
-    for position, image_url in enumerate(image_urls, start=1):
-        media = await _send_whatsapp_transactional_reply(
-            incoming,
-            _image_caption(text, image_urls, position),
-            image_url=image_url,
-        )
-        pushed = bool(media.ok)
-        all_pushed = all_pushed and pushed
-        last_status = media.status_code or last_status
-        attempts.append({
-            "position": position,
-            "url": image_url,
-            "ok": media.ok,
-            "pushed": pushed,
-            "status_code": media.status_code,
-            "response": media.provider_response,
-            "error": media.error,
-        })
-    complete = all_pushed and len(attempts) == len(image_urls)
-    return BrevoSendResult(
-        ok=complete,
-        dry_run=False,
-        status_code=last_status,
-        provider_response={
-            "route": "whatsapp_transactional_media",
-            "images_requested": len(image_urls),
-            "images_attempted": len(attempts),
-            "images_pushed": sum(1 for attempt in attempts if attempt["pushed"]),
-            "attempts": attempts,
-        },
-        error=None if complete else "brevo_image_not_pushed",
-    )
+async def _send_whatsapp_image_files(incoming, text, image_urls):
+    from app.channels.whatsapp_media import send_image_files
+    media = await send_image_files(incoming, image_urls)
+    if not media.ok or media.dry_run:
+        return media
+    # Keep the full response as a separate text message; image captions have
+    # a smaller limit. Never claim overall success after a failed attachment.
+    try:
+        reply = await _send_whatsapp_transactional_reply(incoming, text)
+    except httpx.HTTPError:
+        reply = BrevoSendResult(ok=False, dry_run=False, error="brevo_send_failed")
+    return BrevoSendResult(ok=reply.ok, dry_run=False, status_code=reply.status_code,
+        provider_response={**(media.provider_response or {}), "text": reply.provider_response},
+        error=None if reply.ok else "whatsapp_media_partial_delivery")
 
 
 async def _send_whatsapp_transactional_reply(
     incoming: IncomingMessage,
     text: str,
-    image_url: str | None = None,
 ) -> BrevoSendResult:
     settings = get_settings()
 
@@ -288,10 +241,8 @@ async def _send_whatsapp_transactional_reply(
     payload: dict[str, Any] = {
         "contactNumbers": [recipient],
         "senderNumber": sender,
-        "text": (text or "")[:1024],
+        "text": text or "",
     }
-    if image_url:
-        payload["imageUrl"] = image_url
 
     headers = {
         "accept": "application/json",
@@ -338,13 +289,14 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
     text = result.reply_text if isinstance(result, AgentResult) else str(result)
     image_urls = _outbound_image_urls(result)
     has_outbound_image = bool(image_urls)
+    from app.channels.whatsapp_media import media_configured
     image_send_supported = bool(
         has_outbound_image
         and incoming.channel == "whatsapp"
-        and incoming.visitor_id
+        and incoming.sender_phone
+        and media_configured(settings)
         and getattr(settings, "brevo_send_images_as_attachment", True)
     )
-    image_send_attempted = False
     image_send_result: BrevoSendResult | None = None
     audio_file: dict[str, Any] | None = None
     mode = (settings.brevo_reply_mode or "dry_run").lower()
@@ -388,12 +340,9 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
             return BrevoSendResult(ok=False, dry_run=False, error="human_handoff_queue_unavailable")
 
     if incoming.channel == "whatsapp" and image_urls:
-        # sendMessage ignores imageUrl and still returns 201 with only the caption.
-        # Conversations rejects every file shape. Deliver the image address in the text.
-        text = _unsent_image_text(text, image_urls)
+        text = _without_image_links(text, image_urls) or "Segue a foto oficial do produto."
         if isinstance(result, AgentResult):
             result.reply_text = text
-        image_send_supported = False
     if settings.dry_run or mode == "dry_run":
         sent = BrevoSendResult(
             ok=True,
@@ -412,99 +361,75 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
             },
         )
         channel = "dry_run"
-    elif incoming.channel == "whatsapp" and incoming.sender_phone:
-        # Prefer transactional WhatsApp API for phone delivery. Conversations
-        # "send as agent" can return HTTP 200 while the message stays only in
-        # the Brevo inbox (not pushed to the customer's WhatsApp).
-        # Ignore BREVO_REPLY_MODE=conversations for WhatsApp+phone.
+    elif incoming.channel == "whatsapp" and image_urls:
+        channel = "whatsapp_cloud_media"
         if image_send_supported:
-            image_send_attempted = True
-            image_send_result = await _send_whatsapp_images_via_conversations(
-                incoming,
-                text,
-                image_urls,
-            )
-        if image_send_result is not None and image_send_result.ok:
+            image_send_result = await _send_whatsapp_image_files(incoming, text, image_urls)
             sent = image_send_result
-            channel = "brevo_conversations_media"
         else:
-            if image_send_attempted and not (image_send_result and image_send_result.ok):
-                failed_urls = [
-                    item["url"] for item in (image_send_result.provider_response or {}).get("attempts") or []
-                    if not item.get("pushed") and item.get("url")
-                ]
-                text = _unsent_image_text(text, failed_urls or image_urls)
-                if isinstance(result, AgentResult):
-                    result.reply_text = text
-                log_event(
-                    "brevo.send.whatsapp_image_fallback_text",
-                    {
-                        "image_count": len(image_urls),
-                        "media_status": image_send_result.status_code if image_send_result else None,
-                        "media_error": image_send_result.error if image_send_result else None,
-                    },
-                )
-            if (
-                audio_file
-                and isinstance(result, AgentResult)
-                and result.reply_audio_url
-                and result.reply_audio_url not in text
-            ):
-                text = f"{text}\n\nOuça: {result.reply_audio_url}".strip()
-            tx = await _send_whatsapp_transactional_reply(incoming, text)
-            if tx.ok:
-                sent = BrevoSendResult(
-                    ok=True,
-                    dry_run=False,
-                    status_code=tx.status_code,
-                    provider_response={
-                        "route": "whatsapp_transactional",
-                        "transactional": tx.provider_response,
-                        "media_attempt": (
-                            image_send_result.provider_response
-                            if image_send_result is not None
-                            else None
-                        ),
-                    },
-                    error=None,
-                )
-                channel = "whatsapp"
-            elif incoming.visitor_id:
-                log_event(
-                    "brevo.send.whatsapp_transactional_fallback_conversations",
-                    {
-                        "transactional_error": tx.error,
-                        "transactional_status": tx.status_code,
-                        "visitor_id_present": True,
-                    },
-                )
-                conv = await _send_conversations_reply(incoming, text, audio_file=None)
-                sent = BrevoSendResult(
-                    ok=bool(conv.ok),
-                    dry_run=False,
-                    status_code=conv.status_code,
-                    provider_response={
-                        "route": "brevo_conversations_fallback",
-                        "transactional_error": tx.error,
-                        "transactional_status": tx.status_code,
-                        "transactional": tx.provider_response,
-                        "conversations": conv.provider_response,
-                    },
-                    error=None if conv.ok else (conv.error or tx.error),
-                )
-                channel = "brevo_conversations_fallback"
-            else:
-                sent = BrevoSendResult(
-                    ok=False,
-                    dry_run=False,
-                    status_code=tx.status_code,
-                    provider_response={
-                        "route": "whatsapp_transactional",
-                        "transactional": tx.provider_response,
-                    },
-                    error=tx.error or "brevo_send_failed",
-                )
-                channel = "whatsapp"
+            sent = BrevoSendResult(ok=False, dry_run=False, error="whatsapp_media_not_configured")
+    elif incoming.channel == "whatsapp" and incoming.sender_phone:
+        if (
+            audio_file
+            and isinstance(result, AgentResult)
+            and result.reply_audio_url
+            and result.reply_audio_url not in text
+        ):
+            text = f"{text}\n\nOuça: {result.reply_audio_url}".strip()
+        tx = await _send_whatsapp_transactional_reply(incoming, text)
+        if tx.ok:
+            sent = BrevoSendResult(
+                ok=True,
+                dry_run=False,
+                status_code=tx.status_code,
+                provider_response={
+                    "route": "whatsapp_transactional",
+                    "transactional": tx.provider_response,
+                    "media_attempt": (
+                        image_send_result.provider_response
+                        if image_send_result is not None
+                        else None
+                    ),
+                },
+                error=None,
+            )
+            channel = "whatsapp"
+        elif incoming.visitor_id:
+            log_event(
+                "brevo.send.whatsapp_transactional_fallback_conversations",
+                {
+                    "transactional_error": tx.error,
+                    "transactional_status": tx.status_code,
+                    "visitor_id_present": True,
+                },
+            )
+            conv = await _send_conversations_reply(incoming, text, audio_file=None)
+            sent = BrevoSendResult(
+                ok=bool(conv.ok),
+                dry_run=False,
+                status_code=conv.status_code,
+                provider_response={
+                    "route": "brevo_conversations_fallback",
+                    "transactional_error": tx.error,
+                    "transactional_status": tx.status_code,
+                    "transactional": tx.provider_response,
+                    "conversations": conv.provider_response,
+                },
+                error=None if conv.ok else (conv.error or tx.error),
+            )
+            channel = "brevo_conversations_fallback"
+        else:
+            sent = BrevoSendResult(
+                ok=False,
+                dry_run=False,
+                status_code=tx.status_code,
+                provider_response={
+                    "route": "whatsapp_transactional",
+                    "transactional": tx.provider_response,
+                },
+                error=tx.error or "brevo_send_failed",
+            )
+            channel = "whatsapp"
     elif incoming.channel in {"instagram", "facebook", "widget"} and incoming.visitor_id:
         sent = await _send_conversations_reply(incoming, text, audio_file=audio_file)
         channel = "brevo_conversations"
@@ -531,23 +456,18 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
     if has_outbound_image:
         media_send_supported = image_send_supported
         media_send_failed = bool(
-            image_send_attempted
-            and not (image_send_result and image_send_result.ok)
+            incoming.channel == "whatsapp" and not sent.dry_run and not sent.ok
         )
         image_provider_response = (
             image_send_result.provider_response
             if image_send_result and image_send_result.provider_response
             else {}
         )
-        native_media_count = int(image_provider_response.get("images_pushed") or 0)
+        native_media_count = int(image_provider_response.get("images_accepted") or 0)
         native_media_sent = native_media_count > 0
         native_media_complete = bool(image_send_result and image_send_result.ok)
-        fallback_link_sent = bool(
-            not native_media_complete and sent.ok and not sent.dry_run
-        )
-        fallback_link_failed = bool(
-            not native_media_complete and not sent.ok and not sent.dry_run
-        )
+        fallback_link_sent = False
+        fallback_link_failed = False
         if isinstance(result, AgentResult):
             result.response_metadata.update({
                 "image_url_found": True,

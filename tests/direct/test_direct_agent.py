@@ -99,9 +99,33 @@ async def test_only_delivered_tail_is_reused():
     api = client([response()])
     first = await run(api)
     api2 = client([response("Continuando")])
-    await run(api2, previous=first.response_metadata)
+    await run(api2, previous=first.response_metadata,
+              history=[{"role": "assistant", "content": first.reply_text}])
     api2.conversations.create.assert_not_awaited()
     api2.conversations.items.list.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('delivered', ['Oferta de atendimento corrigida.',
+    'Resposta com link oficial acrescentado: https://loja.test/produto'])
+async def test_changed_delivered_text_rebuilds_even_with_matching_remote_id(delivered):
+    first = await run(client([response('Texto original do modelo.')]))
+    api = client([response('Continuando a resposta entregue.')])
+    history = [{"role": "assistant", "content": delivered}]
+    await run(api, previous=first.response_metadata, history=history)
+    api.conversations.items.list.assert_not_awaited()
+    assert api.conversations.create.await_args.kwargs['items'] == history
+
+
+@pytest.mark.asyncio
+async def test_old_metadata_without_text_hash_rebuilds_from_delivered_history():
+    first = await run(client([response()]))
+    first.response_metadata['direct_agent'].pop('reply_sha256')
+    api = client([response()])
+    history = [{"role": "assistant", "content": first.reply_text}]
+    await run(api, previous=first.response_metadata, history=history)
+    api.conversations.items.list.assert_not_awaited()
+    assert api.conversations.create.await_args.kwargs['items'] == history
 
 
 @pytest.mark.asyncio
@@ -110,9 +134,10 @@ async def test_remote_undelivered_answer_causes_rebuild():
     first = await run(api)
     api2 = client([response()])
     api2.conversations.items.list.return_value = NS(data=[NS(id="undelivered")])
-    delivered = [{"role": "user", "content": "Olá"}, {"role": "assistant", "content": "Oi"}]
+    delivered = [{"role": "user", "content": "Olá"}, {"role": "assistant", "content": first.reply_text}]
     await run(api2, previous=first.response_metadata, history=delivered)
     assert api2.conversations.create.await_args.kwargs["items"] == delivered
+    api2.conversations.items.list.assert_awaited_once()
 
 
 @pytest.mark.asyncio

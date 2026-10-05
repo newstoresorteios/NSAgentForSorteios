@@ -5,6 +5,9 @@ def permanent_delivery_failure(info):
     return info.get('retryable') is False or info.get('error') in {
         'meta_authentication_failed', 'meta_page_access_token_missing',
         'meta_recipient_missing', 'meta_reply_too_long',
+        'whatsapp_media_not_configured', 'whatsapp_media_sender_mismatch',
+        'whatsapp_media_recipient_or_sender_missing', 'whatsapp_media_invalid_image',
+        'whatsapp_media_partial_delivery', 'whatsapp_media_delivery_uncertain',
     }
 
 
