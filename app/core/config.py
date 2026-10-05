@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # Explicit server-owned workspace -> vector store map. Never supplied by a customer.
     direct_vector_stores: str = Field(default="{}", alias="DIRECT_VECTOR_STORES")
     direct_memory_enabled: bool = Field(default=True, alias="DIRECT_MEMORY_ENABLED")
+    direct_checkout_enabled: bool = Field(default=False, alias="DIRECT_CHECKOUT_ENABLED")
     openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")
     # Role-specific models (fall back to OPENAI_MODEL when empty).
     openai_main_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MAIN_MODEL")

@@ -32,6 +32,17 @@ def build_outbound_envelope(incoming: Any, result: Any) -> dict[str, Any]:
             "failure_next_step", "outbound_image_url", "outbound_image_urls",
         ) if key in metadata
     }
+    if metadata.get("engine") == "direct":
+        # Delivery retries must retain the same review, identity scope and known
+        # products. Never serialize prompts or a remote tail that was not sent.
+        checkpoint = result_payload["response_metadata"]
+        for key in ("engine", "response_source", "persona_runtime", "direct_checkout"):
+            if key in metadata:
+                checkpoint[key] = metadata[key]
+        direct = metadata.get("direct_agent") or {}
+        checkpoint["direct_agent"] = {key: direct[key] for key in (
+            "products", "continuity", "catalog_snapshot", "last_catalog_search", "checkout_status",
+        ) if key in direct}
     result_payload["response_metadata"]["reply_audio_size"] = (
         len(getattr(result, "reply_audio_bytes", None) or b"")
         or metadata.get("reply_audio_size", 0)

@@ -90,15 +90,21 @@ async def preview_turn(payload):
         from app.direct.continuity import learned_context
         learned = await asyncio.to_thread(learned_context, persona, incoming)
         tools = DirectTools(incoming=incoming, history=state["history"], documents=docs,
+                            checkout_enabled=settings.direct_checkout_enabled,
                             workspace=workspace, tenant=persona.tenant_id, preview=True, learned=learned,
                             continuity=(state['previous'].get('direct_agent') or {}).get('continuity'),
                             products=(state['previous'].get('direct_agent') or {}).get('products', []),
                             catalog_snapshot=(state['previous'].get('direct_agent') or {}).get('catalog_snapshot'))
-        result = await DirectOpenAIAgent(get_async_openai_client(), settings).run_turn(
-            incoming=incoming, workspace_id=workspace, history=state["history"], previous=state["previous"],
-            tools=tools, content=content,
-            persona_name=persona.agent_display_name, tone=persona.tone or "natural",
-            vector_store_id=vector_store_for(settings, workspace), persona=persona_context(persona))
+        from app.direct.checkout import handle_checkout_command, carry_checkout_context
+        result = await handle_checkout_command(incoming, state["previous"], workspace,
+            enabled=settings.direct_checkout_enabled, preview=True)
+        if result is None:
+            result = await DirectOpenAIAgent(get_async_openai_client(), settings).run_turn(
+                incoming=incoming, workspace_id=workspace, history=state["history"], previous=state["previous"],
+                tools=tools, content=content,
+                persona_name=persona.agent_display_name, tone=persona.tone or "natural",
+                vector_store_id=vector_store_for(settings, workspace), persona=persona_context(persona))
+        result = carry_checkout_context(result, state["previous"])
         state["history"] = (state["history"] + [{"role": "user", "content": payload.text},
                            {"role": "assistant", "content": result.reply_text}])[-20:]
         state["previous"] = result.response_metadata

@@ -1,5 +1,9 @@
 # Agente direto
 
+Checkout opcional com confirmação fora do modelo: veja [direct-checkout.md](direct-checkout.md).
+Quando `DIRECT_CHECKOUT_ENABLED=false` (padrão), o atendimento comercial continua
+usando consultas e links oficiais, sem criação de carrinho pelo direto.
+
 `NSAGENT_ENGINE=legacy|direct` seleciona o caminho na primeira linha executável de
 `app.message_pipeline.process_incoming_message`. O padrão versionado é `legacy`.
 O caminho `direct` chama `app.direct.pipeline.process_direct_message` e

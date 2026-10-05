@@ -53,6 +53,8 @@ def _true(value):
 async def current_item(adapter, item: CheckoutItem):
     # Bypass the catalog cache: both the review and confirmation need live facts.
     payload = await adapter._request("GET", f"/internal/products/{item.product_id}")
+    if payload.get("success") is False:
+        raise ValueError("product_unavailable")
     product = payload.get("product", {})
     if str(product.get("id")) != item.product_id:
         raise ValueError("product_identity_mismatch")
@@ -62,6 +64,8 @@ async def current_item(adapter, item: CheckoutItem):
     label = ""
     if item.variant_id:
         payload = await adapter.get_product_variant(item.variant_id)
+        if payload.get("success") is False:
+            raise ValueError("variant_unavailable")
         effective = payload.get("variant", {})
         if (str(effective.get("id")) != item.variant_id
                 or str(effective.get("product_id")) != item.product_id):
@@ -76,10 +80,10 @@ async def current_item(adapter, item: CheckoutItem):
     price = resolve_commercial_price(effective, require_positive=True).amount
     if price is None or price <= 0 or price != price.quantize(Decimal("0.01")):
         raise ValueError("current_price_unavailable")
-    name = str(product.get("name") or "").strip()
+    name = " ".join(str(product.get("name") or "").split())
     if not name:
         raise ValueError("product_name_unavailable")
-    return {"name": name[:300], "variant_label": label[:300], "unit_price": f"{price:.2f}"}
+    return {"name": name[:300], "variant_label": " ".join(label.split())[:300], "unit_price": f"{price:.2f}"}
 
 
 async def prepare_checkout(*, adapter, item, incoming, workspace, known_ids):
@@ -107,10 +111,11 @@ def _result(text, *, proposal=None, status, reason=None, cart_url=None):
 def review_result(proposal):
     code = proposal["id"][:8].upper()
     total = Decimal(proposal["unit_price"]) * proposal["quantity"]
+    total_label = f"{total:.2f}".replace(".", ",")
     variant = f" ({proposal['variant_label']})" if proposal["variant_label"] else ""
     text = (f"Confira: {proposal['quantity']} × {proposal['name']}{variant}, "
             f"R$ {proposal['unit_price'].replace('.', ',')} por unidade. "
-            f"Subtotal: R$ {total:.2f}.\n\n"
+            f"Subtotal: R$ {total_label}.\n\n"
             "Frete e condições finais de pagamento serão mostrados no site. "
             "O carrinho não reserva estoque nem confirma pagamento.\n\n"
             f"Para criar o carrinho, responda CONFIRMAR {code}. "
@@ -125,11 +130,15 @@ def _normalized(text):
 
 
 def _verified_cart(raw, proposal):
+    if raw.get("success") is not True:
+        raise ValueError("cart_read_unverified")
     cart = raw.get("cart", {})
     items = cart.get("items", [])
     if not isinstance(items, list) or len(items) != 1:
         raise ValueError("cart_contents_mismatch")
     item = items[0]
+    if not isinstance(item, dict):
+        raise ValueError("cart_contents_mismatch")
     variant = item.get("variant_id")
     variant = str(variant) if variant not in (None, "", 0, "0") else None
     if (str(item.get("product_id")) != proposal["product_id"]
@@ -203,6 +212,13 @@ async def handle_checkout_command(incoming, previous, workspace, *, enabled, pre
     text = _normalized(incoming.text or "")
     command = re.fullmatch(r"(confirmar|cancelar) ([a-f0-9]{8})[.!]?", text)
     if not command:
+        if state.get("status") == "awaiting_confirmation" and state.get("proposal"):
+            if text in {"nao", "nao quero", "nao quero mais", "desisti", "cancela", "cancelar"}:
+                return _result("Proposta descartada. Nenhum pedido foi cancelado.", status="cancelled")
+            if text in {"sim", "confirmo", "pode criar", "pode comprar", "quero", "ok"}:
+                return _result("Para confirmar, envie CONFIRMAR seguido do código da proposta. "
+                               "Nenhum carrinho foi criado nesta mensagem.",
+                               proposal=state["proposal"], status="awaiting_confirmation")
         return None
     if not enabled:
         return _result("A criação de carrinho por aqui está indisponível. Use o link oficial do produto.",

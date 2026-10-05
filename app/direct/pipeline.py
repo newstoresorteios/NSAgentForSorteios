@@ -54,6 +54,14 @@ async def process_direct_message(incoming, customer_context):
         persona_token = set_persona_runtime(persona)
         await asyncio.to_thread(stamp_inbound_workspace, incoming.raw.get("inbound_id"), workspace)
         history, previous = await asyncio.to_thread(load_history, incoming, workspace)
+        from app.direct.checkout import handle_checkout_command, carry_checkout_context
+        checkout_result = await handle_checkout_command(incoming, previous, workspace,
+            enabled=settings.direct_checkout_enabled)
+        if checkout_result is not None:
+            checkout_result.response_metadata["persona_runtime"] = {"workspace_id": workspace,
+                "persona_version_id": persona.persona_version_id}
+            log_event("direct.checkout.completed", {"status": checkout_result.response_metadata["direct_checkout"]["status"]})
+            return carry_checkout_context(checkout_result, previous)
         documents = await asyncio.to_thread(knowledge_documents, persona)
         from app.direct.continuity import learned_context
         learned = await asyncio.to_thread(learned_context, persona, incoming)
@@ -67,6 +75,7 @@ async def process_direct_message(incoming, customer_context):
             except Exception as exc:
                 log_event("direct.memory.unavailable", {"error_type": type(exc).__name__})
         tools = DirectTools(incoming=incoming, history=history, documents=documents,
+                            checkout_enabled=settings.direct_checkout_enabled,
                             workspace=workspace, tenant=persona.tenant_id, learned=learned,
                             continuity=(previous.get('direct_agent') or {}).get('continuity'),
                             products=(previous.get('direct_agent') or {}).get('products', []),
@@ -81,7 +90,7 @@ async def process_direct_message(incoming, customer_context):
         log_event("direct.turn.completed", {k: v for k, v in result.response_metadata["direct_agent"].items()
                   if k in {"model", "calls", "tools", "input_tokens", "output_tokens", "latency_ms",
                            "prompt_version", "persona_sha256", "knowledge_document_count", "catalog_searches"}})
-        return result
+        return carry_checkout_context(result, previous)
     except Exception as exc:
         # Do not serialize exception messages: API errors can contain request data.
         from app.direct.diagnostics import safe_error_details
