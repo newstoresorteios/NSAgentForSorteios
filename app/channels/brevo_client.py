@@ -466,8 +466,14 @@ async def send_brevo_reply(incoming: IncomingMessage, result: AgentResult | str)
         native_media_count = int(image_provider_response.get("images_accepted") or 0)
         native_media_sent = native_media_count > 0
         native_media_complete = bool(image_send_result and image_send_result.ok)
-        fallback_link_sent = False
-        fallback_link_failed = False
+        # WhatsApp requires a native file. Other Conversations channels may
+        # still deliver an image URL already present in the reply text.
+        fallback_link_attempted = bool(
+            incoming.channel != "whatsapp" and channel == "brevo_conversations"
+            and not sent.dry_run and any(url in text for url in image_urls)
+        )
+        fallback_link_sent = fallback_link_attempted and bool(sent.ok)
+        fallback_link_failed = fallback_link_attempted and not sent.ok
         if isinstance(result, AgentResult):
             result.response_metadata.update({
                 "image_url_found": True,

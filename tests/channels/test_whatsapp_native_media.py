@@ -161,3 +161,20 @@ async def test_transactional_text_preserves_every_character_and_final_link(monke
     monkeypatch.setattr(brevo, 'get_settings', _settings)
     monkeypatch.setattr(brevo.httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
     assert (await brevo._send_whatsapp_transactional_reply(incoming(), full_text)).ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('ok', [True, False])
+@pytest.mark.parametrize('has_link', [True, False])
+async def test_other_conversations_channels_report_only_actual_link_attempts(monkeypatch, ok, has_link):
+    import app.channels.brevo_client as brevo
+    monkeypatch.setattr(brevo, 'get_settings', _settings)
+    monkeypatch.setattr(brevo, '_send_conversations_reply', AsyncMock(
+        return_value=BrevoSendResult(ok=ok, dry_run=False)))
+    url = 'https://images.tcdn.com.br/produto.png'
+    result = AgentResult(reply_text='Imagem oficial: ' + (url if has_link else 'indisponível'),
+                         response_metadata={'outbound_image_url': url})
+    await brevo.send_brevo_reply(IncomingMessage(channel='facebook', visitor_id='visitor'), result)
+    assert result.response_metadata['fallback_link_sent'] is (has_link and ok)
+    assert result.response_metadata['fallback_link_failed'] is (has_link and not ok)
+    assert result.response_metadata['native_media_sent'] is False
