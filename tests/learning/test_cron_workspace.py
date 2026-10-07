@@ -63,3 +63,30 @@ async def test_remarketing_preserves_meta_provider_and_workspace(monkeypatch):
     assert result.reply_text
     assert finish.call_args.kwargs["provider_response"]["provider_response"]["message_id"] == "receipt-1"
     brevo_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_remarketing_does_not_send_meta_when_agent_replies_are_disabled(monkeypatch):
+    from app.learning import remarketing
+    from app.channels import meta_instagram
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(remarketing, "get_settings", lambda: SimpleNamespace(remarketing_enabled=True, remarketing_batch_size=1))
+    monkeypatch.setattr(remarketing, "claim_due_remarketing_attempts", lambda _limit: [{
+        "id": 4, "conversation_status_id": 2, "provider": "meta", "workspace_id": "workspace-a",
+        "channel": "instagram", "sender_external_id": "customer-1", "touch_number": 1,
+    }])
+    monkeypatch.setattr(remarketing, "remarketing_attempt_is_sendable", lambda *_a, **_k: True)
+    cancelled = []
+    monkeypatch.setattr(
+        remarketing,
+        "cancel_processing_remarketing_attempt",
+        lambda attempt_id, *, reason: cancelled.append((attempt_id, reason)),
+    )
+    monkeypatch.setattr(meta_instagram, "meta_agent_replies_enabled", lambda: False)
+    meta_send = AsyncMock(side_effect=AssertionError("must not send"))
+    monkeypatch.setattr(meta_instagram, "send_meta_instagram_reply", meta_send)
+
+    assert await remarketing.run_remarketing_batch() == {"claimed": 1, "sent": 0, "failed": 0}
+    assert cancelled == [(4, "meta_agent_replies_disabled")]
+    meta_send.assert_not_awaited()

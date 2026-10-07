@@ -324,6 +324,26 @@ async def _process_inbox_row_locked(row: dict[str, Any]) -> dict[str, Any]:
             {"inbox_id": inbox_id},
         )
 
+    if (incoming.provider or "").lower() == "meta":
+        from app.channels.meta_instagram import meta_agent_replies_enabled
+
+        if not meta_agent_replies_enabled():
+            _mark_group_processed(grouped_inbox_ids, inbound_id)
+            log_event(
+                "inbox.skipped_agent_replies_disabled",
+                {
+                    "inbox_id": inbox_id,
+                    "channel": incoming.channel,
+                    "inbound_id": inbound_id,
+                },
+            )
+            return {
+                "ok": True,
+                "inbox_id": inbox_id,
+                "inbound_id": inbound_id,
+                "skipped": "agent_replies_disabled",
+            }
+
     from app.ingress.outbox import has_sent_outbound
     if has_successful_agent_response(inbound_id) or has_sent_outbound(inbound_id):
         _mark_group_processed(grouped_inbox_ids, inbound_id)

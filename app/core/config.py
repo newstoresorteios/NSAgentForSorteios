@@ -866,6 +866,11 @@ class Settings(BaseSettings):
         default=False,
         alias="META_WEBHOOK_ENABLED",
     )
+    # Receive stays on META_WEBHOOK_ENABLED. This only controls automatic replies.
+    meta_agent_replies_enabled: bool = Field(
+        default=True,
+        alias="META_AGENT_REPLIES_ENABLED",
+    )
     meta_app_secret: str = Field(default="", alias="META_APP_SECRET")
     meta_ig_app_secret: str = Field(default="", alias="META_IG_APP_SECRET")
     meta_verify_token: str = Field(default="", alias="META_VERIFY_TOKEN")

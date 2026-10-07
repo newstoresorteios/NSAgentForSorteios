@@ -676,6 +676,24 @@ def complete_paid_remarketing(
             )
 
 
+def cancel_processing_remarketing_attempt(attempt_id: int, *, reason: str) -> None:
+    """Drop a claimed touch without retrying it."""
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE public.ai_remarketing_attempts
+                SET status = 'cancelled',
+                    last_error = %(reason)s,
+                    updated_at = %(now)s
+                WHERE id = %(attempt_id)s
+                  AND status = 'processing'
+                """,
+                {"attempt_id": attempt_id, "reason": reason, "now": now},
+            )
+
+
 def finish_remarketing_attempt(
     attempt_id: int,
     *,
@@ -862,7 +880,17 @@ async def run_remarketing_batch(limit: int | None = None) -> dict[str, int]:
         )
         try:
             if incoming.provider == "meta":
-                from app.channels.meta_instagram import send_meta_instagram_reply
+                from app.channels.meta_instagram import (
+                    meta_agent_replies_enabled,
+                    send_meta_instagram_reply,
+                )
+
+                if not meta_agent_replies_enabled():
+                    cancel_processing_remarketing_attempt(
+                        attempt_id,
+                        reason="meta_agent_replies_disabled",
+                    )
+                    continue
                 result = await send_meta_instagram_reply(incoming, AgentResult(
                     reply_text=message_text, intent="commerce"))
                 send_ok = bool(result.get("ok")) and not result.get("dry_run", False)

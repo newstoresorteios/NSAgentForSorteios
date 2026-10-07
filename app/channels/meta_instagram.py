@@ -364,6 +364,12 @@ def meta_webhook_enabled() -> bool:
     return bool(getattr(settings, "meta_webhook_enabled", False))
 
 
+def meta_agent_replies_enabled() -> bool:
+    """Inbound Instagram DMs can be stored while the agent stays silent."""
+    settings = get_settings()
+    return bool(getattr(settings, "meta_agent_replies_enabled", True))
+
+
 def _normalize_meta_secret(value: str | None) -> str:
     cleaned = (value or "").strip()
     if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:

@@ -109,6 +109,61 @@ def test_meta_provider_respects_human_takeover(monkeypatch):
     assert synced == [("ig:user-1", 9)]
 
 
+def test_meta_dm_is_stored_without_agent_reply_when_replies_disabled(monkeypatch):
+    import asyncio
+
+    from app.ingress import worker as worker_mod
+
+    incoming = IncomingMessage(
+        provider="meta",
+        channel="instagram",
+        text="oi",
+        sender_key="instagram:user-1",
+        sender_external_id="user-1",
+        visitor_id="user-1",
+        conversation_id="ig:user-1",
+    )
+    monkeypatch.setattr(worker_mod, "incoming_from_inbox_payload", lambda *_args, **_kwargs: incoming)
+    monkeypatch.setattr(worker_mod, "attach_recent_image_for_followup", lambda item: item)
+    monkeypatch.setattr(worker_mod, "is_caption_echo_of_recent_image", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(worker_mod, "claim_inbound_message", lambda *_args, **_kwargs: (True, 11))
+    monkeypatch.setattr(
+        "app.ops.human_takeover.human_takeover_active",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "app.channels.meta_instagram.meta_agent_replies_enabled",
+        lambda: False,
+    )
+    marked = []
+    monkeypatch.setattr(
+        worker_mod,
+        "mark_inbox_processed",
+        lambda row_id, **kwargs: marked.append((row_id, kwargs)),
+    )
+    synced = []
+    monkeypatch.setattr(
+        "app.configuration.workspace.stamp_silent_inbound_workspace",
+        lambda message, inbound_id: synced.append((message.conversation_id, inbound_id)),
+    )
+    monkeypatch.setattr(
+        "app.message_pipeline.process_incoming_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("agent must stay silent")),
+    )
+
+    result = asyncio.run(
+        worker_mod.process_inbox_row({"id": 3, "payload_json": {}, "attempts": 1}, lock_held=True)
+    )
+    assert result == {
+        "ok": True,
+        "inbox_id": 3,
+        "inbound_id": 11,
+        "skipped": "agent_replies_disabled",
+    }
+    assert marked == [(3, {"processed_inbound_id": 11})]
+    assert synced == [("ig:user-1", 11)]
+
+
 def test_process_inbox_row_skips_caption_echo(monkeypatch):
     import asyncio
 

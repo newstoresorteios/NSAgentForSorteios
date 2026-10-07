@@ -184,6 +184,9 @@ async def admin_diagnostics_payload(settings=None) -> dict:
             cfg, "remarketing_meta_window_hours", 24
         ),
         "meta_webhook_enabled": bool(getattr(cfg, "meta_webhook_enabled", False)),
+        "meta_agent_replies_enabled": bool(
+            getattr(cfg, "meta_agent_replies_enabled", True)
+        ),
         "meta_app_secret_configured": bool(
             str(getattr(cfg, "meta_app_secret", "") or "").strip()
         ),
